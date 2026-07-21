@@ -83,7 +83,7 @@ class NovelMemory:
     # ── L3: 伏笔追踪 ──
 
     def get_foreshadowing_context(self, novel_id: str, current_chapter: int) -> str:
-        """获取需要回收的伏笔"""
+        """获取需要回收的伏笔（按时序紧迫度排序）"""
         hooks_path = os.path.join(self.get_novel_dir(novel_id), "foreshadowing.json")
         if not os.path.exists(hooks_path):
             return ""
@@ -91,16 +91,28 @@ class NovelMemory:
         with open(hooks_path, "r", encoding="utf-8") as f:
             hooks = json.load(f)
         
-        # 找到应该在当前章节附近回收的伏笔
-        active = [h for h in hooks if not h.get("resolved") and h.get("reveal_chapter", 999) <= current_chapter + 2]
+        # 按紧迫度分组
+        active = []
+        for h in hooks:
+            if h.get("resolved"):
+                continue
+            reveal = h.get("reveal_chapter", 999)
+            if reveal <= current_chapter + 3:  # 3章内需回收
+                urgency = "🔴 必须" if reveal <= current_chapter else ("🟡 建议" if reveal <= current_chapter + 1 else "🟢 可选")
+                active.append((urgency, reveal, h))
         
         if not active:
             return ""
         
-        context = "## 待回收伏笔\n"
-        for h in active[:10]:
-            context += (f"- [第{h.get('plant_chapter', '?')}章埋设] {h.get('description', '')} "
-                       f"(计划第{h.get('reveal_chapter', '?')}章回收)\n")
+        # 按紧迫度排序：必须 > 建议 > 可选
+        urgency_order = {"🔴 必须": 0, "🟡 建议": 1, "🟢 可选": 2}
+        active.sort(key=lambda x: (urgency_order.get(x[0], 99), x[1]))
+        
+        context = "## 📌 伏笔回收提醒\n\n"
+        context += "以下伏笔需要在近期回收。优先处理「必须」级别的伏笔：\n\n"
+        for urgency, reveal, h in active[:8]:
+            context += (f"- {urgency} [第{h.get('plant_chapter', '?')}章埋设 → 计划第{reveal}章回收] {h.get('description', '')}\n")
+        
         return context
 
     # ── 综合构建 ──
