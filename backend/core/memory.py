@@ -199,5 +199,27 @@ class NovelMemory:
         state_path = os.path.join(self.get_novel_dir(novel_id), "state.json")
         if os.path.exists(state_path):
             with open(state_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {"current_chapter": 0, "total_words": 0}
+                state = json.load(f)
+            # 向后兼容：旧数据可能没有 completed_chapters，从磁盘扫描
+            if "completed_chapters" not in state:
+                state["completed_chapters"] = self._scan_chapters(novel_id)
+            if "current_chapter" not in state:
+                chs = state["completed_chapters"]
+                state["current_chapter"] = max(chs) if chs else 0
+            return state
+        return {"current_chapter": 0, "total_words": 0, "completed_chapters": []}
+
+    def _scan_chapters(self, novel_id: str) -> list:
+        """扫描磁盘实际存在的章节文件，返回章节号列表"""
+        chapters_dir = os.path.join(self.get_novel_dir(novel_id), "chapters")
+        if not os.path.exists(chapters_dir):
+            return []
+        chapters = []
+        for f in os.listdir(chapters_dir):
+            if f.startswith("chapter_") and f.endswith(".md"):
+                try:
+                    num = int(f.replace("chapter_", "").replace(".md", ""))
+                    chapters.append(num)
+                except ValueError:
+                    pass
+        return sorted(chapters)

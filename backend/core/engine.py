@@ -204,7 +204,11 @@ class NovelEngine:
 
             # 更新状态
             state = self.memory.get_novel_state(novel_id)
-            state["current_chapter"] = chapter_num
+            completed = state.get("completed_chapters", [])
+            if chapter_num not in completed:
+                completed.append(chapter_num)
+            state["completed_chapters"] = sorted(completed)
+            state["current_chapter"] = max(completed) if completed else 0
             state["total_words"] = state.get("total_words", 0) + len(full_text)
             self.memory.save_novel_state(novel_id, state)
 

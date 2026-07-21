@@ -217,7 +217,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <div class="meta">
               <span class="tag">{{ n.genre }}</span>
               <span class="tag">{{ n.style }}</span>
-              <span class="badge" :class="n.state.current_chapter?'badge-ok':'badge-warn'">{{ n.state.current_chapter }}/{{ n.state.total_chapters }}</span>
+              <span class="badge" :class="(n.state.completed_chapters||[]).length?'badge-ok':'badge-warn'">{{ (n.state.completed_chapters||[]).length }}/{{ n.state.total_chapters }}</span>
             </div>
           </div>
           <div class="book-progress">
@@ -348,14 +348,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div>
             <h2 style="font-size:18px;margin:0;border:none;padding:0">{{ activeNovel.title }}</h2>
             <div class="text-xs color-text3 mt-4">
-              <span class="badge badge-ok mr-8" v-if="activeNovel.state.current_chapter">{{ activeNovel.state.current_chapter }}章已完成</span>
+              <span class="badge badge-ok mr-8" v-if="(activeNovel.state.completed_chapters||[]).length">{{ (activeNovel.state.completed_chapters||[]).length }}章已完成</span>
               {{ activeNovel.genre }} · {{ activeNovel.style }}
             </div>
           </div>
         </div>
 
         <div class="chapter-picker">
-          <div v-for="ch in availableChapters" :key="ch" class="cp-btn" :class="{active:ch===writing.chapter, done:ch<=activeNovel.state.current_chapter}" @click="selectChapter(ch)">{{ ch }}</div>
+          <div v-for="ch in availableChapters" :key="ch" class="cp-btn" :class="{active:ch===writing.chapter, done:(activeNovel.state.completed_chapters||[]).includes(ch)}" @click="selectChapter(ch)">{{ ch }}</div>
         </div>
 
         <div v-if="currentOutline" class="chapter-outline">
@@ -365,13 +365,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div class="co-meta"><span>🎭 {{ currentOutline.emotion_curve }}</span><span>👤 {{ (currentOutline.characters||[]).join('、') }}</span></div>
         </div>
 
-        <button class="btn btn-primary w-full mb-16" style="padding:12px" v-if="writing.chapter>activeNovel.state.current_chapter" @click="doGenerateChapter" :disabled="loading.write">
+        <button class="btn btn-primary w-full mb-16" style="padding:12px" v-if="!writing.done && !(activeNovel.state.completed_chapters||[]).includes(writing.chapter)" @click="doGenerateChapter" :disabled="loading.write">
           <span v-if="loading.write"><span class="spinner"></span> 写作中…</span>
           <span v-else>生成第{{ writing.chapter }}章</span>
         </button>
 
         <div v-if="writing.content" class="chapter-content" ref="preview">{{ writing.content }}</div>
-        <div v-else-if="!loading.write && writing.chapter<=activeNovel.state.current_chapter" class="chapter-empty">
+        <div v-else-if="!loading.write && (activeNovel.state.completed_chapters||[]).includes(writing.chapter) && writing.done" class="chapter-empty">
           <div class="ce-icon">☐</div><p>第{{ writing.chapter }}章</p><p class="text-xs color-text3 mt-8">点击章节序号查看</p>
         </div>
 
@@ -399,7 +399,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <div class="export-check" :class="{checked:exportSelected[n.id]}" @click="toggleExport(n.id)"></div>
             <div class="ei-info">
               <div class="ei-title">{{ n.title }}</div>
-              <div class="ei-meta">{{ n.genre }} · {{ n.style }} · {{ n.state.current_chapter }}/{{ n.state.total_chapters }}章</div>
+              <div class="ei-meta">{{ n.genre }} · {{ n.style }} · {{ (n.state.completed_chapters||[]).length }}/{{ n.state.total_chapters }}章</div>
             </div>
             <div class="ei-actions">
               <button class="btn btn-ghost btn-xs" @click="doSingleExport(n,'txt')" :disabled="loading.export===n.id+'txt'">{{ loading.export===n.id+'txt' ? '…' : 'TXT' }}</button>
@@ -458,7 +458,7 @@ createApp({
       return null;
     });
 
-    function pct(n) { const t=n.state.total_chapters||1,c=n.state.current_chapter||0; return Math.round(c/t*100)+'%'; }
+    function pct(n) { const t=n.state.total_chapters||1,c=(n.state.completed_chapters||[]).length; return Math.round(c/t*100)+'%'; }
     function fmtWords(w) { return w>=10000?(w/10000).toFixed(0)+'万字':w+'字'; }
     function coverGradient(id) {
       const c=[['#1a1a2e','#16213e'],['#0f3460','#533483'],['#1b4332','#2d6a4f'],['#3d2c2e','#6b4c3b'],['#1c2541','#3a506b']];
@@ -498,7 +498,10 @@ createApp({
     function openNovel(novel) {
       activeNovel.value=novel; error.value='';
       fetch(API+'/api/novels/'+encodeURIComponent(novel.id)).then(r=>r.json()).then(d=>{planResult.value=d.novel}).catch(console.error);
-      selectChapter(Math.min(novel.state.current_chapter+1, novel.state.total_chapters||1)); currentView.value='write';
+      const done=(novel.state.completed_chapters||[]), total=novel.state.total_chapters||1;
+      // 找第一个未生成章节
+      let next=1; while(next<=total && done.includes(next)) next++;
+      selectChapter(Math.min(next, total)); currentView.value='write';
     }
     function startWriting(title) { const n=novels.value.find(x=>x.id===title||x.title===title); if(n) openNovel(n); }
 
@@ -508,7 +511,8 @@ createApp({
     }
 
     async function doGenerateChapter() {
-      if(!activeNovel.value||writing.chapter<=activeNovel.value.state.current_chapter) return;
+      if(!activeNovel.value) return;
+      if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter)) return;
       loading.write=true; writing.content=''; writing.done=false; error.value='';
       try {
         const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter})});
@@ -518,7 +522,14 @@ createApp({
           for(const line of lines){ if(!line.startsWith('data: '))continue;
             try{ const evt=JSON.parse(line.slice(6));
               if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
-              else if(evt.type==='done'){ writing.done=true; activeNovel.value.state.current_chapter=evt.chapter_num; loadShelf(); }
+              else if(evt.type==='done'){
+                writing.done=true;
+                const ch=activeNovel.value.state; if(!ch.completed_chapters) ch.completed_chapters=[];
+                if(!ch.completed_chapters.includes(evt.chapter_num)) ch.completed_chapters.push(evt.chapter_num);
+                ch.completed_chapters.sort((a,b)=>a-b);
+                ch.current_chapter=Math.max(...ch.completed_chapters);
+                loadShelf();
+              }
               else if(evt.type==='error') error.value=evt.message;
             }catch(_){}
           }
