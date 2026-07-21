@@ -168,6 +168,23 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .empty h3{font-size:16px;font-weight:600;margin-bottom:4px}
 .empty p{font-size:13px;color:var(--text2);margin-bottom:16px}
 
+/* ── Create Progress ── */
+.create-progress{background:var(--bg2);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:16px 20px;margin-top:12px}
+.create-progress .cp-bar{height:6px;background:var(--border-light);border-radius:3px;overflow:hidden;margin-bottom:8px}
+.create-progress .cp-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--blue));border-radius:3px;transition:width .5s ease}
+.create-progress .cp-info{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+.create-progress .cp-label{color:var(--text);font-weight:500}
+.create-progress .cp-pct{color:var(--text3);font-variant-numeric:tabular-nums}
+
+/* ── Review Section ── */
+.review-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin:16px 0}
+.review-section .rs-title{font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text2)}
+.review-section textarea{min-height:70px;margin-bottom:10px}
+
+/* ── Batch Preview ── */
+.batch-preview{max-height:200px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-xs);padding:12px;font-size:12px;color:var(--text2);font-family:var(--font-mono);white-space:pre-wrap;margin-top:8px}
+.batch-status{display:flex;align-items:center;gap:8px;margin-top:8px}
+
 /* ── Responsive ── */
 @media(max-width:800px){
   .sidebar{display:none}
@@ -292,9 +309,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
       <div v-if="error" class="error-msg">{{ error }}</div>
 
-      <button class="btn btn-primary w-full" style="padding:12px;font-size:15px" @click="doCreate" :disabled="loading.create">
-        <span v-if="loading.create"><span class="spinner"></span> 构建世界观…</span>
-        <span v-else>生成大纲</span>
+      <div v-if="loading.create" class="create-progress">
+        <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
+        <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
+      </div>
+      <button v-else class="btn btn-primary w-full" style="padding:12px;font-size:15px" @click="doCreate">
+        生成大纲
       </button>
 
       <!-- Creation Result -->
@@ -373,8 +393,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div class="co-meta"><span>🎭 {{ currentOutline.emotion_curve }}</span><span>👤 {{ (currentOutline.characters||[]).join('、') }}</span></div>
         </div>
 
-        <button class="btn btn-primary w-full mb-16" style="padding:12px" v-if="!writing.done && !(activeNovel.state.completed_chapters||[]).includes(writing.chapter)" @click="doGenerateChapter" :disabled="loading.write">
+        <button class="btn btn-primary w-full mb-16" style="padding:12px" v-if="!writing.done && !(activeNovel.state.completed_chapters||[]).includes(writing.chapter)" @click="doGenerateChapter" :disabled="loading.write || loading.batch">
           <span v-if="loading.write"><span class="spinner"></span> 写作中…</span>
+          <span v-else-if="loading.batch">⏳ 批量生成中，请等待…</span>
           <span v-else>生成第{{ writing.chapter }}章</span>
         </button>
 
@@ -383,17 +404,18 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
             <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)">
               <span>批量：从</span>
-              <input v-model.number="batchStart" type="number" min="1" :max="activeNovel.state.total_chapters" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
+              <input v-model.number="batchStart" type="number" min="1" :max="activeNovel.state.total_chapters" :disabled="loading.batch" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
               <span>到</span>
-              <input v-model.number="batchEnd" type="number" min="1" :max="activeNovel.state.total_chapters" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
+              <input v-model.number="batchEnd" type="number" min="1" :max="activeNovel.state.total_chapters" :disabled="loading.batch" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
             </div>
-            <button class="btn btn-secondary btn-sm" @click="doBatchGenerate" :disabled="loading.batch" style="white-space:nowrap">
-              {{ loading.batch ? '批量中…' : '📦 批量生成' }}
-            </button>
+            <div style="display:flex;gap:6px">
+              <button v-if="loading.batch" class="btn btn-sm" style="background:var(--red);color:#fff" @click="cancelBatch">⏹ 中断</button>
+              <button v-else class="btn btn-secondary btn-sm" @click="doBatchGenerate" :disabled="loading.write">📦 批量生成</button>
+            </div>
           </div>
           <div v-if="loading.batch" style="margin-top:8px">
-            <div class="progress-bar"><div class="progress-fill" :style="{width:batchProgress+'%'}"></div></div>
-            <div class="text-xs color-text3 mt-4 text-center">已生成 {{ batchCurrent }}/{{ batchEnd }} 章（{{ batchProgress }}%）</div>
+            <div class="batch-status"><div class="progress-bar" style="flex:1"><div class="progress-fill" :style="{width:batchProgress+'%'}"></div></div><span class="progress-text" style="margin-left:8px">{{ batchCurrent }}/{{ batchEnd }} ({{ batchProgress }}%)</span></div>
+            <div v-if="batchStreaming" class="batch-preview">{{ batchStreaming.slice(-300) }}</div>
           </div>
         </div>
 
@@ -417,6 +439,17 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div v-if="writing.done" class="flex gap-8 justify-center mt-24 mb-16">
           <button class="btn btn-primary" @click="nextChapter">下一章</button>
           <button class="btn btn-secondary" @click="copyChapter">复制</button>
+        </div>
+
+        <!-- 意见重生成 -->
+        <div v-if="writing.done" class="review-section">
+          <div class="rs-title">💬 对本章不满意？输入修改意见重新生成（大纲和结构不变）</div>
+          <textarea v-model="reviewFeedback" rows="2" placeholder="如：对话太少 / 节奏太慢 / 冲突感不够强 / 描写不够细致…"></textarea>
+          <button class="btn btn-secondary btn-sm" @click="doRegenerate" :disabled="loading.write || !reviewFeedback.trim()">
+            <span v-if="loading.write"><span class="spinner"></span> 重写中…</span>
+            <span v-else>🔄 按意见重新生成</span>
+          </button>
+          <span class="text-xs color-text3 ml-8">大纲、角色、节拍结构均保持不变</span>
         </div>
 
         <div v-if="error" class="error-msg">{{ error }}</div>
@@ -485,6 +518,9 @@ createApp({
     const editSaved = ref(false); const styleMode = ref('library');
     const customStyleDesc = ref(''); const styleSeeds = ref([]);
     const theme = ref(localStorage.getItem('theme') || 'dark');
+    const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
+    const reviewFeedback = ref(''); const batchStreaming = ref('');
+    const abortCtrl = ref(null);
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'' });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
@@ -534,10 +570,20 @@ createApp({
     async function doCreate() {
       if (!form.inspiration.trim()) { error.value='请输入核心灵感'; return; }
       error.value=''; planResult.value=null; loading.create=true;
+      createProgress.value=0; createPhase.value='start'; createPhaseLabel.value='准备中…';
       try {
-        const r=await fetch(API+'/api/novels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form})});
-        if(!r.ok) throw new Error((await r.json()).detail||'创建失败');
-        planResult.value=(await r.json()).novel; await loadShelf();
+        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form})});
+        const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+        while(true){ const{value,done}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
+          const lines=buf.split('\n'); buf=lines.pop()||'';
+          for(const line of lines){ if(!line.startsWith('data: '))continue;
+            try{ const evt=JSON.parse(line.slice(6));
+              if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
+              else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; await loadShelf(); }
+              else if(evt.type==='error'){ error.value=evt.message; }
+            }catch(_){}
+          }
+        }
       } catch(e){ error.value=e.message; }
       loading.create=false;
     }
@@ -562,8 +608,9 @@ createApp({
 
     async function doGenerateChapter() {
       if(!activeNovel.value) return;
+      if(loading.batch){ error.value='批量生成运行中，请先停止或等待完成'; return; }
       if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter)) return;
-      loading.write=true; writing.content=''; writing.done=false; error.value='';
+      loading.write=true; writing.content=''; writing.done=false; reviewFeedback.value=''; error.value='';
       try {
         const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel'})});
         const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
@@ -590,35 +637,61 @@ createApp({
     function nextChapter() { const n=writing.chapter+1; if(n<=(activeNovel.value?.state.total_chapters||999)) selectChapter(n); }
     function copyChapter() { navigator.clipboard.writeText(writing.content); error.value='已复制'; setTimeout(()=>error.value='',2000); }
 
+    function cancelBatch() {
+      if(abortCtrl.value){ abortCtrl.value.abort(); abortCtrl.value=null; }
+      loading.batch=false; batchStreaming.value='';
+      error.value='批量生成已中断';
+    }
+
     async function doBatchGenerate() {
       if(!activeNovel.value||loading.batch) return;
       const start=batchStart.value||1, end=batchEnd.value||1;
       if(start>end) return;
-      loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value='';
+      loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value=''; batchStreaming.value='';
+      const ctrl=new AbortController(); abortCtrl.value=ctrl;
       try {
         const r=await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/generate/batch',{
           method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({start_chapter:start,end_chapter:end,writing_mode:writingModeLiterary.value?'literary':'webnovel'})
+          body:JSON.stringify({start_chapter:start,end_chapter:end,writing_mode:writingModeLiterary.value?'literary':'webnovel'}),
+          signal:ctrl.signal,
         });
         const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
-        while(true){ const{value,done}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
+        while(true){ const{value,done}=await reader.read(); if(done||ctrl.signal.aborted)break; buf+=dec.decode(value,{stream:true});
           const lines=buf.split('\n'); buf=lines.pop()||'';
           for(const line of lines){
             if(!line.startsWith('data: '))continue;
             try{ const evt=JSON.parse(line.slice(6));
               if(evt.type==='progress'){ batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100); }
-              else if(evt.type==='chapter_done'){
-                batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
-                loadShelf();
-              }
+              else if(evt.type==='text'){ batchStreaming.value+=evt.content; }
+              else if(evt.type==='chapter_done'){ batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100); batchStreaming.value=''; loadShelf(); }
               else if(evt.type==='batch_done'){ batchCurrent.value=end; batchProgress.value=100; }
               else if(evt.type==='error'){ error.value=evt.message; }
             }catch(e){}
           }
         }
         selectChapter(end); loadShelf();
+      } catch(e){ if(e.name!=='AbortError') error.value=e.message; }
+      loading.batch=false; abortCtrl.value=null; batchStreaming.value='';
+    }
+
+    async function doRegenerate() {
+      if(!activeNovel.value||!reviewFeedback.value.trim()){ error.value='请输入修改意见'; return; }
+      loading.write=true; writing.content=''; writing.done=false; error.value='';
+      try {
+        const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel',feedback:reviewFeedback.value.trim()})});
+        const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+        while(true){ const{value,done}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
+          const lines=buf.split('\n'); buf=lines.pop()||'';
+          for(const line of lines){ if(!line.startsWith('data: '))continue;
+            try{ const evt=JSON.parse(line.slice(6));
+              if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
+              else if(evt.type==='done'){ writing.done=true; reviewFeedback.value=''; }
+              else if(evt.type==='error') error.value=evt.message;
+            }catch(_){}
+          }
+        }
       } catch(e){ error.value=e.message; }
-      loading.batch=false;
+      loading.write=false;
     }
     function onModeChange() { /* toggle handled by v-model, just reset writing state */ }
 
@@ -705,8 +778,9 @@ createApp({
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,
-      batchStart,batchEnd,batchProgress,batchCurrent,exportProgress,writingModeLiterary,
-      doBatchGenerate,onModeChange };
+      batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,
+      doBatchGenerate,cancelBatch,onModeChange,
+      createProgress,createPhase,createPhaseLabel,reviewFeedback,doRegenerate };
   }
 }).mount('#app');
 </script>

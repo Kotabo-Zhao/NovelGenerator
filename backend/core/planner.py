@@ -266,6 +266,196 @@ class Planner:
         
         return plan
 
+    async def plan_stream(self, creative_input: dict):
+        """3阶段流式规划 — 前端可显示进度条
+        
+        Yields:
+            {"type":"progress","phase":"worldbuilding","pct":25,"label":"构建世界观…"}
+            {"type":"progress","phase":"characters","pct":55,"label":"设计角色…"}
+            {"type":"progress","phase":"outline","pct":85,"label":"生成大纲…"}
+            {"type":"done","plan":{...}}
+        """
+        genre = creative_input.get("genre", "玄幻")
+        style_name = creative_input.get("style", "热血爽文")
+        inspiration = creative_input.get("inspiration", "")
+        target_words = creative_input.get("target_words", 500000)
+        title = creative_input.get("title", "")
+
+        if style_name.startswith("自定义") or style_name == "自定义风格":
+            style_config = build_custom_style(style_name)
+        else:
+            style_config = get_style(style_name)
+        
+        style_guide = build_style_prompt(style_config)
+        structure_hint = style_config.get("structure",
+            "遵循「三章一小高潮、五章一中高潮、一卷一大高潮」的节奏")
+
+        yield {"type": "progress", "phase": "start", "pct": 5, "label": "分析创意…"}
+
+        # ── Phase 1: 世界观 (5% → 30%) ──
+        yield {"type": "progress", "phase": "worldbuilding", "pct": 10, "label": "构建世界观体系…"}
+        
+        wb_prompt = f"""你是一位世界观架构师。请根据以下创意生成世界设定。
+
+风格: {style_config['name']} ({style_config['author']})
+创意: {inspiration}
+题材: {genre}
+
+输出 JSON:
+```json
+{{
+  "title": "自动生成的书名",
+  "genre": "{genre}",
+  "worldbuilding": {{
+    "era": "时代背景",
+    "geography": "地理环境（3-5个关键地点）",
+    "power_system": "力量/科技体系",
+    "core_conflict": "核心矛盾（主线冲突的本质）",
+    "factions": [{{"name":"","description":"","alignment":"正/邪/中立"}}]
+  }}
+}}
+```
+只输出 JSON。"""
+
+        wb = await self._call_llm(wb_prompt, "worldbuilding")
+        if not wb:
+            yield {"type": "error", "message": "世界观生成失败"}
+            return
+
+        yield {"type": "progress", "phase": "worldbuilding", "pct": 30, "label": "世界观完成 ✓"}
+
+        # ── Phase 2: 角色 (30% → 55%) ──
+        yield {"type": "progress", "phase": "characters", "pct": 32, "label": "设计角色关系网…"}
+        
+        char_prompt = f"""你是一位角色设计师。请根据以下世界观为小说创作角色体系。
+
+世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:500]}
+风格: {style_config['name']}
+创意: {inspiration}
+
+输出 JSON（主角+配角+反派，深度人物宝典级别）:
+```json
+{{
+  "characters": {{
+    "protagonist": {{
+      "name": "", "age": "", "identity": "", "appearance": "",
+      "personality": {{"surface": "","true_self": "","flaw": ""}},
+      "backstory": "", "motivation": {{"want": "","need": ""}},
+      "arc": "", "cheat": "", "secret": "", "catchphrase": "",
+      "relationships": [{{"name":"","type":"盟友/导师/对手","dynamic":""}}]
+    }},
+    "supporting": [{{"name":"","identity":"","relation":"","personality":"","role":"","mini_arc":"","meaning":""}}],
+    "antagonist": [{{"name":"","motivation":"","power":"","conflict":"","humanity":""}}],
+    "bible_summary": ""
+  }}
+}}
+```
+只输出 JSON。"""
+
+        chars = await self._call_llm(char_prompt, "characters")
+        if not chars:
+            yield {"type": "error", "message": "角色生成失败"}
+            return
+
+        yield {"type": "progress", "phase": "characters", "pct": 55, "label": "角色设计完成 ✓"}
+
+        # ── Phase 3: 大纲 (55% → 95%) ──
+        yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划章节大纲…"}
+        
+        system_prompt = PLANNER_SYSTEM.format(
+            style_guide=style_guide,
+            style_name=style_config['name'],
+            structure_hint=structure_hint,
+        )
+        
+        outline_prompt = f"""请根据以下已生成的世界观和角色，补充完整大纲。
+
+{system_prompt}
+
+【题材】{genre}
+【风格】{style_config['name']}（{style_config['author']}）
+【核心创意】{inspiration}
+【目标字数】{target_words} 字
+
+已有设定:
+书名: {wb.get('title','')}
+世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:300]}
+角色体系: {json.dumps(chars.get('characters',{}).get('protagonist',{}).get('name',''), ensure_ascii=False)}
+
+请输出完整的 JSON 大纲（卷+章），格式与之前一致。只输出 JSON：
+```json
+{{
+  "outline": {{
+    "volumes": [{{"number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"","chapters":[...]}}],
+    "total_chapters": 0,
+    "three_act_map": "",
+    "rhythm_notes": ""
+  }}
+}}
+```
+"""
+
+        yield {"type": "progress", "phase": "outline", "pct": 75, "label": "生成章节细节…"}
+
+        outline = await self._call_llm(outline_prompt, "outline", max_tokens=8192)
+        if not outline:
+            yield {"type": "error", "message": "大纲生成失败"}
+            return
+
+        yield {"type": "progress", "phase": "outline", "pct": 92, "label": "组装最终文档…"}
+
+        # 组装完整 plan
+        plan = {
+            "title": wb.get("title", title or "未命名"),
+            "genre": genre,
+            "style": style_name,
+            "target_words": target_words,
+            "worldbuilding": wb.get("worldbuilding", {}),
+            "characters": chars.get("characters", {}),
+            "outline": outline.get("outline", {}),
+            "_meta": {
+                "created_at": __import__("datetime").datetime.now().isoformat(),
+                "model": self.model,
+                "creative_input": creative_input,
+                "streamed": True,
+            },
+        }
+        
+        # 标准化
+        for vol in plan.get("outline", {}).get("volumes", []):
+            vol["number"] = int(vol.get("number", 1))
+            for ch in vol.get("chapters", []):
+                ch["number"] = int(ch.get("number", 1))
+                ch["target_words"] = int(ch.get("target_words", 3000))
+        plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
+        plan["target_words"] = int(plan.get("target_words", 0))
+
+        yield {"type": "progress", "phase": "done", "pct": 100, "label": "创作方案完成！"}
+        yield {"type": "done", "plan": plan}
+
+    async def _call_llm(self, prompt: str, phase: str, max_tokens: int = 4096) -> dict:
+        """调用 LLM 并解析 JSON"""
+        log.info(f"Planner phase [{phase}]: calling LLM...")
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.8,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content
+            result = self._parse_json(content)
+            if result:
+                log.info(f"Planner phase [{phase}]: OK")
+            else:
+                log.error(f"Planner phase [{phase}]: JSON parse failed")
+            return result
+        except Exception as e:
+            log.error(f"Planner phase [{phase}] LLM error: {e}")
+            return None
+
     def _parse_json(self, content: str) -> dict:
         """Extract JSON from LLM response (handle markdown code blocks)"""
         content = content.strip()

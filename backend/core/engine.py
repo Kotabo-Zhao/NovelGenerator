@@ -3,7 +3,7 @@ import json
 import os
 import sys
 import logging
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, AsyncIterator
 from openai import OpenAI
 
 # Allow importing from parent dir (works both as package and standalone)
@@ -82,6 +82,40 @@ class NovelEngine:
         
         log.info(f"Novel created: {plan['title']} ({total_chapters} chapters)")
         return plan
+
+    async def create_novel_stream(self, creative_input: dict) -> AsyncIterator[dict]:
+        """流式创建小说 — 前端可显示分阶段进度条
+        
+        Yields progress events from Planner.plan_stream(),
+        then saves plan + bible on 'done'.
+        """
+        async for event in self.planner.plan_stream(creative_input):
+            if event["type"] == "done":
+                plan = event["plan"]
+                novel_dir = self.memory.get_novel_dir(plan["title"])
+                os.makedirs(novel_dir, exist_ok=True)
+                
+                with open(os.path.join(novel_dir, "plan.json"), "w", encoding="utf-8") as f:
+                    json.dump(plan, f, ensure_ascii=False, indent=2)
+                
+                self._save_character_bible(plan, novel_dir)
+                
+                total_chapters = plan.get("outline", {}).get("total_chapters", 0)
+                self.memory.save_novel_state(plan["title"], {
+                    "current_chapter": 0,
+                    "total_chapters": total_chapters,
+                    "total_words": 0,
+                    "status": "planning_done",
+                    "created_at": plan.get("_meta", {}).get("created_at", ""),
+                })
+                
+                hooks_path = os.path.join(novel_dir, "foreshadowing.json")
+                with open(hooks_path, "w", encoding="utf-8") as f:
+                    json.dump([], f)
+                
+                log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)")
+            
+            yield event
 
     def get_novel(self, novel_id: str) -> Optional[dict]:
         """获取已有小说的规划数据"""
@@ -163,13 +197,13 @@ class NovelEngine:
             return f.read()
 
     async def generate_chapter_stream(
-        self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel"
+        self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel",
+        feedback: str = None,
     ) -> AsyncGenerator[dict, None]:
         """流式生成章节 — 前端可实时显示打字效果
         
-        Yields:
-            {"type": "text", "content": "..."} or {"type": "done", "content": "全文"}
-            or {"type": "error", "message": "..."}
+        Args:
+            feedback: 用户修改意见（用于重生成，不改大纲结构）
         """
         try:
             plan = self.get_novel(novel_id)
@@ -194,6 +228,16 @@ class NovelEngine:
 
             # 组装上下文
             context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+
+            # 注入修改意见（重生成场景）
+            if feedback and feedback.strip():
+                context = (
+                    f"【重写指令】以下是上一版存在的问题，请在重写时修正。\n"
+                    f"注意：章节大纲、核心事件、出场角色、scene_beats 和结局钩子不变！\n"
+                    f"只改进行文质量和具体表达，不改变叙事结构。\n\n"
+                    f"用户修改意见：{feedback.strip()}\n\n"
+                    f"---\n\n{context}"
+                )
 
             # 获取创作参数
             genre = plan.get("genre", "玄幻")

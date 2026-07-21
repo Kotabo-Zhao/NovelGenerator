@@ -58,6 +58,13 @@ async def serve_frontend():
     return HTMLResponse("<h1>NovelGenerator</h1><p>Frontend not found</p>", status_code=404)
 
 
+@app.get("/sw.js")
+async def serve_sw():
+    path = os.path.join(WEB_DIR, "sw.js")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="application/javascript")
+    return Response("// sw.js not found", media_type="application/javascript", status_code=404)
+
 @app.get("/manifest.json")
 async def serve_manifest():
     path = os.path.join(WEB_DIR, "manifest.json")
@@ -80,6 +87,7 @@ class GenerateChapterRequest(BaseModel):
     novel_id: str
     chapter_num: int
     writing_mode: str = "webnovel"  # "webnovel" | "literary"
+    feedback: Optional[str] = None  # 用户修改意见（重生成场景）
 
 
 # ── Routes ──
@@ -203,12 +211,33 @@ async def create_novel(req: CreateNovelRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/novels/create-stream")
+async def create_novel_stream(req: CreateNovelRequest):
+    """流式创建新小说 — 三阶段进度条"""
+    async def event_stream():
+        async for event in engine.create_novel_stream({
+            "genre": req.genre,
+            "style": req.style,
+            "inspiration": req.inspiration,
+            "target_words": req.target_words,
+            "title": req.title,
+        }):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
 @app.post("/api/novels/generate")
 async def generate_chapter(req: GenerateChapterRequest):
     """流式生成章节 (SSE)"""
     async def event_stream():
         async for event in engine.generate_chapter_stream(
-            req.novel_id, req.chapter_num, req.writing_mode
+            req.novel_id, req.chapter_num, req.writing_mode,
+            feedback=req.feedback,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
     
