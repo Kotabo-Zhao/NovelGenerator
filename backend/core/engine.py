@@ -15,12 +15,15 @@ except ImportError:
 from .planner import Planner
 from .writer import Writer
 from .memory import NovelMemory
+from .embellisher import Embellisher
+from .foreshadowing_designer import ForeshadowingDesigner
+from .context_updater import ContextUpdater
 
 log = logging.getLogger(__name__)
 
 
 class NovelEngine:
-    """小说创作引擎 — 整合规划、写作、记忆管理"""
+    """小说创作引擎 — 多智能体架构: Planner→Writer→Embellisher→ContextUpdater"""
 
     def __init__(self):
         self.client = OpenAI(
@@ -30,8 +33,10 @@ class NovelEngine:
         self.model = config.DEEPSEEK_MODEL
         self.planner = Planner(self.client, self.model)
         self.writer = Writer(self.client, self.model)
+        self.embellisher = Embellisher(self.client, self.model)
+        self.fd_designer = ForeshadowingDesigner(self.client, self.model)
+        self.context_updater = ContextUpdater(self.client, self.model)
         self.memory = NovelMemory(config.NOVELS_DIR)
-        # 确保小说存储目录存在（Render 冷启动时不会丢）
         os.makedirs(config.NOVELS_DIR, exist_ok=True)
 
     # ── Phase 1: 规划 ──

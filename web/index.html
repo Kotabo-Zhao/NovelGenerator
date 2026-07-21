@@ -257,6 +257,18 @@ label{display:block;font-size:13px;font-weight:600;color:var(--text2);margin-bot
           <button class="btn btn-outline btn-sm flex-1" @click="applyCustomStyle" :disabled="!customStyleDesc.trim()">
             {{ form.style.startsWith('自定义') ? '✓ 已应用' : '应用此风格' }}
           </button>
+          <button class="btn btn-outline btn-sm" @click="saveStyleSeed" :disabled="!customStyleDesc.trim()">
+            💾 保存为种子
+          </button>
+        </div>
+        <!-- 已保存的种子 -->
+        <div v-if="styleSeeds.length>0" class="mt-12">
+          <div class="style-cat-title">已保存的风格种子</div>
+          <div class="flex gap-8 flex-wrap">
+            <span v-for="s in styleSeeds" :key="s.name" class="tag" style="cursor:pointer" @click="loadStyleSeed(s)">
+              {{ s.name }} <span style="opacity:.5;margin-left:4px;font-size:10px;cursor:pointer" @click.stop="deleteStyleSeed(s)">✕</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -427,8 +439,11 @@ label{display:block;font-size:13px;font-weight:600;color:var(--text2);margin-bot
             <div class="ei-title">{{ n.title }}</div>
             <div class="ei-meta">{{ n.genre }} · {{ n.style }} · {{ n.state.current_chapter }}/{{ n.state.total_chapters }}章</div>
           </div>
-          <button class="btn btn-outline btn-xs" @click="doSingleExport(n)" :disabled="loading.export">
-            {{ loading.export===n.id ? '…' : '⬇ TXT' }}
+          <button class="btn btn-outline btn-xs" @click="doSingleExport(n, 'txt')" :disabled="loading.export" style="margin-right:4px">
+            {{ loading.export===n.id+'txt' ? '…' : '⬇ TXT' }}
+          </button>
+          <button class="btn btn-outline btn-xs" @click="doSingleExport(n, 'pdf')" :disabled="loading.export" style="color:var(--accent);border-color:var(--accent)30">
+            {{ loading.export===n.id+'pdf' ? '…' : '📄 PDF' }}
           </button>
         </div>
       </div>
@@ -475,7 +490,8 @@ createApp({
     const editSaved = ref(false);
     const styleMode = ref('library');
     const customStyleDesc = ref('');
-    
+    const styleSeeds = ref([]);
+
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'' });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false });
     const writing = reactive({ chapter:1, content:'', done:false });
@@ -508,7 +524,7 @@ createApp({
     }
 
     // Init
-    onMounted(async () => { await loadStyles(); await loadShelf(); });
+    onMounted(async () => { await loadStyles(); await loadShelf(); await loadStyleSeeds(); });
 
     async function loadStyles() {
       try { const r=await fetch(API+'/api/styles'); const d=await r.json(); styleCategories.value=d.categories||{}; }
@@ -576,12 +592,17 @@ createApp({
     // Export
     function toggleExport(id) { exportSelected[id]=!exportSelected[id]; }
     function selectAll() { const v=!allSelected.value; novels.value.forEach(n=>exportSelected[n.id]=v); }
-    async function doSingleExport(novel) {
-      loading.export=novel.id; error.value='';
+    async function doSingleExport(novel, fmt='txt') {
+      loading.export=novel.id+fmt; error.value='';
       try {
-        const r=await fetch(API+'/api/novels/'+encodeURIComponent(novel.id)+'/export?fmt=txt');
+        const r=await fetch(API+'/api/novels/'+encodeURIComponent(novel.id)+'/export?fmt='+fmt);
         if(!r.ok){ throw new Error((await r.json().catch(()=>({detail:'无章节内容'}))).detail); }
-        downloadBlob(await r.text(), novel.id+'.txt');
+        if(fmt==='pdf') {
+          const blob=await r.blob();
+          downloadBlob(blob, novel.id+'.pdf', false, 'application/pdf');
+        } else {
+          downloadBlob(await r.text(), novel.id+'.txt');
+        }
       } catch(e){ error.value=e.message; }
       loading.export=false;
     }
@@ -601,12 +622,41 @@ createApp({
       } catch(e){ error.value=e.message; }
       loading.export=false;
     }
-    function downloadBlob(text,filename,delay=false) {
-      const blob=new Blob(['\uFEFF'+text],{type:'text/plain;charset=utf-8'});
+    function downloadBlob(data, filename, delay=false, mime='text/plain;charset=utf-8') {
+      const blob = typeof data === 'string' ? new Blob(['\uFEFF'+data],{type:mime}) : data;
       const url=URL.createObjectURL(blob); const a=document.createElement('a');
       a.href=url; a.download=filename; document.body.appendChild(a); a.click();
       document.body.removeChild(a);
       const t=delay?300:1000; setTimeout(()=>URL.revokeObjectURL(url),t);
+    }
+
+    // ── Style Seeds ──
+    async function loadStyleSeeds() {
+      try { const r=await fetch(API+'/api/styles/seeds'); styleSeeds.value=(await r.json()).seeds||[]; }
+      catch(e){}
+    }
+    async function saveStyleSeed() {
+      const desc = customStyleDesc.value.trim();
+      if(!desc) return;
+      const name = prompt('给这个风格起个名字:', '');
+      if(!name) return;
+      try {
+        const r=await fetch(API+'/api/styles/seeds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,description:desc,author:'自定义',prose:desc,tone:desc})});
+        if(r.ok){ await loadStyleSeeds(); error.value='风格种子已保存';setTimeout(()=>error.value='',2000); }
+        else throw new Error((await r.json()).detail);
+      } catch(e){ error.value=e.message; }
+    }
+    async function loadStyleSeed(seed) {
+      try {
+        const r=await fetch(API+'/api/styles/seeds');
+        const seeds = (await r.json()).seeds||[];
+        const found = seeds.find(s=>s.name===seed.name);
+        if(found){ customStyleDesc.value=found.description||''; applyCustomStyle(); }
+      } catch(e){}
+    }
+    async function deleteStyleSeed(seed) {
+      try { await fetch(API+'/api/styles/seeds/'+encodeURIComponent(seed.filename),{method:'DELETE'}); await loadStyleSeeds(); }
+      catch(e){}
     }
 
     // ── Plan Editing ──
@@ -657,14 +707,14 @@ createApp({
     }
 
     return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,
-      form,loading,writing,genres,editSaved,styleMode,customStyleDesc,
+      form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
       openCreate,openWrite,doCreate,openNovel,startWriting,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
-      applyCustomStyle };
+      applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed };
   }
 }).mount('#app');
 </script>

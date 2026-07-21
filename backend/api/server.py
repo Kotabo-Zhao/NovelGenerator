@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, PlainTextResponse, FileResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse, FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
@@ -96,6 +96,49 @@ async def get_styles():
     for cat, names in categories.items():
         result[cat] = [{"name": n, "author": STYLES[n]["author"]} for n in names]
     return {"categories": result}
+
+
+# ── Style Seeds ──
+
+import shutil
+STYLE_SEEDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "style_seeds")
+os.makedirs(STYLE_SEEDS_DIR, exist_ok=True)
+
+
+@app.get("/api/styles/seeds")
+async def list_style_seeds():
+    """列出所有保存的风格种子"""
+    seeds = []
+    if os.path.exists(STYLE_SEEDS_DIR):
+        for fname in os.listdir(STYLE_SEEDS_DIR):
+            if fname.endswith(".json"):
+                path = os.path.join(STYLE_SEEDS_DIR, fname)
+                with open(path, "r", encoding="utf-8") as f:
+                    seed = json.load(f)
+                    seeds.append({"name": seed.get("name", fname[:-5]), "author": seed.get("author", ""), "filename": fname})
+    return {"seeds": seeds}
+
+
+@app.post("/api/styles/seeds")
+async def save_style_seed(seed: dict):
+    """保存风格种子"""
+    name = seed.get("name", "未命名").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="风格名称不能为空")
+    safe_name = "".join(c for c in name if c.isalnum() or c in " _-") or "custom_style"
+    path = os.path.join(STYLE_SEEDS_DIR, f"{safe_name}.json")
+    seed["saved_at"] = __import__("datetime").datetime.now().isoformat()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(seed, f, ensure_ascii=False, indent=2)
+    return {"success": True, "name": safe_name}
+
+
+@app.delete("/api/styles/seeds/{name}")
+async def delete_style_seed(name: str):
+    path = os.path.join(STYLE_SEEDS_DIR, f"{name}.json")
+    if os.path.exists(path):
+        os.remove(path)
+    return {"success": True}
 
 
 @app.get("/api/novels")
@@ -182,8 +225,11 @@ async def get_chapter(novel_id: str, chapter_num: int):
 
 @app.get("/api/novels/{novel_id}/export")
 async def export_novel(novel_id: str, fmt: str = "txt"):
-    """导出单本小说"""
-    content, err = engine.export_novel(novel_id, fmt)
+    """导出单本小说 (txt / pdf)"""
+    if fmt == "pdf":
+        return await export_novel_pdf(novel_id)
+    
+    content, err = engine.export_novel(novel_id, "txt")
     if err:
         raise HTTPException(status_code=404, detail=err)
     
@@ -192,6 +238,82 @@ async def export_novel(novel_id: str, fmt: str = "txt"):
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={novel_id}.txt"}
     )
+
+
+async def export_novel_pdf(novel_id: str):
+    """导出为 PDF"""
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        raise HTTPException(status_code=500, detail="PDF 导出需要安装 fpdf2: pip install fpdf2")
+    
+    content, err = engine.export_novel(novel_id, "txt")
+    if err:
+        raise HTTPException(status_code=404, detail=err)
+    
+    plan = engine.get_novel(novel_id)
+    title = plan.get("title", novel_id) if plan else novel_id
+    
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # 添加中文字体
+    font_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "fonts")
+    os.makedirs(font_dir, exist_ok=True)
+    
+    # 尝试使用系统字体或内置字体
+    font_used = False
+    for font_name in ["simsun.ttc", "simsun.ttf", "msyh.ttc", "msyh.ttf", "NotoSansSC-Regular.ttf"]:
+        font_path = os.path.join(font_dir, font_name)
+        if os.path.exists(font_path):
+            pdf.add_font("CJK", "", font_path, uni=True)
+            pdf.set_font("CJK", "", 12)
+            font_used = True
+            break
+    
+    if not font_used:
+        # fallback: 无中文字体时用内置字体（中文会显示为方块，但英文正常）
+        pdf.set_font("Helvetica", "", 12)
+    
+    # 书名页
+    pdf.set_font("CJK", "", 18) if font_used else pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 20, title, new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(10)
+    
+    if plan:
+        pdf.set_font("CJK", "", 10) if font_used else pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 8, f"题材: {plan.get('genre','')}  风格: {plan.get('style','')}", new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.ln(10)
+    
+    # 正文
+    pdf.set_font("CJK", "", 11) if font_used else pdf.set_font("Helvetica", "", 11)
+    
+    for line in content.split("\n"):
+        line = line.strip()
+        if not line:
+            pdf.ln(4)
+            continue
+        
+        if line.startswith("# "):
+            pdf.set_font("CJK", "", 14) if font_used else pdf.set_font("Helvetica", "B", 14)
+            pdf.cell(0, 10, line.lstrip("# "), new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(4)
+            pdf.set_font("CJK", "", 11) if font_used else pdf.set_font("Helvetica", "", 11)
+        elif line.startswith("-" * 10):
+            pdf.ln(6)
+        else:
+            # 中文按字符宽度自动换行
+            pdf.multi_cell(0, 6, line)
+            pdf.ln(2)
+    
+    pdf_bytes = pdf.output()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={novel_id}.pdf"}
+    )
+
+from fastapi.responses import Response
 
 
 @app.post("/api/novels/export/batch")
