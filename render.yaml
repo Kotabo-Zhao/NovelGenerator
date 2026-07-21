@@ -3,7 +3,7 @@ services:
     name: novelgenerator
     runtime: python
     plan: free
-    buildCommand: pip install -r backend/requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: cd backend && python api/server.py
     envVars:
       - key: DEEPSEEK_API_KEY

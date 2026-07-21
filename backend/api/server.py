@@ -4,10 +4,15 @@ import logging
 import sys
 import os
 
-# Load .env from project root
-from dotenv import load_dotenv
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-load_dotenv(os.path.join(_ROOT, ".env"))
+# Load .env from project root (local dev only; Render uses env vars)
+try:
+    from dotenv import load_dotenv
+    _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    _dotenv_path = os.path.join(_ROOT, ".env")
+    if os.path.exists(_dotenv_path):
+        load_dotenv(_dotenv_path)
+except Exception:
+    pass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
