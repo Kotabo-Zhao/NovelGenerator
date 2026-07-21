@@ -2,7 +2,7 @@
 import json
 import logging
 from openai import OpenAI
-from .styles import get_style
+from .styles import get_style, build_style_prompt, build_custom_style
 
 log = logging.getLogger(__name__)
 
@@ -68,28 +68,26 @@ class Planner:
         target_words = creative_input.get("target_words", 500000)
         title = creative_input.get("title", "")
 
-        # 获取风格模板
-        style = get_style(style_name)
-        style_guide = f"""作者: {style['author']}
-文笔特征: {style['prose']}
-语气基调: {style['tone']}
-节奏控制: {style['pacing']}
-对话风格: {style['dialogue']}
-结构偏好: {style['structure']}"""
-
-        structure_hint = style.get("structure", 
+        # 获取风格模板（支持自定义风格）
+        if style_name.startswith("自定义") or style_name == "自定义风格":
+            style_config = build_custom_style(style_name)
+        else:
+            style_config = get_style(style_name)
+        
+        style_guide = build_style_prompt(style_config)
+        structure_hint = style_config.get("structure",
             "遵循「三章一小高潮、五章一中高潮、一卷一大高潮」的节奏")
 
         system_prompt = PLANNER_SYSTEM.format(
             style_guide=style_guide,
-            style_name=style['name'],
+            style_name=style_config['name'],
             structure_hint=structure_hint,
         )
 
         user_prompt = f"""请根据以下信息生成完整的创作方案。
 
 【题材】{genre}
-【风格】{style_name}（{style['author']}）
+【风格】{style_name}（{style_config['author']}）
 【核心创意】{inspiration}
 【目标字数】{target_words} 字
 {f'【书名】{title}' if title else '【书名】请根据创意自动生成一个有吸引力的书名'}

@@ -1,38 +1,59 @@
-"""NovelGenerator — Writer: 章节正文生成"""
+"""NovelGenerator — Writer: 章节正文生成（两遍式风格迁移）"""
 import logging
 from typing import AsyncGenerator
 from openai import OpenAI
-from .styles import get_style
+from .styles import get_style, build_style_prompt, build_custom_style
 
 log = logging.getLogger(__name__)
 
 WRITER_SYSTEM = """你是一位专业的网络小说作家。
 
-## 你的写作风格
+## 你的写作身份
 
 {style_guide}
 
-## 写作要求
+## 核心写作要求
 
-1. **严格遵循风格**: 上述文笔特征是你必须遵守的写作原则。每一段文字都要体现这个风格。
-2. **角色一致性**: 遵守已给出的角色设定和世界规则，不要自行添加未在设定中的新设定。
-3. **场景描写**: {description_density}
-4. **节奏控制**: {pacing}
-5. **钩子结尾**: 本章末尾必须留下钩子，让读者想立刻看下一章。
-6. **去 AI 味**: 
-   - 禁用「随着」「与此同时」「总而言之」「在这个过程中」等 AI 高频过渡词
-   - 每段长度要有变化（3-8句不等）
-   - 对话不要总是「XX说，XX道」，用动作和神态穿插
-   - 避免每章开头都用环境描写
+1. **绝对忠于风格**: 上述文笔特征、语气基调、对话风格是你必须严格遵守的准则。
+2. **少样本参考**: 如果提供了风格示例，请模仿其句式节奏、意象选择、情感张力。
+3. **标志句式**: 适当使用上述标志性句式/词汇，但不要堆砌。
+4. **严禁写法**: 上述禁止列表中的写法一律不得出现。
+5. **去 AI 味**:
+   - 禁用所有 AI 高频过渡词（随着/与此同时/总而言之/在这个过程中/此外/值得一提的是）
+   - 每段长度有变化（2-6句不等），避免齐整的段落
+   - 对话不用「XX说」「XX道」每句都标注，用动作和神态穿插
+   - 每章开头不要总是环境描写
+   - 不要在所有段落结尾加感叹号
+6. **角色一致性**: 遵守角色设定和世界规则。
+7. **钩子结尾**: 本章末尾必须留下钩子。
 
 ## 输出格式
 
-直接输出正文，不需要标题（标题由系统添加）。正文以章节内容开始，以钩子结尾。
-每段之间空一行。总字数控制在 {target_words} 字左右。"""
+直接输出正文，不需要标题。每段之间空一行。总字数控制在 {target_words} 字左右。"""
+
+
+STYLE_POLISH_SYSTEM = """你是一位专业的文字编辑，专精于将文字打磨成特定作家的风格。
+
+## 目标风格
+
+{style_guide}
+
+## 打磨要求
+
+你需要将以下草稿进行风格打磨。注意:
+1. **不必重写全文**——保留原稿的核心情节和对话内容
+2. **修正文笔**——将不匹配的句式替换为目标风格的句式
+3. **注入风格标志**——适当加入目标风格的标志性写法（但不能生硬）
+4. **去掉违和感**——移除与目标风格冲突的用词和表述
+5. **保持字数**——打磨后的字数应与原稿相近（±10%）
+
+## 输出格式
+
+直接输出打磨后的正文，不需要标题和说明。每段之间空一行。"""
 
 
 class Writer:
-    """章节写手 — 基于上下文和大纲生成正文"""
+    """章节写手 — 两遍生成: 初稿 + 风格打磨"""
 
     def __init__(self, client: OpenAI, model: str):
         self.client = client
@@ -45,34 +66,28 @@ class Writer:
         style: str = "热血爽文",
         target_words: int = 3000,
     ) -> AsyncGenerator[str, None]:
-        """流式生成章节正文
-        
-        Args:
-            context: 完整的写作上下文（由 NovelMemory.build_writer_context 组装）
-            genre: 题材
-            style: 风格名（如 "土豆风格", "猫腻风格"）
-            target_words: 目标字数
+        """流式生成章节正文（两遍式: 初稿 + 风格打磨）
         
         Yields:
-            str: 流式输出的文本片段
+            str: 流式输出的文本片段。第一阶段 yield 初稿，第二阶段 yield 打磨后的最终版。
         """
-        style_config = get_style(style)
+        # 解析风格
+        if style in ("自定义风格",) or style.startswith("自定义"):
+            style_config = build_custom_style(style)
+        else:
+            style_config = get_style(style)
         
-        style_guide = f"""作者: {style_config['author']}
-文笔特征: {style_config['prose']}
-语气基调: {style_config['tone']}
-对话风格: {style_config['dialogue']}
-标志性写法: {style_config.get('examples', '')}"""
+        style_prompt = build_style_prompt(style_config)
 
+        # ── 第一遍: 生成初稿 ──
         system_prompt = WRITER_SYSTEM.format(
-            style_guide=style_guide,
-            description_density="每500字至少有一段环境/氛围描写，增强代入感" if "描写" in style_config.get("prose","") else "根据风格需要决定描写密度",
-            pacing=style_config.get("pacing", "根据大纲情绪曲线控制节奏"),
+            style_guide=style_prompt,
             target_words=target_words,
         )
 
-        log.info(f"Writing chapter: {genre}/{style}, target {target_words} words")
+        log.info(f"Writing chapter: {genre}/{style}, pass 1/2 (draft)")
         
+        draft = ""
         stream = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -84,11 +99,48 @@ class Writer:
             stream=True,
         )
         
-        total = 0
         for chunk in stream:
             delta = chunk.choices[0].delta
             if delta.content:
-                total += len(delta.content)
-                yield delta.content
+                draft += delta.content
+                yield delta.content  # 流式输出初稿
         
-        log.info(f"Chapter written: {total} chars generated")
+        log.info(f"Draft done: {len(draft)} chars")
+
+        # ── 第二遍: 风格打磨 ──
+        # 只对较长内容做打磨（<500字跳过，自定义风格跳过）
+        if len(draft) < 500 or style_config.get("is_custom"):
+            log.info("Skipping polish pass (too short or custom style)")
+            return
+
+        log.info(f"Pass 2/2: style polish")
+        
+        polish_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
+        
+        polish_stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": polish_prompt},
+                {"role": "user", "content": f"草稿如下：\n\n{draft}"},
+            ],
+            temperature=0.6,  # 低温保证一致性
+            max_tokens=target_words * 3,
+            stream=True,
+        )
+        
+        yield "\n\n"  # 分隔符（前端可以忽略）
+        
+        polished = ""
+        for chunk in polish_stream:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                polished += delta.content
+        
+        log.info(f"Polish done: {len(polished)} chars")
+        
+        # 产出打磨后的最终版
+        if polished and len(polished) > len(draft) * 0.5:
+            yield polished
+            log.info(f"Final output: polished version ({len(polished)} chars)")
+        else:
+            log.warning(f"Polish result too short ({len(polished)} chars), using draft")

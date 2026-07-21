@@ -227,17 +227,38 @@ label{display:block;font-size:13px;font-weight:600;color:var(--text2);margin-bot
 
     <!-- Style Picker -->
     <div class="card">
-      <div class="card-title">🎨 选择风格 — 向大师看齐</div>
-      <template v-for="(authors, cat) in styleCategories">
-        <div class="style-cat-title">{{ cat }}</div>
-        <div class="style-grid">
-          <div v-for="s in authors" :key="s.name" class="style-card"
-            :class="{active:form.style===s.name}" @click="form.style=s.name">
-            <div class="sc-name">{{ s.name }}</div>
-            <div class="sc-author">{{ s.author }}</div>
-          </div>
+      <div class="card-header flex justify-between items-center">
+        <div class="card-title">🎨 选择风格 — 向大师看齐</div>
+        <div class="flex gap-8">
+          <button class="btn btn-xs" :class="styleMode==='library'?'btn-primary':'btn-outline'" @click="styleMode='library'">风格库</button>
+          <button class="btn btn-xs" :class="styleMode==='custom'?'btn-primary':'btn-outline'" @click="styleMode='custom'">自定义</button>
         </div>
+      </div>
+      
+      <!-- 风格库模式 -->
+      <template v-if="styleMode==='library'">
+        <template v-for="(authors, cat) in styleCategories">
+          <div class="style-cat-title">{{ cat }}</div>
+          <div class="style-grid">
+            <div v-for="s in authors" :key="s.name" class="style-card"
+              :class="{active:form.style===s.name}" @click="form.style=s.name">
+              <div class="sc-name">{{ s.name }}</div>
+              <div class="sc-author">{{ s.author }}</div>
+            </div>
+          </div>
+        </template>
       </template>
+
+      <!-- 自定义风格模式 -->
+      <div v-if="styleMode==='custom'" class="mt-8">
+        <p class="text-sm color-text2 mb-8">用一段话描述你想要的文笔风格，AI 会尽力模仿。越具体效果越好。</p>
+        <textarea v-model="customStyleDesc" rows="4" placeholder="如：王小波的黑色幽默 + 村上春树的孤独感 + 中国武侠的江湖气。对话要冷幽默，描写要有画面感但不啰嗦，节奏快但不能乱…"></textarea>
+        <div class="flex gap-8 mt-8">
+          <button class="btn btn-outline btn-sm flex-1" @click="applyCustomStyle" :disabled="!customStyleDesc.trim()">
+            {{ form.style.startsWith('自定义') ? '✓ 已应用' : '应用此风格' }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <div v-if="error" class="error-msg">⚠️ {{ error }}</div>
@@ -452,6 +473,8 @@ createApp({
     const styleCategories = ref({});
     const exportSelected = reactive({});
     const editSaved = ref(false);
+    const styleMode = ref('library');
+    const customStyleDesc = ref('');
     
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'' });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false });
@@ -627,14 +650,21 @@ createApp({
       startWriting(planResult.value.title);
     }
 
+    function applyCustomStyle() {
+      const desc = customStyleDesc.value.trim();
+      if (!desc) return;
+      form.style = '自定义: ' + desc;
+    }
+
     return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,
-      form,loading,writing,genres,editSaved,
+      form,loading,writing,genres,editSaved,styleMode,customStyleDesc,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
       openCreate,openWrite,doCreate,openNovel,startWriting,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
-      addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart };
+      addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
+      applyCustomStyle };
   }
 }).mount('#app');
 </script>
