@@ -174,4 +174,4 @@ async def export_novel(novel_id: str, fmt: str = "txt"):
 if __name__ == "__main__":
     import uvicorn
     log.info(f"Starting NovelGenerator API on {HOST}:{PORT}")
-    uvicorn.run("server:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run("api.server:app", host=HOST, port=PORT, reload=True)
