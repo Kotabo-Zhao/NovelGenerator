@@ -614,7 +614,7 @@ createApp({
       let buf = '';
       let lastData = Date.now();
       const timeoutCheck = setInterval(() => {
-        if (Date.now() - lastData > 30000) {
+        if (Date.now() - lastData > 60000) {
           reader.cancel('SSE timeout');
           clearInterval(timeoutCheck);
         }

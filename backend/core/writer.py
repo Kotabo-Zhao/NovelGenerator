@@ -196,10 +196,13 @@ class Writer:
 
         final_text = draft  # default: use draft as-is
         
-        # ── 第二遍: 风格打磨 ──
-        polish_skipped = len(draft) < 500 or style_config.get("is_custom")
+        # ── 第二遍: 风格打磨（长文跳过——3000字以上初稿质量已够，省一轮API调用）──
+        polish_skipped = len(draft) < 500 or style_config.get("is_custom") or len(draft) > 2000
         if polish_skipped:
-            log.info("Skipping polish pass (too short or custom style)")
+            if len(draft) > 2000:
+                log.info(f"Skipping polish pass (draft {len(draft)} chars, long enough)")
+            else:
+                log.info("Skipping polish pass (too short or custom style)")
         else:
             try:
                 log.info(f"Pass 2/2: style polish")
@@ -230,12 +233,15 @@ class Writer:
             except Exception as e:
                 log.warning(f"Polish pass failed: {e}, using draft")
 
-        # ── Humanizer 检测 ──
+        # ── Humanizer 检测（长文跳过——减少API调用）──
         try:
             h_result = humanize_text(final_text)
             log.info(f"Humanizer score: {h_result['score']}/100 ({h_result['total_issues']} issues)")
             
-            if h_result["score"] < 70 and h_result["total_issues"] > 3:
+            # 初稿 ≥2000字 且 评分 ≥50 → 跳过 Humanizer 重写（省一轮API）
+            if len(final_text) >= 2000 and h_result["score"] >= 50:
+                log.info(f"Skipping Humanizer pass (score OK: {h_result['score']})")
+            elif h_result["score"] < 70 and h_result["total_issues"] > 3:
                 log.info(f"Pass 3/3: Humanizer rewrite (score={h_result['score']})")
                 h_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
                 h_prompt += "\n\n" + build_humanizer_prompt(h_result["detected"])
