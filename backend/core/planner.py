@@ -233,7 +233,7 @@ class Planner:
 
         log.info(f"Planning novel: {genre}/{style_name} - {inspiration[:50]}...")
         
-        response = self.client.chat.completions.create(
+        kwargs = dict(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -242,6 +242,10 @@ class Planner:
             temperature=0.8,
             max_tokens=8192,
         )
+        if "v4" in self.model:
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        
+        response = self.client.chat.completions.create(**kwargs)
 
         content = response.choices[0].message.content
         plan = self._parse_json(content)

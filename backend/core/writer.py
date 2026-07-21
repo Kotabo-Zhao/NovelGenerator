@@ -142,7 +142,7 @@ class Writer:
         """创建 LLM 请求，v4 系列自动禁用 reasoning"""
         if "v4" in self.model:
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-        return self._create(**kwargs)
+        return self.client.chat.completions.create(**kwargs)
 
     async def write_stream(
         self,

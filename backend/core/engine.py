@@ -64,7 +64,7 @@ class NovelEngine:
         atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
         
         # 生成人物宝典 — 独立的角色wiki文件
-        # ⚠️ _save_character_bible also uses atomic_write_json internally
+        self._save_character_bible(plan, novel_dir)
         
         # 初始化状态
         total_chapters = plan.get("outline", {}).get("total_chapters", 0)
