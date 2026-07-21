@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import logging
+import asyncio
 from typing import AsyncGenerator, Optional, AsyncIterator
 from openai import OpenAI
 
@@ -98,7 +99,8 @@ class NovelEngine:
                 with open(os.path.join(novel_dir, "plan.json"), "w", encoding="utf-8") as f:
                     json.dump(plan, f, ensure_ascii=False, indent=2)
                 
-                self._save_character_bible(plan, novel_dir)
+                # 人物宝典在线程池中执行（包含文件IO）
+                await asyncio.to_thread(self._save_character_bible, plan, novel_dir)
                 
                 total_chapters = plan.get("outline", {}).get("total_chapters", 0)
                 self.memory.save_novel_state(plan["title"], {

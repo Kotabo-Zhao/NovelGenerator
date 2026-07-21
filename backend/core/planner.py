@@ -1,4 +1,5 @@
 """NovelGenerator — Planner: 世界观、角色、大纲生成"""
+import asyncio
 import json
 import logging
 from openai import OpenAI
@@ -434,19 +435,21 @@ class Planner:
         yield {"type": "done", "plan": plan}
 
     async def _call_llm(self, prompt: str, phase: str, max_tokens: int = 4096) -> dict:
-        """调用 LLM 并解析 JSON"""
+        """调用 LLM 并解析 JSON（线程池隔离，不阻塞事件循环）"""
         log.info(f"Planner phase [{phase}]: calling LLM...")
-        try:
+        
+        def _sync_call():
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt},
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.8,
                 max_tokens=max_tokens,
             )
             content = response.choices[0].message.content
-            result = self._parse_json(content)
+            return self._parse_json(content)
+        
+        try:
+            result = await asyncio.to_thread(_sync_call)
             if result:
                 log.info(f"Planner phase [{phase}]: OK")
             else:

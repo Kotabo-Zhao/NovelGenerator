@@ -215,14 +215,18 @@ async def create_novel(req: CreateNovelRequest):
 async def create_novel_stream(req: CreateNovelRequest):
     """流式创建新小说 — 三阶段进度条"""
     async def event_stream():
-        async for event in engine.create_novel_stream({
-            "genre": req.genre,
-            "style": req.style,
-            "inspiration": req.inspiration,
-            "target_words": req.target_words,
-            "title": req.title,
-        }):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        try:
+            async for event in engine.create_novel_stream({
+                "genre": req.genre,
+                "style": req.style,
+                "inspiration": req.inspiration,
+                "target_words": req.target_words,
+                "title": req.title,
+            }):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            log.exception("create_novel_stream crashed")
+            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         event_stream(),
@@ -235,11 +239,15 @@ async def create_novel_stream(req: CreateNovelRequest):
 async def generate_chapter(req: GenerateChapterRequest):
     """流式生成章节 (SSE)"""
     async def event_stream():
-        async for event in engine.generate_chapter_stream(
-            req.novel_id, req.chapter_num, req.writing_mode,
-            feedback=req.feedback,
-        ):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        try:
+            async for event in engine.generate_chapter_stream(
+                req.novel_id, req.chapter_num, req.writing_mode,
+                feedback=req.feedback,
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            log.exception("generate_chapter crashed")
+            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         event_stream(),
@@ -259,14 +267,18 @@ async def generate_batch(novel_id: str, req: dict):
     writing_mode = req.get("writing_mode", "webnovel")
     
     async def event_stream():
-        for ch_num in range(start, end + 1):
-            yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
-            async for event in engine.generate_chapter_stream(
-                novel_id, ch_num, writing_mode
-            ):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
-        yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end}, ensure_ascii=False)}\n\n"
+        try:
+            for ch_num in range(start, end + 1):
+                yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
+                async for event in engine.generate_chapter_stream(
+                    novel_id, ch_num, writing_mode
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            log.exception("batch generate crashed")
+            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         event_stream(),
