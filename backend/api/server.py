@@ -158,9 +158,9 @@ async def get_chapter(novel_id: str, chapter_num: int):
 @app.get("/api/novels/{novel_id}/export")
 async def export_novel(novel_id: str, fmt: str = "txt"):
     """导出小说"""
-    content = engine.export_novel(novel_id, fmt)
-    if not content:
-        raise HTTPException(status_code=404, detail="导出失败")
+    content, err = engine.export_novel(novel_id, fmt)
+    if err:
+        raise HTTPException(status_code=404, detail=err)
     
     return PlainTextResponse(
         content,

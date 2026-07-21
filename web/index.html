@@ -459,15 +459,25 @@ createApp({
     async function doExport(fmt) {
       if (!activeNovel.value) return;
       loading.export = true;
+      error.value = '';
       try {
         const r = await fetch(API + '/api/novels/' + encodeURIComponent(activeNovel.value.id) + '/export?fmt=' + fmt);
+        if (!r.ok) {
+          const errData = await r.json().catch(() => ({detail: '导出失败，请先生成至少一章内容'}));
+          throw new Error(errData.detail || '导出失败');
+        }
         const text = await r.text();
-        const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+        if (!text || text.trim().length === 0) {
+          throw new Error('导出内容为空，请先生成章节');
+        }
+        const blob = new Blob(['\uFEFF' + text], {type:'text/plain;charset=utf-8'});
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = (activeNovel.value.id) + '.txt';
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
       } catch(e) { error.value = e.message; }
       loading.export = false;
     }

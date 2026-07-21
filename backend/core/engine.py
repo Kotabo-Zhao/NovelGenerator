@@ -31,6 +31,8 @@ class NovelEngine:
         self.planner = Planner(self.client, self.model)
         self.writer = Writer(self.client, self.model)
         self.memory = NovelMemory(config.NOVELS_DIR)
+        # 确保小说存储目录存在（Render 冷启动时不会丢）
+        os.makedirs(config.NOVELS_DIR, exist_ok=True)
 
     # ── Phase 1: 规划 ──
 
@@ -173,12 +175,19 @@ class NovelEngine:
 
     # ── Phase 3: 导出 ──
 
-    def export_novel(self, novel_id: str, fmt: str = "txt") -> Optional[str]:
-        """导出小说全文"""
-        chapters_dir = os.path.join(self.memory.get_novel_dir(novel_id), "chapters")
+    def export_novel(self, novel_id: str, fmt: str = "txt") -> tuple:
+        """导出小说全文
+        
+        Returns:
+            (content: str|None, error: str|None)
+        """
         plan = self.get_novel(novel_id)
-        if not plan or not os.path.exists(chapters_dir):
-            return None
+        if not plan:
+            return None, f"小说 '{novel_id}' 不存在"
+
+        chapters_dir = os.path.join(self.memory.get_novel_dir(novel_id), "chapters")
+        if not os.path.exists(chapters_dir):
+            return None, "尚未生成任何章节，请先在写作页面生成至少一章"
 
         title = plan.get("title", novel_id)
         chapters = sorted(
@@ -186,12 +195,15 @@ class NovelEngine:
             key=lambda x: int(x.split("_")[1].split(".")[0]) if "_" in x else 0
         )
 
+        if not chapters:
+            return None, "暂无章节内容，请先生成章节"
+
         if fmt == "txt":
             lines = [f"{title}\n{'=' * 40}\n"]
             for ch_file in chapters:
                 with open(os.path.join(chapters_dir, ch_file), "r", encoding="utf-8") as f:
                     lines.append(f.read())
                     lines.append("\n\n" + "—" * 40 + "\n\n")
-            return "\n".join(lines)
+            return "\n".join(lines), None
 
-        return None  # 其他格式暂不支持
+        return None, f"暂不支持 {fmt} 格式"
