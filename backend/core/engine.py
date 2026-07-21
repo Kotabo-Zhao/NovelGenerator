@@ -1,13 +1,20 @@
 """NovelGenerator — Engine: 创作管线编排器"""
 import json
 import os
+import sys
 import logging
 from typing import AsyncGenerator, Optional
 from openai import OpenAI
+
+# Allow importing from parent dir (works both as package and standalone)
+try:
+    from backend import config
+except ImportError:
+    import config
+
 from .planner import Planner
 from .writer import Writer
 from .memory import NovelMemory
-from .. import config
 
 log = logging.getLogger(__name__)
 

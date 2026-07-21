@@ -4,6 +4,11 @@ import logging
 import sys
 import os
 
+# Load .env from project root
+from dotenv import load_dotenv
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+load_dotenv(os.path.join(_ROOT, ".env"))
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi import FastAPI, HTTPException
