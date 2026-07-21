@@ -1,0 +1,188 @@
+"""NovelGenerator — Planner: 世界观、角色、大纲生成"""
+import json
+import logging
+from openai import OpenAI
+from .memory import NovelMemory
+
+log = logging.getLogger(__name__)
+
+PLANNER_SYSTEM = """你是一位资深的小说策划编辑，专精于网文和类型小说的世界观搭建、角色设计和大纲规划。
+
+你的任务是根据用户提供的创意，生成结构化的设定文档。你必须严格按照 JSON 格式输出。
+
+## 输出要求
+
+### 世界观 (worldbuilding)
+- 时代背景、地理环境、社会结构
+- 力量体系/科技水平（如有）
+- 核心冲突（主线矛盾）
+- 势力分布（3-5个势力/组织）
+
+### 角色 (characters)
+- 主角：姓名、年龄、身份、性格、外貌、背景故事、核心动机、金手指/特殊能力
+- 配角：3-5个，每人包含姓名、身份、与主角关系、性格特征、在主线中的作用
+- 反派：1-2个，包含动机、实力、与主角的冲突点
+
+### 大纲 (outline)
+- 卷结构：3-5卷，每卷一个主题
+- 章纲：每卷5-10章，每章包含：核心事件、情绪曲线、出场角色、本章钩子
+- 总字数目标
+
+## 写作原则
+- 遵循"三章一小高潮、五章一中高潮、一卷一大高潮"的节奏
+- 每章结尾必须有钩子（悬念/期待）
+- 角色弧线：主角必须有成长变化
+- 避免流水账，每章必须有实质性事件推进
+"""
+
+
+class Planner:
+    """故事规划器 — 生成世界观、角色、大纲"""
+
+    def __init__(self, client: OpenAI, model: str):
+        self.client = client
+        self.model = model
+        self.memory = NovelMemory()
+
+    def plan(self, creative_input: dict) -> dict:
+        """
+        Args:
+            creative_input: {
+                "genre": "修仙",
+                "style": "热血爽文",
+                "inspiration": "程序员穿越修真界，用代码重构修仙体系",
+                "target_words": 1000000
+            }
+        Returns:
+            structured plan dict
+        """
+        genre = creative_input.get("genre", "玄幻")
+        style = creative_input.get("style", "热血爽文")
+        inspiration = creative_input.get("inspiration", "")
+        target_words = creative_input.get("target_words", 500000)
+        title = creative_input.get("title", "")
+
+        user_prompt = f"""请根据以下信息生成完整的创作方案。
+
+【题材】{genre}
+【风格】{style}
+【核心创意】{inspiration}
+【目标字数】{target_words} 字
+{f'【书名】{title}' if title else '【书名】请根据创意自动生成一个有吸引力的书名'}
+
+请严格按照以下 JSON 格式输出（不要输出其他内容）：
+
+```json
+{{
+  "title": "书名",
+  "genre": "题材",
+  "style": "风格",
+  "target_words": {target_words},
+  "worldbuilding": {{
+    "era": "时代背景",
+    "geography": "地理环境（3-5个关键地点）",
+    "power_system": "力量/科技体系",
+    "core_conflict": "核心矛盾",
+    "factions": [
+      {{"name": "势力名", "description": "描述", "alignment": "正/邪/中立"}}
+    ]
+  }},
+  "characters": {{
+    "protagonist": {{
+      "name": "姓名",
+      "age": "年龄",
+      "identity": "身份",
+      "personality": "性格特征",
+      "appearance": "外貌描述",
+      "backstory": "背景故事",
+      "motivation": "核心动机",
+      "cheat": "金手指/特殊能力",
+      "arc": "角色成长弧线"
+    }},
+    "supporting": [
+      {{"name": "", "identity": "", "relation": "", "personality": "", "role": ""}}
+    ],
+    "antagonist": [
+      {{"name": "", "motivation": "", "power": "", "conflict": ""}}
+    ]
+  }},
+  "outline": {{
+    "volumes": [
+      {{
+        "number": 1,
+        "title": "卷标题",
+        "theme": "本卷主题",
+        "chapters": [
+          {{
+            "number": 1,
+            "title": "章标题",
+            "summary": "核心事件一句话描述",
+            "emotion_curve": "紧张→震惊→愤怒",
+            "characters": ["出场角色"],
+            "hook": "本章结尾钩子",
+            "target_words": 3000
+          }}
+        ]
+      }}
+    ],
+    "total_chapters": 0,
+    "rhythm_notes": "节奏设计说明"
+  }}
+}}
+```
+
+重要：确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。"""
+
+        log.info(f"Planning novel: {genre} - {inspiration[:50]}...")
+        
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": PLANNER_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.8,
+            max_tokens=8192,
+        )
+
+        content = response.choices[0].message.content
+        plan = self._parse_json(content)
+        
+        if plan:
+            plan["_meta"] = {
+                "created_at": __import__("datetime").datetime.now().isoformat(),
+                "model": self.model,
+                "creative_input": creative_input,
+            }
+            log.info(f"Plan generated: {plan.get('title', 'Unknown')} — "
+                     f"{plan.get('outline', {}).get('total_chapters', 0)} chapters")
+        
+        return plan
+
+    def _parse_json(self, content: str) -> dict:
+        """Extract JSON from LLM response (handle markdown code blocks)"""
+        content = content.strip()
+        
+        # Remove markdown code fences
+        if content.startswith("```"):
+            lines = content.split("\n")
+            # Remove first line (```json) and last line (```)
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines)
+
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Try to extract JSON from between first { and last }
+            start = content.find("{")
+            end = content.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    return json.loads(content[start:end + 1])
+                except json.JSONDecodeError:
+                    pass
+            log.error(f"Failed to parse JSON from response (first 500 chars): {content[:500]}")
+            return None
