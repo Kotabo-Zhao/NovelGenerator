@@ -247,37 +247,89 @@ label{display:block;font-size:13px;font-weight:600;color:var(--text2);margin-bot
       <span v-else>🚀 开始创作</span>
     </button>
 
-    <!-- Creation Result -->
+    <!-- Creation Result — 可编辑模式 -->
     <div v-if="planResult && !loading.create">
+      <!-- 书名 -->
       <div class="card mt-16">
-        <div class="card-title">✅ 创作完成</div>
-        <h3 style="font-size:20px;margin-bottom:12px">{{ planResult.title }}</h3>
-        <div class="flex gap-8 flex-wrap mb-16">
-          <span class="tag">{{ planResult.genre }}</span>
-          <span class="tag">{{ planResult.style }}</span>
-          <span class="tag">{{ planResult.outline?.total_chapters || 0 }} 章</span>
-          <span class="tag">{{ fmtWords(planResult.target_words) }}</span>
-        </div>
-        
-        <div class="mb-12"><strong>世界观</strong></div>
-        <p class="text-sm color-text2 mb-12">{{ planResult.worldbuilding?.core_conflict }}</p>
-        
-        <div class="mb-12"><strong>主角</strong></div>
-        <p class="text-sm"><b>{{ planResult.characters?.protagonist?.name }}</b> — {{ planResult.characters?.protagonist?.identity }}</p>
-        <p class="text-sm color-text2 mb-12">{{ planResult.characters?.protagonist?.backstory }}</p>
+        <div class="card-title">📖 书名</div>
+        <input v-model="planResult.title" style="font-size:20px;font-weight:700;text-align:center;padding:14px">
+      </div>
 
-        <div class="mb-12"><strong>大纲预览</strong></div>
-        <div v-for="vol in (planResult.outline?.volumes || [])" :key="vol.number" style="margin-bottom:10px;padding-left:12px;border-left:2px solid var(--border)">
-          <p class="text-sm"><b>第{{ vol.number }}卷: {{ vol.title }}</b> <span class="color-text3 text-xs">{{ vol.theme }}</span></p>
-          <p class="text-xs color-text2" v-for="ch in (vol.chapters||[]).slice(0,5)" :key="ch.number">
-            第{{ ch.number }}章 {{ ch.title }} — {{ ch.summary?.slice(0,40) }}…
-          </p>
-          <p v-if="(vol.chapters||[]).length>5" class="text-xs color-text3">… 等 {{ vol.chapters.length }} 章</p>
+      <!-- 世界观 -->
+      <div class="card">
+        <div class="card-header"><div class="card-title">🌍 世界观</div></div>
+        <div class="form-group">
+          <label>时代背景</label>
+          <input v-model="planResult.worldbuilding.era" placeholder="如：上古神话时代、近未来赛博世界">
+        </div>
+        <div class="form-group">
+          <label>力量体系</label>
+          <input v-model="planResult.worldbuilding.power_system" placeholder="如：灵气九阶、基因序列、系统面板">
+        </div>
+        <div class="form-group">
+          <label>核心冲突</label>
+          <textarea v-model="planResult.worldbuilding.core_conflict" rows="2" placeholder="主线矛盾…"></textarea>
+        </div>
+      </div>
+
+      <!-- 主角 -->
+      <div class="card">
+        <div class="card-header"><div class="card-title">👤 主角</div></div>
+        <div class="form-row">
+          <div class="form-group"><label>姓名</label><input v-model="planResult.characters.protagonist.name"></div>
+          <div class="form-group"><label>身份</label><input v-model="planResult.characters.protagonist.identity"></div>
+        </div>
+        <div class="form-group"><label>性格</label><input v-model="planResult.characters.protagonist.personality"></div>
+        <div class="form-group"><label>背景故事</label><textarea v-model="planResult.characters.protagonist.backstory" rows="2"></textarea></div>
+        <div class="form-row">
+          <div class="form-group"><label>金手指</label><input v-model="planResult.characters.protagonist.cheat"></div>
+          <div class="form-group"><label>核心动机</label><input v-model="planResult.characters.protagonist.motivation"></div>
+        </div>
+      </div>
+
+      <!-- 大纲 -->
+      <div class="card">
+        <div class="card-header flex justify-between items-center">
+          <div class="card-title">📋 大纲（{{ planResult.outline?.total_chapters || 0 }}章）</div>
+          <button class="btn btn-outline btn-xs" @click="addVolume">＋ 卷</button>
+        </div>
+        <div v-for="(vol,vi) in planResult.outline.volumes" :key="vi" style="margin-bottom:20px;padding:16px;background:var(--bg2);border-radius:var(--radius-sm)">
+          <div class="flex justify-between items-center mb-8">
+            <div class="form-row flex-1 mr-8">
+              <div class="form-group" style="width:80px;flex-shrink:0">
+                <label class="text-xs">卷</label>
+                <input v-model.number="vol.number" style="text-align:center;width:60px" @change="renumberChapters">
+              </div>
+              <div class="form-group flex-1"><label class="text-xs">标题</label><input v-model="vol.title"></div>
+            </div>
+            <button class="btn btn-outline btn-xs" style="color:var(--accent2)" @click="removeVolume(vi)" v-if="planResult.outline.volumes.length>1">✕</button>
+          </div>
+          <div class="form-group"><label class="text-xs">主题</label><input v-model="vol.theme" class="mb-8"></div>
+
+          <!-- 章列表 -->
+          <div v-for="(ch,ci) in vol.chapters" :key="ci" style="padding:8px 0;border-bottom:1px solid var(--border)">
+            <div class="flex gap-8 items-start">
+              <span style="font-size:12px;color:var(--text3);padding-top:10px;min-width:32px">Ch{{ ch.number }}</span>
+              <div class="flex-1">
+                <input v-model="ch.title" placeholder="章标题" style="margin-bottom:4px;font-size:13px;padding:8px 12px">
+                <input v-model="ch.summary" placeholder="一句话摘要" style="font-size:12px;padding:6px 12px">
+              </div>
+              <button class="btn btn-outline btn-xs" style="color:var(--accent2);margin-top:6px" @click="vol.chapters.splice(ci,1);renumberChapters()" v-if="vol.chapters.length>1">✕</button>
+            </div>
+          </div>
+          <button class="btn btn-outline btn-xs mt-8 w-full" @click="addChapter(vol)">＋ 添加章节</button>
         </div>
 
-        <button class="btn btn-primary w-full mt-16" style="padding:12px;font-size:15px" @click="startWriting(planResult.title)">
-          ✍️ 开始逐章写作
-        </button>
+        <div v-if="editSaved" class="badge badge-ok mb-8">✅ 大纲已保存</div>
+
+        <div class="flex gap-8">
+          <button class="btn btn-secondary flex-1" @click="savePlan" :disabled="loading.saving">
+            {{ loading.saving ? '保存中…' : '💾 保存大纲' }}
+          </button>
+          <button class="btn btn-primary flex-1" style="padding:12px;font-size:15px" @click="confirmAndStart">
+            ✍️ 确认并开始写作
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -399,9 +451,10 @@ createApp({
     const preview = ref(null);
     const styleCategories = ref({});
     const exportSelected = reactive({});
+    const editSaved = ref(false);
     
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'' });
-    const loading = reactive({ shelf:false, create:false, write:false, export:false });
+    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false });
     const writing = reactive({ chapter:1, content:'', done:false });
     
     const genres = ['修仙','玄幻','都市','科幻','悬疑','历史','游戏','末日','无限流','武侠','克苏鲁','赛博朋克'];
@@ -533,13 +586,55 @@ createApp({
       const t=delay?300:1000; setTimeout(()=>URL.revokeObjectURL(url),t);
     }
 
+    // ── Plan Editing ──
+    function addChapter(vol) {
+      const maxNum = Math.max(0, ...vol.chapters.map(c=>c.number||0));
+      vol.chapters.push({number:maxNum+1, title:'新章节', summary:'待填写', emotion_curve:'平稳→紧张', characters:['主角'], hook:'悬念', target_words:3000});
+      renumberChapters();
+    }
+    function addVolume() {
+      const vols = planResult.value.outline.volumes;
+      const maxNum = Math.max(0, ...vols.map(v=>v.number||0));
+      vols.push({number:maxNum+1, title:'新卷', theme:'待填写', chapters:[{number:1, title:'第一章', summary:'待填写', emotion_curve:'平稳→紧张', characters:['主角'], hook:'悬念', target_words:3000}]});
+      renumberChapters();
+    }
+    function removeVolume(vi) { planResult.value.outline.volumes.splice(vi,1); renumberChapters(); }
+    function renumberChapters() {
+      const vols = planResult.value?.outline?.volumes;
+      if(!vols)return;
+      let chNum=0;
+      for(const vol of vols) {
+        for(const ch of vol.chapters) { chNum++; ch.number=chNum; }
+      }
+      planResult.value.outline.total_chapters = chNum;
+    }
+    async function savePlan() {
+      if(!planResult.value) return;
+      loading.saving=true; editSaved.value=false; error.value='';
+      renumberChapters();
+      try {
+        const r=await fetch(API+'/api/novels/'+encodeURIComponent(planResult.value.title),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(planResult.value)});
+        if(!r.ok) throw new Error((await r.json().catch(()=>({detail:'保存失败'}))).detail);
+        editSaved.value=true;
+        await loadShelf();
+        setTimeout(()=>editSaved.value=false, 3000);
+      } catch(e){ error.value=e.message; }
+      loading.saving=false;
+    }
+    async function confirmAndStart() {
+      await savePlan();
+      if(error.value) return;
+      startWriting(planResult.value.title);
+    }
+
     return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,
-      form,loading,writing,genres,
+      form,loading,writing,genres,editSaved,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
       openCreate,openWrite,doCreate,openNovel,startWriting,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
-      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf };
+      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
+      addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart };
   }
 }).mount('#app');
 </script>

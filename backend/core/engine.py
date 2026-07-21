@@ -83,6 +83,43 @@ class NovelEngine:
         plan["state"] = self.memory.get_novel_state(novel_id)
         return plan
 
+    def update_plan(self, novel_id: str, plan_data: dict) -> bool:
+        """保存用户修改后的大纲
+        
+        Args:
+            novel_id: 小说ID（目录名）
+            plan_data: 修改后的完整 plan 字典
+        Returns:
+            True 表示保存成功
+        """
+        plan_path = os.path.join(self.memory.get_novel_dir(novel_id), "plan.json")
+        if not os.path.exists(plan_path):
+            return False
+        
+        # 保留 _meta 原始信息
+        existing = self.get_novel(novel_id)
+        if existing and "_meta" in existing:
+            plan_data["_meta"] = existing["_meta"]
+        
+        # 标准化章节号
+        for vol in plan_data.get("outline", {}).get("volumes", []):
+            vol["number"] = int(vol.get("number", 1))
+            for ch in vol.get("chapters", []):
+                ch["number"] = int(ch.get("number", 1))
+                ch["target_words"] = int(ch.get("target_words", 3000))
+        plan_data["outline"]["total_chapters"] = int(plan_data.get("outline", {}).get("total_chapters", 0))
+        
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(plan_data, f, ensure_ascii=False, indent=2)
+        
+        # 更新 state 中的 total_chapters
+        state = self.memory.get_novel_state(novel_id)
+        state["total_chapters"] = plan_data.get("outline", {}).get("total_chapters", state.get("total_chapters", 0))
+        self.memory.save_novel_state(novel_id, state)
+        
+        log.info(f"Plan updated: {novel_id}")
+        return True
+
     def list_novels(self) -> list:
         """列出所有小说"""
         novels = []

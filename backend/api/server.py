@@ -118,6 +118,19 @@ async def get_novel(novel_id: str):
     return {"novel": plan}
 
 
+@app.put("/api/novels/{novel_id}")
+async def update_novel_plan(novel_id: str, plan_data: dict):
+    """保存用户修改后的大纲"""
+    try:
+        success = engine.update_plan(novel_id, plan_data)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在")
+        return {"success": True, "message": "大纲已保存"}
+    except Exception as e:
+        log.exception("Failed to update plan")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/novels")
 async def create_novel(req: CreateNovelRequest):
     """创建新小说 — 灵感 → 世界观+角色+大纲"""
