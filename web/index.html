@@ -2,500 +2,546 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0f1923">
-<title>NovelGenerator — AI 小说生成器</title>
+<meta name="theme-color" content="#0a0e14">
+<title>NovelGenerator</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/vue@3.5/dist/vue.global.prod.js"></script>
 <style>
 :root {
-  --bg: #0f1923; --card: #1a2634; --card-hover: #1e2d3d;
-  --text: #e0e6ed; --text2: #8899aa; --text3: #556;
-  --accent: #ff6b35; --accent2: #e74c3c; --green: #27ae60;
-  --border: #2a3a4f; --radius: 12px;
+  --bg: #0a0e14; --bg2: #12171f; --card: #161c26; --card-hover: #1c2432;
+  --text: #e6eaf0; --text2: #8899b4; --text3: #4a5568;
+  --accent: #ff6b4a; --accent2: #e74c3c; --green: #2ecc71; --blue: #3498db;
+  --gold: #f0c040; --purple: #9b59b6; --cyan: #1abc9c;
+  --border: #1e2a3a; --radius: 14px; --radius-sm: 8px;
+  --font-mono: 'SF Mono','Fira Code','Consolas',monospace;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;min-height:100dvh}
-#app{max-width:800px;margin:0 auto;padding:16px;padding-bottom:80px}
-h1{font-size:22px;padding:12px 0;display:flex;align-items:center;gap:8px}
-h2{font-size:16px;color:var(--text2);margin:16px 0 8px;padding-left:8px;border-left:3px solid var(--accent)}
-.card{background:var(--card);border-radius:var(--radius);padding:18px;margin:12px 0;border:1px solid var(--border)}
-.card-title{font-size:13px;color:var(--text3);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px}
-.btn{display:inline-block;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .2s}
-.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{opacity:.9}
-.btn-secondary{background:var(--border);color:var(--text)}.btn-secondary:hover{background:#3a4a5f}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;min-height:100dvh;overflow-x:hidden}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+#app{max-width:860px;margin:0 auto;padding:0 16px 100px}
+
+/* ── Header ── */
+.app-header{position:sticky;top:0;z-index:50;background:var(--bg);padding:16px 0 12px;backdrop-filter:blur(12px)}
+.app-header h1{font-size:22px;display:flex;align-items:center;gap:10px;color:var(--text)}
+.app-header h1 .ver{font-size:11px;color:var(--text3);font-weight:400;margin-left:4px}
+.header-actions{display:flex;gap:8px;align-items:center}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 20px;border-radius:var(--radius-sm);font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .2s;white-space:nowrap;line-height:1}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{opacity:.92;transform:translateY(-1px)}
+.btn-secondary{background:var(--border);color:var(--text)}.btn-secondary:hover{background:#2a3a50}
 .btn-danger{background:var(--accent2);color:#fff}
-.btn-sm{padding:6px 14px;font-size:12px}
-input,textarea,select{width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;font-family:inherit;outline:none;transition:border .2s}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
+.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-sm{padding:7px 14px;font-size:12px}
+.btn-xs{padding:4px 10px;font-size:11px;border-radius:5px}
+.btn-icon{width:36px;height:36px;padding:0;border-radius:50%;font-size:18px}
+
+/* ── Form ── */
+input,textarea,select{width:100%;padding:12px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:14px;font-family:inherit;outline:none;transition:border .2s;appearance:none}
 input:focus,textarea:focus,select:focus{border-color:var(--accent)}
-textarea{resize:vertical;min-height:80px}
-label{display:block;font-size:13px;color:var(--text2);margin-bottom:4px}
-.form-group{margin-bottom:14px}
-.form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+textarea{resize:vertical;min-height:90px;line-height:1.6}
+label{display:block;font-size:13px;font-weight:600;color:var(--text2);margin-bottom:6px}
+.form-group{margin-bottom:16px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .form-row-3{grid-template-columns:1fr 1fr 1fr}
-.tag{display:inline-block;padding:3px 10px;border-radius:5px;font-size:12px;font-weight:600;margin:2px;background:var(--accent)20;color:var(--accent)}
-.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
-.badge-ok{background:var(--green)20;color:var(--green)}
-.badge-warn{background:var(--accent)20;color:var(--accent)}
-.progress-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin:8px 0}
-.progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
-.chapter-preview{background:var(--bg);border-radius:8px;padding:16px;margin:12px 0;max-height:50vh;overflow-y:auto;font-size:15px;line-height:1.8;white-space:pre-wrap}
-.chapter-preview h1{font-size:20px;border:none;padding:0 0 12px 0;margin-bottom:12px;border-bottom:1px solid var(--border)}
+
+/* ── Style Picker ── */
+.style-cat-title{font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:2px;margin:16px 0 8px;padding-left:4px}
+.style-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.style-card{padding:12px 14px;background:var(--card);border:2px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all .2s;text-align:center}
+.style-card:hover{border-color:var(--blue);background:var(--card-hover)}
+.style-card.active{border-color:var(--accent);background:var(--accent)12}
+.style-card .sc-name{font-size:14px;font-weight:700;margin-bottom:2px}
+.style-card .sc-author{font-size:11px;color:var(--text3)}
+
+/* ── Cards ── */
+.card{background:var(--card);border-radius:var(--radius);padding:20px;margin:14px 0;border:1px solid var(--border);transition:all .2s}
+.card-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+.card-title{font-size:13px;color:var(--text3);text-transform:uppercase;letter-spacing:1.5px;font-weight:700}
+
+/* ── Shelf ── */
+.shelf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+.book-card{position:relative;background:var(--card);border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);cursor:pointer;transition:all .25s}
+.book-card:hover{transform:translateY(-3px);box-shadow:0 8px 30px rgba(0,0,0,.3);border-color:var(--accent)}
+.book-cover{height:110px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:rgba(255,255,255,.15);letter-spacing:4px;position:relative;overflow:hidden}
+.book-cover::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,var(--card) 100%)}
+.book-info{padding:14px 16px}
+.book-info h3{font-size:15px;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.book-info .meta{font-size:12px;color:var(--text2);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.book-progress{display:flex;align-items:center;gap:8px;padding:0 16px 14px}
+.progress-bar{flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .4s ease}
+.progress-text{font-size:11px;color:var(--text3);white-space:nowrap}
+
+/* ── Tags / Badges ── */
+.tag{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:5px;font-size:11px;font-weight:600;background:var(--accent)18;color:var(--accent)}
+.tag-sm{padding:2px 7px;font-size:10px}
+.badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:700}
+.badge-ok{background:var(--green)18;color:var(--green)}.badge-warn{background:var(--gold)18;color:var(--gold)}
+
+/* ── Reading View ── */
+.reading-container{max-width:680px;margin:0 auto}
+.chapter-header{text-align:center;padding:30px 0 20px;border-bottom:1px solid var(--border);margin-bottom:24px}
+.chapter-header h2{font-size:20px;color:var(--text)}
+.chapter-outline{background:var(--bg2);border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:20px;border-left:3px solid var(--accent)}
+.chapter-outline .co-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:2px;margin-bottom:6px}
+.chapter-outline .co-title{font-size:15px;font-weight:700;margin-bottom:4px}
+.chapter-outline .co-summary{font-size:13px;color:var(--text2);line-height:1.5}
+.chapter-outline .co-meta{font-size:11px;color:var(--text3);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap}
+.chapter-content{font-size:16px;line-height:2;color:var(--text);white-space:pre-wrap;padding:0 0 40px;font-family:'PingFang SC','Noto Serif SC','Songti SC','SimSun',serif}
+.chapter-content h1{font-size:22px;text-align:center;margin:20px 0;border:none;padding:0}
+.chapter-content p{margin:0 0 1.2em;text-indent:2em}
+.chapter-empty{text-align:center;padding:60px 20px;color:var(--text3)}
+.chapter-empty .ce-icon{font-size:56px;margin-bottom:12px}
+
+/* ── Chapter Picker ── */
+.chapter-picker{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px;max-height:120px;overflow-y:auto;padding:4px 0}
+.chapter-picker .cp-btn{width:44px;height:36px;display:flex;align-items:center;justify-content:center;background:var(--card);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;color:var(--text2);transition:all .15s;flex-shrink:0}
+.chapter-picker .cp-btn:hover{background:var(--card-hover);color:var(--text)}
+.chapter-picker .cp-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.chapter-picker .cp-btn.done{background:var(--green)12;border-color:var(--green)30;color:var(--green)}
+
+/* ── Export ── */
+.export-list{max-height:400px;overflow-y:auto}
+.export-item{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--card);border-radius:var(--radius-sm);margin-bottom:8px;border:1px solid var(--border)}
+.export-item .ei-info{flex:1;min-width:0}
+.export-item .ei-title{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.export-item .ei-meta{font-size:11px;color:var(--text3);margin-top:2px}
+.export-check{width:20px;height:20px;border:2px solid var(--border);border-radius:5px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .2s;margin-right:12px}
+.export-check.checked{background:var(--accent);border-color:var(--accent)}
+.export-check.checked::after{content:'✓';color:#fff;font-size:12px;font-weight:700}
+.export-actions{display:flex;gap:8px;margin-top:16px}
+
+/* ── Bottom Bar ── */
+.bottom-bar{position:fixed;bottom:0;left:0;right:0;background:var(--bg2);border-top:1px solid var(--border);display:flex;z-index:100;padding:8px 0 max(8px,env(safe-area-inset-bottom))}
+.bottom-bar .bb-item{flex:1;text-align:center;color:var(--text2);font-size:11px;cursor:pointer;padding:4px;transition:color .2s}
+.bottom-bar .bb-item.active{color:var(--accent)}
+.bottom-bar .bb-icon{font-size:22px;display:block;margin-bottom:2px}
+
+/* ── Utilities ── */
+.text-center{text-align:center}.text-sm{font-size:13px}.text-xs{font-size:11px}
+.color-text2{color:var(--text2)}.color-text3{color:var(--text3)}.color-accent{color:var(--accent)}
+.w-full{width:100%}.mt-4{margin-top:4px}.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}.mt-24{margin-top:24px}
+.mb-4{margin-bottom:4px}.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}.mb-16{margin-bottom:16px}
+.ml-8{margin-left:8px}.mr-8{margin-right:8px}
+.flex{display:flex}.items-center{align-items:center}.justify-between{justify-content:space-between}.justify-center{justify-content:center}
+.gap-8{gap:8px}.gap-12{gap:12px}.gap-16{gap:16px}.flex-wrap{flex-wrap:wrap}.flex-1{flex:1}
+.spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 .loading-dots:after{content:'';animation:dots 1.5s infinite}
 @keyframes dots{0%,20%{content:'.'}40%{content:'..'}60%{content:'...'}80%,100%{content:''}}
-.spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.tab-bar{display:flex;gap:0;margin-bottom:16px;border-radius:10px;overflow:hidden;background:var(--card)}
-.tab{flex:1;text-align:center;padding:10px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text2);border-bottom:2px solid transparent;transition:all .2s}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent);background:var(--accent)08}
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--border);display:flex;z-index:100;padding:8px 0 env(safe-area-inset-bottom)}
-.bottom-nav .nav-item{flex:1;text-align:center;color:var(--text2);font-size:11px;cursor:pointer;padding:4px}
-.bottom-nav .nav-item.active{color:var(--accent)}
-.bottom-nav .nav-icon{font-size:22px;display:block}
-.list-item{background:var(--card);border-radius:var(--radius);padding:14px 16px;margin:8px 0;border:1px solid var(--border);cursor:pointer;transition:all .2s}
-.list-item:hover{background:var(--card-hover);border-color:var(--accent)}
-.list-item h3{font-size:15px;margin-bottom:4px}
-.list-item p{font-size:12px;color:var(--text2)}
-.empty{text-align:center;padding:40px 20px;color:var(--text3)}
-.empty-icon{font-size:48px;margin-bottom:12px}
-.mb-8{margin-bottom:8px}.mb-16{margin-bottom:16px}.mt-8{margin-top:8px}.mt-16{margin-top:16px}
-.flex{display:flex}.items-center{align-items:center}.gap-8{gap:8px}.gap-12{gap:12px}.justify-between{justify-content:space-between}.flex-wrap{flex-wrap:wrap}
-.text-sm{font-size:13px}.text-xs{font-size:11px}.text-center{text-align:center}
-.color-text2{color:var(--text2)}.color-accent{color:var(--accent)}
-.w-full{width:100%}
+.error-msg{background:var(--accent2)12;border:1px solid var(--accent2)25;border-radius:var(--radius-sm);padding:14px 18px;color:var(--accent2);font-size:14px;margin:16px 0}
+.empty-icon{font-size:56px;margin-bottom:14px;opacity:.5}
+.fade-enter-active,.fade-leave-active{transition:opacity .3s}
+.fade-enter-from,.fade-leave-to{opacity:0}
+
+/* ── Responsive ── */
+@media(max-width:600px){
+  .form-row,.form-row-3{grid-template-columns:1fr}
+  .shelf-grid{grid-template-columns:1fr}
+  .style-grid{grid-template-columns:repeat(3,1fr)}
+  .chapter-content{font-size:15px;line-height:1.85}
+}
 </style>
 </head>
 <body>
-
 <div id="app">
-  <!-- 顶部标题栏 -->
-  <div style="display:flex;align-items:center;justify-content:space-between">
-    <h1>📖 NovelGenerator <span class="badge badge-ok text-sm">v0.1</span></h1>
-    <button v-if="currentView!=='create'" class="btn btn-primary btn-sm" @click="currentView='create'">+ 新建小说</button>
-  </div>
-
-  <!-- Tab 切换 -->
-  <div class="tab-bar" v-if="currentView!=='create'">
-    <div class="tab" :class="{active:currentView==='shelf'}" @click="currentView='shelf'">📚 书架</div>
-    <div class="tab" :class="{active:currentView==='write'}" @click="currentView='write'" v-if="activeNovel">✍️ 写作</div>
-    <div class="tab" :class="{active:currentView==='export'}" @click="currentView='export'" v-if="activeNovel">📤 导出</div>
-  </div>
-
-  <!-- ====== View: 书架 ====== -->
-  <div v-if="currentView==='shelf'">
-    <div v-if="loading.shelf" class="text-center mt-16">
-      <div class="spinner"></div>
-      <p class="color-text2 mt-8">加载中...</p>
+  <!-- Header -->
+  <div class="app-header flex justify-between items-center">
+    <h1>📖 NovelGenerator <span class="ver">v0.2</span></h1>
+    <div class="header-actions">
+      <button v-if="currentView!=='create'" class="btn btn-primary btn-sm" @click="openCreate">＋ 新建</button>
     </div>
-    <div v-else-if="novels.length===0" class="empty">
+  </div>
+
+  <!-- ====== View: Shelf ====== -->
+  <div v-if="currentView==='shelf'" class="fade-enter-active">
+    <div v-if="loading.shelf" class="text-center mt-24"><div class="spinner"></div><p class="color-text3 mt-8">加载中…</p></div>
+    
+    <div v-else-if="novels.length===0" class="text-center" style="padding:80px 20px">
       <div class="empty-icon">📚</div>
-      <p>还没有小说，开始创作吧！</p>
-      <button class="btn btn-primary mt-16" @click="currentView='create'">创作第一本小说</button>
+      <p style="font-size:16px;color:var(--text2);margin-bottom:4px">书架空空如也</p>
+      <p class="color-text3 text-sm mb-16">选择一位网文大师的风格，开始你的第一部作品</p>
+      <button class="btn btn-primary" @click="openCreate">✨ 开始创作</button>
     </div>
-    <div v-else>
-      <div v-for="n in novels" :key="n.id" class="list-item" @click="openNovel(n)">
-        <div class="flex justify-between items-center">
-          <div>
-            <h3>{{ n.title }}</h3>
-            <p>{{ n.genre }} · {{ n.style }} · 目标 {{ (n.target_words/10000).toFixed(0) }}万字</p>
-          </div>
-          <div class="text-right">
-            <div class="badge" :class="n.state.current_chapter>0?'badge-ok':'badge-warn'">
-              {{ n.state.current_chapter }}/{{ n.state.total_chapters }} 章
-            </div>
+
+    <div v-else class="shelf-grid">
+      <div v-for="n in novels" :key="n.id" class="book-card" @click="openNovel(n)">
+        <div class="book-cover" :style="{background:coverGradient(n.id)}">{{ n.title.slice(0,6) }}</div>
+        <div class="book-info">
+          <h3>{{ n.title }}</h3>
+          <div class="meta">
+            <span class="tag tag-sm">{{ n.genre }}</span>
+            <span class="tag tag-sm">{{ n.style }}</span>
+            <span class="badge" :class="n.state.current_chapter?'badge-ok':'badge-warn'">
+              {{ n.state.current_chapter }}/{{ n.state.total_chapters }}章
+            </span>
           </div>
         </div>
-        <div class="progress-bar mt-8">
-          <div class="progress-fill" :style="{width:(n.state.current_chapter/n.state.total_chapters*100)+'%'}"></div>
+        <div class="book-progress">
+          <div class="progress-bar"><div class="progress-fill" :style="{width:pct(n)}"></div></div>
+          <span class="progress-text">{{ pct(n) }}</span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ====== View: 创建小说 ====== -->
+  <!-- ====== View: Create ====== -->
   <div v-if="currentView==='create'">
-    <h2>🎨 开始创作</h2>
     <div class="card">
+      <div class="card-title">📝 创作灵感</div>
       <div class="form-row">
         <div class="form-group">
-          <label>题材</label>
+          <label>题材类型</label>
           <select v-model="form.genre">
             <option v-for="g in genres" :value="g">{{ g }}</option>
           </select>
         </div>
         <div class="form-group">
-          <label>风格</label>
-          <select v-model="form.style">
-            <option v-for="s in styles" :value="s">{{ s }}</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-row form-row-3">
-        <div class="form-group">
           <label>目标字数</label>
           <select v-model="form.target_words">
-            <option :value="100000">10万字</option>
-            <option :value="300000">30万字</option>
-            <option :value="500000">50万字</option>
-            <option :value="1000000">100万字</option>
+            <option :value="100000">10万字（短篇）</option>
+            <option :value="300000">30万字（中篇）</option>
+            <option :value="500000" selected>50万字（长篇）</option>
+            <option :value="1000000">100万字（超长篇）</option>
           </select>
         </div>
-        <div class="form-group" style="grid-column:span 2">
-          <label>书名（留空自动生成）</label>
-          <input v-model="form.title" placeholder="如：我在修真界写代码">
-        </div>
       </div>
       <div class="form-group">
-        <label>核心灵感</label>
-        <textarea v-model="form.inspiration" placeholder="用一句话描述你的故事创意，越具体越好…&#10;&#10;如：程序员穿越修真界，发现这个世界的一切规则都像代码一样可以被修改和重构。他用程序员的思维重新理解修仙，却发现这个世界的底层代码正在崩溃…"></textarea>
+        <label>书名（留空自动生成）</label>
+        <input v-model="form.title" placeholder="如：我在修真界写代码">
       </div>
+      <div class="form-group">
+        <label>核心灵感 <span class="color-text3">（越具体越好，AI 会据此构建完整世界观）</span></label>
+        <textarea v-model="form.inspiration" rows="3" placeholder="用几句话描述你的故事创意…
 
-      <div v-if="error" class="card" style="background:var(--accent2)15;border-color:var(--accent2)30;color:var(--accent2)">
-        ⚠️ {{ error }}
+如：程序员穿越修真界，发现这个世界的一切规则都像代码一样可以被修改和重构。他用程序员的思维重新理解修仙，却发现这个世界的底层代码正在崩溃…"></textarea>
       </div>
+    </div>
 
-      <button class="btn btn-primary w-full" @click="doCreate" :disabled="loading.create">
-        <span v-if="loading.create"><span class="spinner"></span> AI 正在创作世界观和角色…</span>
-        <span v-else>🚀 开始创作</span>
-      </button>
-
-      <div v-if="planResult" class="mt-16">
-        <h2>✅ 创作完成！</h2>
-        <div class="card">
-          <h3 style="font-size:18px;margin-bottom:8px">{{ planResult.title }}</h3>
-          <div class="flex gap-8 flex-wrap mb-8">
-            <span class="tag">{{ planResult.genre }}</span>
-            <span class="tag">{{ planResult.style }}</span>
-            <span class="tag">{{ planResult.outline?.total_chapters || 0 }} 章</span>
-            <span class="tag">{{ (planResult.target_words/10000).toFixed(0) }}万字</span>
+    <!-- Style Picker -->
+    <div class="card">
+      <div class="card-title">🎨 选择风格 — 向大师看齐</div>
+      <template v-for="(authors, cat) in styleCategories">
+        <div class="style-cat-title">{{ cat }}</div>
+        <div class="style-grid">
+          <div v-for="s in authors" :key="s.name" class="style-card"
+            :class="{active:form.style===s.name}" @click="form.style=s.name">
+            <div class="sc-name">{{ s.name }}</div>
+            <div class="sc-author">{{ s.author }}</div>
           </div>
-          
-          <h2>世界观</h2>
-          <p class="text-sm color-text2">{{ planResult.worldbuilding?.core_conflict }}</p>
-          
-          <h2>主角</h2>
-          <p class="text-sm"><strong>{{ planResult.characters?.protagonist?.name }}</strong> — {{ planResult.characters?.protagonist?.identity }}</p>
-          <p class="text-sm color-text2">{{ planResult.characters?.protagonist?.backstory }}</p>
-
-          <h2>大纲预览</h2>
-          <div v-for="vol in (planResult.outline?.volumes || [])" :key="vol.number" class="mb-8">
-            <p class="text-sm"><strong>第{{ vol.number }}卷: {{ vol.title }}</strong></p>
-            <p class="text-xs color-text2" v-for="ch in (vol.chapters||[]).slice(0,5)" :key="ch.number">
-              第{{ ch.number }}章 {{ ch.title }} — {{ ch.summary }}
-            </p>
-            <p v-if="(vol.chapters||[]).length>5" class="text-xs color-text2">… 等 {{ vol.chapters.length }} 章</p>
-          </div>
-
-          <button class="btn btn-primary w-full mt-16" @click="startWriting(planResult.title)">
-            ✍️ 开始逐章写作
-          </button>
         </div>
+      </template>
+    </div>
+
+    <div v-if="error" class="error-msg">⚠️ {{ error }}</div>
+
+    <button class="btn btn-primary w-full" style="padding:14px 20px;font-size:16px" @click="doCreate" :disabled="loading.create">
+      <span v-if="loading.create"><span class="spinner"></span> AI 正在构建世界观和角色…</span>
+      <span v-else>🚀 开始创作</span>
+    </button>
+
+    <!-- Creation Result -->
+    <div v-if="planResult && !loading.create">
+      <div class="card mt-16">
+        <div class="card-title">✅ 创作完成</div>
+        <h3 style="font-size:20px;margin-bottom:12px">{{ planResult.title }}</h3>
+        <div class="flex gap-8 flex-wrap mb-16">
+          <span class="tag">{{ planResult.genre }}</span>
+          <span class="tag">{{ planResult.style }}</span>
+          <span class="tag">{{ planResult.outline?.total_chapters || 0 }} 章</span>
+          <span class="tag">{{ fmtWords(planResult.target_words) }}</span>
+        </div>
+        
+        <div class="mb-12"><strong>世界观</strong></div>
+        <p class="text-sm color-text2 mb-12">{{ planResult.worldbuilding?.core_conflict }}</p>
+        
+        <div class="mb-12"><strong>主角</strong></div>
+        <p class="text-sm"><b>{{ planResult.characters?.protagonist?.name }}</b> — {{ planResult.characters?.protagonist?.identity }}</p>
+        <p class="text-sm color-text2 mb-12">{{ planResult.characters?.protagonist?.backstory }}</p>
+
+        <div class="mb-12"><strong>大纲预览</strong></div>
+        <div v-for="vol in (planResult.outline?.volumes || [])" :key="vol.number" style="margin-bottom:10px;padding-left:12px;border-left:2px solid var(--border)">
+          <p class="text-sm"><b>第{{ vol.number }}卷: {{ vol.title }}</b> <span class="color-text3 text-xs">{{ vol.theme }}</span></p>
+          <p class="text-xs color-text2" v-for="ch in (vol.chapters||[]).slice(0,5)" :key="ch.number">
+            第{{ ch.number }}章 {{ ch.title }} — {{ ch.summary?.slice(0,40) }}…
+          </p>
+          <p v-if="(vol.chapters||[]).length>5" class="text-xs color-text3">… 等 {{ vol.chapters.length }} 章</p>
+        </div>
+
+        <button class="btn btn-primary w-full mt-16" style="padding:12px;font-size:15px" @click="startWriting(planResult.title)">
+          ✍️ 开始逐章写作
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- ====== View: 写作 ====== -->
-  <div v-if="currentView==='write' && activeNovel">
-    <h2>✍️ {{ activeNovel.title }}</h2>
-    <div class="card">
-      <div class="flex justify-between items-center mb-16">
-        <div>
-          <span class="text-sm color-text2">进度</span>
-          <span class="badge badge-ok ml-8">{{ activeNovel.state.current_chapter }}/{{ activeNovel.state.total_chapters }} 章</span>
-        </div>
-        <button class="btn btn-secondary btn-sm" @click="currentView='shelf'">← 返回书架</button>
+  <!-- ====== View: Write ====== -->
+  <div v-if="currentView==='write' && activeNovel" class="reading-container">
+    <div class="flex justify-between items-center mb-12">
+      <div class="text-sm color-text2">
+        <span class="color-accent">{{ activeNovel.title }}</span>
+        <span class="ml-8 badge badge-ok" v-if="activeNovel.state.current_chapter">{{ activeNovel.state.current_chapter }}章</span>
       </div>
-      <div class="progress-bar mb-16">
-        <div class="progress-fill" :style="{width:(activeNovel.state.current_chapter/activeNovel.state.total_chapters*100)+'%'}"></div>
-      </div>
+      <button class="btn btn-outline btn-xs" @click="currentView='shelf'">← 书架</button>
+    </div>
 
-      <!-- 章节选择 -->
-      <div class="form-group">
-        <label>选择章节</label>
-        <div class="flex gap-8 flex-wrap">
-          <button v-for="ch in availableChapters" :key="ch"
-            class="btn btn-sm" 
-            :class="ch===writing.chapter?'btn-primary':'btn-secondary'"
-            @click="selectChapter(ch)">
-            第{{ ch }}章
-            <span v-if="ch<=activeNovel.state.current_chapter" class="badge badge-ok ml-4">✓</span>
-          </button>
-        </div>
-      </div>
+    <!-- Chapter picker -->
+    <div class="chapter-picker">
+      <div v-for="ch in availableChapters" :key="ch" class="cp-btn"
+        :class="{active:ch===writing.chapter, done:ch<=activeNovel.state.current_chapter}"
+        @click="selectChapter(ch)">{{ ch }}</div>
+    </div>
 
-      <!-- 本章大纲 -->
-      <div v-if="currentOutline" class="card" style="background:var(--bg)">
-        <div class="text-xs color-text2 mb-4">📋 本章大纲</div>
-        <div class="text-sm"><strong>{{ currentOutline.title }}</strong></div>
-        <div class="text-sm color-text2">{{ currentOutline.summary }}</div>
-        <div class="text-xs color-text3 mt-4">情绪: {{ currentOutline.emotion_curve }} · 出场: {{ (currentOutline.characters||[]).join('、') }} · 钩子: {{ currentOutline.hook }}</div>
+    <!-- Outline -->
+    <div v-if="currentOutline" class="chapter-outline">
+      <div class="co-label">本章大纲</div>
+      <div class="co-title">{{ currentOutline.title }}</div>
+      <div class="co-summary">{{ currentOutline.summary }}</div>
+      <div class="co-meta">
+        <span>🎭 {{ currentOutline.emotion_curve }}</span>
+        <span>👤 {{ (currentOutline.characters||[]).join('、') }}</span>
+        <span v-if="currentOutline.hook">🪝 {{ currentOutline.hook }}</span>
       </div>
+    </div>
 
-      <button class="btn btn-primary w-full mb-8" @click="doGenerateChapter" :disabled="loading.write || writing.chapter<=activeNovel.state.current_chapter">
-        <span v-if="loading.write"><span class="spinner"></span> AI 正在写作…</span>
-        <span v-else-if="writing.chapter<=activeNovel.state.current_chapter">✅ 本章已完成</span>
+    <!-- Generate button -->
+    <div class="mb-16" v-if="writing.chapter > activeNovel.state.current_chapter">
+      <button class="btn btn-primary w-full" style="padding:14px" @click="doGenerateChapter" :disabled="loading.write">
+        <span v-if="loading.write"><span class="spinner"></span> AI 写作中…</span>
         <span v-else>🤖 生成第{{ writing.chapter }}章</span>
       </button>
-      
-      <div v-if="writing.content" class="chapter-preview" ref="preview">{{ writing.content }}</div>
-      <div v-if="loading.write && !writing.content" class="text-center mt-16">
-        <div class="spinner"></div>
-        <p class="color-text2 mt-8">AI 正在构思和写作…<span class="loading-dots"></span></p>
-      </div>
+    </div>
 
-      <div v-if="writing.done" class="mt-16 text-center">
-        <div class="flex gap-8 justify-center">
-          <button class="btn btn-primary" @click="nextChapter">下一章 →</button>
-          <button class="btn btn-secondary" @click="copyChapter">📋 复制本章</button>
+    <!-- Content -->
+    <div v-if="writing.content" class="chapter-content" ref="preview">{{ writing.content }}</div>
+    <div v-else-if="!loading.write && writing.chapter<=activeNovel.state.current_chapter" class="chapter-empty">
+      <div class="ce-icon">📄</div>
+      <p>第{{ writing.chapter }}章</p>
+      <p class="color-text3 text-sm mt-8">点击上方章节序号查看内容</p>
+    </div>
+
+    <div v-if="loading.write && !writing.content" class="text-center" style="padding:60px 20px">
+      <div class="spinner" style="width:32px;height:32px;border-width:3px"></div>
+      <p class="color-text2 mt-16">AI 正在构思和写作…<span class="loading-dots"></span></p>
+    </div>
+
+    <!-- Done actions -->
+    <div v-if="writing.done" class="flex gap-8 justify-center mt-24 mb-16">
+      <button class="btn btn-primary" @click="nextChapter">下一章 →</button>
+      <button class="btn btn-secondary" @click="copyChapter">📋 复制</button>
+    </div>
+
+    <div v-if="error" class="error-msg">{{ error }}</div>
+  </div>
+
+  <!-- ====== View: Export ====== -->
+  <div v-if="currentView==='export'">
+    <div class="card">
+      <div class="card-title">📤 导出小说</div>
+      <p class="text-sm color-text2 mb-12">点击单本导出下载 TXT 文件，或勾选多本批量导出</p>
+      
+      <div class="export-list">
+        <div v-for="n in novels" :key="n.id" class="export-item">
+          <div class="export-check" :class="{checked:exportSelected[n.id]}" @click="toggleExport(n.id)"></div>
+          <div class="ei-info">
+            <div class="ei-title">{{ n.title }}</div>
+            <div class="ei-meta">{{ n.genre }} · {{ n.style }} · {{ n.state.current_chapter }}/{{ n.state.total_chapters }}章</div>
+          </div>
+          <button class="btn btn-outline btn-xs" @click="doSingleExport(n)" :disabled="loading.export">
+            {{ loading.export===n.id ? '…' : '⬇ TXT' }}
+          </button>
         </div>
       </div>
+
+      <div v-if="novels.length===0" class="text-center color-text3 text-sm" style="padding:30px">还没有小说</div>
+
+      <div class="export-actions" v-if="selectedCount>0">
+        <button class="btn btn-secondary flex-1" @click="doBatchExport('download')" :disabled="loading.export">
+          ⬇ 批量下载 ({{ selectedCount }}本)
+        </button>
+      </div>
+      <div class="export-actions">
+        <button class="btn btn-outline flex-1 btn-sm" @click="selectAll" v-if="novels.length">
+          {{ allSelected ? '取消全选' : '全选' }}
+        </button>
+      </div>
     </div>
+
+    <div v-if="error" class="error-msg">{{ error }}</div>
   </div>
 
-  <!-- ====== View: 导出 ====== -->
-  <div v-if="currentView==='export' && activeNovel">
-    <h2>📤 导出</h2>
-    <div class="card">
-      <p class="text-sm color-text2 mb-16">已生成 {{ activeNovel.state.current_chapter }} 章，共约 {{ (activeNovel.state.total_words||0) }} 字</p>
-      <button class="btn btn-primary w-full mb-8" @click="doExport('txt')" :disabled="loading.export">
-        <span v-if="loading.export"><span class="spinner"></span> 导出中…</span>
-        <span v-else>📄 导出 TXT</span>
-      </button>
-      <p class="text-xs color-text3 text-center">更多格式（EPUB/PDF）即将支持</p>
-    </div>
-  </div>
-
-  <!-- 底部导航 -->
-  <div class="bottom-nav" v-if="currentView!=='create'">
-    <div class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'">
-      <span class="nav-icon">📚</span>书架
-    </div>
-    <div class="nav-item" :class="{active:currentView==='write'}" @click="currentView='write'; selectChapter(activeNovel?.state.current_chapter+1||1)" v-if="activeNovel">
-      <span class="nav-icon">✍️</span>写作
-    </div>
-    <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'" v-if="activeNovel">
-      <span class="nav-icon">📤</span>导出
-    </div>
+  <!-- Bottom Nav -->
+  <div class="bottom-bar">
+    <div class="bb-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="bb-icon">📚</span>书架</div>
+    <div class="bb-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="bb-icon">✍️</span>写作</div>
+    <div class="bb-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="bb-icon">📤</span>导出</div>
   </div>
 </div>
 
 <script>
-const API = window.location.origin;  // 部署后自动使用当前域名，本地开发用 http://localhost:8000
-// 本地开发时取消下行注释：
-// const API = 'http://localhost:8000';
-
+const API = window.location.origin;
 const { createApp, ref, reactive, computed, watch, nextTick, onMounted } = Vue;
 
 createApp({
   setup() {
-    // State
     const currentView = ref('shelf');
     const novels = ref([]);
     const activeNovel = ref(null);
     const planResult = ref(null);
     const error = ref('');
     const preview = ref(null);
+    const styleCategories = ref({});
+    const exportSelected = reactive({});
     
-    const form = reactive({
-      genre: '修仙', style: '热血爽文', inspiration: '',
-      target_words: 500000, title: ''
-    });
+    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'' });
+    const loading = reactive({ shelf:false, create:false, write:false, export:false });
+    const writing = reactive({ chapter:1, content:'', done:false });
     
-    const loading = reactive({ shelf: false, create: false, write: false, export: false });
-    const writing = reactive({ chapter: 1, content: '', done: false });
+    const genres = ['修仙','玄幻','都市','科幻','悬疑','历史','游戏','末日','无限流','武侠','克苏鲁','赛博朋克'];
     
-    // Options
-    const genres = ['修仙', '玄幻', '都市', '科幻', '悬疑', '历史', '游戏', '末日', '无限流', '武侠'];
-    const styles = ['热血爽文', '轻松搞笑', '黑暗深沉', '温馨治愈', '悬疑烧脑', '快节奏打脸', '慢热布局'];
-
     // Computed
+    const selectedCount = computed(() => Object.values(exportSelected).filter(Boolean).length);
+    const allSelected = computed(() => novels.value.length>0 && novels.value.every(n=>exportSelected[n.id]));
     const availableChapters = computed(() => {
       if (!activeNovel.value) return [];
       const total = activeNovel.value.state.total_chapters || 20;
-      const chapters = [];
-      for (let i = 1; i <= total; i++) chapters.push(i);
-      return chapters;
+      return Array.from({length:total},(_,i)=>i+1);
     });
-
     const currentOutline = computed(() => {
-      if (!activeNovel.value || !planResult.value) return null;
-      const vols = planResult.value.outline?.volumes || [];
-      for (const vol of vols) {
-        for (const ch of vol.chapters || []) {
-          if (ch.number === writing.chapter) return ch;
-        }
+      if (!activeNovel.value||!planResult.value) return null;
+      for (const vol of planResult.value.outline?.volumes||[]) {
+        for (const ch of vol.chapters||[]) { if (ch.number===writing.chapter) return ch; }
       }
       return null;
     });
 
-    // Methods
-    async function loadShelf() {
-      loading.shelf = true;
-      try {
-        const r = await fetch(API + '/api/novels');
-        const data = await r.json();
-        novels.value = data.novels || [];
-      } catch(e) { console.error(e); }
-      loading.shelf = false;
-    }
-
-    async function doCreate() {
-      if (!form.inspiration.trim()) { error.value = '请输入核心灵感'; return; }
-      error.value = '';
-      planResult.value = null;
-      loading.create = true;
-      try {
-        const r = await fetch(API + '/api/novels', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({...form})
-        });
-        if (!r.ok) { const d = await r.json(); throw new Error(d.detail || '创建失败'); }
-        const data = await r.json();
-        planResult.value = data.novel;
-        await loadShelf();
-      } catch(e) { error.value = e.message; }
-      loading.create = false;
-    }
-
-    function openNovel(novel) {
-      activeNovel.value = novel;
-      // Load full plan
-      fetch(API + '/api/novels/' + encodeURIComponent(novel.id))
-        .then(r => r.json())
-        .then(d => { planResult.value = d.novel; })
-        .catch(console.error);
-      selectChapter(novel.state.current_chapter + 1);
-    }
-
-    function startWriting(title) {
-      const novel = novels.value.find(n => n.id === title || n.title === title);
-      if (novel) openNovel(novel);
-      currentView.value = 'write';
-    }
-
-    function selectChapter(ch) {
-      writing.chapter = ch;
-      writing.content = '';
-      writing.done = false;
-      // Try to load existing chapter
-      if (activeNovel.value) {
-        fetch(API + '/api/novels/' + encodeURIComponent(activeNovel.value.id) + '/chapters/' + ch)
-          .then(r => {
-            if (r.ok) return r.text();
-            return '';
-          })
-          .then(content => {
-            if (content) { writing.content = content; writing.done = true; }
-          })
-          .catch(() => {});
-      }
-    }
-
-    async function doGenerateChapter() {
-      if (!activeNovel.value || writing.chapter <= activeNovel.value.state.current_chapter) return;
-      loading.write = true;
-      writing.content = '';
-      writing.done = false;
-      error.value = '';
-
-      try {
-        const r = await fetch(API + '/api/novels/generate', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({novel_id: activeNovel.value.id, chapter_num: writing.chapter})
-        });
-
-        const reader = r.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const {done, value} = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, {stream: true});
-          
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const evt = JSON.parse(line.slice(6));
-                if (evt.type === 'text') {
-                  writing.content += evt.content;
-                  nextTick(() => {
-                    if (preview.value) preview.value.scrollTop = preview.value.scrollHeight;
-                  });
-                } else if (evt.type === 'done') {
-                  writing.done = true;
-                  // Update local state
-                  activeNovel.value.state.current_chapter = evt.chapter_num;
-                  await loadShelf();
-                } else if (evt.type === 'error') {
-                  error.value = evt.message;
-                }
-              } catch(e) {}
-            }
-          }
-        }
-      } catch(e) { error.value = e.message; }
-      loading.write = false;
-    }
-
-    function nextChapter() {
-      const next = writing.chapter + 1;
-      const total = activeNovel.value?.state.total_chapters || 999;
-      if (next <= total) selectChapter(next);
-    }
-
-    function copyChapter() {
-      navigator.clipboard.writeText(writing.content).then(() => alert('已复制到剪贴板'));
-    }
-
-    async function doExport(fmt) {
-      if (!activeNovel.value) return;
-      loading.export = true;
-      error.value = '';
-      try {
-        const r = await fetch(API + '/api/novels/' + encodeURIComponent(activeNovel.value.id) + '/export?fmt=' + fmt);
-        if (!r.ok) {
-          const errData = await r.json().catch(() => ({detail: '导出失败，请先生成至少一章内容'}));
-          throw new Error(errData.detail || '导出失败');
-        }
-        const text = await r.text();
-        if (!text || text.trim().length === 0) {
-          throw new Error('导出内容为空，请先生成章节');
-        }
-        const blob = new Blob(['\uFEFF' + text], {type:'text/plain;charset=utf-8'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = (activeNovel.value.id) + '.txt';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      } catch(e) { error.value = e.message; }
-      loading.export = false;
+    // Helpers
+    function pct(n) { const t=n.state.total_chapters||1; const c=n.state.current_chapter||0; return Math.round(c/t*100)+'%'; }
+    function fmtWords(w) { return w>=10000?(w/10000).toFixed(0)+'万字':w+'字'; }
+    function coverGradient(id) {
+      const colors = [['#1a1a2e','#16213e'],['#0f3460','#533483'],['#1b4332','#2d6a4f'],['#3d2c2e','#6b4c3b'],['#1c2541','#3a506b']];
+      const idx = (id||'').split('').reduce((a,c)=>a+c.charCodeAt(0),0) % colors.length;
+      const [a,b]=colors[idx]; return `linear-gradient(135deg,${a},${b})`;
     }
 
     // Init
-    onMounted(() => loadShelf());
+    onMounted(async () => { await loadStyles(); await loadShelf(); });
 
-    return {
-      currentView, novels, activeNovel, planResult, error, preview,
-      form, loading, writing, genres, styles,
-      availableChapters, currentOutline,
-      loadShelf, doCreate, openNovel, startWriting,
-      selectChapter, doGenerateChapter, nextChapter,
-      copyChapter, doExport,
-    };
+    async function loadStyles() {
+      try { const r=await fetch(API+'/api/styles'); const d=await r.json(); styleCategories.value=d.categories||{}; }
+      catch(e){ console.error(e); }
+    }
+    async function loadShelf() {
+      loading.shelf=true;
+      try { const r=await fetch(API+'/api/novels'); novels.value=(await r.json()).novels||[]; }
+      catch(e){ console.error(e); }
+      loading.shelf=false;
+    }
+    function openCreate() { planResult.value=null; error.value=''; currentView.value='create'; }
+    function openWrite() { if(activeNovel.value){ currentView.value='write'; } }
+
+    // Create
+    async function doCreate() {
+      if (!form.inspiration.trim()) { error.value='请输入核心灵感'; return; }
+      error.value=''; planResult.value=null; loading.create=true;
+      try {
+        const r=await fetch(API+'/api/novels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form})});
+        if(!r.ok){ const d=await r.json(); throw new Error(d.detail||'创建失败'); }
+        planResult.value=(await r.json()).novel;
+        await loadShelf();
+      } catch(e){ error.value=e.message; }
+      loading.create=false;
+    }
+
+    // Open novel
+    function openNovel(novel) {
+      activeNovel.value=novel; error.value='';
+      fetch(API+'/api/novels/'+encodeURIComponent(novel.id)).then(r=>r.json()).then(d=>{planResult.value=d.novel}).catch(console.error);
+      selectChapter(novel.state.current_chapter+1); currentView.value='write';
+    }
+    function startWriting(title) { const n=novels.value.find(x=>x.id===title||x.title===title); if(n)openNovel(n); }
+
+    // Chapter selection
+    function selectChapter(ch) { writing.chapter=ch; writing.content=''; writing.done=false; error.value='';
+      if(activeNovel.value){ fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+ch)
+        .then(r=>r.ok?r.text():'').then(c=>{if(c){writing.content=c;writing.done=true;}}).catch(()=>{}); }
+    }
+
+    // Generate
+    async function doGenerateChapter() {
+      if(!activeNovel.value||writing.chapter<=activeNovel.value.state.current_chapter)return;
+      loading.write=true; writing.content=''; writing.done=false; error.value='';
+      try {
+        const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter})});
+        const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+        while(true){ const{value,done}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
+          const lines=buf.split('\n'); buf=lines.pop()||'';
+          for(const line of lines){ if(!line.startsWith('data: '))continue;
+            try{ const evt=JSON.parse(line.slice(6));
+              if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
+              else if(evt.type==='done'){ writing.done=true; activeNovel.value.state.current_chapter=evt.chapter_num; loadShelf(); }
+              else if(evt.type==='error'){ error.value=evt.message; }
+            }catch(_){}
+          }
+        }
+      } catch(e){ error.value=e.message; }
+      loading.write=false;
+    }
+    function nextChapter() { const n=writing.chapter+1; const t=activeNovel.value?.state.total_chapters||999; if(n<=t)selectChapter(n); }
+    function copyChapter() { navigator.clipboard.writeText(writing.content).then(()=>{error.value='已复制到剪贴板';setTimeout(()=>error.value='',2000)}); }
+
+    // Export
+    function toggleExport(id) { exportSelected[id]=!exportSelected[id]; }
+    function selectAll() { const v=!allSelected.value; novels.value.forEach(n=>exportSelected[n.id]=v); }
+    async function doSingleExport(novel) {
+      loading.export=novel.id; error.value='';
+      try {
+        const r=await fetch(API+'/api/novels/'+encodeURIComponent(novel.id)+'/export?fmt=txt');
+        if(!r.ok){ throw new Error((await r.json().catch(()=>({detail:'无章节内容'}))).detail); }
+        downloadBlob(await r.text(), novel.id+'.txt');
+      } catch(e){ error.value=e.message; }
+      loading.export=false;
+    }
+    async function doBatchExport(mode) {
+      const ids=Object.entries(exportSelected).filter(([,v])=>v).map(([k])=>k);
+      if(!ids.length){ error.value='请先勾选要导出的小说'; return; }
+      loading.export=true; error.value='';
+      try {
+        const r=await fetch(API+'/api/novels/export/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_ids:ids,fmt:'txt'})});
+        const data=await r.json();
+        let ok=0,fail=0;
+        for(const item of data.results){
+          if(item.success&&item.content){ downloadBlob(item.content,item.novel_id+'.txt',true); ok++; }
+          else { fail++; error.value=(error.value||'')+(item.error||'导出失败')+'\n'; }
+        }
+        if(ok>0&&fail===0)error.value=`成功导出 ${ok} 本小说`;
+      } catch(e){ error.value=e.message; }
+      loading.export=false;
+    }
+    function downloadBlob(text,filename,delay=false) {
+      const blob=new Blob(['\uFEFF'+text],{type:'text/plain;charset=utf-8'});
+      const url=URL.createObjectURL(blob); const a=document.createElement('a');
+      a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      const t=delay?300:1000; setTimeout(()=>URL.revokeObjectURL(url),t);
+    }
+
+    return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,
+      form,loading,writing,genres,
+      selectedCount,allSelected,availableChapters,currentOutline,
+      pct,fmtWords,coverGradient,
+      openCreate,openWrite,doCreate,openNovel,startWriting,
+      selectChapter,doGenerateChapter,nextChapter,copyChapter,
+      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf };
   }
 }).mount('#app');
 </script>
-
 </body>
 </html>

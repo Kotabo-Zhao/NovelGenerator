@@ -2,23 +2,27 @@
 import logging
 from typing import AsyncGenerator
 from openai import OpenAI
+from .styles import get_style
 
 log = logging.getLogger(__name__)
 
-WRITER_SYSTEM = """你是一位专业的网络小说作家，擅长创作{genre}类{style}风格的小说。
+WRITER_SYSTEM = """你是一位专业的网络小说作家。
+
+## 你的写作风格
+
+{style_guide}
 
 ## 写作要求
 
-1. **严格按照大纲写作**: 本章大纲已经给出核心事件、情绪曲线和结尾钩子，请忠实执行。
+1. **严格遵循风格**: 上述文笔特征是你必须遵守的写作原则。每一段文字都要体现这个风格。
 2. **角色一致性**: 遵守已给出的角色设定和世界规则，不要自行添加未在设定中的新设定。
-3. **对话生动**: 每个角色的对话要有辨识度，符合其性格特征。
-4. **场景描写**: 每 500 字至少有一段环境/氛围描写，增强代入感。
-5. **节奏控制**: 遵循情绪曲线，该紧张时加快节奏（短句），该抒缓时放慢节奏（描写）。
-6. **钩子结尾**: 本章末尾必须留下钩子，让读者想立刻看下一章。
-7. **去 AI 味**: 
-   - 禁用"随着""与此同时""总而言之""在这个过程当中"等 AI 高频过渡词
+3. **场景描写**: {description_density}
+4. **节奏控制**: {pacing}
+5. **钩子结尾**: 本章末尾必须留下钩子，让读者想立刻看下一章。
+6. **去 AI 味**: 
+   - 禁用「随着」「与此同时」「总而言之」「在这个过程中」等 AI 高频过渡词
    - 每段长度要有变化（3-8句不等）
-   - 对话不要总是"XX说，XX道"，用动作和神态穿插
+   - 对话不要总是「XX说，XX道」，用动作和神态穿插
    - 避免每章开头都用环境描写
 
 ## 输出格式
@@ -46,14 +50,25 @@ class Writer:
         Args:
             context: 完整的写作上下文（由 NovelMemory.build_writer_context 组装）
             genre: 题材
-            style: 风格
+            style: 风格名（如 "土豆风格", "猫腻风格"）
             target_words: 目标字数
         
         Yields:
             str: 流式输出的文本片段
         """
+        style_config = get_style(style)
+        
+        style_guide = f"""作者: {style_config['author']}
+文笔特征: {style_config['prose']}
+语气基调: {style_config['tone']}
+对话风格: {style_config['dialogue']}
+标志性写法: {style_config.get('examples', '')}"""
+
         system_prompt = WRITER_SYSTEM.format(
-            genre=genre, style=style, target_words=target_words
+            style_guide=style_guide,
+            description_density="每500字至少有一段环境/氛围描写，增强代入感" if "描写" in style_config.get("prose","") else "根据风格需要决定描写密度",
+            pacing=style_config.get("pacing", "根据大纲情绪曲线控制节奏"),
+            target_words=target_words,
         )
 
         log.info(f"Writing chapter: {genre}/{style}, target {target_words} words")
@@ -65,7 +80,7 @@ class Writer:
                 {"role": "user", "content": f"请根据以下上下文和本章大纲，开始写正文：\n\n{context}"},
             ],
             temperature=0.85,
-            max_tokens=target_words * 3,  # ~3 tokens per Chinese character
+            max_tokens=target_words * 3,
             stream=True,
         )
         

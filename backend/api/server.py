@@ -86,6 +86,18 @@ async def health():
     return {"status": "ok", "service": "NovelGenerator"}
 
 
+@app.get("/api/styles")
+async def get_styles():
+    """返回所有可用风格（分组）"""
+    from core.styles import get_style_categories, STYLES
+    categories = get_style_categories()
+    # 附带简短的作者标签
+    result = {}
+    for cat, names in categories.items():
+        result[cat] = [{"name": n, "author": STYLES[n]["author"]} for n in names]
+    return {"categories": result}
+
+
 @app.get("/api/novels")
 async def list_novels():
     """列出所有小说"""
@@ -157,7 +169,7 @@ async def get_chapter(novel_id: str, chapter_num: int):
 
 @app.get("/api/novels/{novel_id}/export")
 async def export_novel(novel_id: str, fmt: str = "txt"):
-    """导出小说"""
+    """导出单本小说"""
     content, err = engine.export_novel(novel_id, fmt)
     if err:
         raise HTTPException(status_code=404, detail=err)
@@ -167,6 +179,32 @@ async def export_novel(novel_id: str, fmt: str = "txt"):
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={novel_id}.txt"}
     )
+
+
+@app.post("/api/novels/export/batch")
+async def batch_export(req: dict = None):
+    """批量导出所有小说"""
+    if req is None:
+        req = {}
+    novel_ids = req.get("novel_ids", [])
+    fmt = req.get("fmt", "txt")
+    
+    if not novel_ids:
+        # 导出全部
+        novels = engine.list_novels()
+        novel_ids = [n["id"] for n in novels]
+    
+    results = []
+    for nid in novel_ids:
+        content, err = engine.export_novel(nid, fmt)
+        results.append({
+            "novel_id": nid,
+            "success": err is None,
+            "error": err or None,
+            "content": content if err is None else None,
+        })
+    
+    return {"results": results}
 
 
 # ── Main ──

@@ -2,12 +2,17 @@
 import json
 import logging
 from openai import OpenAI
+from .styles import get_style
 
 log = logging.getLogger(__name__)
 
 PLANNER_SYSTEM = """你是一位资深的小说策划编辑，专精于网文和类型小说的世界观搭建、角色设计和大纲规划。
 
 你的任务是根据用户提供的创意，生成结构化的设定文档。你必须严格按照 JSON 格式输出。
+
+## 目标风格
+
+{style_guide}
 
 ## 输出要求
 
@@ -28,10 +33,13 @@ PLANNER_SYSTEM = """你是一位资深的小说策划编辑，专精于网文和
 - 总字数目标
 
 ## 写作原则
-- 遵循"三章一小高潮、五章一中高潮、一卷一大高潮"的节奏
+
+{structure_hint}
+
 - 每章结尾必须有钩子（悬念/期待）
 - 角色弧线：主角必须有成长变化
 - 避免流水账，每章必须有实质性事件推进
+- 生成的大纲必须完全符合目标风格的{style_name}的结构特征
 """
 
 
@@ -47,7 +55,7 @@ class Planner:
         Args:
             creative_input: {
                 "genre": "修仙",
-                "style": "热血爽文",
+                "style": "土豆风格",
                 "inspiration": "程序员穿越修真界，用代码重构修仙体系",
                 "target_words": 1000000
             }
@@ -55,15 +63,33 @@ class Planner:
             structured plan dict
         """
         genre = creative_input.get("genre", "玄幻")
-        style = creative_input.get("style", "热血爽文")
+        style_name = creative_input.get("style", "热血爽文")
         inspiration = creative_input.get("inspiration", "")
         target_words = creative_input.get("target_words", 500000)
         title = creative_input.get("title", "")
 
+        # 获取风格模板
+        style = get_style(style_name)
+        style_guide = f"""作者: {style['author']}
+文笔特征: {style['prose']}
+语气基调: {style['tone']}
+节奏控制: {style['pacing']}
+对话风格: {style['dialogue']}
+结构偏好: {style['structure']}"""
+
+        structure_hint = style.get("structure", 
+            "遵循「三章一小高潮、五章一中高潮、一卷一大高潮」的节奏")
+
+        system_prompt = PLANNER_SYSTEM.format(
+            style_guide=style_guide,
+            style_name=style['name'],
+            structure_hint=structure_hint,
+        )
+
         user_prompt = f"""请根据以下信息生成完整的创作方案。
 
 【题材】{genre}
-【风格】{style}
+【风格】{style_name}（{style['author']}）
 【核心创意】{inspiration}
 【目标字数】{target_words} 字
 {f'【书名】{title}' if title else '【书名】请根据创意自动生成一个有吸引力的书名'}
@@ -74,7 +100,7 @@ class Planner:
 {{
   "title": "书名",
   "genre": "题材",
-  "style": "风格",
+  "style": "{style_name}",
   "target_words": {target_words},
   "worldbuilding": {{
     "era": "时代背景",
@@ -129,14 +155,15 @@ class Planner:
 }}
 ```
 
-重要：确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。"""
+重要：确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。
+大纲的卷结构和节奏必须严格匹配「{style['name']}」的风格要求。"""
 
-        log.info(f"Planning novel: {genre} - {inspiration[:50]}...")
+        log.info(f"Planning novel: {genre}/{style_name} - {inspiration[:50]}...")
         
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": PLANNER_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.8,
@@ -155,6 +182,7 @@ class Planner:
                     ch["target_words"] = int(ch.get("target_words", 3000))
             plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
             plan["target_words"] = int(plan.get("target_words", 0))
+            plan["style"] = style_name  # 保存风格名
             
             plan["_meta"] = {
                 "created_at": __import__("datetime").datetime.now().isoformat(),
@@ -173,7 +201,6 @@ class Planner:
         # Remove markdown code fences
         if content.startswith("```"):
             lines = content.split("\n")
-            # Remove first line (```json) and last line (```)
             if lines[0].startswith("```"):
                 lines = lines[1:]
             if lines and lines[-1].strip() == "```":
@@ -183,7 +210,6 @@ class Planner:
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            # Try to extract JSON from between first { and last }
             start = content.find("{")
             end = content.rfind("}")
             if start >= 0 and end > start:
