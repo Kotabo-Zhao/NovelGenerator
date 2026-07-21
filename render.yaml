@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: novelgenerator
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && python api/server.py
+    envVars:
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
+        value: deepseek-chat
+      - key: HOST
+        value: 0.0.0.0

@@ -1,4 +1,4 @@
-"""NovelGenerator — FastAPI Server"""
+"""NovelGenerator — FastAPI Server (serves frontend + API)"""
 import json
 import logging
 import sys
@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, PlainTextResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 
@@ -21,7 +22,7 @@ log = logging.getLogger("api")
 app = FastAPI(title="NovelGenerator API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS.split(",") if CORS_ORIGINS != "*" else ["*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,8 +30,31 @@ app.add_middleware(
 
 engine = NovelEngine()
 
+# 前端文件目录
+WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
 
-# ── Models ──
+
+# ── Frontend Route ──
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_frontend():
+    """Serve the SPA frontend"""
+    index_path = os.path.join(WEB_DIR, "index.html")
+    if os.path.exists(index_path):
+        with open(index_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return HTMLResponse("<h1>NovelGenerator</h1><p>Frontend not found</p>", status_code=404)
+
+
+@app.get("/manifest.json")
+async def serve_manifest():
+    path = os.path.join(WEB_DIR, "manifest.json")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="application/json")
+    return {}
+
+
+# ── API Routes ──
 
 class CreateNovelRequest(BaseModel):
     genre: str = "玄幻"

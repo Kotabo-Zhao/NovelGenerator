@@ -283,7 +283,9 @@ label{display:block;font-size:13px;color:var(--text2);margin-bottom:4px}
 </div>
 
 <script>
-const API = 'http://localhost:8000';
+const API = window.location.origin;  // 部署后自动使用当前域名，本地开发用 http://localhost:8000
+// 本地开发时取消下行注释：
+// const API = 'http://localhost:8000';
 
 const { createApp, ref, reactive, computed, watch, nextTick, onMounted } = Vue;
 
