@@ -624,6 +624,8 @@ createApp({
       // 找第一个未生成章节
       let next=1; while(next<=total && done.includes(next)) next++;
       selectChapter(Math.min(next, total)); currentView.value='write';
+      // 批量范围默认从第一个未完成到最后一章
+      batchStart.value=Math.min(next, total); batchEnd.value=total;
     }
     function startWriting(title) { const n=novels.value.find(x=>x.id===title||x.title===title); if(n) openNovel(n); }
 
@@ -662,8 +664,8 @@ createApp({
 
     function cancelBatch() {
       if(abortCtrl.value){ abortCtrl.value.abort(); abortCtrl.value=null; }
-      loading.batch=false; batchStreaming.value='';
-      error.value='批量生成已中断';
+      loading.batch=false; batchStreaming.value=''; writing.done=true;
+      error.value='批量生成已中断，已生成的章节已保存';
     }
 
     async function doBatchGenerate() {
@@ -680,10 +682,33 @@ createApp({
           signal:ctrl.signal,
         });
         await readSSE(r, (evt) => {
-          if(evt.type==='progress'){ batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100); }
-          else if(evt.type==='text'){ batchStreaming.value=(batchStreaming.value+evt.content).slice(-500); }
-          else if(evt.type==='chapter_done'){ batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100); batchStreaming.value=''; loadShelf(); }
-          else if(evt.type==='chapter_failed'){ failedChapters.push(evt.chapter); batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100); batchStreaming.value=''; }
+          if(evt.type==='progress'){
+            // 开始新章节 → 重置正文预览
+            writing.chapter=evt.chapter; writing.content=''; writing.done=false;
+            batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100);
+          }
+          else if(evt.type==='text'){
+            // 流式内容同时写入正文区和预览区
+            writing.content+=evt.content;
+            batchStreaming.value=(batchStreaming.value+evt.content).slice(-300);
+            nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
+          }
+          else if(evt.type==='chapter_done'){
+            writing.done=true;
+            // 直接更新 activeNovel 状态 — 触发章节标记刷新
+            const st=activeNovel.value.state;
+            if(!st.completed_chapters) st.completed_chapters=[];
+            if(!st.completed_chapters.includes(evt.chapter)) st.completed_chapters.push(evt.chapter);
+            st.completed_chapters.sort((a,b)=>a-b);
+            st.current_chapter=Math.max(...st.completed_chapters);
+            batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
+            batchStreaming.value=''; loadShelf();
+          }
+          else if(evt.type==='chapter_failed'){
+            failedChapters.push(evt.chapter);
+            batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
+            batchStreaming.value='';
+          }
           else if(evt.type==='batch_done'){
             batchCurrent.value=end; batchProgress.value=100;
             if((evt.failed||[]).length>0) error.value=`${evt.failed.length}章失败: ${evt.failed.join(',')}`;
