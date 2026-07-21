@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0d1117">
-<title>NovelGenerator</title>
+    <meta name="theme-color" content="#0d1117">
+    <title>NovelGenerator</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/vue@3.5/dist/vue.global.prod.js"></script>
@@ -195,6 +195,53 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .form-row{grid-template-columns:1fr}
   .reading-container{max-width:100%}
 }
+
+/* ── iOS 风格 ── */
+[data-ui="ios"] {
+  --radius: 20px; --radius-sm: 16px; --radius-xs: 12px;
+  --shadow: 0 2px 8px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.06);
+  --font: -apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','PingFang SC','Helvetica Neue',sans-serif;
+}
+[data-ui="ios"] .sidebar{display:none !important}
+[data-ui="ios"] .main{max-width:100% !important;padding:24px 20px 110px !important}
+[data-ui="ios"] .bottom-nav{display:flex !important}
+[data-ui="ios"] .bottom-nav .bn-item{font-size:10px;padding:6px 4px}
+[data-ui="ios"] .bottom-nav .bn-icon{font-size:22px}
+[data-ui="ios"] .card{border-radius:20px;padding:24px;margin-bottom:16px;border:none !important;background:var(--card)}
+[data-ui="ios"] .btn{padding:10px 22px;font-size:14px;font-weight:600;border-radius:12px}
+[data-ui="ios"] .btn-sm{padding:8px 16px;font-size:13px}
+[data-ui="ios"] .btn-xs{padding:6px 12px;font-size:12px}
+[data-ui="ios"] input, [data-ui="ios"] textarea, [data-ui="ios"] select{padding:12px 16px;border-radius:12px;font-size:15px}
+[data-ui="ios"] .chapter-picker .cp-btn{min-width:40px;height:36px;border-radius:10px;font-size:13px}
+[data-ui="ios"] .chapter-content{font-size:17px;line-height:2.2}
+[data-ui="ios"] .reading-container{max-width:100% !important}
+[data-ui="ios"] .book-card{border-radius:20px}
+[data-ui="ios"] .book-cover{height:120px;border-radius:20px 20px 0 0}
+[data-ui="ios"] .style-card{border-radius:14px;padding:14px}
+[data-ui="ios"] .export-item{border-radius:16px;padding:16px 20px}
+[data-ui="ios"] .chapter-outline{border-radius:16px;padding:16px 20px}
+[data-ui="ios"] .review-section{border-radius:20px;padding:20px}
+[data-ui="ios"] .create-progress{border-radius:16px;padding:18px 22px}
+[data-ui="ios"] .batch-preview{border-radius:14px}
+[data-ui="ios"] .form-row{gap:14px}
+
+/* iOS 浅色主题 */
+[data-ui="ios"][data-theme="light"] {
+  --bg: #f2f2f7; --bg2: #ffffff; --card: #ffffff; --card-hover: #f0f0f5;
+  --text: #000000; --text2: #3c3c43; --text3: #aeaeb2;
+  --accent: #007aff; --blue: #007aff; --green: #34c759; --red: #ff3b30;
+  --border: #e5e5ea; --border-light: #f0f0f5;
+  --shadow: 0 2px 8px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+}
+
+/* iOS 深色主题 */
+[data-ui="ios"][data-theme="dark"] {
+  --bg: #000000; --bg2: #1c1c1e; --card: #1c1c1e; --card-hover: #2c2c2e;
+  --text: #ffffff; --text2: #aeaeb2; --text3: #636366;
+  --accent: #0a84ff; --blue: #0a84ff; --green: #30d158; --red: #ff453a;
+  --border: #38383a; --border-light: #2c2c2e;
+  --shadow: 0 2px 8px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.2);
+}
 </style>
 </head>
 <body>
@@ -212,7 +259,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <div class="theme-toggle" @click="toggleTheme" :title="theme==='dark'?'切换浅色':'切换深色'">
         {{ theme === 'dark' ? '☀️' : '🌙' }}
       </div>
-      v0.5 · macOS Edition
+      <div class="theme-toggle" @click="toggleUIStyle" :title="uiStyle==='macOS'?'切换iOS风格':'切换macOS风格'" style="font-size:13px">
+        {{ uiStyle === 'macOS' ? '🍎' : '📱' }}
+      </div>
+      v0.8 · macOS/iOS
     </div>
   </aside>
 
@@ -502,6 +552,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     <div class="bn-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="bn-icon">✨</span>新建</div>
     <div class="bn-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="bn-icon">✍️</span>写作</div>
     <div class="bn-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="bn-icon">↗</span>导出</div>
+    <div class="bn-item" @click="toggleTheme"><span class="bn-icon">{{ theme==='dark'?'☀️':'🌙' }}</span>主题</div>
+    <div class="bn-item" @click="toggleUIStyle"><span class="bn-icon">{{ uiStyle==='macOS'?'📱':'🍎' }}</span>风格</div>
   </nav>
 </div>
 
@@ -518,6 +570,7 @@ createApp({
     const editSaved = ref(false); const styleMode = ref('library');
     const customStyleDesc = ref(''); const styleSeeds = ref([]);
     const theme = ref(localStorage.getItem('theme') || 'dark');
+    const uiStyle = ref(localStorage.getItem('uiStyle') || 'macOS');
     const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
     const reviewFeedback = ref(''); const batchStreaming = ref('');
     const abortCtrl = ref(null);
@@ -585,17 +638,22 @@ createApp({
     }
 
     onMounted(async () => {
-      applyTheme(theme.value);
+      applyAppearance();
       await loadStyles(); await loadShelf(); await loadStyleSeeds();
     });
 
-    function applyTheme(t) {
-      document.documentElement.setAttribute('data-theme', t);
-      document.querySelector('meta[name="theme-color"]').setAttribute('content', t==='light'?'#f5f5f7':'#0d1117');
-      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]').setAttribute('content', t==='light'?'default':'black-translucent');
-      localStorage.setItem('theme', t);
+    function applyAppearance() {
+      document.documentElement.setAttribute('data-theme', theme.value);
+      document.documentElement.setAttribute('data-ui', uiStyle.value);
+      const isLight = theme.value === 'light';
+      const isIOS = uiStyle.value === 'iOS';
+      document.querySelector('meta[name="theme-color"]').setAttribute('content', isLight ? (isIOS ? '#f2f2f7' : '#f5f5f7') : (isIOS ? '#000000' : '#0d1117'));
+      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]').setAttribute('content', isLight ? 'default' : 'black-translucent');
+      localStorage.setItem('theme', theme.value);
+      localStorage.setItem('uiStyle', uiStyle.value);
     }
-    function toggleTheme() { theme.value = theme.value === 'dark' ? 'light' : 'dark'; applyTheme(theme.value); }
+    function toggleTheme() { theme.value = theme.value === 'dark' ? 'light' : 'dark'; applyAppearance(); }
+    function toggleUIStyle() { uiStyle.value = uiStyle.value === 'macOS' ? 'iOS' : 'macOS'; applyAppearance(); }
 
     async function loadStyles() { try { const r=await fetch(API+'/api/styles'); styleCategories.value=(await r.json()).categories||{}; } catch(e){} }
     async function loadShelf() { loading.shelf=true; try { novels.value=(await (await fetch(API+'/api/novels')).json()).novels||[]; } catch(e){} loading.shelf=false; }
@@ -817,8 +875,8 @@ createApp({
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
-      applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,
-      batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,
+      applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
+      batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,
       createProgress,createPhase,createPhaseLabel,reviewFeedback,doRegenerate };
   }
