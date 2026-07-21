@@ -193,6 +193,99 @@ AI_PATTERNS = [
         "pattern": r"(.{2,10})(?:说|道|问|答|喊|叫|吼|喝)(?:道|着)?(?!.{0,3}(?:。|！|？|……|\"|'|」))",
         "fix": "不要每句对话都用'XX说/道'标注。用动作和神态穿插"
     },
+
+    # ── 第5阶段: 中文小说特有问题 (来自 rn-renhua + stop-slop + humanize 9 levers) ──
+    {
+        "id": 25,
+        "name": "二元对比壳",
+        "category": "内容",
+        "pattern": r"(?:不是|并非|不在于)(?:.{0,15})(?:而是|而在于)|不只是.{0,15}(?:更是|更是……{0,5})|与其.{0,15}不如",
+        "fix": "直接陈述判断，不要用'不是A而是B'的对比结构"
+    },
+    {
+        "id": 26,
+        "name": "伪洞察标记",
+        "category": "内容",
+        "pattern": r"(?:真正的|本质上|核心在于|关键在于|说白了|归根结底|更重要的是|这背后|这说明)(?!.{0,3}(?:问题|原因|事实|情况))",
+        "fix": "删除这些提示词，直接进入判断或事实"
+    },
+    {
+        "id": 27,
+        "name": "讲义冒号",
+        "category": "风格",
+        "pattern": r"(?:原因(?:很简单|是)|结论是|重点是|分成.{1,4}类)[：:]",
+        "fix": "改成普通叙述句，不用冒号引出答案"
+    },
+    {
+        "id": 28,
+        "name": "空洞金句结尾",
+        "category": "风格",
+        "pattern": r"(?:这不仅仅是.{0,10}更是|这标志.{0,10}里程碑|真正的.{0,5}从来都不|在这一刻.{0,10}(?:明白|懂得|知道))",
+        "fix": "结尾用具体动作或悬念收束，不要万能金句"
+    },
+    {
+        "id": 29,
+        "name": "抽象压力叙事",
+        "category": "内容",
+        "pattern": r"(?:差距.{0,6}(?:拉开|扩大)|成为.{0,4}分水岭|时代.{0,4}(?:变|不同)|格局.{0,4}(?:改变|重塑))",
+        "fix": "不写空泛的威胁描述。写具体的失败场景或损失"
+    },
+    {
+        "id": 30,
+        "name": "AI高频过渡词",
+        "category": "语言",
+        "pattern": r"(?:与此同时|在这个过程中|此外|值得一提的是|总的来看|随着.{0,8}的发展|值得注意的是|从某种意义上说|在当今时代)",
+        "fix": "删除这些过渡词。分段直接开始新内容"
+    },
+    {
+        "id": 31,
+        "name": "模糊感悟句",
+        "category": "语言",
+        "pattern": r"(?:似乎|仿佛|或许|大概|也许).{0,10}(?:明白了|懂得了|知道|感受到|意识到|触动了)",
+        "fix": "用具体动作代替模糊感悟。'他顿了顿'比'他仿佛明白了'有力"
+    },
+    {
+        "id": 32,
+        "name": "破折号过量",
+        "category": "风格",
+        "pattern": r"—",
+        "fix": "每500字最多一个破折号。多余的全部改为句号或逗号"
+    },
+    {
+        "id": 33,
+        "name": "三段式执念",
+        "category": "风格",
+        "pattern": r"^(.+)(?:。|！|？|……)\n\n(.+)(?:。|！|？|……)\n\n(.+)(?:。|！|？|……)$",
+        "fix": "段落长度要有变化。偶尔用单句成段打破节奏"
+    },
+    {
+        "id": 34,
+        "name": "的的不绝",
+        "category": "语言",
+        "pattern": r"(?:的.{0,8}){4,}",
+        "fix": "减少'的'字密度。长定语拆成短句"
+    },
+    {
+        "id": 35,
+        "name": "说教腔",
+        "category": "交流",
+        "pattern": r"(?:你要知道|要记住|别忘了|记住|你要明白|必须承认|不得不承认)",
+        "fix": "不要对读者说教。用人物内心独白或行动展示"
+    },
+    {
+        "id": 36,
+        "name": "每个段落感叹号",
+        "category": "风格",
+        "pattern": r"！.{0,50}\n\n.{0,50}！",
+        "fix": "感叹号是调料不是主菜。克制使用，让动作和沉默说话"
+    },
+    {
+        "id": 37,
+        "name": "AI句式平行",
+        "category": "语言",
+        "pattern": r"(.{5,15})(?:的|地|得)(.{5,15})(?:，{0,2}|、)(.{5,15})(?:的|地|得)(.{5,15})",
+        "fix": "打破平行句式。长短交错，不要两句一样节奏"
+    },
 ]
 
 
@@ -218,6 +311,16 @@ def detect_ai_patterns(text: str) -> list:
     return results
 
 
+def _get_fix(pattern: dict) -> str:
+    """获取修复建议，兼容 AI_PATTERNS 内外"""
+    if pattern["id"] == 99:
+        return f"句长单调: {pattern['examples'][0] if pattern.get('examples') else '句长变化不够大'}。让短句更短(≤8字)，长句更长，交替出现"
+    idx = pattern["id"] - 1
+    if 0 <= idx < len(AI_PATTERNS):
+        return AI_PATTERNS[idx]["fix"]
+    return f"减少{pattern['name']}的出现"
+
+
 def build_humanizer_prompt(detected: list) -> str:
     """根据检测结果构建 Humanizer 润色提示"""
     if not detected:
@@ -230,7 +333,7 @@ def build_humanizer_prompt(detected: list) -> str:
 
     # 取前5个最严重的模式的具体 fix 建议
     fixes = "\n".join(
-        f"{i+1}. {AI_PATTERNS[p['id']-1]['fix']}"
+        f"{i+1}. {_get_fix(p)}"
         for i, p in enumerate(detected[:5])
     )
 
@@ -261,16 +364,32 @@ def humanize_text(text: str) -> dict:
     """分析文本并生成 Humanizer 提示
     
     Returns:
-        {"detected": [...], "prompt": "...", "score": 0-100 (越低越好)}
+        {"detected": [...], "prompt": "...", "score": 0-100 (越低AI味越重)}
     """
     detected = detect_ai_patterns(text)
+    
+    # ── 句长分析 (burstiness) ──
+    burst_issues = _analyze_burstiness(text)
+    if burst_issues["violations"]:
+        detected.append({
+            "id": 99,
+            "name": "句长单调",
+            "category": "风格",
+            "count": burst_issues["violations"],
+            "examples": burst_issues["examples"][:3],
+        })
+    
     total_issues = sum(p["count"] for p in detected)
     
-    # 评分: 100 = 完全干净, 0 = 重灾区
-    # 按万分比计算: 每100字出现1个问题扣1分，封顶100
+    # 综合评分: pattern detections + burstiness
     word_count = len(text)
     issue_density = total_issues / max(word_count, 1) * 100
     score = max(0, 100 - int(issue_density * 20))
+    # 破折号惩罚: 每500字超过1个扣3分
+    dash_count = text.count("—")
+    dash_budget = max(1, word_count // 500)
+    if dash_count > dash_budget:
+        score = max(0, score - (dash_count - dash_budget) * 2)
     
     return {
         "detected": detected,
@@ -278,4 +397,45 @@ def humanize_text(text: str) -> dict:
         "score": score,
         "total_issues": total_issues,
         "word_count": word_count,
+        "burstiness": burst_issues,
     }
+
+
+def _analyze_burstiness(text: str) -> dict:
+    """分析句长变化（突发性检查）
+    
+    每150字至少一个短句(≤8字)
+    连续三句长度差不超过6字
+    """
+    # 按句号/感叹号/问号分句
+    sentences = re.split(r'[。！？……\n]', text)
+    sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 1]
+    
+    violations = 0
+    examples = []
+    
+    # 检查1: 连续三句长度过于接近
+    for i in range(len(sentences) - 2):
+        s1, s2, s3 = len(sentences[i]), len(sentences[i+1]), len(sentences[i+2])
+        if abs(s1 - s2) <= 3 and abs(s2 - s3) <= 3:
+            violations += 1
+            if len(examples) < 3:
+                examples.append(f"连续三句长度相近({s1},{s2},{s3}字)")
+    
+    # 检查2: 每150字是否有短句
+    char_count = 0
+    has_short = False
+    block_start = 0
+    for s in sentences:
+        char_count += len(s)
+        if len(s) <= 8:
+            has_short = True
+        if char_count >= 150:
+            if not has_short:
+                violations += 1
+                if len(examples) < 3:
+                    examples.append(f"150字内无短句(≤8字)")
+            char_count = 0
+            has_short = False
+    
+    return {"violations": violations, "examples": examples}
