@@ -124,8 +124,17 @@ class NovelEngine:
             # 找到本章大纲
             chapter_outline = self._find_chapter_outline(plan, chapter_num)
             if not chapter_outline:
-                yield {"type": "error", "message": f"第 {chapter_num} 章大纲不存在"}
-                return
+                # 兜底：构造一个基础大纲（防止 DeepSeek JSON 结构异常导致全流程挂掉）
+                log.warning(f"Chapter {chapter_num} outline not found in plan, using fallback")
+                chapter_outline = {
+                    "number": chapter_num,
+                    "title": f"第{chapter_num}章",
+                    "summary": f"继续推进主线剧情发展",
+                    "emotion_curve": "平稳→紧张→悬念",
+                    "characters": ["主角"],
+                    "hook": "留下悬念引导下一章",
+                    "target_words": config.DEFAULT_CHAPTER_WORDS,
+                }
 
             # 组装上下文
             context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
@@ -165,11 +174,11 @@ class NovelEngine:
             yield {"type": "error", "message": str(e)}
 
     def _find_chapter_outline(self, plan: dict, chapter_num: int) -> Optional[dict]:
-        """在大纲中查找指定章节"""
+        """在大纲中查找指定章节（兼容字符串/整数章节号）"""
         volumes = plan.get("outline", {}).get("volumes", [])
         for vol in volumes:
             for ch in vol.get("chapters", []):
-                if ch.get("number") == chapter_num:
+                if int(ch.get("number", 0)) == chapter_num:
                     return ch
         return None
 

@@ -2,7 +2,6 @@
 import json
 import logging
 from openai import OpenAI
-from .memory import NovelMemory
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +41,6 @@ class Planner:
     def __init__(self, client: OpenAI, model: str):
         self.client = client
         self.model = model
-        self.memory = NovelMemory()
 
     def plan(self, creative_input: dict) -> dict:
         """
@@ -149,6 +147,15 @@ class Planner:
         plan = self._parse_json(content)
         
         if plan:
+            # 标准化章节号（DeepSeek 可能返回字符串 "1" 而非整数 1）
+            for vol in plan.get("outline", {}).get("volumes", []):
+                vol["number"] = int(vol.get("number", 1))
+                for ch in vol.get("chapters", []):
+                    ch["number"] = int(ch.get("number", 1))
+                    ch["target_words"] = int(ch.get("target_words", 3000))
+            plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
+            plan["target_words"] = int(plan.get("target_words", 0))
+            
             plan["_meta"] = {
                 "created_at": __import__("datetime").datetime.now().isoformat(),
                 "model": self.model,
