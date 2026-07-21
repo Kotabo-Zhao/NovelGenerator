@@ -154,7 +154,7 @@ class Planner:
 ```
 
 重要：确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。
-大纲的卷结构和节奏必须严格匹配「{style['name']}」的风格要求。"""
+大纲的卷结构和节奏必须严格匹配「{style_config['name']}」的风格要求。"""
 
         log.info(f"Planning novel: {genre}/{style_name} - {inspiration[:50]}...")
         
