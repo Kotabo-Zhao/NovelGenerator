@@ -109,110 +109,104 @@ class Writer:
         
         log.info(f"Draft done: {len(draft)} chars")
 
+        final_text = draft  # default: use draft as-is
+        
         # ── 第二遍: 风格打磨 ──
-        # 只对较长内容做打磨（<500字跳过，自定义风格跳过）
-        if len(draft) < 500 or style_config.get("is_custom"):
+        polish_skipped = len(draft) < 500 or style_config.get("is_custom")
+        if polish_skipped:
             log.info("Skipping polish pass (too short or custom style)")
-            return
-
-        log.info(f"Pass 2/2: style polish")
-        
-        polish_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
-        
-        polish_stream = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": polish_prompt},
-                {"role": "user", "content": f"草稿如下：\n\n{draft}"},
-            ],
-            temperature=0.6,  # 低温保证一致性
-            max_tokens=target_words * 3,
-            stream=True,
-        )
-        
-        yield "\n\n"  # 分隔符（前端可以忽略）
-        
-        polished = ""
-        for chunk in polish_stream:
-            delta = chunk.choices[0].delta
-            if delta.content:
-                polished += delta.content
-        
-        log.info(f"Polish done: {len(polished)} chars")
-        
-        # 产出打磨后的最终版
-        if polished and len(polished) > len(draft) * 0.5:
-            final_text = polished
-            log.info(f"Polish done: {len(polished)} chars")
         else:
-            log.warning(f"Polish result too short ({len(polished)} chars), using draft")
-            final_text = draft
+            try:
+                log.info(f"Pass 2/2: style polish")
+                polish_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
+                
+                polish_stream = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": polish_prompt},
+                        {"role": "user", "content": f"草稿如下：\n\n{draft}"},
+                    ],
+                    temperature=0.6,
+                    max_tokens=target_words * 3,
+                    stream=True,
+                )
+                
+                polished = ""
+                for chunk in polish_stream:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        polished += delta.content
+                
+                if polished and len(polished) > len(draft) * 0.5:
+                    final_text = polished
+                    log.info(f"Polish done: {len(polished)} chars")
+                else:
+                    log.warning(f"Polish result too short ({len(polished)} chars), using draft")
+            except Exception as e:
+                log.warning(f"Polish pass failed: {e}, using draft")
 
         # ── Humanizer 检测 ──
-        h_result = humanize_text(final_text)
-        log.info(f"Humanizer score: {h_result['score']}/100 ({h_result['total_issues']} issues in {h_result['word_count']} chars)")
+        try:
+            h_result = humanize_text(final_text)
+            log.info(f"Humanizer score: {h_result['score']}/100 ({h_result['total_issues']} issues)")
+            
+            if h_result["score"] < 70 and h_result["total_issues"] > 3:
+                log.info(f"Pass 3/3: Humanizer rewrite (score={h_result['score']})")
+                h_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
+                h_prompt += "\n\n" + build_humanizer_prompt(h_result["detected"])
+                
+                h_stream = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": h_prompt},
+                        {"role": "user", "content": f"需要Humanizer润色的文本：\n\n{final_text}"},
+                    ],
+                    temperature=0.5,
+                    max_tokens=target_words * 3,
+                    stream=True,
+                )
+                
+                humanized = ""
+                for chunk in h_stream:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        humanized += delta.content
+                
+                if len(humanized) > len(final_text) * 0.6:
+                    final_text = humanized
+                    log.info(f"Humanizer done: {len(humanized)} chars")
+        except Exception as e:
+            log.warning(f"Humanizer pass failed: {e}, using current text")
 
-        # 如果 AI 痕迹过多（<70分），再做一轮 Humanizer 重写
-        if h_result["score"] < 70 and h_result["total_issues"] > 3:
-            log.info(f"Pass 3/3: Humanizer rewrite (score={h_result['score']})")
-            
-            h_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
-            h_prompt += "\n\n" + build_humanizer_prompt(h_result["detected"])
-            
-            h_stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": h_prompt},
-                    {"role": "user", "content": f"需要Humanizer润色的文本：\n\n{final_text}"},
-                ],
-                temperature=0.5,
-                max_tokens=target_words * 3,
-                stream=True,
-            )
-            
-            humanized = ""
-            for chunk in h_stream:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    humanized += delta.content
-            
-            # 截断检测
-            if _is_truncated(humanized, target_words):
-                log.warning("Humanizer output truncated, using pre-humanizer version")
-            elif len(humanized) > len(final_text) * 0.6:
-                final_text = humanized
-                yield humanized
-                log.info(f"Humanizer done: {len(humanized)} chars")
-        
         # ── 截断检测 ──
-        is_trunc, reason = _check_truncation(final_text, target_words)
-        if is_trunc:
-            log.warning(f"Truncation detected: {reason}. Retrying once...")
-            # 重试一次
-            retry_text = ""
-            retry_stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt + f"\n\n⚠️ 注意：上次生成被截断了（{reason}）。请确保本次完整生成，在结尾处自然地收束本章。"},
-                    {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
-                ],
-                temperature=0.8,
-                max_tokens=target_words * 3,
-                stream=True,
-            )
-            for chunk in retry_stream:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    retry_text += delta.content
-            
-            is_trunc2, reason2 = _check_truncation(retry_text, target_words)
-            if not is_trunc2 and len(retry_text) > len(final_text) * 0.5:
-                final_text = retry_text
-                yield "\n\n"
-                yield retry_text
-                log.info(f"Retry OK: {len(retry_text)} chars")
-            else:
-                log.warning(f"Retry also truncated: {reason2}. Using best available.")
+        try:
+            is_trunc, reason = _check_truncation(final_text, target_words)
+            if is_trunc:
+                log.warning(f"Truncation detected: {reason}. Retrying once...")
+                retry_text = ""
+                retry_stream = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt + f"\n\n⚠️ 注意：上次生成被截断了（{reason}）。请确保本次完整生成。"},
+                        {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
+                    ],
+                    temperature=0.8,
+                    max_tokens=target_words * 3,
+                    stream=True,
+                )
+                for chunk in retry_stream:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        retry_text += delta.content
+                
+                is_trunc2, reason2 = _check_truncation(retry_text, target_words)
+                if not is_trunc2 and len(retry_text) > len(final_text) * 0.5:
+                    final_text = retry_text
+                    log.info(f"Retry OK: {len(retry_text)} chars")
+                else:
+                    log.warning(f"Retry also truncated or short, using best available")
+        except Exception as e:
+            log.warning(f"Truncation check failed: {e}, using current text")
 
 
 def _check_truncation(text: str, target_words: int) -> tuple:

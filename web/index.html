@@ -21,6 +21,13 @@
   --font: -apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;
   --font-mono: 'SF Mono','JetBrains Mono','Fira Code','Consolas',monospace;
 }
+[data-theme="light"] {
+  --bg: #f5f5f7; --bg2: #ffffff; --card: #ffffff; --card-hover: #f0f0f5;
+  --text: #1d1d1f; --text2: #6e6e73; --text3: #aeaeb2;
+  --accent: #e07030; --blue: #0071e3; --green: #248a3d; --red: #e0323a;
+  --border: #d2d2d7; --border-light: #e5e5ea;
+  --shadow: 0 1px 3px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+}
 *{margin:0;padding:0;box-sizing:border-box}
 html{font-size:15px}
 body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100dvh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
@@ -38,7 +45,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:1
 .sidebar-nav .nav-item.active{background:var(--card);color:var(--accent)}
 .sidebar-nav .nav-icon{font-size:17px;width:22px;text-align:center;opacity:.7}
 .sidebar-nav .nav-item.active .nav-icon{opacity:1}
-.sidebar-footer{padding:16px 20px 8px;font-size:11px;color:var(--text3)}
+.sidebar-footer{padding:16px 20px 8px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:8px}
+.theme-toggle{width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font-size:15px;transition:all .15s;border:1px solid var(--border)}.theme-toggle:hover{background:var(--card);border-color:var(--text3)}
 
 /* ── Main ── */
 .main{flex:1;max-width:860px;padding:32px 40px 80px;min-width:0}
@@ -175,7 +183,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <div class="nav-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="nav-icon">✍️</span>写作</div>
       <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="nav-icon">↗</span>导出</div>
     </nav>
-    <div class="sidebar-footer">v0.5 · macOS Edition</div>
+    <div class="sidebar-footer">
+      <div class="theme-toggle" @click="toggleTheme" :title="theme==='dark'?'切换浅色':'切换深色'">
+        {{ theme === 'dark' ? '☀️' : '🌙' }}
+      </div>
+      v0.5 · macOS Edition
+    </div>
   </aside>
 
   <!-- Main Content -->
@@ -428,6 +441,7 @@ createApp({
     const styleCategories = ref({}); const exportSelected = reactive({});
     const editSaved = ref(false); const styleMode = ref('library');
     const customStyleDesc = ref(''); const styleSeeds = ref([]);
+    const theme = ref(localStorage.getItem('theme') || 'dark');
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'' });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false });
@@ -452,7 +466,18 @@ createApp({
       return `linear-gradient(135deg,${a},${b})`;
     }
 
-    onMounted(async () => { await loadStyles(); await loadShelf(); await loadStyleSeeds(); });
+    onMounted(async () => {
+      applyTheme(theme.value);
+      await loadStyles(); await loadShelf(); await loadStyleSeeds();
+    });
+
+    function applyTheme(t) {
+      document.documentElement.setAttribute('data-theme', t);
+      document.querySelector('meta[name="theme-color"]').setAttribute('content', t==='light'?'#f5f5f7':'#0d1117');
+      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]').setAttribute('content', t==='light'?'default':'black-translucent');
+      localStorage.setItem('theme', t);
+    }
+    function toggleTheme() { theme.value = theme.value === 'dark' ? 'light' : 'dark'; applyTheme(theme.value); }
 
     async function loadStyles() { try { const r=await fetch(API+'/api/styles'); styleCategories.value=(await r.json()).categories||{}; } catch(e){} }
     async function loadShelf() { loading.shelf=true; try { novels.value=(await (await fetch(API+'/api/novels')).json()).novels||[]; } catch(e){} loading.shelf=false; }
@@ -582,7 +607,7 @@ createApp({
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
-      applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed };
+      applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme };
   }
 }).mount('#app');
 </script>
