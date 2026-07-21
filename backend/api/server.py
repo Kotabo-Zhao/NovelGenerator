@@ -24,6 +24,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 from core.engine import NovelEngine
+from core.pacing_checker import PacingChecker
+from core.style_fingerprint import StyleFingerprint
 from config import CORS_ORIGINS, HOST, PORT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -246,9 +248,11 @@ async def generate_batch(novel_id: str, req: dict):
 
 @app.get("/api/novels/{novel_id}/export")
 async def export_novel(novel_id: str, fmt: str = "txt"):
-    """导出单本小说 (txt / pdf)"""
+    """导出单本小说 (txt / pdf / epub)"""
     if fmt == "pdf":
         return await export_novel_pdf(novel_id)
+    if fmt == "epub":
+        return await export_novel_epub(novel_id)
     
     content, err = engine.export_novel(novel_id, "txt")
     if err:
@@ -337,6 +341,19 @@ async def export_novel_pdf(novel_id: str):
 from fastapi.responses import Response
 
 
+async def export_novel_epub(novel_id: str):
+    """导出为 EPUB"""
+    content, err = engine.export_novel(novel_id, "epub")
+    if err:
+        raise HTTPException(status_code=404, detail=err)
+    
+    return Response(
+        content=content,
+        media_type="application/epub+zip",
+        headers={"Content-Disposition": f"attachment; filename={novel_id}.epub"}
+    )
+
+
 @app.post("/api/novels/export/batch")
 async def batch_export(req: dict = None):
     """批量导出所有小说"""
@@ -361,6 +378,58 @@ async def batch_export(req: dict = None):
         })
     
     return {"results": results}
+
+
+# ── Pacing Check ──
+
+@app.post("/api/novels/{novel_id}/pacing-check/{chapter_num}")
+async def check_pacing(novel_id: str, chapter_num: int):
+    """检查单章节奏质量"""
+    content = engine.get_chapter(novel_id, chapter_num)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"第{chapter_num}章不存在")
+    
+    result = engine.pacing_checker.analyze(content, chapter_num)
+    return {"result": result}
+
+
+# ── Style Fingerprint ──
+
+fingerprinter = StyleFingerprint()
+
+@app.post("/api/styles/fingerprint")
+async def style_fingerprint(req: dict):
+    """分析文本的风格指纹（5维DNA）"""
+    text = req.get("text", "")
+    if not text or len(text) < 500:
+        raise HTTPException(status_code=400, detail="至少需要500字")
+    
+    fp = fingerprinter.analyze(text)
+    return {"fingerprint": fp}
+
+
+@app.post("/api/styles/compare")
+async def compare_styles(req: dict):
+    """对比两个文本的风格差异"""
+    text_a = req.get("text_a", "")
+    text_b = req.get("text_b", "")
+    if not text_a or not text_b:
+        raise HTTPException(status_code=400, detail="需要两个文本")
+    
+    comparison = fingerprinter.compare(text_a, text_b)
+    return {"comparison": comparison}
+
+
+@app.get("/api/novels/{novel_id}/character-bible")
+async def get_character_bible(novel_id: str):
+    """获取人物宝典"""
+    bible_path = os.path.join(engine.memory.get_novel_dir(novel_id), "character_bible.json")
+    if not os.path.exists(bible_path):
+        raise HTTPException(status_code=404, detail="人物宝典尚未生成")
+    
+    with open(bible_path, "r", encoding="utf-8") as f:
+        bible = json.load(f)
+    return {"bible": bible}
 
 
 # ── Main ──

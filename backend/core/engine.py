@@ -18,12 +18,13 @@ from .memory import NovelMemory
 from .embellisher import Embellisher
 from .foreshadowing_designer import ForeshadowingDesigner
 from .context_updater import ContextUpdater
+from .pacing_checker import PacingChecker
 
 log = logging.getLogger(__name__)
 
 
 class NovelEngine:
-    """小说创作引擎 — 多智能体架构: Planner→Writer→Embellisher→ContextUpdater"""
+    """小说创作引擎 — 多智能体架构: Planner→Writer→Embellisher→ContextUpdater→PacingChecker"""
 
     def __init__(self):
         self.client = OpenAI(
@@ -36,6 +37,7 @@ class NovelEngine:
         self.embellisher = Embellisher(self.client, self.model)
         self.fd_designer = ForeshadowingDesigner(self.client, self.model)
         self.context_updater = ContextUpdater(self.client, self.model)
+        self.pacing_checker = PacingChecker(self.client, self.model)
         self.memory = NovelMemory(config.NOVELS_DIR)
         os.makedirs(config.NOVELS_DIR, exist_ok=True)
 
@@ -59,6 +61,9 @@ class NovelEngine:
         
         with open(os.path.join(novel_dir, "plan.json"), "w", encoding="utf-8") as f:
             json.dump(plan, f, ensure_ascii=False, indent=2)
+        
+        # 生成人物宝典 — 独立的角色wiki文件
+        self._save_character_bible(plan, novel_dir)
         
         # 初始化状态
         total_chapters = plan.get("outline", {}).get("total_chapters", 0)
@@ -223,6 +228,24 @@ class NovelEngine:
             self.memory.save_novel_state(novel_id, state)
 
             log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
+
+            # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
+            try:
+                novel_dir = self.memory.get_novel_dir(novel_id)
+                state_path = os.path.join(novel_dir, "global_state.json")
+                current_state = {}
+                if os.path.exists(state_path):
+                    with open(state_path, "r", encoding="utf-8") as f:
+                        current_state = json.load(f)
+                
+                new_state = self.context_updater.update(novel_id, chapter_num, full_text, current_state)
+                with open(state_path, "w", encoding="utf-8") as f:
+                    json.dump(new_state, f, ensure_ascii=False, indent=2)
+                log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
+            except Exception as e:
+                log.warning(f"ContextUpdater skipped: {e}")
+            
+            yield {"type": "text", "content": "\n\n"}
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num}
 
         except Exception as e:
@@ -238,13 +261,73 @@ class NovelEngine:
                     return ch
         return None
 
+    def _save_character_bible(self, plan: dict, novel_dir: str):
+        """生成人物宝典 — 独立的角色wiki文件"""
+        chars = plan.get("characters", {})
+        protagonist = chars.get("protagonist", {})
+        supporting = chars.get("supporting", [])
+        antagonist = chars.get("antagonist", [])
+        
+        bible = {
+            "novel_title": plan.get("title", ""),
+            "generated_at": plan.get("_meta", {}).get("created_at", ""),
+            "bible_summary": chars.get("bible_summary", ""),
+            "protagonist": self._format_char_entry(protagonist, "主角"),
+            "supporting": [self._format_char_entry(c, f"配角{i+1}") for i, c in enumerate(supporting)],
+            "antagonist": [self._format_char_entry(c, f"反派{i+1}") for i, c in enumerate(antagonist)],
+            "relationship_map": self._build_relationship_map(protagonist, supporting, antagonist),
+        }
+        
+        bible_path = os.path.join(novel_dir, "character_bible.json")
+        with open(bible_path, "w", encoding="utf-8") as f:
+            json.dump(bible, f, ensure_ascii=False, indent=2)
+        
+        log.info(f"Character bible saved: {len(supporting)} supporting + {len(antagonist)} antagonist")
+    
+    def _format_char_entry(self, char: dict, default_role: str) -> dict:
+        """格式化单个人物条目"""
+        return {
+            "name": char.get("name", ""),
+            "role": char.get("role", default_role),
+            "identity": char.get("identity", ""),
+            "personality": char.get("personality", ""),
+            "motivation": char.get("motivation", ""),
+            "secret": char.get("secret", ""),
+            "arc": char.get("arc", char.get("mini_arc", "")),
+            "catchphrase": char.get("catchphrase", ""),
+            "meaning": char.get("meaning", char.get("relation", "")),
+        }
+    
+    def _build_relationship_map(self, protagonist: dict, supporting: list, antagonist: list) -> list:
+        """构建角色关系图"""
+        edges = []
+        pname = protagonist.get("name", "主角")
+        
+        # 主角 → 配角
+        for c in supporting:
+            edges.append({
+                "from": pname,
+                "to": c.get("name", ""),
+                "type": c.get("meaning", c.get("relation", "")),
+            })
+        
+        # 主角 → 反派
+        for c in antagonist:
+            edges.append({
+                "from": pname,
+                "to": c.get("name", ""),
+                "type": "对抗: " + c.get("conflict", ""),
+            })
+        
+        return edges
+
     # ── Phase 3: 导出 ──
 
     def export_novel(self, novel_id: str, fmt: str = "txt") -> tuple:
         """导出小说全文
         
         Returns:
-            (content: str|None, error: str|None)
+            (content: str|bytes|None, error: str|None)
         """
         plan = self.get_novel(novel_id)
         if not plan:
@@ -263,6 +346,9 @@ class NovelEngine:
         if not chapters:
             return None, "暂无章节内容，请先生成章节"
 
+        if fmt == "epub":
+            return self._export_epub(title, plan, chapters_dir, chapters)
+
         if fmt == "txt":
             lines = [f"{title}\n{'=' * 40}\n"]
             for ch_file in chapters:
@@ -272,3 +358,64 @@ class NovelEngine:
             return "\n".join(lines), None
 
         return None, f"暂不支持 {fmt} 格式"
+
+    def _export_epub(self, title: str, plan: dict, chapters_dir: str, chapters: list) -> tuple:
+        """生成 EPUB 电子书"""
+        try:
+            from ebooklib import epub
+        except ImportError:
+            return None, "EPUB 导出需要 ebooklib: pip install ebooklib"
+        
+        book = epub.EpubBook()
+        book.set_identifier(f"novelgen-{title}")
+        book.set_title(title)
+        book.set_language("zh-CN")
+        
+        author = plan.get("characters", {}).get("protagonist", {}).get("name", "AI Writer")
+        book.add_author(author)
+        
+        # 样式
+        style = epub.EpubItem(
+            uid="style",
+            file_name="style/default.css",
+            media_type="text/css",
+            content="body{font-family:serif;line-height:1.8;margin:2em}p{text-indent:2em;margin:.5em 0}h1{text-align:center;margin:2em 0}h2{font-size:1.2em;margin:1em 0}",
+        )
+        book.add_item(style)
+        
+        spine = ["nav"]
+        toc = []
+        
+        # 书名页
+        intro = epub.EpubHtml(title="书名页", file_name="intro.xhtml", lang="zh-CN")
+        intro.content = f"""<html><head><link rel="stylesheet" href="style/default.css"/></head>
+        <body><h1>{title}</h1>
+        <p style="text-align:center">题材: {plan.get('genre','')} | 风格: {plan.get('style','')}</p>
+        </body></html>"""
+        book.add_item(intro)
+        spine.append(intro)
+        toc.append(epub.Link("intro.xhtml", "书名页", "intro"))
+        
+        # 逐章
+        for ch_file in chapters:
+            with open(os.path.join(chapters_dir, ch_file), "r", encoding="utf-8") as f:
+                content = f.read()
+            ch_num = int(ch_file.split("_")[1].split(".")[0]) if "_" in ch_file else 0
+            ch_title = f"第{ch_num}章"
+            
+            c = epub.EpubHtml(title=ch_title, file_name=f"ch{ch_num:04d}.xhtml", lang="zh-CN")
+            html_content = content.replace("\n\n", "</p><p>").replace("\n", "<br/>")
+            c.content = f'<html><head><link rel="stylesheet" href="style/default.css"/></head><body><p>{html_content}</p></body></html>'
+            book.add_item(c)
+            spine.append(c)
+            toc.append(epub.Link(f"ch{ch_num:04d}.xhtml", ch_title, f"ch{ch_num}"))
+        
+        book.toc = toc
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        book.spine = spine
+        
+        import io
+        buf = io.BytesIO()
+        epub.write_epub(buf, book)
+        return buf.getvalue(), None
