@@ -431,6 +431,25 @@ async def batch_export(req: dict = None):
     return {"results": results}
 
 
+@app.post("/api/novels/{novel_id}/regenerate-outline")
+async def regenerate_outline(novel_id: str, req: dict):
+    """根据修改意见重新生成大纲（保留世界观和角色）"""
+    feedback = req.get("feedback", "")
+    if not feedback.strip():
+        raise HTTPException(status_code=400, detail="请输入修改意见")
+    
+    async def event_stream():
+        try:
+            async for event in engine.regenerate_outline_stream(novel_id, feedback):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            log.exception("regenerate_outline crashed")
+            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 # ── Pacing Check ──
 
 @app.post("/api/novels/{novel_id}/pacing-check/{chapter_num}")

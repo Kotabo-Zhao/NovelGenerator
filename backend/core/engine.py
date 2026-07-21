@@ -116,6 +116,60 @@ class NovelEngine:
             
             yield event
 
+    async def regenerate_outline_stream(self, novel_id: str, feedback: str) -> AsyncIterator[dict]:
+        """根据修改意见重新生成大纲（保留世界观和角色）"""
+        plan = self.get_novel(novel_id)
+        if not plan:
+            yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+            return
+
+        genre = plan.get("genre", "玄幻")
+        style_name = plan.get("style", "热血爽文")
+        
+        yield {"type": "progress", "phase": "outline", "pct": 5, "label": "分析修改意见…"}
+        
+        outline_prompt = f"""你是小说大纲规划师。根据以下设定和用户修改意见，重新生成章节大纲。
+
+已有世界观: {json.dumps(plan.get('worldbuilding',{}), ensure_ascii=False)[:400]}
+已有主角: {json.dumps(plan.get('characters',{}).get('protagonist',{}).get('name',''), ensure_ascii=False)}
+题材: {genre}  风格: {style_name}  目标: {plan.get('target_words',0)}字
+
+用户修改意见: {feedback}
+
+【重要】只修改大纲，保留世界观和角色不变。只输出JSON，且只包含"outline"字段。每章摘要控制在30字内。
+```json
+{{"outline":{{"volumes":[{{"number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"","chapters":[{{"number":1,"title":"","summary":"","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":3000}}]}}],"total_chapters":0,"three_act_map":"","rhythm_notes":""}}}}
+```"""
+        
+        yield {"type": "progress", "phase": "outline", "pct": 30, "label": "重新规划章节…"}
+        
+        outline = await self.planner._call_llm(outline_prompt, "outline", max_tokens=16384)
+        if not outline:
+            yield {"type": "error", "message": "大纲生成失败"}
+            return
+        
+        yield {"type": "progress", "phase": "outline", "pct": 80, "label": "保存新大纲…"}
+        
+        # 更新 plan
+        plan["outline"] = outline.get("outline", {})
+        plan["_meta"]["regenerated_at"] = __import__("datetime").datetime.now().isoformat()
+        plan["_meta"]["regeneration_feedback"] = feedback
+        
+        novel_dir = self.memory.get_novel_dir(novel_id)
+        atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
+        
+        # 重置状态
+        self.memory.save_novel_state(novel_id, {
+            "current_chapter": 0,
+            "total_chapters": plan["outline"].get("total_chapters", 0),
+            "total_words": 0,
+            "status": "outline_regenerated",
+            "created_at": plan.get("_meta", {}).get("created_at", ""),
+        })
+        
+        yield {"type": "progress", "phase": "done", "pct": 100, "label": "大纲已更新！"}
+        yield {"type": "done", "plan": plan}
+
     def get_novel(self, novel_id: str) -> Optional[dict]:
         """获取已有小说的规划数据"""
         plan_path = os.path.join(self.memory.get_novel_dir(novel_id), "plan.json")
