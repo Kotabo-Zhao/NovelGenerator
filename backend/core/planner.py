@@ -535,19 +535,25 @@ class Planner:
     
     @staticmethod
     def _try_parse(json_str: str) -> dict:
-        """Try to parse JSON with cleanup"""
+        """Try to parse JSON with cleanup (protected against recursion)"""
         import re
-        # Remove trailing commas (common LLM mistake)
-        cleaned = re.sub(r',(\s*[}\]])', r'\1', json_str)
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            pass
         
-        # Try unescaped line breaks in strings (another common LLM mistake)
+        # Skip regex for very large strings (>50K chars)
+        if len(json_str) < 50000:
+            try:
+                # Remove trailing commas (common LLM mistake)
+                cleaned = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    pass
+            except RecursionError:
+                log.warning("Regex recursion avoided, using bare parse")
+        
+        # Bare parse attempt
         try:
             return json.loads(json_str)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             pass
         
         return None

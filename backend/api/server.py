@@ -4,6 +4,9 @@ import logging
 import sys
 import os
 
+# 提高递归深度限制，防止大型 JSON 解析时触发 RecursionError
+sys.setrecursionlimit(10000)
+
 # Load .env from project root (local dev only; Render uses env vars)
 try:
     from dotenv import load_dotenv
