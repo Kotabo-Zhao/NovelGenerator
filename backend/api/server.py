@@ -77,6 +77,7 @@ class CreateNovelRequest(BaseModel):
 class GenerateChapterRequest(BaseModel):
     novel_id: str
     chapter_num: int
+    writing_mode: str = "webnovel"  # "webnovel" | "literary"
 
 
 # ── Routes ──
@@ -161,6 +162,15 @@ async def get_novel(novel_id: str):
     return {"novel": plan}
 
 
+@app.get("/api/novels/{novel_id}/chapters/{chapter_num}")
+async def get_chapter(novel_id: str, chapter_num: int):
+    """读取单章正文"""
+    content = engine.get_chapter(novel_id, chapter_num)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"第{chapter_num}章不存在")
+    return {"content": content, "chapter_num": chapter_num}
+
+
 @app.put("/api/novels/{novel_id}")
 async def update_novel_plan(novel_id: str, plan_data: dict):
     """保存用户修改后的大纲"""
@@ -195,7 +205,9 @@ async def create_novel(req: CreateNovelRequest):
 async def generate_chapter(req: GenerateChapterRequest):
     """流式生成章节 (SSE)"""
     async def event_stream():
-        async for event in engine.generate_chapter_stream(req.novel_id, req.chapter_num):
+        async for event in engine.generate_chapter_stream(
+            req.novel_id, req.chapter_num, req.writing_mode
+        ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
@@ -208,19 +220,28 @@ async def generate_chapter(req: GenerateChapterRequest):
     )
 
 
-@app.get("/api/novels/{novel_id}/chapters/{chapter_num}")
-async def get_chapter(novel_id: str, chapter_num: int):
-    """获取已生成的章节内容"""
-    chapters_dir = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "novels", novel_id, "chapters"
-    )
-    ch_file = os.path.join(chapters_dir, f"chapter_{chapter_num:04d}.md")
-    if not os.path.exists(ch_file):
-        raise HTTPException(status_code=404, detail="章节不存在")
+@app.post("/api/novels/{novel_id}/generate/batch")
+async def generate_batch(novel_id: str, req: dict):
+    """批量生成章节 (SSE 流式进度)"""
+    start = req.get("start_chapter", 1)
+    end = req.get("end_chapter", 1)
+    writing_mode = req.get("writing_mode", "webnovel")
     
-    with open(ch_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
+    async def event_stream():
+        for ch_num in range(start, end + 1):
+            yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
+            async for event in engine.generate_chapter_stream(
+                novel_id, ch_num, writing_mode
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 @app.get("/api/novels/{novel_id}/export")

@@ -152,6 +152,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .flex{display:flex}.items-center{align-items:center}.justify-between{justify-content:space-between}.justify-center{justify-content:center}
 .gap-6{gap:6px}.gap-8{gap:8px}.gap-12{gap:12px}.gap-16{gap:16px}.flex-wrap{flex-wrap:wrap}.flex-1{flex:1}
 .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .5s linear infinite}
+.progress-bar{width:100%;height:6px;background:var(--border-light);border-radius:3px;overflow:hidden}
+.progress-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s ease}
+.toggle-switch{position:relative;display:inline-block;width:40px;height:22px}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--border);border-radius:22px;transition:.2s}
+.toggle-slider:before{content:'';position:absolute;height:16px;width:16px;left:3px;bottom:3px;background:var(--text);border-radius:50%;transition:.2s}
+.toggle-switch input:checked+.toggle-slider{background:var(--accent)}
+.toggle-switch input:checked+.toggle-slider:before{transform:translateX(18px)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .error-msg{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.2);border-radius:var(--radius-xs);padding:12px 16px;color:var(--red);font-size:13px;margin:12px 0}
 .success-msg{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.2);border-radius:var(--radius-xs);padding:12px 16px;color:var(--green);font-size:13px;margin:12px 0}
@@ -370,6 +378,35 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <span v-else>生成第{{ writing.chapter }}章</span>
         </button>
 
+        <!-- 批量生成 -->
+        <div class="card mb-16" style="padding:12px 16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)">
+              <span>批量：从</span>
+              <input v-model.number="batchStart" type="number" min="1" :max="activeNovel.state.total_chapters" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
+              <span>到</span>
+              <input v-model.number="batchEnd" type="number" min="1" :max="activeNovel.state.total_chapters" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
+            </div>
+            <button class="btn btn-secondary btn-sm" @click="doBatchGenerate" :disabled="loading.batch" style="white-space:nowrap">
+              {{ loading.batch ? '批量中…' : '📦 批量生成' }}
+            </button>
+          </div>
+          <div v-if="loading.batch" style="margin-top:8px">
+            <div class="progress-bar"><div class="progress-fill" :style="{width:batchProgress+'%'}"></div></div>
+            <div class="text-xs color-text3 mt-4 text-center">已生成 {{ batchCurrent }}/{{ batchEnd }} 章（{{ batchProgress }}%）</div>
+          </div>
+        </div>
+
+        <!-- 写作模式切换 -->
+        <div class="mb-16" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);justify-content:center">
+          <span>🐉 网文</span>
+          <label class="toggle-switch">
+            <input type="checkbox" v-model="writingModeLiterary" @change="onModeChange">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>📖 文学</span>
+        </div>
+
         <div v-if="writing.content" class="chapter-content" ref="preview">{{ writing.content }}</div>
         <div v-else-if="!loading.write && (activeNovel.state.completed_chapters||[]).includes(writing.chapter) && writing.done" class="chapter-empty">
           <div class="ce-icon">☐</div><p>第{{ writing.chapter }}章</p><p class="text-xs color-text3 mt-8">点击章节序号查看</p>
@@ -411,7 +448,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div v-if="novels.length===0" class="text-center color-text3 text-sm" style="padding:30px">还没有小说</div>
 
         <div class="export-actions" v-if="selectedCount>0">
-          <button class="btn btn-secondary flex-1" @click="doBatchExport()" :disabled="loading.export">批量下载 ({{ selectedCount }}本)</button>
+          <button class="btn btn-secondary flex-1" @click="doBatchExport()" :disabled="loading.export">
+            <span v-if="loading.export==='batch'"><span class="spinner"></span></span>
+            批量下载 ({{ selectedCount }}本)
+          </button>
+        </div>
+        <div v-if="loading.export==='batch'" style="margin-top:8px">
+          <div class="progress-bar"><div class="progress-fill" :style="{width:exportProgress+'%'}"></div></div>
         </div>
         <button class="btn btn-ghost btn-sm mt-8" @click="selectAll" v-if="novels.length">{{ allSelected ? '取消全选' : '全选' }}</button>
       </div>
@@ -444,8 +487,12 @@ createApp({
     const theme = ref(localStorage.getItem('theme') || 'dark');
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'' });
-    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false });
+    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
+    const writingModeLiterary = ref(false);
     const writing = reactive({ chapter:1, content:'', done:false });
+    const batchStart = ref(1); const batchEnd = ref(1);
+    const batchProgress = ref(0); const batchCurrent = ref(0);
+    const exportProgress = ref(0);
 
     const genres = ['修仙','玄幻','都市','科幻','悬疑','历史','游戏','末日','无限流','武侠','克苏鲁','赛博朋克'];
 
@@ -507,7 +554,10 @@ createApp({
 
     function selectChapter(ch) {
       writing.chapter=ch; writing.content=''; writing.done=false; error.value='';
-      if(activeNovel.value) fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+ch).then(r=>r.ok?r.text():'').then(c=>{if(c){writing.content=c;writing.done=true;}}).catch(()=>{});
+      if(activeNovel.value) fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+ch)
+        .then(r=>r.ok?r.json():null)
+        .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
+        .catch(()=>{});
     }
 
     async function doGenerateChapter() {
@@ -515,7 +565,7 @@ createApp({
       if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter)) return;
       loading.write=true; writing.content=''; writing.done=false; error.value='';
       try {
-        const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter})});
+        const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel'})});
         const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
         while(true){ const{value,done}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
           const lines=buf.split('\n'); buf=lines.pop()||'';
@@ -540,6 +590,38 @@ createApp({
     function nextChapter() { const n=writing.chapter+1; if(n<=(activeNovel.value?.state.total_chapters||999)) selectChapter(n); }
     function copyChapter() { navigator.clipboard.writeText(writing.content); error.value='已复制'; setTimeout(()=>error.value='',2000); }
 
+    async function doBatchGenerate() {
+      if(!activeNovel.value||loading.batch) return;
+      const start=batchStart.value||1, end=batchEnd.value||1;
+      if(start>end) return;
+      loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value='';
+      try {
+        const r=await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/generate/batch',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({start_chapter:start,end_chapter:end,writing_mode:writingModeLiterary.value?'literary':'webnovel'})
+        });
+        const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+        while(true){ const{value,done}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
+          const lines=buf.split('\n'); buf=lines.pop()||'';
+          for(const line of lines){
+            if(!line.startsWith('data: '))continue;
+            try{ const evt=JSON.parse(line.slice(6));
+              if(evt.type==='progress'){ batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100); }
+              else if(evt.type==='chapter_done'){
+                batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
+                loadShelf();
+              }
+              else if(evt.type==='batch_done'){ batchCurrent.value=end; batchProgress.value=100; }
+              else if(evt.type==='error'){ error.value=evt.message; }
+            }catch(e){}
+          }
+        }
+        selectChapter(end); loadShelf();
+      } catch(e){ error.value=e.message; }
+      loading.batch=false;
+    }
+    function onModeChange() { /* toggle handled by v-model, just reset writing state */ }
+
     function toggleExport(id) { exportSelected[id]=!exportSelected[id]; }
     function selectAll() { const v=!allSelected.value; novels.value.forEach(n=>exportSelected[n.id]=v); }
     async function doSingleExport(novel, fmt='txt') {
@@ -555,11 +637,15 @@ createApp({
     async function doBatchExport() {
       const ids=Object.entries(exportSelected).filter(([,v])=>v).map(([k])=>k);
       if(!ids.length){ error.value='请勾选小说'; return; }
-      loading.export=true; error.value='';
+      loading.export='batch'; error.value=''; exportProgress.value=0;
       try {
         const r=await fetch(API+'/api/novels/export/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_ids:ids,fmt:'txt'})});
         const data=await r.json(); let ok=0,fail=0;
-        for(const item of data.results){ if(item.success&&item.content){ downloadBlob(item.content,item.novel_id+'.txt',true); ok++; } else fail++; }
+        for(let i=0;i<data.results.length;i++){
+          const item=data.results[i];
+          if(item.success&&item.content){ downloadBlob(item.content,item.novel_id+'.txt',true); ok++; } else fail++;
+          exportProgress.value=Math.round((i+1)/data.results.length*100);
+        }
         if(ok>0) error.value='导出 '+ok+' 本'; setTimeout(()=>error.value='',3000);
       } catch(e){ error.value=e.message; }
       loading.export=false;
@@ -618,7 +704,9 @@ createApp({
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
-      applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme };
+      applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,
+      batchStart,batchEnd,batchProgress,batchCurrent,exportProgress,writingModeLiterary,
+      doBatchGenerate,onModeChange };
   }
 }).mount('#app');
 </script>

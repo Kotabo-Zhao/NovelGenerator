@@ -148,8 +148,17 @@ class NovelEngine:
 
     # ── Phase 2: 写作 ──
 
+    def get_chapter(self, novel_id: str, chapter_num: int) -> Optional[str]:
+        """读取已生成的章节正文"""
+        chapters_dir = os.path.join(self.memory.get_novel_dir(novel_id), "chapters")
+        ch_file = os.path.join(chapters_dir, f"chapter_{chapter_num:04d}.md")
+        if not os.path.exists(ch_file):
+            return None
+        with open(ch_file, "r", encoding="utf-8") as f:
+            return f.read()
+
     async def generate_chapter_stream(
-        self, novel_id: str, chapter_num: int
+        self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel"
     ) -> AsyncGenerator[dict, None]:
         """流式生成章节 — 前端可实时显示打字效果
         
@@ -193,6 +202,7 @@ class NovelEngine:
                 genre=genre,
                 style=style,
                 target_words=target_words,
+                writing_mode=writing_mode,
             ):
                 full_text += text
                 yield {"type": "text", "content": text}
