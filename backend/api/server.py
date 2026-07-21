@@ -268,14 +268,21 @@ async def generate_batch(novel_id: str, req: dict):
     
     async def event_stream():
         try:
+            failed = []
             for ch_num in range(start, end + 1):
                 yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
-                async for event in engine.generate_chapter_stream(
-                    novel_id, ch_num, writing_mode
-                ):
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end}, ensure_ascii=False)}\n\n"
+                try:
+                    async for event in engine.generate_chapter_stream(
+                        novel_id, ch_num, writing_mode
+                    ):
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
+                except Exception as ch_err:
+                    log.warning(f"Batch chapter {ch_num} failed: {ch_err}, skipping")
+                    failed.append(ch_num)
+                    yield f"data: {json.dumps({'type':'chapter_failed','chapter':ch_num,'error':str(ch_err)}, ensure_ascii=False)}\n\n"
+                    continue
+            yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end,'failed':failed}, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("batch generate crashed")
             yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"

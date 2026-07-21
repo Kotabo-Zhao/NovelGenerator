@@ -4,6 +4,7 @@ import os
 import sqlite3
 from datetime import datetime
 from typing import Optional
+from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
 
 class NovelMemory:
     """分层记忆管理器
@@ -26,12 +27,7 @@ class NovelMemory:
     
     def get_core_context(self, novel_id: str) -> str:
         """获取永不遗忘的核心设定"""
-        plan_path = os.path.join(self.get_novel_dir(novel_id), "plan.json")
-        if not os.path.exists(plan_path):
-            return ""
-        
-        with open(plan_path, "r", encoding="utf-8") as f:
-            plan = json.load(f)
+        plan = safe_read_json(os.path.join(self.get_novel_dir(novel_id), "plan.json"), {})
         
         wb = plan.get("worldbuilding", {})
         chars = plan.get("characters", {})
@@ -84,12 +80,7 @@ class NovelMemory:
 
     def get_foreshadowing_context(self, novel_id: str, current_chapter: int) -> str:
         """获取需要回收的伏笔（按时序紧迫度排序）"""
-        hooks_path = os.path.join(self.get_novel_dir(novel_id), "foreshadowing.json")
-        if not os.path.exists(hooks_path):
-            return ""
-        
-        with open(hooks_path, "r", encoding="utf-8") as f:
-            hooks = json.load(f)
+        hooks = safe_read_json(os.path.join(self.get_novel_dir(novel_id), "foreshadowing.json"), [])
         
         # 按紧迫度分组
         active = []
@@ -157,17 +148,13 @@ class NovelMemory:
         os.makedirs(chapters_dir, exist_ok=True)
         
         ch_path = os.path.join(chapters_dir, f"chapter_{chapter_num:04d}.md")
-        with open(ch_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        atomic_write_text(ch_path, content)
 
     def update_foreshadowing(self, novel_id: str, chapter_num: int, 
                              planted: list = None, resolved: list = None):
         """更新伏笔状态"""
         hooks_path = os.path.join(self.get_novel_dir(novel_id), "foreshadowing.json")
-        hooks = []
-        if os.path.exists(hooks_path):
-            with open(hooks_path, "r", encoding="utf-8") as f:
-                hooks = json.load(f)
+        hooks = safe_read_json(hooks_path, [])
         
         # 添加新伏笔
         for p in (planted or []):
@@ -185,29 +172,24 @@ class NovelMemory:
                     h["resolved"] = True
                     h["resolved_chapter"] = chapter_num
         
-        with open(hooks_path, "w", encoding="utf-8") as f:
-            json.dump(hooks, f, ensure_ascii=False, indent=2)
+            atomic_write_json(hooks_path, hooks)
 
     def save_novel_state(self, novel_id: str, state: dict):
         """保存小说整体状态"""
         state_path = os.path.join(self.get_novel_dir(novel_id), "state.json")
-        with open(state_path, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
+        atomic_write_json(state_path, state)
 
     def get_novel_state(self, novel_id: str) -> dict:
-        """读取小说状态"""
+        """读取小说状态（损坏时自动修复）"""
         state_path = os.path.join(self.get_novel_dir(novel_id), "state.json")
-        if os.path.exists(state_path):
-            with open(state_path, "r", encoding="utf-8") as f:
-                state = json.load(f)
-            # 向后兼容：旧数据可能没有 completed_chapters，从磁盘扫描
-            if "completed_chapters" not in state:
-                state["completed_chapters"] = self._scan_chapters(novel_id)
-            if "current_chapter" not in state:
-                chs = state["completed_chapters"]
-                state["current_chapter"] = max(chs) if chs else 0
-            return state
-        return {"current_chapter": 0, "total_words": 0, "completed_chapters": []}
+        state = safe_read_json(state_path, {})
+        # 向后兼容：旧数据可能没有 completed_chapters，从磁盘扫描
+        if "completed_chapters" not in state:
+            state["completed_chapters"] = self._scan_chapters(novel_id)
+        if "current_chapter" not in state:
+            chs = state["completed_chapters"]
+            state["current_chapter"] = max(chs) if chs else 0
+        return state
 
     def _scan_chapters(self, novel_id: str) -> list:
         """扫描磁盘实际存在的章节文件，返回章节号列表"""

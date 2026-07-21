@@ -20,6 +20,7 @@ from .embellisher import Embellisher
 from .foreshadowing_designer import ForeshadowingDesigner
 from .context_updater import ContextUpdater
 from .pacing_checker import PacingChecker
+from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -60,11 +61,10 @@ class NovelEngine:
         novel_dir = self.memory.get_novel_dir(plan["title"])
         os.makedirs(novel_dir, exist_ok=True)
         
-        with open(os.path.join(novel_dir, "plan.json"), "w", encoding="utf-8") as f:
-            json.dump(plan, f, ensure_ascii=False, indent=2)
+        atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
         
         # 生成人物宝典 — 独立的角色wiki文件
-        self._save_character_bible(plan, novel_dir)
+        # ⚠️ _save_character_bible also uses atomic_write_json internally
         
         # 初始化状态
         total_chapters = plan.get("outline", {}).get("total_chapters", 0)
@@ -78,8 +78,7 @@ class NovelEngine:
         
         # 初始化伏笔文件
         hooks_path = os.path.join(novel_dir, "foreshadowing.json")
-        with open(hooks_path, "w", encoding="utf-8") as f:
-            json.dump([], f)
+        atomic_write_json(hooks_path, [])
         
         log.info(f"Novel created: {plan['title']} ({total_chapters} chapters)")
         return plan
@@ -96,8 +95,7 @@ class NovelEngine:
                 novel_dir = self.memory.get_novel_dir(plan["title"])
                 os.makedirs(novel_dir, exist_ok=True)
                 
-                with open(os.path.join(novel_dir, "plan.json"), "w", encoding="utf-8") as f:
-                    json.dump(plan, f, ensure_ascii=False, indent=2)
+                atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
                 
                 # 人物宝典在线程池中执行（包含文件IO）
                 await asyncio.to_thread(self._save_character_bible, plan, novel_dir)
@@ -112,8 +110,7 @@ class NovelEngine:
                 })
                 
                 hooks_path = os.path.join(novel_dir, "foreshadowing.json")
-                with open(hooks_path, "w", encoding="utf-8") as f:
-                    json.dump([], f)
+                atomic_write_json(hooks_path, [])
                 
                 log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)")
             
@@ -124,8 +121,7 @@ class NovelEngine:
         plan_path = os.path.join(self.memory.get_novel_dir(novel_id), "plan.json")
         if not os.path.exists(plan_path):
             return None
-        with open(plan_path, "r", encoding="utf-8") as f:
-            plan = json.load(f)
+        plan = safe_read_json(plan_path)
         plan["state"] = self.memory.get_novel_state(novel_id)
         return plan
 
@@ -155,8 +151,7 @@ class NovelEngine:
                 ch["target_words"] = int(ch.get("target_words", 3000))
         plan_data["outline"]["total_chapters"] = int(plan_data.get("outline", {}).get("total_chapters", 0))
         
-        with open(plan_path, "w", encoding="utf-8") as f:
-            json.dump(plan_data, f, ensure_ascii=False, indent=2)
+        atomic_write_json(plan_path, plan_data)
         
         # 更新 state 中的 total_chapters
         state = self.memory.get_novel_state(novel_id)
@@ -174,8 +169,7 @@ class NovelEngine:
         for name in os.listdir(config.NOVELS_DIR):
             plan_path = os.path.join(config.NOVELS_DIR, name, "plan.json")
             if os.path.exists(plan_path):
-                with open(plan_path, "r", encoding="utf-8") as f:
-                    plan = json.load(f)
+                plan = safe_read_json(plan_path)
                 state = self.memory.get_novel_state(name)
                 novels.append({
                     "id": name,
@@ -281,12 +275,10 @@ class NovelEngine:
                 state_path = os.path.join(novel_dir, "global_state.json")
                 current_state = {}
                 if os.path.exists(state_path):
-                    with open(state_path, "r", encoding="utf-8") as f:
-                        current_state = json.load(f)
+                    current_state = safe_read_json(state_path)
                 
                 new_state = self.context_updater.update(novel_id, chapter_num, full_text, current_state)
-                with open(state_path, "w", encoding="utf-8") as f:
-                    json.dump(new_state, f, ensure_ascii=False, indent=2)
+                atomic_write_json(state_path, new_state)
                 log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
             except Exception as e:
                 log.warning(f"ContextUpdater skipped: {e}")
@@ -325,8 +317,7 @@ class NovelEngine:
         }
         
         bible_path = os.path.join(novel_dir, "character_bible.json")
-        with open(bible_path, "w", encoding="utf-8") as f:
-            json.dump(bible, f, ensure_ascii=False, indent=2)
+        atomic_write_json(bible_path, bible)
         
         log.info(f"Character bible saved: {len(supporting)} supporting + {len(antagonist)} antagonist")
     

@@ -423,53 +423,65 @@ class Planner:
         yield {"type": "done", "plan": plan}
 
     async def _call_llm(self, prompt: str, phase: str, max_tokens: int = 4096, retry: bool = True) -> dict:
-        """调用 LLM 并解析 JSON（线程池隔离+自动重试）"""
+        """调用 LLM 并解析 JSON（线程池隔离 + 3次重试 + 指数退避 + 简化兜底）"""
         log.info(f"Planner phase [{phase}]: calling LLM...")
         
-        def _sync_call(temp: float = 0.8):
+        def _sync_call(temp: float = 0.8, use_simple_prompt: bool = False):
+            actual_prompt = prompt
+            if use_simple_prompt:
+                # 最终兜底：用最简指令要求输出纯 JSON
+                actual_prompt = prompt + "\n\n⚠️ 直接输出纯JSON，不要```json标记，不要任何解释文字。"
+            
             kwargs = dict(
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": actual_prompt}],
                 temperature=temp,
                 max_tokens=max_tokens,
             )
-            # v4 系列模型默认开启 reasoning，JSON 生成场景应关闭
             if "v4" in self.model:
                 kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
             response = self.client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content
             return content, self._parse_json(content)
         
-        try:
-            content, result = await asyncio.to_thread(_sync_call)
-            if result:
-                log.info(f"Planner phase [{phase}]: OK")
-                return result
+        # 重试策略：temp 递减 + 退避递增 + 最后一次用简化 prompt
+        retry_plan = [
+            (0.8, 2, False),   # 第一次：正常温度，等2s
+            (0.4, 4, False),   # 第二次：低温度，等4s
+            (0.2, 8, True),    # 第三次：最低温 + 简化prompt兜底，等8s
+        ]
+        
+        last_error = None
+        last_raw = ""
+        
+        for attempt, (temp, delay, use_simple) in enumerate(retry_plan):
+            try:
+                content, result = await asyncio.to_thread(_sync_call, temp, use_simple)
+                if result:
+                    if attempt > 0:
+                        log.info(f"Planner phase [{phase}]: OK on retry #{attempt}")
+                    else:
+                        log.info(f"Planner phase [{phase}]: OK")
+                    return result
+                
+                # JSON 解析失败
+                last_raw = content or ""
+                last_error = f"JSON parse failed (attempt {attempt+1})"
+                log.warning(f"Planner phase [{phase}]: {last_error}, retrying in {delay}s")
+                
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                log.warning(f"Planner phase [{phase}]: {last_error}, retrying in {delay}s")
             
-            # 解析失败 → 重试一次（更低的温度以获得更确定的输出）
-            if retry:
-                log.warning(f"Planner phase [{phase}]: retrying with temp=0.3")
-                await asyncio.sleep(2)  # 避免触发速率限制
-                content2, result2 = await asyncio.to_thread(_sync_call, 0.3)
-                if result2:
-                    log.info(f"Planner phase [{phase}]: retry OK")
-                    return result2
-                log.error(f"Planner phase [{phase}]: retry also failed. Raw: {content2[:300]}")
-            else:
-                log.error(f"Planner phase [{phase}]: JSON parse failed. Raw: {content[:300]}")
-            return None
-        except Exception as e:
-            log.error(f"Planner phase [{phase}] LLM error: {e}")
-            if retry:
-                log.warning(f"Planner phase [{phase}]: retrying after error")
-                await asyncio.sleep(2)
-                try:
-                    _, result2 = await asyncio.to_thread(_sync_call, 0.3)
-                    if result2:
-                        return result2
-                except Exception as e2:
-                    log.error(f"Planner phase [{phase}] retry error: {e2}")
-            return None
+            if attempt < len(retry_plan) - 1:
+                await asyncio.sleep(delay)
+        
+        # 全部重试失败
+        log.error(f"Planner phase [{phase}]: ALL RETRIES FAILED. Last error: {last_error}")
+        if last_raw:
+            log.error(f"Planner phase [{phase}]: Last raw output (first 200): {last_raw[:200]}")
+            log.error(f"Planner phase [{phase}]: Last raw output (last 200): {last_raw[-200:]}")
+        return None
 
     def _parse_json(self, content: str) -> dict:
         """Robust JSON extraction from LLM response"""
