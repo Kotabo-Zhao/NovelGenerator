@@ -138,6 +138,12 @@ class Writer:
         self.client = client
         self.model = model
 
+    def _create(self, **kwargs):
+        """创建 LLM 请求，v4 系列自动禁用 reasoning"""
+        if "v4" in self.model:
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        return self._create(**kwargs)
+
     async def write_stream(
         self,
         context: str,
@@ -169,7 +175,7 @@ class Writer:
         log.info(f"Writing chapter: {genre}/{style}/{writing_mode}, pass 1/2 (draft)")
         
         draft = ""
-        stream = self.client.chat.completions.create(
+        stream = self._create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -199,7 +205,7 @@ class Writer:
                 log.info(f"Pass 2/2: style polish")
                 polish_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
                 
-                polish_stream = self.client.chat.completions.create(
+                polish_stream = self._create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": polish_prompt},
@@ -234,7 +240,7 @@ class Writer:
                 h_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
                 h_prompt += "\n\n" + build_humanizer_prompt(h_result["detected"])
                 
-                h_stream = self.client.chat.completions.create(
+                h_stream = self._create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": h_prompt},
@@ -263,7 +269,7 @@ class Writer:
             if is_trunc:
                 log.warning(f"Truncation detected: {reason}. Retrying once...")
                 retry_text = ""
-                retry_stream = self.client.chat.completions.create(
+                retry_stream = self._create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system_prompt + f"\n\n⚠️ 注意：上次生成被截断了（{reason}）。请确保本次完整生成。"},

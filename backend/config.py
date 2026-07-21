@@ -7,7 +7,7 @@ load_dotenv()
 # LLM
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
 # Storage
 NOVELS_DIR = os.getenv("NOVELS_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "novels"))

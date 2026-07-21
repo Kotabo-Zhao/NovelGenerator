@@ -427,12 +427,16 @@ class Planner:
         log.info(f"Planner phase [{phase}]: calling LLM...")
         
         def _sync_call(temp: float = 0.8):
-            response = self.client.chat.completions.create(
+            kwargs = dict(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=temp,
                 max_tokens=max_tokens,
             )
+            # v4 系列模型默认开启 reasoning，JSON 生成场景应关闭
+            if "v4" in self.model:
+                kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+            response = self.client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content
             return content, self._parse_json(content)
         
