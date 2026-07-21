@@ -422,33 +422,55 @@ class Planner:
         yield {"type": "progress", "phase": "done", "pct": 100, "label": "创作方案完成！"}
         yield {"type": "done", "plan": plan}
 
-    async def _call_llm(self, prompt: str, phase: str, max_tokens: int = 4096) -> dict:
-        """调用 LLM 并解析 JSON（线程池隔离，不阻塞事件循环）"""
+    async def _call_llm(self, prompt: str, phase: str, max_tokens: int = 4096, retry: bool = True) -> dict:
+        """调用 LLM 并解析 JSON（线程池隔离+自动重试）"""
         log.info(f"Planner phase [{phase}]: calling LLM...")
         
-        def _sync_call():
+        def _sync_call(temp: float = 0.8):
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.8,
+                temperature=temp,
                 max_tokens=max_tokens,
             )
             content = response.choices[0].message.content
-            return self._parse_json(content)
+            return content, self._parse_json(content)
         
         try:
-            result = await asyncio.to_thread(_sync_call)
+            content, result = await asyncio.to_thread(_sync_call)
             if result:
                 log.info(f"Planner phase [{phase}]: OK")
+                return result
+            
+            # 解析失败 → 重试一次（更低的温度以获得更确定的输出）
+            if retry:
+                log.warning(f"Planner phase [{phase}]: retrying with temp=0.3")
+                await asyncio.sleep(2)  # 避免触发速率限制
+                content2, result2 = await asyncio.to_thread(_sync_call, 0.3)
+                if result2:
+                    log.info(f"Planner phase [{phase}]: retry OK")
+                    return result2
+                log.error(f"Planner phase [{phase}]: retry also failed. Raw: {content2[:300]}")
             else:
-                log.error(f"Planner phase [{phase}]: JSON parse failed")
-            return result
+                log.error(f"Planner phase [{phase}]: JSON parse failed. Raw: {content[:300]}")
+            return None
         except Exception as e:
             log.error(f"Planner phase [{phase}] LLM error: {e}")
+            if retry:
+                log.warning(f"Planner phase [{phase}]: retrying after error")
+                await asyncio.sleep(2)
+                try:
+                    _, result2 = await asyncio.to_thread(_sync_call, 0.3)
+                    if result2:
+                        return result2
+                except Exception as e2:
+                    log.error(f"Planner phase [{phase}] retry error: {e2}")
             return None
 
     def _parse_json(self, content: str) -> dict:
-        """Extract JSON from LLM response (handle markdown code blocks)"""
+        """Robust JSON extraction from LLM response"""
+        if not content:
+            return None
         content = content.strip()
         
         # Remove markdown code fences
@@ -458,17 +480,58 @@ class Planner:
                 lines = lines[1:]
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
-            content = "\n".join(lines)
-
+            content = "\n".join(lines).strip()
+        
+        # Strategy 1: direct parse
+        result = self._try_parse(content)
+        if result is not None:
+            return result
+        
+        # Strategy 2: extract {...} boundaries and retry
+        start = content.find("{")
+        end = content.rfind("}")
+        if start >= 0 and end > start:
+            result = self._try_parse(content[start:end + 1])
+            if result is not None:
+                return result
+        
+        # Strategy 3: find the outermost valid JSON object
+        # Look for the largest {...} that parses successfully
+        brace_count = 0
+        best_start = -1
+        best_end = -1
+        for i, ch in enumerate(content):
+            if ch == "{":
+                if brace_count == 0:
+                    best_start = i
+                brace_count += 1
+            elif ch == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    best_end = i
+                    result = self._try_parse(content[best_start:best_end + 1])
+                    if result is not None:
+                        return result
+        
+        log.error(f"JSON parse failed. First 200: {content[:200]}")
+        log.error(f"JSON parse failed. Last 200: {content[-200:]}")
+        return None
+    
+    @staticmethod
+    def _try_parse(json_str: str) -> dict:
+        """Try to parse JSON with cleanup"""
+        import re
+        # Remove trailing commas (common LLM mistake)
+        cleaned = re.sub(r',(\s*[}\]])', r'\1', json_str)
         try:
-            return json.loads(content)
+            return json.loads(cleaned)
         except json.JSONDecodeError:
-            start = content.find("{")
-            end = content.rfind("}")
-            if start >= 0 and end > start:
-                try:
-                    return json.loads(content[start:end + 1])
-                except json.JSONDecodeError:
-                    pass
-            log.error(f"Failed to parse JSON from response (first 500 chars): {content[:500]}")
-            return None
+            pass
+        
+        # Try unescaped line breaks in strings (another common LLM mistake)
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+        
+        return None

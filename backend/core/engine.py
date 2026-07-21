@@ -331,13 +331,21 @@ class NovelEngine:
         log.info(f"Character bible saved: {len(supporting)} supporting + {len(antagonist)} antagonist")
     
     def _format_char_entry(self, char: dict, default_role: str) -> dict:
-        """格式化单个人物条目"""
+        """格式化单个人物条目（展平嵌套字段）"""
+        personality = char.get("personality", "")
+        if isinstance(personality, dict):
+            personality = f"表层: {personality.get('surface','')}; 真实: {personality.get('true_self','')}; 缺陷: {personality.get('flaw','')}"
+        
+        motivation = char.get("motivation", "")
+        if isinstance(motivation, dict):
+            motivation = f"想要: {motivation.get('want','')}; 需要: {motivation.get('need','')}"
+        
         return {
             "name": char.get("name", ""),
             "role": char.get("role", default_role),
             "identity": char.get("identity", ""),
-            "personality": char.get("personality", ""),
-            "motivation": char.get("motivation", ""),
+            "personality": str(personality),
+            "motivation": str(motivation),
             "secret": char.get("secret", ""),
             "arc": char.get("arc", char.get("mini_arc", "")),
             "catchphrase": char.get("catchphrase", ""),
