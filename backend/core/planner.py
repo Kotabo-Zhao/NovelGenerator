@@ -362,43 +362,31 @@ class Planner:
 
         # ── Phase 3: 大纲 (55% → 95%) ──
         yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划章节大纲…"}
-        
-        system_prompt = PLANNER_SYSTEM.format(
-            style_guide=style_guide,
-            style_name=style_config['name'],
-            structure_hint=structure_hint,
-        )
-        
-        outline_prompt = f"""请根据以下已生成的世界观和角色，补充完整大纲。
 
-{system_prompt}
+        outline_prompt = f"""你是小说大纲规划师。仅根据以下设定生成章节大纲。不要输出世界观和角色。
 
-【题材】{genre}
-【风格】{style_config['name']}（{style_config['author']}）
-【核心创意】{inspiration}
-【目标字数】{target_words} 字
+世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:400]}
+主角名: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
+题材: {genre}  风格: {style_config['name']}  创意: {inspiration}  目标: {target_words}字
+节奏: {structure_hint}
 
-已有设定:
-书名: {wb.get('title','')}
-世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:300]}
-角色体系: {json.dumps(chars.get('characters',{}).get('protagonist',{}).get('name',''), ensure_ascii=False)}
-
-请输出完整的 JSON 大纲（卷+章），格式与之前一致。只输出 JSON：
+【重要】只输出 JSON，且只包含 "outline" 字段。每章摘要控制在30字内。
 ```json
 {{
   "outline": {{
-    "volumes": [{{"number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"","chapters":[...]}}],
-    "total_chapters": 0,
-    "three_act_map": "",
-    "rhythm_notes": ""
+    "volumes": [
+      {{
+        "number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"",
+        "chapters":[
+          {{"number":1,"title":"","summary":"30字内核心事件","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":3000}}
+        ]
+      }}
+    ],
+    "total_chapters":0,"three_act_map":"","rhythm_notes":""
   }}
 }}
-```
-"""
-
-        yield {"type": "progress", "phase": "outline", "pct": 75, "label": "生成章节细节…"}
-
-        outline = await self._call_llm(outline_prompt, "outline", max_tokens=8192)
+```"""
+        outline = await self._call_llm(outline_prompt, "outline", max_tokens=16384)
         if not outline:
             yield {"type": "error", "message": "大纲生成失败"}
             return
