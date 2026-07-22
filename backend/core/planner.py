@@ -709,12 +709,14 @@ class Planner:
         cleaned = cleaned.replace(",    }", "}").replace(",    ]", "]")
         
         try:
-            return json.loads(cleaned)
+            parsed = json.loads(cleaned)
+            return parsed if isinstance(parsed, dict) else None
         except json.JSONDecodeError:
             pass
         
         try:
-            return json.loads(json_str)
+            parsed = json.loads(json_str)
+            return parsed if isinstance(parsed, dict) else None
         except json.JSONDecodeError:
             pass
 
@@ -739,7 +741,7 @@ class Planner:
             repaired += "}" * max(0, braces)
             if repaired != json_str:
                 result = json.loads(repaired)
-                if result:
+                if result and isinstance(result, dict):
                     log.info(f"JSON repair successful: added {braces} }}, {brackets} ]]")
                     return result
         except (json.JSONDecodeError, Exception):
