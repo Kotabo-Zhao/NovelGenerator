@@ -185,6 +185,9 @@ class NovelEngine:
         novel_dir = self.memory.get_novel_dir(novel_id)
         atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
         
+        # 同步更新主角设定卡片
+        self.save_character_bible(novel_id, plan, novel_dir)
+        
         # 重置状态
         self.memory.save_novel_state(novel_id, {
             "current_chapter": 0,
@@ -433,6 +436,19 @@ class NovelEngine:
         atomic_write_json(bible_path, bible)
         
         log.info(f"Character bible saved: {len(supporting)} supporting + {len(antagonist)} antagonist")
+
+    def save_character_bible(self, novel_id: str, plan: dict, novel_dir: str = None):
+        """重新生成并保存人物宝典（用于主角修改后同步）
+        
+        Args:
+            novel_id: 小说ID
+            plan: 最新的 plan 数据（含新的 characters）
+            novel_dir: 可选，自动推断
+        """
+        if novel_dir is None:
+            novel_dir = self.memory.get_novel_dir(novel_id)
+        self._save_character_bible(plan, novel_dir)
+        log.info(f"Character bible regenerated for {novel_id}")
     
     def _format_char_entry(self, char: dict, default_role: str) -> dict:
         """格式化单个人物条目（展平嵌套字段）"""
@@ -614,6 +630,9 @@ class NovelEngine:
                         if k in old_meta and k not in new_plan["_meta"]:
                             new_plan["_meta"][k] = old_meta[k]
                 atomic_write_json(os.path.join(novel_dir, "plan.json"), new_plan)
+
+                # 同步更新主角设定卡片（character_bible.json）
+                self.save_character_bible(novel_id, new_plan, novel_dir)
 
                 # 更新状态
                 total = new_plan.get("outline", {}).get("total_chapters", 0)
