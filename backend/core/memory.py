@@ -109,36 +109,118 @@ class NovelMemory:
     # ── 综合构建 ──
 
     def build_writer_context(self, novel_id: str, chapter_num: int, chapter_outline: dict) -> str:
-        """为 Writer 组装完整的写作上下文"""
-        parts = []
+        """为 Writer 组装完整的写作上下文（强化连续性）
         
-        # L1: 核心设定
+        五层上下文:
+        - L1: 核心设定（世界观+主角档案，永远注入）
+        - L2: 上一章结尾（最后500字，紧接上文）
+        - L3: 全局状态快照（角色位置/力量/近3章摘要）
+        - L4: 伏笔回收提醒
+        - L5: 本章大纲
+        """
+        parts = []
+        novel_dir = self.get_novel_dir(novel_id)
+        
+        # ── L1: 核心设定 ──
         core = self.get_core_context(novel_id)
         if core:
             parts.append(core)
         
-        # L2: 近期上下文
-        recent = self.get_recent_context(novel_id, chapter_num)
-        if recent:
-            parts.append(f"\n## 前情回顾\n{recent}")
+        # ── L2: 上一章结尾（连续性关键）──
+        prev_chapter = chapter_num - 1
+        if prev_chapter >= 1:
+            ch_path = os.path.join(novel_dir, "chapters", f"chapter_{prev_chapter:04d}.md")
+            if os.path.exists(ch_path):
+                with open(ch_path, "r", encoding="utf-8") as f:
+                    prev_content = f.read()
+                # 取上一章最后 500 字 — 确保写手知道故事停在哪里
+                prev_ending = prev_content[-500:] if len(prev_content) > 500 else prev_content
+                parts.append(f"## ⬆️ 上一章结尾（必须从这里接着写）\n\n{prev_ending}")
+                
+                # 同时提供上一章的钩子信息
+                plan = safe_read_json(os.path.join(novel_dir, "plan.json"), {})
+                prev_outline = None
+                for vol in plan.get("outline", {}).get("volumes", []):
+                    for ch in vol.get("chapters", []):
+                        if int(ch.get("number", 0)) == prev_chapter:
+                            prev_outline = ch
+                            break
+                if prev_outline:
+                    hook = prev_outline.get("hook", "")
+                    if hook:
+                        parts.append(f"## 🔗 上一章留下的钩子（本章需要回应）\n{hook}")
         
-        # L3: 伏笔
+        # ── L3: 全局状态快照 ──
+        state_path = os.path.join(novel_dir, "global_state.json")
+        if os.path.exists(state_path):
+            state = safe_read_json(state_path, {})
+            parts.append(self._build_state_snapshot(state, chapter_num))
+        
+        # ── L4: 伏笔 ──
         hooks = self.get_foreshadowing_context(novel_id, chapter_num)
         if hooks:
-            parts.append(f"\n{hooks}")
+            parts.append(hooks)
         
-        # 本章大纲
-        outline_text = f"""## 本章大纲
+        # ── L5: 本章大纲 ──
+        outline_text = self._build_outline_context(chapter_num, chapter_outline)
+        parts.append(outline_text)
+        
+        return "\n\n---\n\n".join(parts)
+    
+    def _build_state_snapshot(self, state: dict, chapter_num: int) -> str:
+        """构建角色状态快照"""
+        lines = ["## 📊 全局状态快照"]
+        
+        # 近期章节摘要
+        summaries = state.get("chapters_summary", {})
+        recent = sorted([(int(k), v) for k, v in summaries.items() if int(k) >= chapter_num - 5 and int(k) < chapter_num])
+        if recent:
+            lines.append("\n### 前情提要")
+            for ch, summary in recent:
+                lines.append(f"- 第{ch}章: {summary}")
+        
+        # 角色最新状态
+        chars = state.get("characters", {})
+        if chars:
+            lines.append("\n### 角色状态")
+            for name, changes in list(chars.items())[:10]:
+                latest = changes[-1] if changes else ""
+                lines.append(f"- **{name}**: {latest}")
+        
+        # 力量等级
+        powers = state.get("power_levels", {})
+        if powers:
+            lines.append("\n### 力量等级")
+            for name, level in powers.items():
+                lines.append(f"- {name}: {level}")
+        
+        # 当前位置
+        locations = state.get("locations", [])
+        if locations:
+            lines.append(f"\n### 已知地点: {', '.join(locations[-5:])}")
+        
+        return "\n".join(lines)
+    
+    def _build_outline_context(self, chapter_num: int, chapter_outline: dict) -> str:
+        """构建章节大纲上下文（含 scene_beats）"""
+        beats_text = ""
+        beats = chapter_outline.get("scene_beats", [])
+        if beats:
+            beats_text = "\n### 场景节拍\n"
+            for b in beats:
+                beats_text += f"- 节拍{b.get('beat','?')}「{b.get('name','')}」: {b.get('function','')} → {b.get('key_action','')}\n"
+        
+        meta = chapter_outline.get("conflict", "") or chapter_outline.get("scene_type", "")
+        
+        return f"""## 本章大纲
 
 - 章节: 第{chapter_num}章「{chapter_outline.get('title', '')}」
 - 核心事件: {chapter_outline.get('summary', '')}
 - 情绪曲线: {chapter_outline.get('emotion_curve', '')}
 - 出场角色: {', '.join(chapter_outline.get('characters', []))}
 - 结尾钩子: {chapter_outline.get('hook', '')}
-- 目标字数: {chapter_outline.get('target_words', 3000)} 字"""
-        parts.append(outline_text)
-        
-        return "\n\n---\n\n".join(parts)
+- 目标字数: {chapter_outline.get('target_words', 3000)} 字
+{f'{{meta}}' if meta else ''}{beats_text}"""
 
     # ── 状态更新 ──
 
