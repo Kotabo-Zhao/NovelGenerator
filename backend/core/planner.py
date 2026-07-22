@@ -258,7 +258,8 @@ class Planner:
                 for ch in vol.get("chapters", []):
                     ch["number"] = int(ch.get("number", 1))
                     ch["target_words"] = int(ch.get("target_words", 3000))
-            plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
+            if isinstance(plan.get("outline"), dict):
+                plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
             plan["target_words"] = int(plan.get("target_words", 0))
             plan["style"] = style_name
             

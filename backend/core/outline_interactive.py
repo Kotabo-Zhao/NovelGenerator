@@ -260,7 +260,7 @@ class OutlineInteractive:
                         break
             plan["outline"]["total_chapters"] = sum(
                 len(v.get("chapters", [])) for v in volumes
-            )
+            ) if isinstance(plan.get("outline"), dict) else 0
         
         elif act in ("modify", "add") and scope == "chapter":
             ch_nums = target.get("chapter_numbers", [])
@@ -517,7 +517,8 @@ class OutlineInteractive:
             for ch in vol.get("chapters", []):
                 counter += 1
                 ch["number"] = counter
-        plan["outline"]["total_chapters"] = counter
+        if isinstance(plan.get("outline"), dict):
+            plan["outline"]["total_chapters"] = counter
 
     def get_iteration_history(self) -> list:
         return self._iteration_history

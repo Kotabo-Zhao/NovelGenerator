@@ -177,6 +177,8 @@ class NovelEngine:
         
         # 更新 plan
         plan["outline"] = outline.get("outline", {})
+        if not isinstance(plan.get("_meta"), dict):
+            plan["_meta"] = {}
         plan["_meta"]["regenerated_at"] = __import__("datetime").datetime.now().isoformat()
         plan["_meta"]["regeneration_feedback"] = feedback
         
@@ -201,6 +203,9 @@ class NovelEngine:
         if not os.path.exists(plan_path):
             return None
         plan = safe_read_json(plan_path)
+        if not isinstance(plan, dict):
+            log.warning(f"get_novel: plan.json for '{novel_id}' is {type(plan).__name__}, not dict. Resetting.")
+            plan = {}
         plan["state"] = self.memory.get_novel_state(novel_id)
         return plan
 
@@ -228,7 +233,10 @@ class NovelEngine:
             for ch in vol.get("chapters", []):
                 ch["number"] = int(ch.get("number", 1))
                 ch["target_words"] = int(ch.get("target_words", 3000))
-        plan_data["outline"]["total_chapters"] = int(plan_data.get("outline", {}).get("total_chapters", 0))
+        if isinstance(plan_data.get("outline"), dict):
+            plan_data["outline"]["total_chapters"] = int(plan_data.get("outline", {}).get("total_chapters", 0))
+        else:
+            log.warning(f"update_plan: plan_data['outline'] is {type(plan_data.get('outline')).__name__}, not dict")
         
         atomic_write_json(plan_path, plan_data)
         
@@ -249,6 +257,8 @@ class NovelEngine:
             plan_path = os.path.join(config.NOVELS_DIR, name, "plan.json")
             if os.path.exists(plan_path):
                 plan = safe_read_json(plan_path)
+                if not isinstance(plan, dict):
+                    continue
                 state = self.memory.get_novel_state(name)
                 novels.append({
                     "id": name,
@@ -586,9 +596,16 @@ class NovelEngine:
                 
                 # 保存
                 novel_dir = self.memory.get_novel_dir(novel_id)
-                new_plan["_meta"] = plan.get("_meta", {})
+                if not isinstance(new_plan.get("_meta"), dict):
+                    new_plan["_meta"] = {}
                 new_plan["_meta"]["last_interactive_edit"] = __import__("datetime").datetime.now().isoformat()
                 new_plan["_meta"]["last_feedback"] = feedback
+                # merge old _meta fields to preserve created_at etc.
+                old_meta = plan.get("_meta", {})
+                if isinstance(old_meta, dict):
+                    for k in ("created_at", "model", "creative_input"):
+                        if k in old_meta and k not in new_plan["_meta"]:
+                            new_plan["_meta"][k] = old_meta[k]
                 atomic_write_json(os.path.join(novel_dir, "plan.json"), new_plan)
 
                 # 更新状态

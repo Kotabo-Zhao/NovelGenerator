@@ -95,7 +95,9 @@ class ContextUpdater:
             updates = json.loads(content)
             
             # 合并到当前状态
-            if not current_state:
+            if not isinstance(current_state, dict):
+                current_state = {"characters": {}, "power_levels": {}, "locations": [], "factions": {}, "items": [], "chapters_summary": {}}
+            elif not current_state:
                 current_state = {"characters": {}, "power_levels": {}, "locations": [], "factions": {}, "items": [], "chapters_summary": {}}
             
             # 合并角色更新

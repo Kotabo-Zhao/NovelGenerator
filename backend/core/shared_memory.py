@@ -20,6 +20,7 @@
 
 import json
 import os
+import copy
 import time
 import threading
 import logging
@@ -98,6 +99,16 @@ class SharedMemoryManager:
         path = self._get_path(memory_type, novel_id)
         default = {} if memory_type != "foreshadowing" else []
         data = safe_read_json(path, default)
+
+        # 类型守卫: 防止 corrupted JSON 返回非预期类型（如 string）
+        if memory_type == "foreshadowing":
+            if not isinstance(data, list):
+                log.warning(f"foreshadowing.json corrupted (got {type(data).__name__}), resetting to []")
+                data = []
+        else:
+            if not isinstance(data, dict):
+                log.warning(f"{memory_type}.json corrupted (got {type(data).__name__}), resetting to {{}}")
+                data = {}
 
         # 入缓存
         with self._cache_lock:
@@ -476,21 +487,30 @@ class SharedMemoryManager:
         return os.path.join(self.novels_dir, novel_id, rel_path)
 
     def _write_with_lock(self, path: str, data, max_retries: int = 3) -> bool:
-        """乐观锁写入：读取→版本检查→写入→冲突重试"""
+        """乐观锁写入：读取→版本检查→写入→冲突重试
+        注意: 防御性复制 data，避免修改调用方的原始数据（副作用 bug）
+        """
+        # 防御性复制 — 避免修改调用方的数据对象
+        write_data = copy.deepcopy(data)
+
         for attempt in range(max_retries):
             # 读取当前版本
             current = safe_read_json(path, {})
+            if not isinstance(current, dict):
+                current = {}
             current_version = current.get("_version", 0)
 
-            # 设置新版本
-            if isinstance(data, dict):
-                data["_version"] = current_version + 1
+            # 设置新版本（只修改 write_data 副本，不影响原始数据）
+            if isinstance(write_data, dict):
+                write_data["_version"] = current_version + 1
 
             # 原子写入
-            atomic_write_json(path, data)
+            atomic_write_json(path, write_data)
 
             # 读取验证
             verify = safe_read_json(path, {})
+            if not isinstance(verify, dict):
+                verify = {}
             verify_version = verify.get("_version", 0)
             if verify_version == current_version + 1:
                 if attempt > 0:
@@ -558,6 +578,9 @@ class SharedMemoryManager:
 
     def get_novel_state(self, novel_id: str) -> dict:
         state = self.read("state", novel_id)
+        # 防御：确保 state 是 dict
+        if not isinstance(state, dict):
+            state = {}
         # Fix: handle both missing key AND None value
         if "completed_chapters" not in state or state.get("completed_chapters") is None:
             state["completed_chapters"] = self.scan_chapters(novel_id)
