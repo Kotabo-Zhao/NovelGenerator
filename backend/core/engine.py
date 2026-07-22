@@ -27,6 +27,7 @@ from .twist_designer import TwistDesigner
 from .feedback_decomposer import FeedbackDecomposer
 from .outline_interactive import OutlineInteractive
 from .outline_interactive import FEEDBACK_CATEGORIES
+from .chapter_summarizer import ChapterSummarizer, check_and_compress
 from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
 
 log = logging.getLogger(__name__)
@@ -59,8 +60,9 @@ class NovelEngine:
             self.client, self.model,
             decomposer=self.feedback_decomposer,
         )
-        # v2.1: 统一记忆管理层 — 带缓存+乐观锁+变化通知
+        # v2.1: 统一记忆管理层 + 渐进式摘要压缩
         self.memory = SharedMemoryManager(config.NOVELS_DIR)
+        self.chapter_summarizer = ChapterSummarizer(self.client, self.model)
 
     # ── Phase 1: 规划 ──
 
@@ -362,6 +364,16 @@ class NovelEngine:
                 log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
             except Exception as e:
                 log.warning(f"ContextUpdater skipped: {e}")
+            
+            # ── Phase 2: 自动触发渐进式摘要压缩（每10章）──
+            try:
+                compress_result = check_and_compress(
+                    self.memory, novel_id, chapter_num, self.chapter_summarizer
+                )
+                if compress_result:
+                    yield {"type": "compression", "chapters_summarized": len(compress_result)}
+            except Exception as e:
+                log.warning(f"Auto-compression skipped: {e}")
             
             yield {"type": "text", "content": "\n\n"}
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num}

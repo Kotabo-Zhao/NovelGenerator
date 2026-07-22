@@ -564,6 +564,26 @@ async def design_twists(novel_id: str):
     return {"result": result}
 
 
+# ── Chapter Summarizer ──
+
+@app.post("/api/novels/{novel_id}/summarize")
+async def summarize_chapters(novel_id: str, req: dict):
+    """触发渐进式摘要压缩"""
+    chapter_num = req.get("chapter_num", 0)
+    result = check_and_compress(engine.memory, novel_id, chapter_num, engine.chapter_summarizer)
+    return {"result": result}
+
+
+@app.get("/api/novels/{novel_id}/token-budget")
+async def get_token_budget(novel_id: str):
+    """查看当前小说的 token 预算"""
+    state = engine.memory.get_novel_state(novel_id)
+    total = state.get("total_chapters", 0)
+    current = state.get("current_chapter", 0)
+    budget = engine.chapter_summarizer.get_token_budget(current)
+    return {"total_chapters": total, "current_chapter": current, "budget": budget}
+
+
 @app.post("/api/novels/{novel_id}/design-chapter-twist")
 async def design_chapter_twist(novel_id: str, req: dict):
     """为单章设计反转钩子"""
