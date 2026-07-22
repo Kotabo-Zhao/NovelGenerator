@@ -229,10 +229,13 @@ class NovelEngine:
         
         # 标准化章节号
         for vol in plan_data.get("outline", {}).get("volumes", []):
+            if not isinstance(vol, dict):
+                continue
             vol["number"] = int(vol.get("number", 1))
             for ch in vol.get("chapters", []):
-                ch["number"] = int(ch.get("number", 1))
-                ch["target_words"] = int(ch.get("target_words", 3000))
+                if isinstance(ch, dict):
+                    ch["number"] = int(ch.get("number", 1))
+                    ch["target_words"] = int(ch.get("target_words", 3000))
         if isinstance(plan_data.get("outline"), dict):
             plan_data["outline"]["total_chapters"] = int(plan_data.get("outline", {}).get("total_chapters", 0))
         else:
@@ -397,10 +400,14 @@ class NovelEngine:
             yield {"type": "error", "message": str(e)}
 
     def _find_chapter_outline(self, plan: dict, chapter_num: int) -> Optional[dict]:
-        """在大纲中查找指定章节（兼容字符串/整数章节号）"""
+        """在大纲中查找指定章节（兼容字符串/整数章节号，防御脏数据）"""
         volumes = plan.get("outline", {}).get("volumes", [])
         for vol in volumes:
+            if not isinstance(vol, dict):
+                continue
             for ch in vol.get("chapters", []):
+                if not isinstance(ch, dict):
+                    continue
                 if int(ch.get("number", 0)) == chapter_num:
                     return ch
         return None
