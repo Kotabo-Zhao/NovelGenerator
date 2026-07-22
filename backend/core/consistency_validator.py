@@ -295,12 +295,15 @@ class ConsistencyValidator:
         
         # 提取时间信息
         time_patterns = [
-            (r"(\d+)\s*个?\s*时辰", lambda n: int(n) * 2),  # 时辰→小时
+            (r"(\d+)\s*个?\s*时辰", lambda n: int(n) * 2),
+            (r"一个?\s*时辰", lambda: 2),
+            (r"半个?\s*时辰", lambda: 1),
+            (r"两\s*个?\s*时辰", lambda: 4),
             (r"(\d+)\s*炷香", lambda n: int(n) * 0.5),
             (r"(\d+)\s*盏茶", lambda n: int(n) * 0.25),
             (r"(\d+)\s*息", lambda n: int(n) * 0.008),
             (r"(\d+)\s*天", lambda n: int(n) * 24),
-            (r"半\s*个?\s*时辰", lambda: 1),
+            (r"(\d+)\s*日", lambda n: int(n) * 24),
         ]
         
         elapsed_hours = 0
@@ -309,12 +312,36 @@ class ConsistencyValidator:
             for m in matches:
                 if isinstance(m, str) and m.isdigit():
                     elapsed_hours += converter(m)
+                elif isinstance(m, str) and len(m) > 0:
+                    # Full match from non-capturing pattern (e.g. "一个时辰")
+                    try:
+                        elapsed_hours += converter()
+                    except TypeError:
+                        pass  # converter needs arg but m is not a digit
         
-        # 提取距离信息
+        # 提取距离信息（含中文数字: 千=1000, 万=10000, 两=2）
         distance_li = 0
+        # 数字距离: "2000里", "三千里"
+        cn_num_map = {"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,"两":2}
         dist_matches = re.findall(r"(\d+)\s*里", chapter_text)
         for d in dist_matches:
             distance_li += int(d)
+        # 千X里: "两千里"
+        for m in re.finditer(r"([一二三四五六七八九十两])\s*千\s*里", chapter_text):
+            n = cn_num_map.get(m.group(1), 1)
+            distance_li += n * 1000
+        # X千里: "三千里" (千 after digit)
+        for m in re.finditer(r"([一二三四五六七八九十两])\s*千\s*里", chapter_text):
+            pass  # already handled above
+        # 万里
+        for m in re.finditer(r"([一二三四五六七八九十两])\s*万\s*里", chapter_text):
+            n = cn_num_map.get(m.group(1), 1)
+            distance_li += n * 10000
+        # 纯 "千里" "万里" 无数字 = 1000/10000
+        if re.search(r"(?<!\d)(?<![一二三四五六七八九十两])千里", chapter_text):
+            distance_li += 1000
+        if re.search(r"(?<!\d)(?<![一二三四五六七八九十两])万里", chapter_text):
+            distance_li += 10000
         
         # 提取移动方式
         travel_mode = "步行"
@@ -347,8 +374,8 @@ class ConsistencyValidator:
             prev_ch_num = max(prev_chapters.keys()) if prev_chapters else 0
             prev_text = prev_chapters.get(prev_ch_num, "")
             # 检查前章末尾的位置
-            prev_locations = re.findall(r"(?:在|于|到|进).{0,5}(?:皇宫|府邸|山|城|镇|殿|阁|院|村|洞|谷|林|海)", prev_text[-500:])
-            curr_locations = re.findall(r"^(?:.{0,100})(?:在|于|到|进).{0,5}(?:皇宫|府邸|山|城|镇|殿|阁|院|村|洞|谷|林|海)", chapter_text[:500])
+            prev_locations = re.findall(r"(?:在|于|到|进).{0,15}(?:皇宫|府邸|山|城|镇|殿|阁|院|村|洞|谷|林|海)", prev_text[-500:])
+            curr_locations = re.findall(r"(?:在|于|到|进).{0,15}(?:皇宫|府邸|山|城|镇|殿|阁|院|村|洞|谷|林|海)", chapter_text[:500])
             
             if prev_locations and curr_locations:
                 prev_loc = prev_locations[-1]
