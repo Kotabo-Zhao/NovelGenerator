@@ -228,60 +228,106 @@ async def update_novel_plan(novel_id: str, plan_data: dict):
 
 @app.post("/api/novels")
 async def create_novel(req: CreateNovelRequest):
-    """创建新小说 — 灵感 → 世界观+角色+大纲"""
+    """创建新小说 — 灵感 → 世界观+角色+大纲（内部走流式避免 Render 超时）"""
+    creative_input = {
+        "genre": req.genre, "style": req.style,
+        "inspiration": req.inspiration,
+        "target_words": req.target_words, "title": req.title,
+    }
     try:
-        plan = engine.create_novel({
-            "genre": req.genre,
-            "style": req.style,
-            "inspiration": req.inspiration,
-            "target_words": req.target_words,
-            "title": req.title,
-        })
+        plan = engine.create_novel(creative_input)
         return {"success": True, "novel": plan}
     except Exception as e:
         log.exception("Failed to create novel")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Fall through to streaming path if sync path failed (likely Render timeout)
+        log.info("Retrying with streaming path...")
+        plan = None
+        async for event in engine.create_novel_stream(creative_input):
+            if event.get("type") == "done":
+                plan = event.get("plan")
+            elif event.get("type") == "error":
+                raise HTTPException(status_code=500, detail=event.get("message", "创建失败"))
+        if plan:
+            return {"success": True, "novel": plan}
+        raise HTTPException(status_code=500, detail="创建失败，请重试")
 
 
 @app.post("/api/novels/create-stream")
 async def create_novel_stream(req: CreateNovelRequest):
-    """流式创建新小说 — 三阶段进度条 + 自动降级"""
+    """流式创建新小说 — 带 Render 心跳防超时"""
     async def event_stream():
-        try:
-            async for event in engine.create_novel_stream({
-            "genre": req.genre,
-            "style": req.style,
-            "inspiration": req.inspiration,
-            "target_words": req.target_words,
-            "title": req.title,
-            "natural_names": req.natural_names,
-        }):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            log.exception("create_novel_stream crashed")
-            # Always send error event so frontend doesn't hang
-            yield f"data: {json.dumps({'type':'error','message':f'生成过程出错: {str(e)}'}, ensure_ascii=False)}\n\n"
+        async for data in _sse_with_heartbeat(
+            engine.create_novel_stream({
+                "genre": req.genre, "style": req.style,
+                "inspiration": req.inspiration,
+                "target_words": req.target_words,
+                "title": req.title,
+                "natural_names": req.natural_names,
+            })
+        ):
+            yield data
     
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def _sse_with_heartbeat(event_generator):
+    """通用心跳包装: 每8s发送ping防止Render超时断开SSE"""
+    q = asyncio.Queue()
+    cancelled = False
+    
+    async def producer():
+        try:
+            async for event in event_generator:
+                await q.put(("event", event))
+        except Exception as e:
+            log.exception("SSE producer crashed")
+            await q.put(("error", str(e)))
+        await q.put(("done", None))
+    
+    async def heartbeater():
+        for t in range(60):  # max 480s
+            await asyncio.sleep(8)
+            if cancelled:
+                break
+            await q.put(("ping", {"type":"ping","t":t}))
+    
+    p_task = asyncio.create_task(producer())
+    h_task = asyncio.create_task(heartbeater())
+    
+    try:
+        while True:
+            kind, data = await q.get()
+            if kind == "done":
+                cancelled = True; h_task.cancel(); break
+            elif kind == "event":
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+            elif kind == "ping":
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+            elif kind == "error":
+                yield f"data: {json.dumps({'type':'error','message':f'生成过程出错: {data}'}, ensure_ascii=False)}\n\n"
+                cancelled = True; h_task.cancel(); break
+    finally:
+        h_task.cancel()
+        if not p_task.done():
+            p_task.cancel()
+        try:
+            await p_task
+        except asyncio.CancelledError:
+            pass
 
 
 @app.post("/api/novels/generate")
 async def generate_chapter(req: GenerateChapterRequest):
-    """流式生成章节 (SSE)"""
+    """流式生成章节 (SSE + 心跳)"""
     async def event_stream():
-        try:
-            async for event in engine.generate_chapter_stream(
+        async for data in _sse_with_heartbeat(
+            engine.generate_chapter_stream(
                 req.novel_id, req.chapter_num, req.writing_mode,
                 feedback=req.feedback,
-            ):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            log.exception("generate_chapter crashed")
-            yield f"data: {json.dumps({'type':'error','message':f'章节生成出错: {str(e)}'}, ensure_ascii=False)}\n\n"
+            )
+        ):
+            yield data
     
     return StreamingResponse(
         event_stream(),
@@ -470,18 +516,16 @@ async def batch_export(req: dict = None):
 
 @app.post("/api/novels/{novel_id}/regenerate-outline")
 async def regenerate_outline(novel_id: str, req: dict):
-    """根据修改意见重新生成大纲（保留世界观和角色）"""
+    """根据修改意见重新生成大纲（保留世界观和角色）+ 心跳"""
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
     
     async def event_stream():
-        try:
-            async for event in engine.regenerate_outline_stream(novel_id, feedback):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            log.exception("regenerate_outline crashed")
-            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
+        async for data in _sse_with_heartbeat(
+            engine.regenerate_outline_stream(novel_id, feedback)
+        ):
+            yield data
     
     return StreamingResponse(event_stream(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -489,18 +533,16 @@ async def regenerate_outline(novel_id: str, req: dict):
 
 @app.post("/api/novels/{novel_id}/interactive-outline")
 async def interactive_outline(novel_id: str, req: dict):
-    """v2 交互式大纲: FeedbackDecomposer 语义拆解 → 逐条精确执行 → diff输出"""
+    """v2 交互式大纲: FeedbackDecomposer 语义拆解 → 逐条精确执行 → diff输出 + 心跳"""
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
     
     async def event_stream():
-        try:
-            async for event in engine.interactive_outline_stream(novel_id, feedback):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            log.exception("interactive_outline crashed")
-            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
+        async for data in _sse_with_heartbeat(
+            engine.interactive_outline_stream(novel_id, feedback)
+        ):
+            yield data
     
     return StreamingResponse(event_stream(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

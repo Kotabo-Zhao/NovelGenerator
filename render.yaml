@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: cd backend && uvicorn api.server:app --host 0.0.0.0 --port $PORT
+    startCommand: cd backend && uvicorn api.server:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 120 --limit-concurrency 10
     envVars:
       - key: DEEPSEEK_API_KEY
         sync: false
