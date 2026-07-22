@@ -253,8 +253,8 @@ class NovelMemory:
                 if r in h.get("description", ""):
                     h["resolved"] = True
                     h["resolved_chapter"] = chapter_num
-        
-            atomic_write_json(hooks_path, hooks)
+
+        atomic_write_json(hooks_path, hooks)
 
     def save_novel_state(self, novel_id: str, state: dict):
         """保存小说整体状态"""
@@ -268,6 +268,9 @@ class NovelMemory:
         # 向后兼容：旧数据可能没有 completed_chapters，从磁盘扫描
         if "completed_chapters" not in state:
             state["completed_chapters"] = self._scan_chapters(novel_id)
+        # Ensure sorted
+        if state["completed_chapters"]:
+            state["completed_chapters"] = sorted(state["completed_chapters"])
         if "current_chapter" not in state:
             chs = state["completed_chapters"]
             state["current_chapter"] = max(chs) if chs else 0

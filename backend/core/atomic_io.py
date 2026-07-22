@@ -8,7 +8,6 @@
 import json
 import os
 import logging
-import tempfile
 import shutil
 
 log = logging.getLogger(__name__)
@@ -19,17 +18,20 @@ def atomic_write_json(path: str, data, indent: int = 2):
     dirname = os.path.dirname(path)
     os.makedirs(dirname, exist_ok=True)
     
-    # 写入临时文件
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dirname)
+    # 写入临时文件（使用固定命名模式避免并发冲突）
+    tmp_path = path + ".writing.tmp"
     try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=indent)
         # 原子 rename（同文件系统下是原子操作）
         os.replace(tmp_path, path)
     except Exception:
         # 清理临时文件
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
         raise
 
 
@@ -69,12 +71,15 @@ def atomic_write_text(path: str, content: str):
     dirname = os.path.dirname(path)
     os.makedirs(dirname, exist_ok=True)
     
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dirname)
+    tmp_path = path + ".writing.tmp"
     try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(tmp_path, path)
     except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
         raise
