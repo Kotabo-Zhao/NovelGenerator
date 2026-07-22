@@ -378,6 +378,31 @@ class NovelEngine:
                 full_text += text
                 yield {"type": "text", "content": text}
 
+            # ── AI 检测 & 人类化改写 (架构层去AI味) ──
+            ai_report = None
+            try:
+                from .ai_detector import AIDetector, HumanRewriter, humanize_pipeline
+                detector = AIDetector(self.client, self.model)
+                rewriter = HumanRewriter(self.client, self.model)
+                
+                chapter_summary = chapter_outline.get("summary", "") or chapter_outline.get("title", "")
+                result = await asyncio.to_thread(
+                    humanize_pipeline, full_text, detector, rewriter,
+                    scene_desc=chapter_summary,
+                    target_length=target_words,
+                    min_score_threshold=30,
+                )
+                if result["rewritten"]:
+                    ai_report = result
+                    full_text = result["text"]
+                    log.info(f"AI Humanizer: score {ai_report['ai_score_before']}→{ai_report.get('ai_score_after','?')}, rewritten")
+                    yield {"type": "ai_report", 
+                           "score_before": ai_report["ai_score_before"],
+                           "score_after": ai_report.get("ai_score_after", ai_report["ai_score_before"]),
+                           "rewritten": True}
+            except Exception as e:
+                log.warning(f"AI Humanizer skipped: {e}")
+
             # 保存章节
             chapter_title = chapter_outline.get("title", f"第{chapter_num}章")
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
