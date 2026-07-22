@@ -1016,7 +1016,18 @@ createApp({
           .catch(()=>{});
       }
     }
-    function startWriting(title) { const n=novels.value.find(x=>x.id===title||x.title===title); if(n) openNovel(n); }
+    function startWriting(title) { 
+      const n=novels.value.find(x=>x.id===title||x.title===title); 
+      if(n) { openNovel(n); return; }
+      // 如果列表还没刷新，直接用刚保存的 planResult 跳转
+      if (planResult.value && planResult.value.title === title) {
+        activeNovel.value = { id: title, title: title, state: planResult.value.state || {} };
+        currentView.value = 'write';
+        planResult.value = planResult.value; // 保留 plan 数据
+        loadShelf(); // 后台刷新列表
+        _saveSession();
+      }
+    }
 
     let _chFetchAbort=null;
     function selectChapter(ch, skipFetch) {
