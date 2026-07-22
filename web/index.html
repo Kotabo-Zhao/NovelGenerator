@@ -492,21 +492,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     <template v-if="currentView==='write' && activeNovel">
       <div class="reading-container">
 
-        <!-- 🔥 大纲修改意见 — 写作页最顶端，无法错过 -->
-        <div class="outline-feedback" style="background:linear-gradient(135deg,rgba(240,136,62,.08),rgba(240,136,62,.03));border:2px solid rgba(240,136,62,.35);margin-bottom:16px;border-radius:12px;padding:14px 18px">
-          <div style="margin-bottom:8px;font-size:12px;font-weight:700;color:var(--accent)">💡 对整部小说大纲有修改意见？</div>
-          <textarea v-model="outlineFeedback" rows="1" placeholder="用自然语言说，如：节奏太慢加冲突戏 / 中间需要一个背叛转折 / 主角太弱了…" style="flex:1;min-height:42px;font-size:14px;background:var(--bg);border:1px solid var(--border)"></textarea>
-          <button class="btn btn-primary" @click="doRegenerateOutline" :disabled="isBusy || !outlineFeedback.trim()" style="flex-shrink:0;padding:8px 20px;white-space:nowrap;font-size:14px">
-            <span v-if="isRegenerating"><span class="spinner"></span> 修改中…</span>
-            <span v-else>🔄 AI 重新生成大纲</span>
-          </button>
-        </div>
-        <div v-if="isRegenerating" class="create-progress mb-12">
-          <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
-          <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
-        </div>
-
-        <div class="flex justify-between items-center mb-16">
+        <div class="flex justify-between items-center mb-12">
           <div>
             <h2 style="font-size:18px;margin:0;border:none;padding:0">{{ activeNovel.title }}</h2>
             <div class="text-xs color-text3 mt-4">
@@ -514,9 +500,21 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               {{ activeNovel.genre }} · {{ activeNovel.style }}
             </div>
           </div>
-          <div class="flex gap-6 items-center">
-            <button class="btn btn-ghost btn-xs" @click="openOutline" style="font-size:12px">📋 编辑大纲</button>
-          </div>
+          <button class="btn btn-ghost btn-xs" @click="openOutline" style="font-size:12px">📋 编辑大纲</button>
+        </div>
+
+        <!-- 大纲修改意见 — 紧凑行 -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:rgba(240,136,62,.06);border:1px solid rgba(240,136,62,.15);border-radius:8px">
+          <span style="font-size:12px;color:var(--accent);white-space:nowrap;font-weight:600">💡 修改大纲</span>
+          <input v-model="outlineFeedback" placeholder="如：加感情线 / 中间需要转折…" style="flex:1;min-width:0;padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
+          <button class="btn btn-primary btn-xs" @click="doRegenerateOutline" :disabled="isBusy || !outlineFeedback.trim()" style="padding:5px 12px;font-size:12px;white-space:nowrap">
+            <span v-if="isRegenerating"><span class="spinner"></span></span>
+            <span v-else>🔄 执行</span>
+          </button>
+        </div>
+        <div v-if="isRegenerating" class="create-progress mb-12">
+          <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
+          <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
         </div>
 
         <div class="chapter-picker">
@@ -530,11 +528,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div class="co-meta"><span>🎭 {{ currentOutline.emotion_curve }}</span><span>👤 {{ (currentOutline.characters||[]).join('、') }}</span></div>
         </div>
 
-        <button class="btn btn-primary w-full mb-12" style="padding:12px" v-if="!writing.done && !(activeNovel.state.completed_chapters||[]).includes(writing.chapter)" @click="doGenerateChapter" :disabled="isBusy">
+        <button class="btn btn-primary mb-12" style="padding:10px 24px;font-size:14px" v-if="!writing.done && !(activeNovel.state.completed_chapters||[]).includes(writing.chapter)" @click="doGenerateChapter" :disabled="isBusy">
           <span v-if="loading.write"><span class="spinner"></span> 写作中…</span>
-          <span v-else-if="loading.batch">⏳ 批量生成中…</span>
-          <span v-else-if="loading.create">⏳ 建书中…</span>
-          <span v-else>生成第{{ writing.chapter }}章</span>
+          <span v-else-if="loading.batch">⏳ 批量中…</span>
+          <span v-else>✍️ 生成第{{ writing.chapter }}章</span>
         </button>
 
         <!-- 单章进度条 -->

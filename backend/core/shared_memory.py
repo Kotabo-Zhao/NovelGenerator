@@ -232,13 +232,15 @@ class SharedMemoryManager:
                 core += f"- {c.get('name', '?')}: {c.get('identity', '')}, {c.get('relation', '')}\n"
         parts.append(core)
 
-        # L2: 上一章结尾
+        # L2: 上一章完整上下文（结尾+摘要）
         prev_chapter = chapter_num - 1
         if prev_chapter >= 1:
             prev_content = self.read_chapter(novel_id, prev_chapter)
             if prev_content:
-                prev_ending = prev_content[-500:] if len(prev_content) > 500 else prev_content
-                parts.append(f"## ⬆️ 上一章结尾（必须从这里接着写）\n\n{prev_ending}")
+                # 取上一章最后 2000 字作为连续性上下文（原来只取 500，太少了）
+                take_chars = min(2000, len(prev_content))
+                prev_ending = prev_content[-take_chars:]
+                parts.append(f"## ⬆️ 上一章结尾（必须从这里接着写！开头要无缝衔接）\n\n{prev_ending}")
                 
                 # 上一章钩子
                 for vol in plan.get("outline", {}).get("volumes", []):
@@ -246,8 +248,26 @@ class SharedMemoryManager:
                         if int(ch.get("number", 0)) == prev_chapter:
                             hook = ch.get("hook", "")
                             if hook:
-                                parts.append(f"## 🔗 上一章留下的钩子（本章需要回应）\n{hook}")
+                                parts.append(f"## 🔗 上一章留下的钩子（本章必须在某个节点回应）\n{hook}")
+                            # 也加入上一章的摘要作为背景
+                            prev_summary = ch.get("summary", "")
+                            if prev_summary and prev_summary != hook:
+                                parts.append(f"## 📝 上一章大纲摘要\n{prev_summary}")
                             break
+        
+        # L2b: 更早章节的摘要（最近3章，帮助理解多章弧线）
+        if chapter_num > 2:
+            summaries = []
+            for ch_num in range(max(1, chapter_num - 3), chapter_num):
+                for vol in plan.get("outline", {}).get("volumes", []):
+                    for ch in vol.get("chapters", []):
+                        if int(ch.get("number", 0)) == ch_num:
+                            s = ch.get("summary", "")
+                            if s:
+                                summaries.append(f"第{ch_num}章: {s}")
+                            break
+            if summaries:
+                parts.append(f"## 📚 前几章剧情线\n" + "\n".join(summaries))
 
         # L3: 全局状态快照
         state = self.read("global_state", novel_id)
