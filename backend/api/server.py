@@ -507,4 +507,5 @@ async def get_character_bible(novel_id: str):
 if __name__ == "__main__":
     import uvicorn
     log.info(f"Starting NovelGenerator API on {HOST}:{PORT}")
+    log.info(f"Storage: {config.NOVELS_DIR}")
     uvicorn.run("api.server:app", host=HOST, port=PORT, reload=True)
