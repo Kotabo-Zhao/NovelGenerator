@@ -439,15 +439,19 @@ class OutlineInteractive:
                 # 标准化
                 if isinstance(result, dict) and "volumes" in result:
                     for vol in result.get("volumes", []):
+                        if not isinstance(vol, dict):
+                            continue
                         vol["number"] = int(vol.get("number", 1))
                         for ch in vol.get("chapters", []):
-                            ch["number"] = int(ch.get("number", 1))
+                            if isinstance(ch, dict):
+                                ch["number"] = int(ch.get("number", 1))
                     result["total_chapters"] = sum(
-                        len(v.get("chapters", [])) for v in result.get("volumes", [])
+                        len(v.get("chapters", [])) for v in result.get("volumes", []) if isinstance(v, dict)
                     )
                 elif isinstance(result, list):
                     for ch in result:
-                        ch["number"] = int(ch.get("number", 1))
+                        if isinstance(ch, dict):
+                            ch["number"] = int(ch.get("number", 1))
                 return result
         except Exception as e:
             log.error(f"LLM call failed [{phase}]: {e}")
@@ -516,7 +520,8 @@ class OutlineInteractive:
         for vol in plan.get("outline", {}).get("volumes", []):
             for ch in vol.get("chapters", []):
                 counter += 1
-                ch["number"] = counter
+                if isinstance(ch, dict):
+                    ch["number"] = counter
         if isinstance(plan.get("outline"), dict):
             plan["outline"]["total_chapters"] = counter
 

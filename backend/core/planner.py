@@ -254,10 +254,13 @@ class Planner:
         if plan:
             # 标准化章节号
             for vol in plan.get("outline", {}).get("volumes", []):
+                if not isinstance(vol, dict):
+                    continue
                 vol["number"] = int(vol.get("number", 1))
                 for ch in vol.get("chapters", []):
-                    ch["number"] = int(ch.get("number", 1))
-                    ch["target_words"] = int(ch.get("target_words", 3000))
+                    if isinstance(ch, dict):
+                        ch["number"] = int(ch.get("number", 1))
+                        ch["target_words"] = int(ch.get("target_words", 3000))
             if isinstance(plan.get("outline"), dict):
                 plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
             plan["target_words"] = int(plan.get("target_words", 0))
@@ -433,10 +436,13 @@ class Planner:
 
         structure_result = await self._call_llm(structure_prompt, "outline_structure", max_tokens=2048)
         
-        # Fallback volume structure
+        # Fallback volume structure — 支持 {"volumes": [...]} 或 {"data": [...]} 或 直接 [...]
         volumes_meta = []
         if structure_result:
-            volumes_meta = structure_result if isinstance(structure_result, list) else structure_result.get("volumes", [])
+            if isinstance(structure_result, list):
+                volumes_meta = structure_result
+            elif isinstance(structure_result, dict):
+                volumes_meta = structure_result.get("data") or structure_result.get("volumes", [])
             if not volumes_meta and isinstance(structure_result, dict):
                 for v in structure_result.values():
                     if isinstance(v, list): volumes_meta = v; break
@@ -495,16 +501,27 @@ class Planner:
                     for j in range(n_ch)
                 ]
 
-            # Handle both array and dict wrapper
-            chapters = ch_result if isinstance(ch_result, list) else ch_result.get("chapters", [])
-            if not chapters and isinstance(ch_result, dict):
-                for v in ch_result.values():
-                    if isinstance(v, list): chapters = v; break
+            # Handle both dict wrapper ({"data": [...]}, {"chapters": [...]}) and direct array
+            chapters = None
+            if isinstance(ch_result, list):
+                chapters = ch_result
+            elif isinstance(ch_result, dict):
+                chapters = ch_result.get("data") or ch_result.get("chapters")
+                if not chapters:
+                    for v in ch_result.values():
+                        if isinstance(v, list): chapters = v; break
             if not chapters:
-                chapters = ch_result if isinstance(ch_result, list) else []
+                chapters = []
 
-            # Renumber to ensure continuity
+            # Renumber to ensure continuity — 防御：确保每个 ch 都是 dict
             for j, ch in enumerate(chapters):
+                if not isinstance(ch, dict):
+                    log.error(f"Chapter {j+1} in vol {vol_num} is {type(ch).__name__}, not dict. Replacing with fallback.")
+                    ch = {"number": chapter_counter + j + 1, "title": f"第{chapter_counter + j + 1}章",
+                          "summary": f"第{vol_num}卷第{j+1}章", "emotion_curve": "平稳→起伏→悬念",
+                          "conflict": "主线推进", "characters": ["主角"], "hook": "引导下一章",
+                          "target_words": chapter_words}
+                    chapters[j] = ch
                 ch["number"] = chapter_counter + j + 1
                 if "target_words" not in ch:
                     ch["target_words"] = chapter_words
@@ -549,10 +566,13 @@ class Planner:
         
         # 标准化
         for vol in plan["outline"]["volumes"]:
+            if not isinstance(vol, dict):
+                continue
             vol["number"] = int(vol.get("number", 1))
             for ch in vol.get("chapters", []):
-                ch["number"] = int(ch.get("number", 1))
-                ch["target_words"] = int(ch.get("target_words", 3000))
+                if isinstance(ch, dict):
+                    ch["number"] = int(ch.get("number", 1))
+                    ch["target_words"] = int(ch.get("target_words", 3000))
         plan["outline"]["total_chapters"] = chapter_counter
         plan["target_words"] = int(plan.get("target_words", 0))
 
@@ -649,7 +669,7 @@ class Planner:
         return None
 
     def _parse_json(self, content: str) -> dict:
-        """Robust JSON extraction from LLM response"""
+        """Robust JSON extraction from LLM response (supports both objects and arrays)"""
         if not content:
             return None
         content = content.strip()
@@ -662,6 +682,27 @@ class Planner:
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             content = "\n".join(lines).strip()
+        
+        # Strategy 0: JSON array (for per-volume chapter prompts that return [{...}])
+        if content.startswith("["):
+            try:
+                parsed = json.loads(content.replace(",}", "}").replace(",]", "]"))
+                if isinstance(parsed, list) and len(parsed) > 0:
+                    log.info(f"JSON array parsed: {len(parsed)} items")
+                    return {"data": parsed, "chapters": parsed}
+            except json.JSONDecodeError:
+                pass
+            # Try array extraction
+            start = content.find("[")
+            end = content.rfind("]")
+            if start >= 0 and end > start:
+                try:
+                    parsed = json.loads(content[start:end + 1].replace(",}", "}").replace(",]", "]"))
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        log.info(f"JSON array extracted: {len(parsed)} items")
+                        return {"data": parsed, "chapters": parsed}
+                except json.JSONDecodeError:
+                    pass
         
         # Strategy 1: direct parse
         result = self._try_parse(content)
@@ -779,6 +820,8 @@ class Planner:
                 continue
             
             for ch in chapters:
+                if not isinstance(ch, dict):
+                    continue
                 num = int(ch.get("number", 0))
                 total += 1
                 if prev_num > 0 and num != prev_num + 1:
@@ -787,6 +830,8 @@ class Planner:
             
             # 检查必需字段
             for ch in chapters:
+                if not isinstance(ch, dict):
+                    continue
                 if not ch.get("summary"):
                     warnings.append(f"第{ch.get('number','?')}章缺少摘要")
                 if not ch.get("title"):
@@ -821,7 +866,11 @@ class Planner:
         
         counter = 0
         for vol in volumes:
+            if not isinstance(vol, dict):
+                continue
             for ch in vol.get("chapters", []):
+                if not isinstance(ch, dict):
+                    continue
                 counter += 1
                 ch["number"] = counter
                 if "target_words" not in ch:
@@ -838,6 +887,8 @@ class Planner:
         outline["total_chapters"] = counter
         
         for i, vol in enumerate(volumes):
+            if not isinstance(vol, dict):
+                continue
             if "number" not in vol:
                 vol["number"] = i + 1
             if "act" not in vol:
