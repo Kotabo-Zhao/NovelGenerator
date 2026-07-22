@@ -321,7 +321,7 @@ class FeedbackDecomposer:
                 "what_to_change": feedback,
                 "change_to": f"根据用户意见「{feedback[:80]}」调整内容",
                 "reason": intent,
-                "regeneration_prompt": f"根据以下意见修改大纲及相关设定: {feedback}\n\n如果涉及角色/世界观修改，请同步更新对应数据。",
+                "regeneration_prompt": f"根据以下意见进行全面修改: {feedback}",
                 "validation": "对比修改前后，确认用户意见涉及的问题已解决",
                 "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
             })
@@ -348,14 +348,8 @@ class FeedbackDecomposer:
                 })
         
         if not change_plan:
-            # 兜底: 通用修改 — regen_prompt 根据 affected_aspects 动态生成
+            # 兜底: 通用修改
             affected = self._detect_affected_aspects(feedback, fallback=["outline"])
-            preserve_note = []
-            if "characters" not in affected:
-                preserve_note.append("角色设定")
-            if "worldbuilding" not in affected:
-                preserve_note.append("世界观")
-            preserve_str = f"保持{'和'.join(preserve_note)}不变。" if preserve_note else ""
             
             change_plan.append({
                 "id": "C001",
@@ -370,8 +364,8 @@ class FeedbackDecomposer:
                 "what_to_change": feedback,
                 "change_to": f"根据用户意见「{feedback[:80]}」调整大纲",
                 "reason": intent,
-                "regeneration_prompt": f"根据以下意见重新规划大纲: {feedback}\n\n{preserve_str}重点关注用户提到的具体问题。如果意见涉及特定章节，只修改相关章节。",
-                "validation": "对比新旧大纲，确认用户意见涉及的问题已解决",
+                "regeneration_prompt": f"根据以下意见进行全面修改: {feedback}",
+                "validation": "对比修改前后，确认用户意见涉及的问题已解决",
                 "affected_aspects": affected
             })
         
