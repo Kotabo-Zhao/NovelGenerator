@@ -1007,11 +1007,12 @@ createApp({
     }
 
     async function doRegenerateOutline() {
-      if(!planResult.value||!outlineFeedback.value.trim()){ error.value='请输入修改意见'; return; }
+      if(!activeNovel.value||!outlineFeedback.value.trim()){ error.value='请输入修改意见'; return; }
       if(isBusy.value){ error.value='有任务正在进行中'; return; }
+      const novelId = activeNovel.value.id;
       isRegenerating.value=true; error.value=''; createPhaseLabel.value='正在分析修改意见…'; createProgress.value=5;
       try {
-        const r=await fetch(API+'/api/novels/'+encodeURIComponent(planResult.value.title)+'/interactive-outline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feedback:outlineFeedback.value.trim()})});
+        const r=await fetch(API+'/api/novels/'+encodeURIComponent(novelId)+'/interactive-outline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feedback:outlineFeedback.value.trim()})});
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
           else if(evt.type==='intent'){ createPhaseLabel.value='已理解: '+evt.summary?.substring(0,50); }
