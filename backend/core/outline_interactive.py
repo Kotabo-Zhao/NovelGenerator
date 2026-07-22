@@ -231,12 +231,25 @@ class OutlineInteractive:
                 new_chars = await self._regenerate_with_prompt(
                     plan, regen_prompt, planner, mode="characters"
                 )
+                
+                # ── LLM 返回检查 + 强制降级 ──
+                if not new_chars:
+                    log.warning(f"Character LLM regeneration returned None, applying force-sync fallback")
+                    new_chars = self._force_sync_characters(plan, regen_prompt)
+                
                 if new_chars:
-                    # ── 主角名变更检测 → 传播到大纲所有章节 ──
+                    # 检测 LLM 是否实际修改了主角（防 LLM 返回原封不动的数据）
                     old_protag = plan.get("characters", {}).get("protagonist", {})
                     new_protag = new_chars.get("protagonist", {})
                     old_name = old_protag.get("name", "")
                     new_name = new_protag.get("name", "")
+                    old_id = old_protag.get("identity", "")
+                    new_id = new_protag.get("identity", "")
+                    
+                    unchanged = (old_name == new_name and old_id == new_id)
+                    if unchanged and ("改" in regen_prompt or "变成" in regen_prompt or "改为" in regen_prompt):
+                        log.warning(f"LLM returned unchanged characters despite modification request, forcing sync")
+                        new_chars = self._force_sync_characters(plan, regen_prompt)
                     
                     if old_name and new_name and old_name != new_name:
                         log.info(f"Protagonist name changed: '{old_name}' → '{new_name}', syncing outline...")
@@ -245,6 +258,8 @@ class OutlineInteractive:
                     
                     plan["characters"] = new_chars
                     result["effect"] += " + 角色设定已同步"
+                else:
+                    log.error(f"Character sync completely failed after fallback — characters unchanged")
             
             if needs_wb:
                 new_wb = await self._regenerate_with_prompt(
@@ -567,6 +582,67 @@ class OutlineInteractive:
         
         log.info(f"_sync_protagonist_name: replaced '{old_name}' → '{new_name}' in {changed} places")
         return changed
+
+    def _force_sync_characters(self, plan: dict, regen_prompt: str) -> dict:
+        """LLM 失败或返回不变时的强制降级：从 regen_prompt 中直接提取修改
+        
+        解析自然语言指令如"名字改成林玄""身份改为将军之后"并直接应用到角色设定。
+        """
+        import re
+        chars = copy.deepcopy(plan.get("characters", {}))
+        protag = chars.get("protagonist", {})
+        applied = []
+        
+        # 提取 "名字改成XXX" — 匹配"名字"后面"改/变/叫/换/成/为"之后的连续内容
+        m = re.search(r"(?:名字|姓名|名称)\s*.{0,4}(?:改|变|叫|换|成|为)\s*([^，。！？\n]{2,4})", regen_prompt)
+        if not m:
+            m = re.search(r"(?:改|变|叫|换|成)(?:名字|姓名|名称|为)\s*([^，。！？\n]{2,4})", regen_prompt)
+        if not m:
+            m = re.search(r"(?:叫|名叫|称为)\s*([^，。！？\n]{2,4})", regen_prompt)
+        if m and len(m.group(1)) >= 2:
+            old_name = protag.get("name", "")
+            new_name = m.group(1).strip('，。！？""''「」')
+            if new_name and new_name != old_name:
+                protag["name"] = new_name
+                applied.append(f"name→{new_name}")
+                log.info(f"_force_sync: name '{old_name}' → '{new_name}'")
+        
+        # 提取 "身份改成XXX" — 匹配"身份"后面的"改/变/成为"之后的连续内容
+        m = re.search(r"(?:身份|背景|人设).{0,4}(?:改|变|成|为)\s*([^，。！？\n]{2,15})", regen_prompt)
+        if m:
+            new_id = m.group(1).strip('，。！？""''「」').strip()
+            if 2 <= len(new_id) <= 20:
+                old_id = protag.get("identity", "")
+                if new_id != old_id:
+                    protag["identity"] = new_id
+                    applied.append(f"identity→{new_id}")
+                    log.info(f"_force_sync: identity '{old_id}' → '{new_id}'")
+        
+        if not applied:
+            # 兜底: 直接匹配 "身份X之后" / "XX之X" 等常见身份格式
+            m = re.search(r"(?:改|变)(?:成|为|身份)\s*([^，。！？\n]{2,15})", regen_prompt)
+            if m:
+                new_id = m.group(1).strip()
+                old_id = protag.get("identity", "")
+                if 2 <= len(new_id) <= 20 and new_id != old_id:
+                    protag["identity"] = new_id
+                    applied.append(f"identity→{new_id}")
+        
+        # 提取 "金手指改成XXX"
+        m = re.search(r"(?:金手指|能力|天赋).{0,4}(?:改|变|为|成|是)\s*([^，。！？\n]{2,20})", regen_prompt)
+        if not m:
+            m = re.search(r"(?:改成|变为|变成)\s*([^，。！？\n]{2,20})", regen_prompt)
+        if m:
+            new_cheat = m.group(1).strip('，。！？""''「」').strip()
+            if len(new_cheat) >= 2:
+                protag["cheat"] = new_cheat
+                applied.append(f"cheat→{new_cheat}")
+        
+        if applied:
+            chars["protagonist"] = protag
+            log.info(f"_force_sync_characters applied: {', '.join(applied)}")
+        
+        return chars
 
     def get_iteration_history(self) -> list:
         return self._iteration_history

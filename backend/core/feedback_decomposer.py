@@ -321,7 +321,7 @@ class FeedbackDecomposer:
                 "what_to_change": feedback,
                 "change_to": f"根据用户意见「{feedback[:80]}」调整内容",
                 "reason": intent,
-                "regeneration_prompt": f"根据以下意见修改大��及相关设定: {feedback}\n\n如果涉及角色/世界观修改，请同步更新对应数据。",
+                "regeneration_prompt": f"根据以下意见修改大纲及相关设定: {feedback}\n\n如果涉及角色/世界观修改，请同步更新对应数据。",
                 "validation": "对比修改前后，确认用户意见涉及的问题已解决",
                 "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
             })
