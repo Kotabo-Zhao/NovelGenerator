@@ -388,26 +388,30 @@ class SharedMemoryManager:
         return "".join(lines)
 
     def _format_state_snapshot(self, state: dict, chapter_num: int) -> str:
-        """格式化角色状态快照"""
+        """格式化角色状态快照（子字段类型守卫，防 global_state.json 损坏）"""
         lines = ["## 📊 全局状态快照"]
         
         summaries = state.get("chapters_summary", {})
-        recent = sorted([(int(k), v) for k, v in summaries.items()
-                        if int(k) >= chapter_num - 5 and int(k) < chapter_num])
-        if recent:
-            lines.append("\n### 前情提要")
-            for ch, summary in recent:
-                lines.append(f"- 第{ch}章: {summary}")
+        if isinstance(summaries, dict):
+            recent = sorted([(int(k), v) for k, v in summaries.items()
+                            if int(k) >= chapter_num - 5 and int(k) < chapter_num])
+            if recent:
+                lines.append("\n### 前情提要")
+                for ch, summary in recent:
+                    lines.append(f"- 第{ch}章: {summary}")
         
         chars = state.get("characters", {})
-        if chars:
+        if isinstance(chars, dict) and chars:
             lines.append("\n### 角色状态")
             for name, changes in list(chars.items())[:10]:
-                latest = changes[-1] if changes else ""
+                if isinstance(changes, list):
+                    latest = changes[-1] if changes else ""
+                else:
+                    latest = str(changes)
                 lines.append(f"- **{name}**: {latest}")
         
         powers = state.get("power_levels", {})
-        if powers:
+        if isinstance(powers, dict) and powers:
             lines.append("\n### 力量等级")
             for name, level in powers.items():
                 lines.append(f"- {name}: {level}")

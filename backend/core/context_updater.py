@@ -79,6 +79,18 @@ class ContextUpdater:
 
         log.info(f"ContextUpdater: chapter {chapter_num}")
         
+        # 防御性清洗 — 放在 LLM 调用之前，确保即使调用失败也返回干净数据
+        if not isinstance(current_state, dict):
+            current_state = {}
+        if not isinstance(current_state.get("characters"), dict):
+            current_state["characters"] = {}
+        if not isinstance(current_state.get("power_levels"), dict):
+            current_state["power_levels"] = {}
+        if not isinstance(current_state.get("locations"), list):
+            current_state["locations"] = []
+        if not isinstance(current_state.get("chapters_summary"), dict):
+            current_state["chapters_summary"] = {}
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -94,29 +106,23 @@ class ContextUpdater:
             content = response.choices[0].message.content
             updates = json.loads(content)
             
-            # 合并到当前状态
-            if not isinstance(current_state, dict):
-                current_state = {"characters": {}, "power_levels": {}, "locations": [], "factions": {}, "items": [], "chapters_summary": {}}
-            elif not current_state:
-                current_state = {"characters": {}, "power_levels": {}, "locations": [], "factions": {}, "items": [], "chapters_summary": {}}
-            
             # 合并角色更新
             for name, change in updates.get("character_updates", {}).items():
-                if name not in current_state.setdefault("characters", {}):
+                if name not in current_state["characters"]:
                     current_state["characters"][name] = []
                 current_state["characters"][name].append(f"[第{chapter_num}章] {change}")
             
             # 合并力量更新
             for name, change in updates.get("power_updates", {}).items():
-                current_state.setdefault("power_levels", {})[name] = f"[第{chapter_num}章] {change}"
+                current_state["power_levels"][name] = f"[第{chapter_num}章] {change}"
             
             # 合并位置
             for loc in updates.get("locations", []):
-                if loc not in current_state.setdefault("locations", []):
+                if loc not in current_state["locations"]:
                     current_state["locations"].append(loc)
             
             # 章节摘要
-            current_state.setdefault("chapters_summary", {})[str(chapter_num)] = updates.get("summary", "")
+            current_state["chapters_summary"][str(chapter_num)] = updates.get("summary", "")
             
             log.info(f"ContextUpdater: state updated for chapter {chapter_num}")
             return current_state
@@ -138,25 +144,29 @@ class ContextUpdater:
         
         # 角色状态
         chars = state.get("characters", {})
-        if chars:
+        if isinstance(chars, dict) and chars:
             parts.append("### 角色状态")
             for name, changes in list(chars.items())[:8]:
-                recent = changes[-2:] if len(changes) > 2 else changes
-                parts.append(f"- {name}: {'; '.join(recent)}")
+                if isinstance(changes, list):
+                    recent = changes[-2:] if len(changes) > 2 else changes
+                    parts.append(f"- {name}: {'; '.join(recent)}")
+                else:
+                    parts.append(f"- {name}: {changes}")
         
         # 力量等级
         powers = state.get("power_levels", {})
-        if powers:
+        if isinstance(powers, dict) and powers:
             parts.append("\n### 当前力量等级")
             for name, level in powers.items():
                 parts.append(f"- {name}: {level}")
         
         # 近期摘要
         summaries = state.get("chapters_summary", {})
-        recent_chs = sorted(int(k) for k in summaries.keys() if int(k) >= chapter_num - 3)
-        if recent_chs:
-            parts.append("\n### 近3章摘要")
-            for ch in recent_chs:
-                parts.append(f"- 第{ch}章: {summaries.get(str(ch), '')}")
+        if isinstance(summaries, dict):
+            recent_chs = sorted(int(k) for k in summaries.keys() if int(k) >= chapter_num - 3)
+            if recent_chs:
+                parts.append("\n### 近3章摘要")
+                for ch in recent_chs:
+                    parts.append(f"- 第{ch}章: {summaries.get(str(ch), '')}")
         
         return "\n".join(parts)
