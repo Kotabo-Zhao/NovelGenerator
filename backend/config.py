@@ -21,7 +21,5 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
 # 写作参数
 MAX_CONTEXT_TOKENS = 8000
-DEFAULT_CHAPTER_WORDS = 2000        # 默认每章字数（一次生成的安全上限）
-MAX_CHAPTER_TOKENS = 6000           # 单章 max_tokens 硬上限（防止 API 截断）
-CHAPTERS_PER_VOLUME_MIN = 5         # 每卷最少章数
-CHAPTERS_PER_VOLUME_MAX = 10        # 每卷最多章数
+DEFAULT_CHAPTER_WORDS = 3000        # 默认每章字数
+MAX_CHAPTER_TOKENS = 6000           # 单章 max_tokens 硬上限（Writer 自动 min(target*3, 6000)）
