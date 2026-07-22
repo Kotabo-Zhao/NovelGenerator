@@ -1017,15 +1017,31 @@ createApp({
       }
     }
     function startWriting(title) { 
-      const n=novels.value.find(x=>x.id===title||x.title===title); 
-      if(n) { openNovel(n); return; }
-      // 如果列表还没刷新，直接用刚保存的 planResult 跳转
-      if (planResult.value && planResult.value.title === title) {
-        activeNovel.value = { id: title, title: title, state: planResult.value.state || {} };
+      const n = novels.value.find(x => x.id === title || x.title === title); 
+      if (n) { openNovel(n); return; }
+      
+      // 列表没刷新 — 用 planResult 跳转
+      const plan = planResult.value;
+      if (plan && (plan.title === title || title === undefined)) {
+        activeNovel.value = {
+          id: plan.title,
+          title: plan.title,
+          genre: plan.genre || '',
+          style: plan.style || '',
+          state: plan.state || { total_chapters: plan.outline?.total_chapters || 1, completed_chapters: [] }
+        };
         currentView.value = 'write';
-        planResult.value = planResult.value; // 保留 plan 数据
-        loadShelf(); // 后台刷新列表
+        loadShelf();
         _saveSession();
+        return;
+      }
+      
+      // 最后兜底：直接 fetch
+      if (title) {
+        fetch(API+'/api/novels/'+encodeURIComponent(title))
+          .then(r=>r.json()).then(d=>{
+            if (d.novel) openNovel({...d.novel, id: title, state: d.novel.state||{}});
+          }).catch(()=>{});
       }
     }
 
