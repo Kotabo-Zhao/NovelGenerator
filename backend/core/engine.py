@@ -16,7 +16,7 @@ except ImportError:
 
 from .planner import Planner
 from .writer import Writer
-from .memory import NovelMemory
+from .shared_memory import SharedMemoryManager
 from .embellisher import Embellisher
 from .foreshadowing_designer import ForeshadowingDesigner
 from .context_updater import ContextUpdater
@@ -59,8 +59,8 @@ class NovelEngine:
             self.client, self.model,
             decomposer=self.feedback_decomposer,
         )
-        self.memory = NovelMemory(config.NOVELS_DIR)
-        os.makedirs(config.NOVELS_DIR, exist_ok=True)
+        # v2.1: 统一记忆管理层 — 带缓存+乐观锁+变化通知
+        self.memory = SharedMemoryManager(config.NOVELS_DIR)
 
     # ── Phase 1: 规划 ──
 
