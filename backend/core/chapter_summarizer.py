@@ -251,7 +251,7 @@ def check_and_compress(smm, novel_id: str, current_chapter: int,
     
     # 更新 global_state
     state = smm.read("global_state", novel_id)
-    if "summaries" not in state:
+    if not isinstance(state.get("summaries"), dict):
         state["summaries"] = {}
     
     for ch_num, summary in results.items():
