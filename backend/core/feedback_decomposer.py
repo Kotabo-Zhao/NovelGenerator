@@ -61,13 +61,21 @@ DECOMPOSER_SYSTEM = """你是一位资深小说编辑和需求分析师。你的
       "change_to": "改成什么（具体的替代内容）",
       "reason": "为什么这样改（关联用户意图）",
       "regeneration_prompt": "为LLM生成精确的、可直接使用的修改提示词(200字内)",
-      "validation": "修改后如何验证是否生效"
+      "validation": "修改后如何验证是否生效",
+      "affected_aspects": ["outline", "characters", "worldbuilding"]
     }
   ],
   "impact_summary": "修改影响范围总览",
   "estimated_changes": "预计修改的章节数量"
 }
 ```
+
+**关于 affected_aspects** — 每项 action 必须包含此字段，标记该修改涉及哪些数据层面:
+- `"outline"` — 几乎所有修改都涉及（章节结构/内容）
+- `"characters"` — 涉及角色身份/性格/背景/关系/能力/弧线的修改
+- `"worldbuilding"` — 涉及世界观设定/时代背景/力量体系/组织架构的修改
+- **示例**: "主角改成将军之后" → affected_aspects: ["outline", "characters"]
+- **示例**: "力量体系从灵力改为魔法" → affected_aspects: ["outline", "characters", "worldbuilding"]
 
 ## 关键原则
 
@@ -76,6 +84,7 @@ DECOMPOSER_SYSTEM = """你是一位资深小说编辑和需求分析师。你的
 - **最小化**: 只改必须改的，不动用户没提到的部分
 - **上下文感知**: 仔细阅读当前大纲结构，准确定位目标章节号
 - **保持一致性**: 修改后的部分必须与未修改部分逻辑连贯
+- **affected_aspects 是关键**: 必须准确标注修改涉及哪些数据层面。缺少标注会导致角色人设/世界观不同步。
 - **regeneration_prompt 是关键**: 这个字段会直接发给大纲生成LLM，必须包含:
   - 具体要改什么章节
   - 当前内容是什么
@@ -159,6 +168,15 @@ class FeedbackDecomposer:
             # 补充元数据
             result["raw_feedback"] = feedback
             result["decomposed_at"] = __import__("datetime").datetime.now().isoformat()
+            
+            # 后处理: 确保每个 action 都有 affected_aspects（防止 LLM 漏标）
+            for item in result.get("change_plan", []):
+                if "affected_aspects" not in item:
+                    regen_prompt = item.get("regeneration_prompt", "")
+                    item["affected_aspects"] = self._detect_affected_aspects(
+                        feedback + " " + regen_prompt, fallback=["outline"]
+                    )
+                    log.info(f"  [{item.get('id','?')}] auto-detected affected_aspects: {item['affected_aspects']}")
             
             plan_count = len(result.get("change_plan", []))
             log.info(f"FeedbackDecomposer: {plan_count} change actions generated")
@@ -263,7 +281,8 @@ class FeedbackDecomposer:
                     "change_to": f"在第{vn}卷中增加2-3章过渡章节，丰富情节展开",
                     "reason": intent,
                     "regeneration_prompt": f"在第{vn}卷大纲中增加2-3章过渡章节，插入在卷首和关键节点之间。每章需要独立的冲突事件和情绪曲线。保持与前后卷的衔接。",
-                    "validation": f"检查第{vn}卷章节数是否增加，新增章节是否有效推进剧情"
+                    "validation": f"检查第{vn}卷章节数是否增加，新增章节是否有效推进剧情",
+                    "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
                 })
         
         if any(kw in feedback for kw in ["删", "减", "去掉", "太多", "太长", "冗", "冗余"]):
@@ -283,7 +302,8 @@ class FeedbackDecomposer:
                     "change_to": f"精简第{cn}章情节，合并重复事件，删减冗余描写",
                     "reason": intent,
                     "regeneration_prompt": f"精简第{cn}章大纲。保留核心冲突和关键转折，删除铺垫性质的辅助事件（可合并到前后章节）。确保精简后仍保持逻辑连贯。",
-                    "validation": f"检查第{cn}章摘要是否比原来更简洁，核心事件是否保留"
+                    "validation": f"检查第{cn}章摘要是否比原来更简洁，核心事件是否保留",
+                    "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
                 })
         
         if any(kw in feedback for kw in ["逻辑", "矛盾", "不合理", "漏洞", "冲突", "不一致"]):
@@ -303,7 +323,8 @@ class FeedbackDecomposer:
                     "change_to": f"重新设计第{cn}章因果链，确保事件有合理铺垫",
                     "reason": intent,
                     "regeneration_prompt": f"重新规划第{cn}章大纲，修复逻辑矛盾。重点检查：(1)事件的因果链是否完整 (2)角色行为是否符合设定 (3)时间线是否一致。如需修改前后章节的衔接，请在指令中说明。",
-                    "validation": f"检查第{cn}章事件因果是否合理，前后章节衔接是否顺畅"
+                    "validation": f"检查第{cn}章事件因果是否合理，前后章节衔接是否顺畅",
+                    "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
                 })
         
         if not change_plan:
@@ -322,7 +343,8 @@ class FeedbackDecomposer:
                 "change_to": f"根据用户意见「{feedback[:80]}」调整大纲",
                 "reason": intent,
                 "regeneration_prompt": f"根据以下意见重新规划大纲: {feedback}\n\n保持世界观和角色体系不变。重点关注用户提到的具体问题。如果意见涉及特定章节，只修改相关章节。",
-                "validation": "对比新旧大纲，确认用户意见涉及的问题已解决"
+                "validation": "对比新旧大纲，确认用户意见涉及的问题已解决",
+                "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
             })
         
         return {
@@ -357,7 +379,8 @@ class FeedbackDecomposer:
                 "change_to": f"按照意见修改第{chapter_num}章",
                 "reason": intent,
                 "regeneration_prompt": f"重新规划第{chapter_num}章大纲。修改意见: {feedback}\n原大纲: {json.dumps(chapter_outline, ensure_ascii=False)[:300]}",
-                "validation": "检查修改后的章节是否符合用户意见"
+                "validation": "检查修改后的章节是否符合用户意见",
+                "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
             }],
             "raw_feedback": feedback,
             "offline_mode": True,
@@ -425,6 +448,41 @@ class FeedbackDecomposer:
         for m in re.finditer(r"第\s*(\d+)\s*卷", text):
             refs.append(int(m.group(1)))
         return sorted(set(refs))
+
+    def _detect_affected_aspects(self, feedback: str, fallback: list = None) -> list:
+        """在用户原始反馈上检测影响的数据层面
+        
+        在原始中文反馈上匹配，比在 LLM 生成的 regen_prompt 上匹配可靠得多。
+        返回 ["outline", "characters", "worldbuilding"] 的组合。
+        """
+        aspects = set(fallback or ["outline"])
+        
+        # 角色相关关键词 — 覆盖所有可能的表达方式
+        char_patterns = [
+            r"主角", r"主人公", r"男主", r"女主", r"反派", r"配角", r"角色",
+            r"人设", r"性格", r"身世", r"出身", r"背景", r"身份",
+            r"金手指", r"能力", r"天赋", r"修为", r"境界", r"实力", r"战力",
+            r"成长", r"弧线", r"弧光", r"转变", r"黑化", r"洗白",
+            r"后代", r"之后", r"之子", r"孤儿", r"少爷", r"小姐",
+        ]
+        for pat in char_patterns:
+            if pat in feedback:
+                aspects.add("characters")
+                break
+        
+        # 世界观相关关键词
+        wb_patterns = [
+            r"世界观", r"世界", r"时代", r"背景设定", r"力量体系",
+            r"修炼体系", r"魔法", r"灵力", r"灵气", r"斗气", r"内力",
+            r"宗门", r"皇朝", r"帝国", r"组织", r"势力",
+            r"规则", r"法则", r"天道", r"位面", r"界面",
+        ]
+        for pat in wb_patterns:
+            if pat in feedback:
+                aspects.add("worldbuilding")
+                break
+        
+        return sorted(aspects)
 
     def _infer_intent(self, feedback: str) -> str:
         """推断用户深层意图（优先级排序: 角色 > 逻辑 > 节奏 > 长短）"""

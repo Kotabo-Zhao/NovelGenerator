@@ -209,13 +209,23 @@ class OutlineInteractive:
             else:
                 return None
             
-            # 同步更新角色设定和世界观（如果修改意见涉及）
-            scope = target.get("scope", "global")
-            needs_chars = (scope == "character" or "角色" in regen_prompt or "主角" in regen_prompt 
-                          or "人设" in regen_prompt or "反派" in regen_prompt or "配角" in regen_prompt
-                          or "性格" in regen_prompt or "金手指" in regen_prompt)
-            needs_wb = (scope == "worldbuilding" or "世界观" in regen_prompt or "背景" in regen_prompt 
-                       or "设定" in regen_prompt or "力量体系" in regen_prompt or "世界" in regen_prompt)
+            # ── 同步更新角色设定和世界观 ──
+            # 优先使用 Decomposer 显式标注的 affected_aspects（精确），
+            # 回退到 regen_prompt 关键词匹配（兜底，覆盖离线模式）
+            affected = action.get("affected_aspects", [])
+            needs_chars = "characters" in affected or (
+                not affected and any(kw in regen_prompt for kw in [
+                    "主角", "主人公", "男主", "女主", "角色", "人设", "性格",
+                    "身世", "出身", "背景", "身份", "金手指", "能力", "天赋",
+                    "反派", "配角", "后代", "之后", "之子",
+                ])
+            )
+            needs_wb = "worldbuilding" in affected or (
+                not affected and any(kw in regen_prompt for kw in [
+                    "世界观", "世界", "时代", "设定", "力量体系",
+                    "修炼体系", "魔法", "灵力", "灵气", "斗气",
+                ])
+            )
             
             if needs_chars:
                 new_chars = await self._regenerate_with_prompt(
