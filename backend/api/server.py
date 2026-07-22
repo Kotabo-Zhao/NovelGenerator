@@ -29,7 +29,7 @@ from typing import Optional
 from core.engine import NovelEngine
 from core.pacing_checker import PacingChecker
 from core.style_fingerprint import StyleFingerprint
-from config import CORS_ORIGINS, HOST, PORT
+from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, DEFAULT_CHAPTER_WORDS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("api")
@@ -98,12 +98,12 @@ class GenerateChapterRequest(BaseModel):
 @app.get("/api/health")
 async def health():
     import os as _os
-    novels_exist = _os.path.exists(config.NOVELS_DIR)
-    novel_count = len([f for f in _os.listdir(config.NOVELS_DIR) if _os.path.isdir(_os.path.join(config.NOVELS_DIR, f)) and f != ".gitkeep"]) if novels_exist else 0
+    novels_exist = _os.path.exists(NOVELS_DIR)
+    novel_count = len([f for f in _os.listdir(NOVELS_DIR) if _os.path.isdir(_os.path.join(NOVELS_DIR, f)) and f != ".gitkeep"]) if novels_exist else 0
     return {
         "status": "ok",
         "service": "NovelGenerator",
-        "storage": config.NOVELS_DIR,
+        "storage": NOVELS_DIR,
         "storage_exists": novels_exist,
         "novel_count": novel_count,
     }
@@ -516,5 +516,5 @@ async def get_character_bible(novel_id: str):
 if __name__ == "__main__":
     import uvicorn
     log.info(f"Starting NovelGenerator API on {HOST}:{PORT}")
-    log.info(f"Storage: {config.NOVELS_DIR}")
+    log.info(f"Storage: {NOVELS_DIR}")
     uvicorn.run("api.server:app", host=HOST, port=PORT, reload=True)
