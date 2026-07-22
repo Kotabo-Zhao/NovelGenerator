@@ -379,47 +379,125 @@ class Planner:
         yield {"type": "progress", "phase": "characters", "pct": 55, "label": "角色设计完成 ✓"}
 
         # ── Phase 3: 大纲 (55% → 95%) ──
-        yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划章节大纲…"}
-
-        # 自动计算章数，上限40章防止单次LLM调用超时
+        # ── Phase 3: 大纲（分卷生成，每卷独立 LLM 调用，杜绝截断）──
         chapter_words = 2000
         estimated_chapters = min(40, max(10, target_words // chapter_words))
-        volumes = max(3, estimated_chapters // 8)
+        vol_count = max(3, estimated_chapters // 8)
+        ch_per_vol = max(5, estimated_chapters // vol_count)
 
-        outline_prompt = f"""你是小说大纲规划师。仅根据以下设定生成章节大纲。不要输出世界观和角色。
+        # Phase 3a: 生成卷结构
+        yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划卷结构…"}
 
-世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:400]}
-主角名: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
-题材: {genre}  风格: {style_config['name']}  创意: {inspiration}  目标: {target_words}字
-节奏: {structure_hint}
+        structure_prompt = f"""你是小说结构师。根据设定规划{vol_count}卷结构。
 
-【章数规划】本次生成 {estimated_chapters} 章（上限40章，后续可在编辑器中添加），分 {volumes} 卷。
-每章 target_words={chapter_words}字，摘要控制在30字内。
+世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:300]}
+主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
+创意: {inspiration}  风格: {style_config['name']}  总目标: {target_words}字
 
-【重要】只输出 JSON，且只包含 "outline" 字段。每章摘要控制在30字内。
+只输出JSON数组，{vol_count}个对象:
 ```json
-{{
-  "outline": {{
-    "volumes": [
-      {{
-        "number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"",
-        "chapters":[
-          {{"number":1,"title":"","summary":"30字内核心事件","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":{chapter_words}}}
-        ]
-      }}
-    ],
-    "total_chapters":0,"three_act_map":"","rhythm_notes":""
-  }}
-}}
-```"""
-        outline = await self._call_llm(outline_prompt, "outline", max_tokens=16384)
-        if not outline:
-            yield {"type": "error", "message": "大纲生成失败"}
+[
+  {{"vol":1,"title":"卷标题","act":"第一幕·建置","theme":"核心主题","ch_count":{ch_per_vol},"act_function":"本卷在全剧中的作用"}}
+]
+```
+只输出JSON。"""
+
+        structure_result = await self._call_llm(structure_prompt, "outline_structure", max_tokens=2048)
+        if not structure_result:
+            yield {"type": "error", "message": "卷结构规划失败"}
             return
+
+        # Handle both dict wrapper and raw list
+        volumes_meta = structure_result if isinstance(structure_result, list) else structure_result.get("volumes", [])
+        if not volumes_meta and isinstance(structure_result, dict):
+            # Try extracting from values
+            for v in structure_result.values():
+                if isinstance(v, list): volumes_meta = v; break
+        if not volumes_meta:
+            # Fallback: create default volume structure
+            volumes_meta = [{"vol": i+1, "title": f"第{i+1}卷", "act": ["第一幕·建置","第二幕·对抗","第三幕·解决"][min(i,2)],
+                            "theme": "主线推进", "ch_count": ch_per_vol, "act_function": "推进故事"}
+                           for i in range(vol_count)]
+
+        # Phase 3b+: 逐卷生成章节
+        all_volumes = []
+        chapter_counter = 0
+        total_chapters = sum(v.get("ch_count", ch_per_vol) for v in volumes_meta[:vol_count])
+
+        for idx, vol_meta in enumerate(volumes_meta[:vol_count]):
+            vol_num = vol_meta.get("vol", idx + 1)
+            vol_title = vol_meta.get("title", f"第{vol_num}卷")
+            vol_act = vol_meta.get("act", "")
+            vol_theme = vol_meta.get("theme", "")
+            vol_function = vol_meta.get("act_function", "")
+            n_ch = min(10, vol_meta.get("ch_count", ch_per_vol))  # 单卷上限10章
+
+            pct = 58 + int(34 * (idx + 1) / vol_count)
+            yield {"type": "progress", "phase": "outline", "pct": pct,
+                   "label": f"生成第{vol_num}卷「{vol_title}」({n_ch}章)…"}
+
+            ch_prompt = f"""生成第{vol_num}卷「{vol_title}」的{n_ch}章大纲。
+卷信息: act={vol_act}, theme={vol_theme}, function={vol_function}
+起始章号: {chapter_counter + 1}
+
+世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:200]}
+主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
+风格: {style_config['name']}
+
+只输出JSON数组，{n_ch}个章节对象:
+```json
+[
+  {{"number":{chapter_counter+1},"title":"章标题","summary":"30字内核心事件","emotion_curve":"压抑→爆发→余韵","conflict":"冲突描述","characters":["出场角色"],"hook":"结尾钩子","target_words":{chapter_words}}}
+]
+```
+只输出JSON。"""
+
+            ch_result = await self._call_llm(ch_prompt, f"outline_vol{vol_num}", max_tokens=4096)
+            if not ch_result:
+                # 单卷失败 → 生成最小化fallback章节
+                log.warning(f"Volume {vol_num} chapter generation failed, using fallback")
+                ch_result = [
+                    {"number": chapter_counter + j + 1, "title": f"第{chapter_counter + j + 1}章",
+                     "summary": f"第{vol_num}卷第{j+1}章核心剧情", "emotion_curve": "平稳→起伏→悬念",
+                     "conflict": "主线推进", "characters": ["主角"],
+                     "hook": "引导下一章", "target_words": chapter_words}
+                    for j in range(n_ch)
+                ]
+
+            # Handle both array and dict wrapper
+            chapters = ch_result if isinstance(ch_result, list) else ch_result.get("chapters", [])
+            if not chapters and isinstance(ch_result, dict):
+                for v in ch_result.values():
+                    if isinstance(v, list): chapters = v; break
+            if not chapters:
+                chapters = ch_result if isinstance(ch_result, list) else []
+
+            # Renumber to ensure continuity
+            for j, ch in enumerate(chapters):
+                ch["number"] = chapter_counter + j + 1
+                if "target_words" not in ch:
+                    ch["target_words"] = chapter_words
+
+            all_volumes.append({
+                "number": vol_num,
+                "title": vol_title,
+                "act": vol_act,
+                "theme": vol_theme,
+                "act_function": vol_function,
+                "chapters": chapters
+            })
+            chapter_counter += len(chapters)
 
         yield {"type": "progress", "phase": "outline", "pct": 92, "label": "组装最终文档…"}
 
-        # 组装完整 plan
+        # 组装完整 plan（使用分卷生成的结果）
+        plan_outline = {
+            "volumes": all_volumes,
+            "total_chapters": chapter_counter,
+            "three_act_map": f"第一幕·建置(约{sum(1 for v in all_volumes if '建置' in v.get('act',''))}卷) → 第二幕·对抗(约{sum(1 for v in all_volumes if '对抗' in v.get('act',''))}卷) → 第三幕·解决(约{sum(1 for v in all_volumes if '解决' in v.get('act',''))}卷)",
+            "rhythm_notes": f"共{len(all_volumes)}卷{chapter_counter}章，每章约{chapter_words}字"
+        }
+
         plan = {
             "title": wb.get("title", title or "未命名"),
             "genre": genre,
@@ -427,7 +505,7 @@ class Planner:
             "target_words": target_words,
             "worldbuilding": wb.get("worldbuilding", {}),
             "characters": chars.get("characters", {}),
-            "outline": outline.get("outline", {}),
+            "outline": plan_outline,
             "_meta": {
                 "created_at": __import__("datetime").datetime.now().isoformat(),
                 "model": self.model,
@@ -437,12 +515,12 @@ class Planner:
         }
         
         # 标准化
-        for vol in plan.get("outline", {}).get("volumes", []):
+        for vol in plan["outline"]["volumes"]:
             vol["number"] = int(vol.get("number", 1))
             for ch in vol.get("chapters", []):
                 ch["number"] = int(ch.get("number", 1))
                 ch["target_words"] = int(ch.get("target_words", 3000))
-        plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
+        plan["outline"]["total_chapters"] = chapter_counter
         plan["target_words"] = int(plan.get("target_words", 0))
 
         yield {"type": "progress", "phase": "done", "pct": 100, "label": "创作方案完成！"}
@@ -578,6 +656,33 @@ class Planner:
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
+            pass
+
+        # Strategy 3: JSON repair — try auto-closing unclosed braces/brackets
+        # Common LLM failure: JSON truncated, missing closing ] or }
+        try:
+            repaired = json_str.rstrip()
+            # Count unclosed pairs
+            braces = repaired.count("{") - repaired.count("}")
+            brackets = repaired.count("[") - repaired.count("]")
+            # Check for unclosed strings
+            in_string = False
+            prev = ''
+            for ch in repaired:
+                if ch == '"' and prev != '\\':
+                    in_string = not in_string
+                prev = ch
+            if in_string:
+                repaired += '"'
+            # Close brackets first, then braces
+            repaired += "]" * max(0, brackets)
+            repaired += "}" * max(0, braces)
+            if repaired != json_str:
+                result = json.loads(repaired)
+                if result:
+                    log.info(f"JSON repair successful: added {braces} }}, {brackets} ]]")
+                    return result
+        except (json.JSONDecodeError, Exception):
             pass
         
         return None
