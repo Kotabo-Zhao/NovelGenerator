@@ -407,7 +407,13 @@ class OutlineInteractive:
             return await self._safe_llm_call(prompt, planner, f"ch_{chapter_num}", max_tokens=1024)
         
         elif mode == "characters":
+            # 强制角色更新指令 — 防止 LLM 把大纲修改 prompt 当成不改角色的理由
+            char_instruction = f"""【强制任务】以下用户意见涉及角色设定的修改，你必须同步更新 character 数据，不能保持原样。
+如果意见说"改成X"，就要真的改成X，不是审阅或建议。"""
+
             prompt = f"""你是角色设计师。请根据修改指令重新设计角色体系。
+
+{char_instruction}
 
 【当前角色设定】
 {json.dumps(plan.get("characters", {}), ensure_ascii=False, indent=2)[:2000]}
@@ -416,10 +422,11 @@ class OutlineInteractive:
 题材: {genre}  风格: {style}  目标字数: {target_words}字
 世界观: {json.dumps(plan.get('worldbuilding', {}), ensure_ascii=False)[:500]}
 
-【修改指令】
+【修改指令 — 其中涉及角色的部分必须执行】
 {regen_prompt}
 
 【输出要求】
+- 必须执行修改指令中对角色的所有变更，不要保持原样
 - 只改指令涉及的角色，保留未提及角色的所有设定
 - 每个角色必须有: name, identity, personality, motivation, arc
 - protagonist 额外有: cheat（金手指）, weakness（弱点）
@@ -433,14 +440,18 @@ class OutlineInteractive:
 - 如果主角名变了，调用方会自动同步大纲中所有提及旧名的地方
 - 如果主角身份/背景变了，请确保 arc（成长弧）也相应调整
 
-输出JSON（完整的characters对象）:
+输出JSON（完整的characters对象，必须反映所有修改）:
 ```json
 {{"protagonist":{{"name":"","identity":"","personality":"","cheat":"","weakness":"","motivation":"","arc":"","changed_fields":[],"previous_name":""}},"supporting":[],"antagonist":[]}}
 ```"""
             return await self._safe_llm_call(prompt, planner, "characters_update", max_tokens=4096)
         
         elif mode == "worldbuilding":
+            wb_instruction = f"""【强制任务】以下用户意见涉及世界观设定的修改，你必须同步更新 worldbuilding 数据，不能保持原样。"""
+
             prompt = f"""你是世界观设计师。请根据修改指令更新世界观设定。
+
+{wb_instruction}
 
 【当前世界观】
 {json.dumps(plan.get("worldbuilding", {}), ensure_ascii=False, indent=2)[:2000]}
@@ -448,10 +459,11 @@ class OutlineInteractive:
 【故事背景】
 题材: {genre}  风格: {style}
 
-【修改指令】
+【修改指令 — 其中涉及世界观的部分必须执行】
 {regen_prompt}
 
 【输出要求】
+- 必须执行修改指令中对世界观的所有变更
 - 只改指令涉及的设定，保留未提及的部分
 - 必须有: era, power_system, core_conflict, world_rules
 - world_rules 列出3-5条核心规则
