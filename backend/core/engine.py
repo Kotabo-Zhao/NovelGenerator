@@ -323,6 +323,13 @@ class NovelEngine:
 
             log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
 
+            # ── 完整度验证 ──
+            from .writer import _check_truncation
+            is_trunc, reason = _check_truncation(full_text, target_words)
+            if is_trunc:
+                log.warning(f"Chapter {chapter_num} may be incomplete: {reason}")
+                yield {"type": "warning", "message": f"本章可能不完整（{reason}），建议查看后重生成"}
+
             # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
             try:
                 novel_dir = self.memory.get_novel_dir(novel_id)

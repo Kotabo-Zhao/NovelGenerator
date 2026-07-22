@@ -529,7 +529,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <span class="text-xs color-text3 ml-8">大纲、角色、节拍结构均保持不变</span>
         </div>
 
-        <div v-if="error" class="error-msg">{{ error }}</div>
+        <div v-if="error" class="error-msg" style="cursor:pointer" @click="error=''">{{ error }} <span style="float:right;opacity:.5">✕</span></div>
       </div>
     </template>
 
@@ -756,7 +756,7 @@ createApp({
       loading.write=false; chapterProgress.value=0;
     }
     function nextChapter() { const n=writing.chapter+1; if(n<=(activeNovel.value?.state.total_chapters||999)) selectChapter(n); }
-    function copyChapter() { navigator.clipboard.writeText(writing.content); error.value='已复制'; setTimeout(()=>error.value='',2000); }
+    function copyChapter() { navigator.clipboard.writeText(writing.content); error.value='已复制到剪贴板'; }
 
     function cancelBatch() {
       if(abortCtrl.value){ abortCtrl.value.abort(); abortCtrl.value=null; }

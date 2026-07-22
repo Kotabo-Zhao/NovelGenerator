@@ -182,6 +182,8 @@ class Writer:
         log.info(f"Writing chapter: {genre}/{style}/{writing_mode}, pass 1/2 (draft)")
         
         draft = ""
+        # max_tokens 硬上限防止 API 截断（2000字 ≈ 6000 tokens，留有余量）
+        safe_max_tokens = min(target_words * 3, 6000)
         stream = self._create(
             model=self.model,
             messages=[
@@ -189,7 +191,7 @@ class Writer:
                 {"role": "user", "content": f"请根据以下上下文和本章大纲，开始写正文：\n\n{context}"},
             ],
             temperature=0.85,
-            max_tokens=target_words * 3,
+            max_tokens=safe_max_tokens,
             stream=True,
         )
         
@@ -222,7 +224,7 @@ class Writer:
                         {"role": "user", "content": f"草稿如下：\n\n{draft}"},
                     ],
                     temperature=0.6,
-                    max_tokens=target_words * 3,
+                    max_tokens=safe_max_tokens,
                     stream=True,
                 )
                 
@@ -260,7 +262,7 @@ class Writer:
                         {"role": "user", "content": f"需要Humanizer润色的文本：\n\n{final_text}"},
                     ],
                     temperature=0.5,
-                    max_tokens=target_words * 3,
+                    max_tokens=safe_max_tokens,
                     stream=True,
                 )
                 
@@ -289,7 +291,7 @@ class Writer:
                         {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
                     ],
                     temperature=0.8,
-                    max_tokens=target_words * 3,
+                    max_tokens=safe_max_tokens,
                     stream=True,
                 )
                 for chunk in retry_stream:

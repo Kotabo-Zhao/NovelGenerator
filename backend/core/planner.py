@@ -367,12 +367,20 @@ class Planner:
         # ── Phase 3: 大纲 (55% → 95%) ──
         yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划章节大纲…"}
 
+        # 自动计算章数：总字数 ÷ 每章安全上限(2000字)
+        chapter_words = 2000
+        estimated_chapters = max(10, target_words // chapter_words)
+        volumes = max(3, estimated_chapters // 15)  # 每卷约15章
+
         outline_prompt = f"""你是小说大纲规划师。仅根据以下设定生成章节大纲。不要输出世界观和角色。
 
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:400]}
 主角名: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
 题材: {genre}  风格: {style_config['name']}  创意: {inspiration}  目标: {target_words}字
 节奏: {structure_hint}
+
+【章数规划】全书约 {estimated_chapters} 章（{target_words}字÷{chapter_words}字/章），分为 {volumes} 卷，每卷约15章。
+每章 target_words 固定为 {chapter_words} 字，不要超标。
 
 【重要】只输出 JSON，且只包含 "outline" 字段。每章摘要控制在30字内。
 ```json
@@ -382,7 +390,7 @@ class Planner:
       {{
         "number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"",
         "chapters":[
-          {{"number":1,"title":"","summary":"30字内核心事件","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":3000}}
+          {{"number":1,"title":"","summary":"30字内核心事件","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":{chapter_words}}}
         ]
       }}
     ],
