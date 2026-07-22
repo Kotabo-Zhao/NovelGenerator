@@ -112,7 +112,11 @@ class NovelEngine:
         """
         async for event in self.planner.plan_stream(creative_input):
             if event["type"] == "done":
-                plan = event["plan"]
+                plan = event.get("plan")
+                if not isinstance(plan, dict):
+                    log.error(f"create_novel_stream: plan is {type(plan).__name__}, not dict")
+                    yield {"type": "error", "message": "大纲数据结构异常，请重试"}
+                    return
                 novel_dir = self.memory.get_novel_dir(plan["title"])
                 os.makedirs(novel_dir, exist_ok=True)
                 

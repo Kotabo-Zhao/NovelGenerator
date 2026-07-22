@@ -280,6 +280,10 @@ async def _sse_with_heartbeat(event_generator):
     async def producer():
         try:
             async for event in event_generator:
+                # 防御: 确保event是dict
+                if not isinstance(event, dict):
+                    log.error(f"SSE producer got non-dict event: {type(event).__name__}: {str(event)[:200]}")
+                    event = {"type": "warning", "message": f"内部数据格式异常: {type(event).__name__}"}
                 await q.put(("event", event))
         except Exception as e:
             log.exception("SSE producer crashed")
