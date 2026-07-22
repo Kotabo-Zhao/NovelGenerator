@@ -836,6 +836,19 @@ createApp({
       if (_shelfDebounce) return;
       _shelfDebounce = setTimeout(() => { _shelfDebounce=null; loadShelf(); }, 500);
     }
+    function loadNovelPlan() {
+      // 从服务端强制重拉最新 plan（主角修改后确保前端同步）
+      if (!activeNovel.value) return;
+      fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id))
+        .then(r=>r.json()).then(d=>{
+          if (d.novel) {
+            // 用 nextTick 确保 Vue 响应式触发
+            planResult.value = null;
+            setTimeout(() => { planResult.value = d.novel; }, 50);
+          }
+        })
+        .catch(()=>{});
+    }
     function openCreate() { planResult.value=null; error.value=''; currentView.value='create'; }
     function openWrite() { if(activeNovel.value) { currentView.value='write'; _saveSession(); } }
     function openOutline() {
@@ -1018,7 +1031,7 @@ createApp({
           else if(evt.type==='intent'){ createPhaseLabel.value='已理解: '+evt.summary?.substring(0,50); }
           else if(evt.type==='execution_summary'){ createPhaseLabel.value=`完成 ${evt.executed}/${evt.total} 条修改`; }
           else if(evt.type==='diff'){ createPhaseLabel.value=`共 ${(evt.changes||[]).length} 处变更`; }
-          else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成'; planResult.value=evt.plan; outlineFeedback.value=''; loadShelfDebounced(); }
+          else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成'; planResult.value=evt.plan; outlineFeedback.value=''; loadShelfDebounced(); loadNovelPlan(); }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError')error.value=e.message||'连接超时'; }
