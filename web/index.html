@@ -701,7 +701,29 @@ createApp({
     const styleCategories = ref({}); const exportSelected = reactive({});
     const editSaved = ref(false); const styleMode = ref('library');
     const customStyleDesc = ref(''); const styleSeeds = ref([]);
-    const styleParams = ref({}); const customParams = reactive({
+    const styleParams = ref({
+      narrative_person:{label:'叙事人称',options:[
+        {value:'first',label:'第一人称（我）'},{value:'third_limited',label:'第三人称限知'},{value:'third_omniscient',label:'第三人称全知'}
+      ]},
+      tone:{label:'文风基调',options:[
+        {value:'hot_blood',label:'热血昂扬'},{value:'calm',label:'冷静克制'},{value:'humorous',label:'幽默轻松'},{value:'dark',label:'暗黑沉重'},{value:'warm',label:'温馨治愈'}
+      ]},
+      pacing:{label:'节奏控制',options:[
+        {value:'fast',label:'快节奏'},{value:'balanced',label:'张弛有度'},{value:'slow',label:'舒缓细腻'}
+      ]},
+      dialogue_ratio:{label:'对话比例',options:[
+        {value:'low',label:'少对话'},{value:'medium',label:'叙事对话均衡'},{value:'high',label:'对话驱动'}
+      ]},
+      description_density:{label:'描写密度',options:[
+        {value:'sparse',label:'简洁留白'},{value:'moderate',label:'适中'},{value:'rich',label:'浓墨重彩'}
+      ]},
+      emotion_tendency:{label:'情感倾向',options:[
+        {value:'positive',label:'积极向上'},{value:'bittersweet',label:'悲喜交加'},{value:'tragic',label:'悲剧底色'},{value:'neutral',label:'冷静旁观'}
+      ]},
+      length_preference:{label:'篇幅偏好',options:[
+        {value:'short',label:'短篇精炼'},{value:'medium',label:'中篇展开'},{value:'long',label:'长篇铺陈'}
+      ]}
+    }); const customParams = reactive({
       narrative_person:'third_limited', tone:'hot_blood', pacing:'balanced',
       dialogue_ratio:'medium', description_density:'moderate',
       emotion_tendency:'positive', length_preference:'medium', keyword:''
