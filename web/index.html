@@ -739,18 +739,23 @@ createApp({
 
     onMounted(async () => {
       applyAppearance();
-      await loadStyles(); await loadShelf(); await loadStyleSeeds();
-      // 刷新恢复：从sessionStorage恢复上次选中的小说
+      loadStyles(); loadStyleSeeds(); // fire-and-forget
+      // 书架加载（带重试，Render冷启动需要等服务器醒来）
+      loading.shelf = true;
+      for (let attempt=0; attempt<3; attempt++) {
+        const ok = await _loadShelfOnce();
+        if (ok) break;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
+      }
+      loading.shelf = false;
+      // 恢复上次session
       const savedId = sessionStorage.getItem('activeNovelId');
       if (savedId && novels.value.length > 0) {
         const found = novels.value.find(n => n.id === savedId);
         if (found) {
           activeNovel.value = found;
-          // 异步加载plan
           fetch(API+'/api/novels/'+encodeURIComponent(savedId))
-            .then(r=>r.json()).then(d=>{planResult.value=d.novel;})
-            .catch(()=>{});
-          // 恢复上次的视图（大纲页或写作页）
+            .then(r=>r.json()).then(d=>{planResult.value=d.novel;}).catch(()=>{});
           const savedView = sessionStorage.getItem('lastView');
           if (savedView && ['create','write'].includes(savedView)) {
             currentView.value = savedView;
@@ -759,7 +764,6 @@ createApp({
             let next = 1; while(next<=total && done.includes(next)) next++;
             writing.chapter = Math.min(next, total);
             if (done.includes(writing.chapter)) {
-              // 已生成章节，预加载内容
               fetch(API+'/api/novels/'+encodeURIComponent(savedId)+'/chapters/'+writing.chapter)
                 .then(r=>r.ok?r.json():null)
                 .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
@@ -793,22 +797,32 @@ createApp({
 
     async function loadStyles() { try { const r=await fetch(API+'/api/styles'); styleCategories.value=(await r.json()).categories||{}; } catch(e){} }
     let _shelfDebounce=null;
-    async function loadShelf() {
-      if (_shelfDebounce) { clearTimeout(_shelfDebounce); _shelfDebounce=null; }
-      loading.shelf=true;
+    async function _loadShelfOnce() {
+      // 内部fetch，返回true/false，失败不覆盖已有数据
       try {
         const r = await fetch(API+'/api/novels');
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
-        novels.value = data.novels || [];
-        if (activeNovel.value) {
-          const updated = novels.value.find(n => n.id === activeNovel.value.id);
+        const list = data.novels || [];
+        // 仅在成功且有数据时更新（或首次加载）
+        if (list.length > 0 || novels.value.length === 0) {
+          novels.value = list;
+        }
+        if (activeNovel.value && list.length > 0) {
+          const updated = list.find(n => n.id === activeNovel.value.id);
           if (updated) activeNovel.value = updated;
         }
+        return true;
       } catch(e) {
-        console.error('loadShelf failed:', e);
+        console.warn('Shelf fetch retry:', e.message);
+        return false;
       }
-      loading.shelf=false;
+    }
+    async function loadShelf() {
+      if (_shelfDebounce) { clearTimeout(_shelfDebounce); _shelfDebounce=null; }
+      if (!loading.shelf && novels.value.length === 0) loading.shelf = true;
+      await _loadShelfOnce();
+      loading.shelf = false;
     }
     function loadShelfDebounced() {
       if (_shelfDebounce) return;
