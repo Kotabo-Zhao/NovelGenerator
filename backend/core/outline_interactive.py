@@ -232,6 +232,17 @@ class OutlineInteractive:
                     plan, regen_prompt, planner, mode="characters"
                 )
                 if new_chars:
+                    # ── 主角名变更检测 → 传播到大纲所有章节 ──
+                    old_protag = plan.get("characters", {}).get("protagonist", {})
+                    new_protag = new_chars.get("protagonist", {})
+                    old_name = old_protag.get("name", "")
+                    new_name = new_protag.get("name", "")
+                    
+                    if old_name and new_name and old_name != new_name:
+                        log.info(f"Protagonist name changed: '{old_name}' → '{new_name}', syncing outline...")
+                        changed_count = self._sync_protagonist_name(plan, old_name, new_name)
+                        result["effect"] += f" + 主角名已全篇同步({changed_count}处)"
+                    
                     plan["characters"] = new_chars
                     result["effect"] += " + 角色设定已同步"
             
@@ -400,9 +411,16 @@ class OutlineInteractive:
 - supporting 角色有: relation（与主角关系）
 - antagonist 有: goal（目标）, method（手段）
 
+【主角信息变更检测（关键！）】
+- 如果修改涉及主角的 name 或 identity 的变更，必须在返回结果中标注
+- 在 protagonist 对象中加入 "changed_fields" 字段，列出被修改的字段名
+- 例如: "name" 被修改时 changed_fields: ["name"]，同时旧名通过 "previous_name" 字段记录
+- 如果主角名变了，调用方会自动同步大纲中所有提及旧名的地方
+- 如果主角身份/背景变了，请确保 arc（成长弧）也相应调整
+
 输出JSON（完整的characters对象）:
 ```json
-{{"protagonist":{{"name":"","identity":"","personality":"","cheat":"","weakness":"","motivation":"","arc":""}},"supporting":[],"antagonist":[]}}
+{{"protagonist":{{"name":"","identity":"","personality":"","cheat":"","weakness":"","motivation":"","arc":"","changed_fields":[],"previous_name":""}},"supporting":[],"antagonist":[]}}
 ```"""
             return await self._safe_llm_call(prompt, planner, "characters_update", max_tokens=4096)
         
@@ -524,6 +542,31 @@ class OutlineInteractive:
                     ch["number"] = counter
         if isinstance(plan.get("outline"), dict):
             plan["outline"]["total_chapters"] = counter
+
+    def _sync_protagonist_name(self, plan: dict, old_name: str, new_name: str) -> int:
+        """主角改名后，同步大纲所有章节摘要中的旧名引用
+        
+        Returns: 修改的处数
+        """
+        if not old_name or not new_name or old_name == new_name:
+            return 0
+        
+        changed = 0
+        # 遍历所有卷/章，替换 summary/hook/conflict/title 中的旧名
+        for vol in plan.get("outline", {}).get("volumes", []):
+            if not isinstance(vol, dict):
+                continue
+            for ch in vol.get("chapters", []):
+                if not isinstance(ch, dict):
+                    continue
+                for field in ("summary", "hook", "conflict", "title"):
+                    val = ch.get(field, "")
+                    if isinstance(val, str) and old_name in val:
+                        ch[field] = val.replace(old_name, new_name)
+                        changed += 1
+        
+        log.info(f"_sync_protagonist_name: replaced '{old_name}' → '{new_name}' in {changed} places")
+        return changed
 
     def get_iteration_history(self) -> list:
         return self._iteration_history

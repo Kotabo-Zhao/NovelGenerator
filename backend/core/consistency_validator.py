@@ -23,6 +23,22 @@ from openai import OpenAI
 
 log = logging.getLogger(__name__)
 
+# ── 工具函数 ──
+
+def _name_similarity(a: str, b: str) -> float:
+    """计算两个名字的相似度 (0.0 ~ 1.0)
+    
+    使用字符级 Jaccard 相似度：共同字符数 / 并集字符数
+    """
+    if not a or not b:
+        return 0.0
+    set_a = set(a)
+    set_b = set(b)
+    union = len(set_a | set_b)
+    if union == 0:
+        return 0.0
+    return len(set_a & set_b) / union
+
 # ═══════════════════════════════════════════════
 # L1 规则引擎: 快速扫描硬性约束
 # ═══════════════════════════════════════════════
@@ -239,6 +255,72 @@ class ConsistencyValidator:
                         "location": f"第{ch.get('number','?')}章",
                         "fix": "在角色设定中补充该角色，或确认名称是否正确",
                     })
+        
+        # ── 主角身份一致性检查（新增）──
+        if protagonist:
+            # 检查章节摘要中是否提到主角（确认主角出场覆盖）
+            chapters_with_protag = 0
+            total_chapters = 0
+            for vol in volumes:
+                for ch in vol.get("chapters", []):
+                    if not isinstance(ch, dict):
+                        continue
+                    total_chapters += 1
+                    ch_text = f"{ch.get('summary','')} {ch.get('conflict','')} {ch.get('hook','')}"
+                    if protagonist in ch_text:
+                        chapters_with_protag += 1
+            
+            if total_chapters > 0 and chapters_with_protag < max(2, total_chapters * 0.5):
+                violations.append({
+                    "id": "O004",
+                    "type": "protagonist_coverage",
+                    "severity": "P1",
+                    "description": f"主角「{protagonist}」仅出现在 {chapters_with_protag}/{total_chapters} 章摘要中（<50%），可能被边缘化",
+                    "fix": "确保主角在大部分章节中作为核心角色出场",
+                })
+            
+            # 检查角色设定中是否有空/占位名称
+            if protagonist in ("主角", "男主", "女主", "主人公", ""):
+                violations.append({
+                    "id": "O005",
+                    "type": "protagonist_placeholder",
+                    "severity": "P0",
+                    "description": f"主角名称为占位符「{protagonist}」，未设定真实姓名",
+                    "fix": "为角色设定中的 protagonist.name 填入真实姓名",
+                })
+            
+            # 检查 chapter characters 列表中的主角名是否与设定一致
+            for vol in volumes:
+                for ch in vol.get("chapters", []):
+                    if not isinstance(ch, dict):
+                        continue
+                    ch_chars = ch.get("characters", [])
+                    # 检查是否有类似但不完全匹配的主角名（可能是改名后不同步）
+                    for cname in ch_chars:
+                        if not cname or cname == protagonist:
+                            continue
+                        # 策略1: 同姓不同名 (如 "林玄" vs "林凡")
+                        if len(cname) >= 2 and len(protagonist) >= 2 and cname[0] == protagonist[0]:
+                            warnings.append({
+                                "id": "O006",
+                                "type": "character_name_mismatch",
+                                "severity": "P1",
+                                "description": f"第{ch.get('number','?')}章角色列表中有同姓疑似主角: '{cname}' vs 设定名 '{protagonist}'",
+                                "location": f"第{ch.get('number','?')}章",
+                                "fix": f"确认'{cname}'是否应为'{protagonist}'，或明确为不同角色",
+                            })
+                            break
+                        # 策略2: 编辑距离 ≤2 的相似名
+                        if _name_similarity(cname, protagonist) >= 0.6:
+                            warnings.append({
+                                "id": "O006",
+                                "type": "character_name_mismatch",
+                                "severity": "P1",
+                                "description": f"第{ch.get('number','?')}章角色列表中有疑似主角名变体: '{cname}' vs 设定名 '{protagonist}'",
+                                "location": f"第{ch.get('number','?')}章",
+                                "fix": f"统一主角名称为「{protagonist}」，或确认是否为不同角色",
+                            })
+                            break
         
         score = 100
         for v in violations:

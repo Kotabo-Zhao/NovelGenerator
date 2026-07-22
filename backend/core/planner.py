@@ -228,10 +228,15 @@ class Planner:
   }}
 }}
 ```
+重要：
+- 确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。
+- 大纲的卷结构和节奏必须严格匹配「{style_config['name']}」的风格要求。
 
-重要：确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。
-大纲的卷结构和节奏必须严格匹配「{style_config['name']}」的风格要求。"""
-
+【章节标题多样性要求】
+- 禁止所有章节使用同一格式模板（如「XXXX·XX」「XX者」「XX的XX」）
+- 标题应多样化：可以来自动作、对话、意象、悬念、细节
+- 相邻章节标题风格应明显不同，长短交错
+- 示例好标题: 「墙上的影子先碎了」「三碗酒」「剑还在转」「他不叫叶凡」"""
         log.info(f"Planning novel: {genre}/{style_name} - {inspiration[:50]}...")
         
         kwargs = dict(
@@ -480,10 +485,18 @@ class Planner:
 主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
 风格: {style_config['name']}
 
+【章节标题多样性要求（关键！）】
+- 禁止使用固定格式模板，每章标题应该有独特风格
+- 禁止的格式: 「XXXX·XX」「事件名*角色名」「名词的XX」「XX者」「XX之路」「XX之X」
+- 好标题举例: 「墙上的影子先碎了」「他不叫叶凡」「三碗酒」「剑还在转」「那天雨很大」
+- 坏标题举例: 「觉醒·初战」「修炼者之路」「力量的真谛」「守护者」「复仇之火」
+- 标题来源可以来自: 一个动作、一句对话、一个意象、一个悬念、一个细节
+- 相邻章节的标题风格应有明显差异，长短交替
+
 只输出JSON数组，{n_ch}个章节对象:
 ```json
 [
-  {{"number":{chapter_counter+1},"title":"章标题","summary":"30字内核心事件","emotion_curve":"压抑→爆发→余韵","conflict":"冲突描述","characters":["出场角色"],"hook":"结尾钩子","target_words":{chapter_words}}}
+  {{"number":{chapter_counter+1},"title":"章节标题(禁止格式模板)","summary":"30字内核心事件","emotion_curve":"压抑→爆发→余韵","conflict":"冲突描述","characters":["出场角色"],"hook":"结尾钩子","target_words":{chapter_words}}}
 ]
 ```
 只输出JSON。"""
