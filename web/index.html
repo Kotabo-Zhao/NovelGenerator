@@ -162,6 +162,22 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .toggle-switch input:checked+.toggle-slider:before{transform:translateX(18px)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .error-msg{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.2);border-radius:var(--radius-xs);padding:12px 16px;color:var(--red);font-size:13px;margin:12px 0}
+/* Toast / Error Modal */
+.toast-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center}
+.toast-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);max-width:420px;width:90%;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.toast-box .toast-icon{font-size:32px;text-align:center;margin-bottom:12px}
+.toast-box .toast-title{font-size:16px;font-weight:600;margin-bottom:8px;text-align:center}
+.toast-box .toast-body{font-size:14px;color:var(--text2);margin-bottom:20px;text-align:center;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.toast-box .toast-actions{text-align:center}
+.toast-close{position:absolute;top:12px;right:12px;background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px 8px;border-radius:4px}
+.toast-close:hover{background:var(--bg2);color:var(--text)}
+/* Toggle Switch */
+.toggle-switch{position:relative;display:inline-flex;align-items:center;cursor:pointer}
+.toggle-switch input{display:none}
+.toggle-slider{width:40px;height:22px;background:var(--border);border-radius:11px;position:relative;transition:background .2s}
+.toggle-slider:before{content:'';position:absolute;width:18px;height:18px;background:#fff;border-radius:50%;top:2px;left:2px;transition:transform .2s}
+.toggle-switch input:checked+.toggle-slider{background:var(--accent)}
+.toggle-switch input:checked+.toggle-slider:before{transform:translateX(18px)}
 .success-msg{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.2);border-radius:var(--radius-xs);padding:12px 16px;color:var(--green);font-size:13px;margin:12px 0}
 .empty{text-align:center;padding:48px 16px}
 .empty .empty-icon{font-size:40px;margin-bottom:12px;opacity:.25}
@@ -256,6 +272,17 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 </head>
 <body>
 <div id="app">
+  <!-- Toast -->
+  <div v-if="toast.visible" class="toast-overlay" @click.self="toast.visible=false">
+    <div class="toast-box">
+      <div class="toast-icon">{{ toast.icon || '⚠️' }}</div>
+      <div class="toast-title">{{ toast.title }}</div>
+      <div class="toast-body">{{ toast.message }}</div>
+      <div class="toast-actions">
+        <button class="btn btn-primary" @click="toast.visible=false">知道了</button>
+      </div>
+    </div>
+  </div>
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="sidebar-logo"><span class="dot"></span>NovelGen</div>
@@ -328,6 +355,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         </div>
         <div class="form-group"><label>书名（留空自动生成）</label><input v-model="form.title" placeholder="我在修真界写代码"></div>
         <div class="form-group"><label>核心灵感</label><textarea v-model="form.inspiration" rows="3" placeholder="用几句话描述你的故事创意，越具体效果越好…"></textarea></div>
+        <!-- 命名去AI味开关 -->
+        <div class="flex items-center gap-6 mt-8" style="font-size:13px;color:var(--text2)">
+          <label class="toggle-switch">
+            <input type="checkbox" v-model="form.naturalNames">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>自然命名 <span style="opacity:.55">（禁用"云星辰叶尘无极天帝"等AI高频词）</span></span>
+        </div>
       </div>
 
       <!-- Style -->
@@ -367,7 +402,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         </div>
       </div>
 
-      <div v-if="error" class="error-msg">{{ error }}</div>
+      <div v-if="error" class="error-msg" style="cursor:pointer" @click="error=''">{{ error }} <span style="float:right;opacity:.5">✕</span></div>
 
       <div v-if="loading.create" class="create-progress">
         <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
@@ -569,7 +604,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <button class="btn btn-ghost btn-sm mt-8" @click="selectAll" v-if="novels.length">{{ allSelected ? '取消全选' : '全选' }}</button>
       </div>
 
-      <div v-if="error" class="error-msg">{{ error }}</div>
+      <div v-if="error" class="error-msg" style="cursor:pointer" @click="error=''">{{ error }} <span style="float:right;opacity:.5">✕</span></div>
     </template>
   </main>
 
@@ -593,6 +628,8 @@ createApp({
     const currentView = ref('shelf');
     const novels = ref([]); const activeNovel = ref(null);
     const planResult = ref(null); const error = ref(''); const preview = ref(null);
+    const toast = reactive({ visible:false, title:'', message:'', icon:'⚠️' });
+    const abortCtrl = ref(null);
     const styleCategories = ref({}); const exportSelected = reactive({});
     const editSaved = ref(false); const styleMode = ref('library');
     const customStyleDesc = ref(''); const styleSeeds = ref([]);
@@ -608,6 +645,14 @@ createApp({
     const isBusy = computed(() => loading.create || loading.write || loading.batch || isRegenerating.value);
     
     // ── SSE 安全读取器（含超时保护）──
+    /* ── 错误弹窗 ── */
+    function showToast(msg, title='提示', icon='⚠️') {
+      toast.title = title; toast.message = msg; toast.icon = icon; toast.visible = true;
+    }
+    function reportError(msg, title='操作异常') {
+      error.value = msg; showToast(msg, title, '⚠️');
+    }
+
     async function readSSE(response, onEvent, timeoutMs = 300000) {
       const reader = response.body.getReader();
       const dec = new TextDecoder();
@@ -642,7 +687,7 @@ createApp({
       }
     }
 
-    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'' });
+    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     const writingModeLiterary = ref(false);
     const writing = reactive({ chapter:1, content:'', done:false });
@@ -710,18 +755,18 @@ createApp({
     function openWrite() { if(activeNovel.value) currentView.value='write'; }
 
     async function doCreate() {
-      if (!form.inspiration.trim()) { error.value='请输入核心灵感'; return; }
-      if (loading.write || loading.batch) { error.value='有任务正在进行中，请等待完成'; return; }
+      if (!form.inspiration.trim()) { reportError('请输入核心灵感'); return; }
+      if (loading.write || loading.batch) { reportError('有任务正在进行中，请等待完成'); return; }
       error.value=''; planResult.value=null; loading.create=true;
       createProgress.value=0; createPhase.value='start'; createPhaseLabel.value='准备中…';
       try {
-        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form})});
+        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames})});
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
           else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelf(); }
-          else if(evt.type==='error'){ error.value=evt.message; return false; }
+          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
-      } catch(e){ if(e.name!=='AbortError')error.value=e.message||'连接超时，请重试'; }
+      } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
       loading.create=false;
     }
 
@@ -747,7 +792,7 @@ createApp({
 
     async function doGenerateChapter() {
       if(!activeNovel.value) return;
-      if(isBusy.value){ error.value='有任务正在进行中，请等待完成'; return; }
+      if(isBusy.value){ reportError('有任务正在进行中，请等待完成'); return; }
       if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter)) return;
       loading.write=true; writing.content=''; writing.done=false; reviewFeedback.value=''; error.value='';
       chapterProgress.value=0; chapterProgressLabel.value='准备中…';
@@ -767,18 +812,18 @@ createApp({
             ch.completed_chapters.sort((a,b)=>a-b); ch.current_chapter=Math.max(...ch.completed_chapters);
             loadShelf();
           }
-          else if(evt.type==='error'){ error.value=evt.message; return false; }
+          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
-      } catch(e){ if(e.name!=='AbortError')error.value=e.message||'连接超时，请重试'; }
+      } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
       loading.write=false; chapterProgress.value=0;
     }
     function nextChapter() { const n=writing.chapter+1; if(n<=(activeNovel.value?.state.total_chapters||999)) selectChapter(n); }
-    function copyChapter() { navigator.clipboard.writeText(writing.content); error.value='已复制到剪贴板'; }
+    function copyChapter() { navigator.clipboard.writeText(writing.content); showToast('已复制到剪贴板', '操作成功', '✅'); }
 
     function cancelBatch() {
       if(abortCtrl.value){ abortCtrl.value.abort(); abortCtrl.value=null; }
       loading.batch=false; batchStreaming.value=''; writing.done=true;
-      error.value='批量生成已中断，已生成的章节已保存';
+      showToast('已中断，已生成的章节保留', '批量生成中断', '⏸');
     }
 
     async function doBatchGenerate() {
@@ -825,9 +870,9 @@ createApp({
           }
           else if(evt.type==='batch_done'){
             batchCurrent.value=end; batchProgress.value=100;
-            if((evt.failed||[]).length>0) error.value=`${evt.failed.length}章失败: ${evt.failed.join(',')}`;
+            if((evt.failed||[]).length>0) reportError(`${evt.failed.length}章失败: ${evt.failed.join(',')}`, '批量生成部分失败');
           }
-          else if(evt.type==='error'){ error.value=evt.message; return false; }
+          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
         selectChapter(end); loadShelf();
       } catch(e){ if(e.name!=='AbortError') error.value=e.message||'连接超时，已生成的部分已保存'; }
@@ -843,9 +888,9 @@ createApp({
         await readSSE(r, (evt) => {
           if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
           else if(evt.type==='done'){ writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
-          else if(evt.type==='error'){ error.value=evt.message; return false; }
+          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
-      } catch(e){ if(e.name!=='AbortError')error.value=e.message||'连接超时，请重试'; }
+      } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
       loading.write=false; chapterProgress.value=0;
     }
 
@@ -858,7 +903,7 @@ createApp({
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
           else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成'; planResult.value=evt.plan; outlineFeedback.value=''; loadShelf(); }
-          else if(evt.type==='error'){ error.value=evt.message; return false; }
+          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError')error.value=e.message||'连接超时'; }
       isRegenerating.value=false; createProgress.value=0;

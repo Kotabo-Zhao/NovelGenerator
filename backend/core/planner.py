@@ -332,11 +332,25 @@ class Planner:
         # ── Phase 2: 角色 (30% → 55%) ──
         yield {"type": "progress", "phase": "characters", "pct": 32, "label": "设计角色关系网…"}
         
+        natural_names = creative_input.get("natural_names", True)
+        
+        naming_rules = """## 命名规则（反AI套路）
+- 禁止使用以下网文高频字根：云、星辰、无极、天、剑、血、魔、帝、皇、王、尊、圣、仙、神、龙、凤、麒、麟、冥、魂、煞
+- 主角名不能是"叶尘""萧炎""林动""林枫""苏铭""韩立"等AI高频名或其变体
+- 用真实感的中文名：考虑时代背景（古代/现代/架空），考虑阶级身份（平民/世家/皇室）
+- 两字姓可用（欧阳、慕容、上官），单字姓更自然。名用1-2字，避免单字玄幻名
+- 配角名要区分度：不同阵营、不同阶层用不同风格的名字
+- 反派名要有"人味"——不是天生邪恶，是境遇造就。禁用"暗""影""煞""灭"等标签化命名
+- 示例好名字: 周怀瑾, 柳如意, 沈砚, 顾长卿, 卫小蝶, 曹阿满, 姜白石, 陆青崖
+"""
+
         char_prompt = f"""你是一位角色设计师。请根据以下世界观为小说创作角色体系。
 
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:500]}
 风格: {style_config['name']}
 创意: {inspiration}
+
+{naming_rules}
 
 输出 JSON（主角+配角+反派，深度人物宝典级别）:
 ```json

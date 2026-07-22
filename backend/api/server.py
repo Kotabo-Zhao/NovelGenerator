@@ -84,6 +84,7 @@ class CreateNovelRequest(BaseModel):
     inspiration: str = ""
     target_words: int = 500000
     title: str = ""
+    natural_names: bool = True  # 自然命名，去AI味
 
 
 class GenerateChapterRequest(BaseModel):
@@ -229,12 +230,13 @@ async def create_novel_stream(req: CreateNovelRequest):
     async def event_stream():
         try:
             async for event in engine.create_novel_stream({
-                "genre": req.genre,
-                "style": req.style,
-                "inspiration": req.inspiration,
-                "target_words": req.target_words,
-                "title": req.title,
-            }):
+            "genre": req.genre,
+            "style": req.style,
+            "inspiration": req.inspiration,
+            "target_words": req.target_words,
+            "title": req.title,
+            "natural_names": req.natural_names,
+        }):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("create_novel_stream crashed")
