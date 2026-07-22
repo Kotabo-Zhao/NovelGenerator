@@ -490,7 +490,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
           </div>
           <div class="flex gap-6 items-center">
-            <button class="btn btn-ghost btn-xs" @click="currentView='create'" style="font-size:12px">📋 编辑大纲</button>
+            <button class="btn btn-ghost btn-xs" @click="openOutline" style="font-size:12px">📋 编辑大纲</button>
           </div>
         </div>
 
@@ -503,6 +503,19 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div class="co-title">{{ currentOutline.title }}</div>
           <div class="co-summary">{{ currentOutline.summary }}</div>
           <div class="co-meta"><span>🎭 {{ currentOutline.emotion_curve }}</span><span>👤 {{ (currentOutline.characters||[]).join('、') }}</span></div>
+        </div>
+
+        <!-- 写作页直接修改大纲 -->
+        <div v-if="activeNovel" class="outline-feedback mb-12" style="background:rgba(240,136,62,.05);border-color:rgba(240,136,62,.2)">
+          <textarea v-model="outlineFeedback" rows="1" placeholder="💡 对大纲有意见？用自然语言说：节奏太慢 / 加暗线 / 中间转折不足…" style="flex:1;min-height:40px;font-size:13px"></textarea>
+          <button class="btn btn-primary btn-xs" @click="doRegenerateOutline" :disabled="isBusy || !outlineFeedback.trim()" style="flex-shrink:0;padding:6px 12px;white-space:nowrap">
+            <span v-if="isRegenerating"><span class="spinner"></span></span>
+            <span v-else>🔄 修改大纲</span>
+          </button>
+        </div>
+        <div v-if="isRegenerating" class="create-progress mb-12">
+          <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
+          <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
         </div>
 
         <button class="btn btn-primary w-full mb-12" style="padding:12px" v-if="!writing.done && !(activeNovel.state.completed_chapters||[]).includes(writing.chapter)" @click="doGenerateChapter" :disabled="isBusy">
@@ -700,32 +713,6 @@ createApp({
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     const writingModeLiterary = ref(false);
     const writing = reactive({ chapter:1, content:'', done:false });
-    // ── SSE流式缓冲：避免每次text事件触发Vue全量diff ──
-    let _streamBuffer = ''; let _flushPending = false; let _lastFlush = 0; let _lastScroll = 0;
-    function _scheduleFlush(kind='content') {
-      if (_flushPending) return;
-      const now = Date.now();
-      const minInterval = kind === 'batch' ? 150 : 100;
-      if (now - _lastFlush < minInterval) {
-        _flushPending = true;
-        requestAnimationFrame(() => { _flushPending = false; _doFlush(); });
-      } else {
-        _doFlush();
-      }
-    }
-    function _doFlush() {
-      if (!_streamBuffer && writing.content) return; // nothing new
-      writing.content += _streamBuffer;
-      _streamBuffer = '';
-      _lastFlush = Date.now();
-      // 滚动节流: 最多每300ms一次
-      const now = Date.now();
-      if (now - _lastScroll > 300 && preview.value) {
-        _lastScroll = now;
-        preview.value.scrollTop = preview.value.scrollHeight;
-      }
-    }
-    function _resetStream() { _streamBuffer = ''; _flushPending = false; _lastFlush = 0; _lastScroll = 0; }
 
     const batchStart = ref(1); const batchEnd = ref(1);
     const batchProgress = ref(0); const batchCurrent = ref(0);
@@ -859,25 +846,35 @@ createApp({
       activeNovel.value=novel; error.value='';
       _saveSession();
       const done=(novel.state.completed_chapters||[]), total=novel.state.total_chapters||1;
-      planResult.value=null; // 先清空，立即切换视图
+      planResult.value=null;
       let next=1; while(next<=total && done.includes(next)) next++;
-      selectChapter(Math.min(next, total), true); currentView.value='write';
+      writing.chapter=Math.min(next, total); writing.content=''; writing.done=false;
+      currentView.value='write';
       batchStart.value=Math.min(next, total); batchEnd.value=total;
-      // 异步加载plan，不阻塞UI
-      fetch(API+'/api/novels/'+encodeURIComponent(novel.id)).then(r=>r.json()).then(d=>{planResult.value=d.novel}).catch(console.error);
+      // 异步加载plan和章节内容
+      fetch(API+'/api/novels/'+encodeURIComponent(novel.id))
+        .then(r=>r.json()).then(d=>{planResult.value=d.novel;})
+        .catch(()=>{});
+      // 如果默认章节已生成，加载内容
+      const defaultCh = Math.min(next, total);
+      if (done.includes(defaultCh)) {
+        fetch(API+'/api/novels/'+encodeURIComponent(novel.id)+'/chapters/'+defaultCh)
+          .then(r=>r.ok?r.json():null)
+          .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
+          .catch(()=>{});
+      }
     }
     function startWriting(title) { const n=novels.value.find(x=>x.id===title||x.title===title); if(n) openNovel(n); }
 
     let _chFetchAbort=null;
     function selectChapter(ch, skipFetch) {
       writing.chapter=ch; writing.content=''; writing.done=false; error.value='';
-      _resetStream();
       // 取消进行中的请求
       if (_chFetchAbort) { _chFetchAbort.abort(); _chFetchAbort=null; }
       if (skipFetch) return;
       if(!activeNovel.value) return;
       const done=activeNovel.value.state.completed_chapters||[];
-      if(!done.includes(ch)) return; // 未生成章节，不fetch
+      if(!done.includes(ch)) return;
       const ctrl=new AbortController(); _chFetchAbort=ctrl;
       fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+ch, {signal:ctrl.signal})
         .then(r=>r.ok?r.json():null)
@@ -891,19 +888,17 @@ createApp({
       if(isBusy.value){ reportError('有任务正在进行中，请等待完成'); return; }
       if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter)) return;
       loading.write=true; writing.content=''; writing.done=false; reviewFeedback.value=''; error.value='';
-      _resetStream();
       chapterProgress.value=0; chapterProgressLabel.value='准备中…';
       const targetChars = (currentOutline.value?.target_words || 3000) * 2;
       try {
         const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel'})});
         await readSSE(r, (evt) => {
           if(evt.type==='text'){
-            _streamBuffer+=evt.content; chapterProgress.value=Math.min(95, Math.round((writing.content.length+_streamBuffer.length)/targetChars*100));
-            chapterProgressLabel.value=`${writing.content.length+_streamBuffer.length}字`;
-            _scheduleFlush();
+            writing.content+=evt.content; chapterProgress.value=Math.min(95, Math.round(writing.content.length/targetChars*100));
+            chapterProgressLabel.value=`${writing.content.length}字`;
+            nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
           }
           else if(evt.type==='done'){
-            _doFlush();
             writing.done=true; chapterProgress.value=100; chapterProgressLabel.value='完成';
             const ch=activeNovel.value.state; if(!ch.completed_chapters) ch.completed_chapters=[];
             if(!ch.completed_chapters.includes(evt.chapter_num)) ch.completed_chapters.push(evt.chapter_num);
@@ -940,20 +935,16 @@ createApp({
         });
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){
-            _doFlush(); _resetStream();
-            // 开始新章节 → 重置正文预览
             writing.chapter=evt.chapter; writing.content=''; writing.done=false;
             batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100);
           }
           else if(evt.type==='text'){
-            _streamBuffer+=evt.content;
+            writing.content+=evt.content;
             batchStreaming.value=(batchStreaming.value+evt.content).slice(-300);
-            _scheduleFlush('batch');
+            nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
           }
           else if(evt.type==='chapter_done'){
-            _doFlush(); // 清空buffer
             writing.done=true;
-            // 直接更新 activeNovel 状态 — 触发章节标记刷新
             const st=activeNovel.value.state;
             if(!st.completed_chapters) st.completed_chapters=[];
             if(!st.completed_chapters.includes(evt.chapter)) st.completed_chapters.push(evt.chapter);
@@ -968,7 +959,6 @@ createApp({
             batchStreaming.value='';
           }
           else if(evt.type==='batch_done'){
-            _doFlush();
             batchCurrent.value=end; batchProgress.value=100;
             if((evt.failed||[]).length>0) reportError(`${evt.failed.length}章失败: ${evt.failed.join(',')}`, '批量生成部分失败');
           }
@@ -982,12 +972,12 @@ createApp({
     async function doRegenerate() {
       if(!activeNovel.value||!reviewFeedback.value.trim()){ error.value='请输入修改意见'; return; }
       if(loading.batch){ error.value='批量生成运行中，请等待完成'; return; }
-      loading.write=true; writing.content=''; writing.done=false; error.value=''; chapterProgress.value=0; _resetStream();
+      loading.write=true; writing.content=''; writing.done=false; error.value=''; chapterProgress.value=0;
       try {
         const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel',feedback:reviewFeedback.value.trim()})});
         await readSSE(r, (evt) => {
-          if(evt.type==='text'){ _streamBuffer+=evt.content; _scheduleFlush(); }
-          else if(evt.type==='done'){ _doFlush(); writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
+          if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
+          else if(evt.type==='done'){ writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
