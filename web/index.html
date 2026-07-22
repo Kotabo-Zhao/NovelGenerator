@@ -289,6 +289,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     <nav class="sidebar-nav">
       <div class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="nav-icon">📚</span>书架</div>
       <div class="nav-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="nav-icon">✨</span>新建</div>
+      <div class="nav-item" :class="{active:currentView==='create'&&activeNovel&&planResult}" @click="openOutline" v-if="activeNovel"><span class="nav-icon">📋</span>大纲</div>
       <div class="nav-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="nav-icon">✍️</span>写作</div>
       <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="nav-icon">↗</span>导出</div>
     </nav>
@@ -417,7 +418,20 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div class="card mt-16">
           <div class="card-title">大纲预览</div>
           <div class="form-group"><label>书名</label><input v-model="planResult.title" style="font-size:17px;font-weight:600;text-align:center"></div>
-          
+
+          <!-- 大纲修改意见 — 顶部醒目位置 -->
+          <div class="outline-feedback" style="background:rgba(240,136,62,.06);border-color:rgba(240,136,62,.25);margin-bottom:16px">
+            <textarea v-model="outlineFeedback" rows="2" placeholder="💡 用自然语言提修改意见… 如：节奏太慢加冲突戏 / 主角性格太弱 / 加一条暗线 / 中间需要一个背叛转折" style="flex:1;min-height:52px;font-size:14px"></textarea>
+            <button class="btn btn-primary btn-sm" @click="doRegenerateOutline" :disabled="isBusy || !outlineFeedback.trim()" style="flex-shrink:0;padding:8px 16px;white-space:nowrap">
+              <span v-if="isRegenerating"><span class="spinner"></span></span>
+              <span v-else>🔄 AI 修改大纲</span>
+            </button>
+          </div>
+          <div v-if="isRegenerating" class="create-progress" style="margin-bottom:16px">
+            <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
+            <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
+          </div>
+
           <div class="mb-12"><label>世界观</label></div>
           <div class="form-group"><input v-model="planResult.worldbuilding.era" placeholder="时代背景"></div>
           <div class="form-group"><input v-model="planResult.worldbuilding.power_system" placeholder="力量体系"></div>
@@ -456,16 +470,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
           <div v-if="editSaved" class="success-msg">已保存</div>
 
-          <!-- 大纲修改意见 -->
-          <div v-if="!isRegenerating" class="outline-feedback">
-            <textarea v-model="outlineFeedback" rows="2" placeholder="对大纲有修改意见？如：增加感情线 / 中间加一个背叛转折 / 主角性格太软弱…" style="flex:1;min-height:44px"></textarea>
-            <button class="btn btn-secondary btn-sm" @click="doRegenerateOutline" :disabled="isBusy || !outlineFeedback.trim()" style="flex-shrink:0">🔄 重生成</button>
-          </div>
-          <div v-if="isRegenerating" class="create-progress">
-            <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
-            <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
-          </div>
-
           <div class="flex gap-8">
             <button class="btn btn-secondary flex-1" @click="savePlan" :disabled="loading.saving">{{ loading.saving ? '…' : '保存大纲' }}</button>
             <button class="btn btn-primary flex-1" style="padding:12px" @click="confirmAndStart">确认并开始写作</button>
@@ -484,6 +488,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <span class="badge badge-ok mr-8" v-if="(activeNovel.state.completed_chapters||[]).length">{{ (activeNovel.state.completed_chapters||[]).length }}章已完成</span>
               {{ activeNovel.genre }} · {{ activeNovel.style }}
             </div>
+          </div>
+          <div class="flex gap-6 items-center">
+            <button class="btn btn-ghost btn-xs" @click="currentView='create'" style="font-size:12px">📋 编辑大纲</button>
           </div>
         </div>
 
@@ -612,6 +619,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   <nav class="bottom-nav">
     <div class="bn-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="bn-icon">📚</span>书架</div>
     <div class="bn-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="bn-icon">✨</span>新建</div>
+    <div class="bn-item" :class="{active:currentView==='create'&&activeNovel&&planResult}" @click="openOutline" v-if="activeNovel"><span class="bn-icon">📋</span>大纲</div>
     <div class="bn-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="bn-icon">✍️</span>写作</div>
     <div class="bn-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="bn-icon">↗</span>导出</div>
     <div class="bn-item" @click="toggleTheme"><span class="bn-icon">{{ theme==='dark'?'☀️':'🌙' }}</span>主题</div>
@@ -785,6 +793,14 @@ createApp({
     }
     function openCreate() { planResult.value=null; error.value=''; currentView.value='create'; }
     function openWrite() { if(activeNovel.value) currentView.value='write'; }
+    function openOutline() {
+      if(!activeNovel.value) return;
+      // 从服务端重新加载plan（保留最新版本）
+      fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id))
+        .then(r=>r.json()).then(d=>{planResult.value=d.novel;})
+        .catch(()=>{});
+      currentView.value='create';
+    }
 
     async function doCreate() {
       if (!form.inspiration.trim()) { reportError('请输入核心灵感'); return; }
@@ -1037,7 +1053,7 @@ createApp({
       form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
-      openCreate,openWrite,doCreate,openNovel,startWriting,
+      openCreate,openWrite,openOutline,doCreate,openNovel,startWriting,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
