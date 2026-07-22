@@ -688,7 +688,24 @@ createApp({
     function toggleUIStyle() { uiStyle.value = uiStyle.value === 'macOS' ? 'iOS' : 'macOS'; applyAppearance(); }
 
     async function loadStyles() { try { const r=await fetch(API+'/api/styles'); styleCategories.value=(await r.json()).categories||{}; } catch(e){} }
-    async function loadShelf() { loading.shelf=true; try { novels.value=(await (await fetch(API+'/api/novels')).json()).novels||[]; } catch(e){} loading.shelf=false; }
+    async function loadShelf() {
+      loading.shelf=true;
+      try {
+        const r = await fetch(API+'/api/novels');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        novels.value = data.novels || [];
+        // 刷新 activeNovel 的状态（跟服务端同步）
+        if (activeNovel.value) {
+          const updated = novels.value.find(n => n.id === activeNovel.value.id);
+          if (updated) activeNovel.value = updated;
+        }
+      } catch(e) {
+        console.error('loadShelf failed:', e);
+        // 不覆盖已有数据，避免"丢小说"
+      }
+      loading.shelf=false;
+    }
     function openCreate() { planResult.value=null; error.value=''; currentView.value='create'; }
     function openWrite() { if(activeNovel.value) currentView.value='write'; }
 

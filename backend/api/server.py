@@ -283,17 +283,23 @@ async def generate_batch(novel_id: str, req: dict):
             failed = []
             for ch_num in range(start, end + 1):
                 yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
+                chapter_error = None
                 try:
                     async for event in engine.generate_chapter_stream(
                         novel_id, ch_num, writing_mode
                     ):
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
+                        if event.get("type") == "error":
+                            chapter_error = event.get("message", "未知错误")
+                    if not chapter_error:
+                        yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
                 except Exception as ch_err:
-                    log.warning(f"Batch chapter {ch_num} failed: {ch_err}, skipping")
+                    chapter_error = str(ch_err)
+                    log.warning(f"Batch chapter {ch_num} exception: {ch_err}")
+                
+                if chapter_error:
                     failed.append(ch_num)
-                    yield f"data: {json.dumps({'type':'chapter_failed','chapter':ch_num,'error':str(ch_err)}, ensure_ascii=False)}\n\n"
-                    continue
+                    yield f"data: {json.dumps({'type':'chapter_failed','chapter':ch_num,'error':chapter_error}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end,'failed':failed}, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("batch generate crashed")
