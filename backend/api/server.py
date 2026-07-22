@@ -97,7 +97,16 @@ class GenerateChapterRequest(BaseModel):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "NovelGenerator"}
+    import os as _os
+    novels_exist = _os.path.exists(config.NOVELS_DIR)
+    novel_count = len([f for f in _os.listdir(config.NOVELS_DIR) if _os.path.isdir(_os.path.join(config.NOVELS_DIR, f)) and f != ".gitkeep"]) if novels_exist else 0
+    return {
+        "status": "ok",
+        "service": "NovelGenerator",
+        "storage": config.NOVELS_DIR,
+        "storage_exists": novels_exist,
+        "novel_count": novel_count,
+    }
 
 
 @app.get("/api/styles")

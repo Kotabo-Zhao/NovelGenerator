@@ -9,9 +9,10 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
-# Storage — 用绝对路径防止工作目录变化导致数据丢失
-_DEFAULT_NOVELS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "novels"))
-NOVELS_DIR = os.getenv("NOVELS_DIR", _DEFAULT_NOVELS)
+# Storage — 绝对路径，环境变量覆盖
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_NOVELS = os.path.join(os.path.dirname(_HERE), "novels")
+NOVELS_DIR = os.path.abspath(os.getenv("NOVELS_DIR", _DEFAULT_NOVELS))
 
 # Server
 HOST = os.getenv("HOST", "0.0.0.0")
