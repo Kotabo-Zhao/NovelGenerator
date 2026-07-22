@@ -306,6 +306,26 @@ class FeedbackDecomposer:
                     "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
                 })
         
+        # 修改/替换型（角色/世界观调整）
+        if "改" in feedback and any(kw in feedback for kw in ["主角", "角色", "人设", "身份", "名", "背景", "世界观", "设定"]):
+            change_plan.append({
+                "id": f"C{len(change_plan)+1:03d}",
+                "priority": 1,
+                "action": "modify",
+                "target": {
+                    "scope": "global",
+                    "volume_numbers": [],
+                    "chapter_numbers": [],
+                    "description": "根据用户意见调整设定"
+                },
+                "what_to_change": feedback,
+                "change_to": f"根据用户意见「{feedback[:80]}」调整内容",
+                "reason": intent,
+                "regeneration_prompt": f"根据以下意见修改大��及相关设定: {feedback}\n\n如果涉及角色/世界观修改，请同步更新对应数据。",
+                "validation": "对比修改前后，确认用户意见涉及的问题已解决",
+                "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
+            })
+        
         if any(kw in feedback for kw in ["逻辑", "矛盾", "不合理", "漏洞", "冲突", "不一致"]):
             target_chs = chapter_nums or list(range(1, min(11, total_chapters + 1)))
             for cn in target_chs[:3]:
@@ -328,7 +348,15 @@ class FeedbackDecomposer:
                 })
         
         if not change_plan:
-            # 兜底: 通用修改
+            # 兜底: 通用修改 — regen_prompt 根据 affected_aspects 动态生成
+            affected = self._detect_affected_aspects(feedback, fallback=["outline"])
+            preserve_note = []
+            if "characters" not in affected:
+                preserve_note.append("角色设定")
+            if "worldbuilding" not in affected:
+                preserve_note.append("世界观")
+            preserve_str = f"保持{'和'.join(preserve_note)}不变。" if preserve_note else ""
+            
             change_plan.append({
                 "id": "C001",
                 "priority": 1,
@@ -342,9 +370,9 @@ class FeedbackDecomposer:
                 "what_to_change": feedback,
                 "change_to": f"根据用户意见「{feedback[:80]}」调整大纲",
                 "reason": intent,
-                "regeneration_prompt": f"根据以下意见重新规划大纲: {feedback}\n\n保持世界观和角色体系不变。重点关注用户提到的具体问题。如果意见涉及特定章节，只修改相关章节。",
+                "regeneration_prompt": f"根据以下意见重新规划大纲: {feedback}\n\n{preserve_str}重点关注用户提到的具体问题。如果意见涉及特定章节，只修改相关章节。",
                 "validation": "对比新旧大纲，确认用户意见涉及的问题已解决",
-                "affected_aspects": self._detect_affected_aspects(feedback, fallback=["outline"])
+                "affected_aspects": affected
             })
         
         return {
