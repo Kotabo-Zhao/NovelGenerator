@@ -1,5 +1,6 @@
 """NovelGenerator — Planner: 世界观、角色、大纲生成"""
 import asyncio
+import re
 import json
 import logging
 from openai import OpenAI
@@ -251,7 +252,7 @@ class Planner:
         plan = self._parse_json(content)
         
         if plan:
-            # 标准化章节号（DeepSeek 可能返回字符串 "1" 而非整数 1）
+            # 标准化章节号
             for vol in plan.get("outline", {}).get("volumes", []):
                 vol["number"] = int(vol.get("number", 1))
                 for ch in vol.get("chapters", []):
@@ -259,7 +260,10 @@ class Planner:
                     ch["target_words"] = int(ch.get("target_words", 3000))
             plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
             plan["target_words"] = int(plan.get("target_words", 0))
-            plan["style"] = style_name  # 保存风格名
+            plan["style"] = style_name
+            
+            # v2: 大纲验证与自动修复
+            plan["outline"] = self.repair_outline(plan["outline"])
             
             plan["_meta"] = {
                 "created_at": __import__("datetime").datetime.now().isoformat(),
@@ -523,6 +527,14 @@ class Planner:
         plan["outline"]["total_chapters"] = chapter_counter
         plan["target_words"] = int(plan.get("target_words", 0))
 
+        # ── v2: 大纲验证与自动修复 ──
+        validation = self.validate_outline(plan["outline"])
+        if validation["warnings"]:
+            log.warning(f"Outline validation: {len(validation['warnings'])} warnings")
+        if validation["issues"]:
+            log.warning(f"Outline validation: {len(validation['issues'])} issues, auto-repairing...")
+            plan["outline"] = self.repair_outline(plan["outline"])
+        
         yield {"type": "progress", "phase": "done", "pct": 100, "label": "创作方案完成！"}
         yield {"type": "done", "plan": plan}
 
@@ -557,6 +569,7 @@ class Planner:
         
         last_error = None
         last_raw = ""
+        last_partial = None  # 保存最后一次部分解析结果
         
         for attempt, (temp, delay, use_simple) in enumerate(retry_plan):
             try:
@@ -568,9 +581,16 @@ class Planner:
                         log.info(f"Planner phase [{phase}]: OK")
                     return result
                 
-                # JSON 解析失败
+                # JSON 解析失败 — 尝试部分修复
                 last_raw = content or ""
                 last_error = f"JSON parse failed (attempt {attempt+1})"
+                
+                # 尝试提取部分有效数据 (如大纲只解析出部分卷)
+                partial = self._parse_partial(content) if content else None
+                if partial:
+                    last_partial = partial
+                    log.warning(f"Planner phase [{phase}]: partial parse got {len(str(partial))} chars")
+                
                 log.warning(f"Planner phase [{phase}]: {last_error}, retrying in {delay}s")
                 
             except Exception as e:
@@ -580,7 +600,19 @@ class Planner:
             if attempt < len(retry_plan) - 1:
                 await asyncio.sleep(delay)
         
-        # 全部重试失败
+        # ── 降级策略1: 尝试使用部分解析结果 ──
+        if last_partial:
+            log.warning(f"Planner phase [{phase}]: using partial parse as fallback")
+            return last_partial
+        
+        # ── 降级策略2: 尝试从原始文本暴力提取 ──
+        if last_raw:
+            forced = self._force_extract(last_raw)
+            if forced:
+                log.warning(f"Planner phase [{phase}]: using force-extracted result")
+                return forced
+        
+        # 全部失败
         log.error(f"Planner phase [{phase}]: ALL RETRIES FAILED. Last error: {last_error}")
         if last_raw:
             log.error(f"Planner phase [{phase}]: Last raw output (first 200): {last_raw[:200]}")
@@ -685,4 +717,203 @@ class Planner:
         except (json.JSONDecodeError, Exception):
             pass
         
+        return None
+
+    # ── 大纲验证与修复 (v2) ──
+
+    @staticmethod
+    def validate_outline(outline: dict) -> dict:
+        """验证大纲结构完整性
+        
+        Returns:
+            {"valid": bool, "issues": [...], "warnings": [...]}
+        """
+        issues = []
+        warnings = []
+        
+        if not outline:
+            return {"valid": False, "issues": ["大纲为空"], "warnings": []}
+        
+        volumes = outline.get("volumes", [])
+        if not volumes:
+            return {"valid": False, "issues": ["大纲缺少卷结构"], "warnings": []}
+        
+        # 检查章节连续性
+        prev_num = 0
+        total = 0
+        for vol in volumes:
+            chapters = vol.get("chapters", [])
+            if not chapters:
+                warnings.append(f"第{vol.get('number','?')}卷没有章节")
+                continue
+            
+            for ch in chapters:
+                num = int(ch.get("number", 0))
+                total += 1
+                if prev_num > 0 and num != prev_num + 1:
+                    issues.append(f"章节号跳跃: {prev_num}→{num}")
+                prev_num = num
+            
+            # 检查必需字段
+            for ch in chapters:
+                if not ch.get("summary"):
+                    warnings.append(f"第{ch.get('number','?')}章缺少摘要")
+                if not ch.get("title"):
+                    ch["title"] = f"第{ch.get('number','?')}章"
+        
+        # 检查总章节数一致性
+        if outline.get("total_chapters", 0) != total:
+            outline["total_chapters"] = total
+            warnings.append(f"total_chapters 不匹配，已自动修正为 {total}")
+        
+        # 检查三幕结构
+        acts = set(v.get("act", "") for v in volumes)
+        has_acts = any("建置" in a or "对抗" in a or "解决" in a for a in acts)
+        if len(volumes) >= 3 and not has_acts:
+            warnings.append("多卷大纲缺少三幕标注")
+        
+        return {
+            "valid": len(issues) == 0,
+            "issues": issues,
+            "warnings": warnings,
+            "total_chapters": total,
+            "volume_count": len(volumes),
+        }
+
+    @staticmethod
+    def repair_outline(outline: dict) -> dict:
+        """自动修复大纲常见问题"""
+        if not outline:
+            return outline
+        
+        volumes = outline.get("volumes", [])
+        
+        counter = 0
+        for vol in volumes:
+            for ch in vol.get("chapters", []):
+                counter += 1
+                ch["number"] = counter
+                if "target_words" not in ch:
+                    ch["target_words"] = 3000
+                if "emotion_curve" not in ch:
+                    ch["emotion_curve"] = "平稳→起伏→悬念"
+                if "characters" not in ch:
+                    ch["characters"] = ["主角"]
+                if "conflict" not in ch:
+                    ch["conflict"] = ""
+                if "hook" not in ch:
+                    ch["hook"] = ""
+        
+        outline["total_chapters"] = counter
+        
+        for i, vol in enumerate(volumes):
+            if "number" not in vol:
+                vol["number"] = i + 1
+            if "act" not in vol:
+                vol["act"] = ""
+            if "theme" not in vol:
+                vol["theme"] = ""
+        
+        return outline
+
+    def _parse_partial(self, content: str) -> dict:
+        """尝试从部分损坏的 JSON 中提取有效数据"""
+        if not content:
+            return None
+        
+        vol_start = content.find('"volumes"')
+        if vol_start < 0:
+            return None
+        
+        remaining = content[vol_start:]
+        pos = remaining.find("[")
+        if pos < 0:
+            return None
+        
+        remaining = remaining[pos + 1:]
+        volumes = []
+        
+        while remaining.strip():
+            brace_count = 0
+            obj_end = -1
+            for i, ch in enumerate(remaining):
+                if ch == "{":
+                    brace_count += 1
+                elif ch == "}":
+                    brace_count -= 1
+                    if brace_count == 0:
+                        obj_end = i + 1
+                        break
+            
+            if obj_end < 0:
+                break
+            
+            obj_str = remaining[:obj_end]
+            try:
+                vol_obj = json.loads(obj_str.replace(",}", "}").replace(",]", "]"))
+                volumes.append(vol_obj)
+            except json.JSONDecodeError:
+                pass
+            
+            remaining = remaining[obj_end:]
+            while remaining and remaining[0] in ", \t\n\r":
+                remaining = remaining[1:]
+        
+        if volumes:
+            log.info(f"Partial parse: recovered {len(volumes)} volumes from truncated JSON")
+            return {"volumes": volumes, "total_chapters": sum(
+                len(v.get("chapters", [])) for v in volumes
+            )}
+        return None
+
+    def _force_extract(self, raw_text: str) -> dict:
+        """从完全无法解析的 LLM 输出中暴力提取大纲结构（最后兜底）"""
+        if not raw_text:
+            return None
+        
+        volumes = []
+        current_vol = None
+        
+        for line in raw_text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            
+            vol_match = re.search(r"第\s*(\d+)\s*卷\s*[：:\s]*(.+)", line)
+            if vol_match:
+                if current_vol and current_vol.get("chapters"):
+                    volumes.append(current_vol)
+                current_vol = {
+                    "number": int(vol_match.group(1)),
+                    "title": vol_match.group(2).strip().strip("「」\"\"'"),
+                    "act": "", "theme": "", "act_function": "",
+                    "chapters": [],
+                }
+                continue
+            
+            ch_match = re.search(r"第\s*(\d+)\s*章\s*[：:\s]*(.+)", line)
+            if ch_match and current_vol:
+                ch = {
+                    "number": int(ch_match.group(1)),
+                    "title": ch_match.group(2).strip()[:20],
+                    "summary": ch_match.group(2).strip()[:50],
+                    "emotion_curve": "平稳→起伏→悬念",
+                    "conflict": "",
+                    "characters": ["主角"],
+                    "hook": "",
+                    "target_words": 3000,
+                }
+                current_vol["chapters"].append(ch)
+        
+        if current_vol and current_vol.get("chapters"):
+            volumes.append(current_vol)
+        
+        if volumes:
+            log.info(f"Force extract: recovered {len(volumes)} volumes from unstructured text")
+            return {
+                "volumes": volumes,
+                "total_chapters": sum(len(v.get("chapters", [])) for v in volumes),
+                "three_act_map": "",
+                "rhythm_notes": "（自动从文本提取）",
+            }
         return None

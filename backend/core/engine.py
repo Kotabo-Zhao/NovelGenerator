@@ -24,6 +24,7 @@ from .pacing_checker import PacingChecker
 from .consistency_validator import ConsistencyValidator
 from .opening_optimizer import OpeningOptimizer
 from .twist_designer import TwistDesigner
+from .feedback_decomposer import FeedbackDecomposer
 from .outline_interactive import OutlineInteractive
 from .outline_interactive import FEEDBACK_CATEGORIES
 from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
@@ -53,7 +54,11 @@ class NovelEngine:
         self.consistency_validator = ConsistencyValidator(self.client, self.model)
         self.opening_optimizer = OpeningOptimizer(self.client, self.model)
         self.twist_designer = TwistDesigner(self.client, self.model)
-        self.outline_interactive = OutlineInteractive(self.client, self.model)
+        self.feedback_decomposer = FeedbackDecomposer(self.client, self.model)
+        self.outline_interactive = OutlineInteractive(
+            self.client, self.model,
+            decomposer=self.feedback_decomposer,
+        )
         self.memory = NovelMemory(config.NOVELS_DIR)
         os.makedirs(config.NOVELS_DIR, exist_ok=True)
 
@@ -541,34 +546,28 @@ class NovelEngine:
         return buf.getvalue(), None
 
     # ═══════════════════════════════════════════════════════
-    # Phase 4: 交互式大纲 (新)
+    # Phase 4: 交互式大纲 (v2 — FeedbackDecomposer驱动)
     # ═══════════════════════════════════════════════════════
 
     async def interactive_outline_stream(self, novel_id: str, feedback: str) -> AsyncIterator[dict]:
-        """交互式大纲生成: 解析反馈 → 分类 → 针对性重生成 → 差异输出"""
+        """v2 交互式大纲: FeedbackDecomposer 语义拆解 → 逐条精确执行 → diff输出"""
         plan = self.get_novel(novel_id)
         if not plan:
             yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
             return
 
-        # 1. 解析反馈
-        yield {"type": "progress", "phase": "analyze", "pct": 5, "label": "分析修改意见…"}
-        parsed = self.outline_interactive.parse_feedback(feedback)
-
-        categories = parsed.get("categories", [])
-        cat_names = [FEEDBACK_CATEGORIES.get(c, {}).get("name", c) for c in categories]
-        yield {"type": "progress", "phase": "analyze", "pct": 15,
-               "label": f"识别修改类型: {', '.join(cat_names)}"}
-
-        # 2. 保存旧版本用于diff
+        # 保存旧版本用于 diff
         old_plan = copy.deepcopy(plan)
 
-        # 3. 针对性重生成
-        async for event in self.outline_interactive.regenerate_with_feedback(
-            plan, parsed, self.planner
+        # 使用 v2 process_feedback（内部含 decomposer.decompose + 逐条执行）
+        async for event in self.outline_interactive.process_feedback(
+            feedback, plan, self.planner
         ):
             if event["type"] == "done":
                 new_plan = event["plan"]
+                # 验证并修复
+                new_plan["outline"] = self.planner.repair_outline(new_plan.get("outline", {}))
+                
                 # 保存
                 novel_dir = self.memory.get_novel_dir(novel_id)
                 new_plan["_meta"] = plan.get("_meta", {})
@@ -585,12 +584,20 @@ class NovelEngine:
                     "status": "outline_regenerated",
                 })
 
-                # 输出差异摘要
+                # diff
                 diff = self.outline_interactive.get_diff_summary(old_plan, new_plan)
-                yield {"type": "diff", "changes": diff}
+                if diff:
+                    yield {"type": "diff", "changes": diff}
                 yield event
             else:
                 yield event
+
+    def decompose_feedback(self, novel_id: str, feedback: str) -> dict:
+        """仅拆解反馈，不执行修改（供前端预览修改计划）"""
+        plan = self.get_novel(novel_id)
+        if not plan:
+            return {"error": f"小说 '{novel_id}' 不存在"}
+        return self.feedback_decomposer.decompose(feedback, plan)
 
     # ═══════════════════════════════════════════════════════
     # Phase 5: 一致性校验 (新)

@@ -469,7 +469,7 @@ async def regenerate_outline(novel_id: str, req: dict):
 
 @app.post("/api/novels/{novel_id}/interactive-outline")
 async def interactive_outline(novel_id: str, req: dict):
-    """交互式大纲生成: 解析反馈 → 分类 → 针对性重生成 → 差异输出"""
+    """v2 交互式大纲: FeedbackDecomposer 语义拆解 → 逐条精确执行 → diff输出"""
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
@@ -484,6 +484,39 @@ async def interactive_outline(novel_id: str, req: dict):
     
     return StreamingResponse(event_stream(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/novels/{novel_id}/decompose-feedback")
+async def decompose_feedback(novel_id: str, req: dict):
+    """仅拆解反馈为修改计划（不执行），供前端预览"""
+    feedback = req.get("feedback", "")
+    if not feedback.strip():
+        raise HTTPException(status_code=400, detail="请输入修改意见")
+    result = engine.decompose_feedback(novel_id, feedback)
+    return {"result": result}
+
+
+# ── Chapter Feedback (章节修改意见) ──
+
+@app.post("/api/novels/{novel_id}/chapter-feedback/{chapter_num}")
+async def chapter_feedback(novel_id: str, chapter_num: int, req: dict):
+    """对已生成章节提出修改意见 — 拆解为具体指令"""
+    feedback = req.get("feedback", "")
+    if not feedback.strip():
+        raise HTTPException(status_code=400, detail="请输入修改意见")
+    
+    plan = engine.get_novel(novel_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在")
+    
+    chapter_outline = engine._find_chapter_outline(plan, chapter_num)
+    if not chapter_outline:
+        raise HTTPException(status_code=404, detail=f"第{chapter_num}章大纲不存在")
+    
+    result = engine.feedback_decomposer.decompose_for_chapter(
+        feedback, chapter_num, chapter_outline, plan
+    )
+    return {"result": result}
 
 
 # ── Consistency Validator ──
