@@ -289,7 +289,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     <nav class="sidebar-nav">
       <div class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="nav-icon">📚</span>书架</div>
       <div class="nav-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="nav-icon">✨</span>新建</div>
-      <div class="nav-item" :class="{active:currentView==='create'&&activeNovel&&planResult}" @click="openOutline" v-if="activeNovel"><span class="nav-icon">📋</span>大纲</div>
+      <div class="nav-item" :class="{active:currentView==='create'&&activeNovel}" @click="openOutline" v-if="activeNovel"><span class="nav-icon">📋</span>修改大纲</div>
       <div class="nav-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="nav-icon">✍️</span>写作</div>
       <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="nav-icon">↗</span>导出</div>
     </nav>
@@ -481,6 +481,21 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     <!-- ====== Write ====== -->
     <template v-if="currentView==='write' && activeNovel">
       <div class="reading-container">
+
+        <!-- 🔥 大纲修改意见 — 写作页最顶端，无法错过 -->
+        <div class="outline-feedback" style="background:linear-gradient(135deg,rgba(240,136,62,.08),rgba(240,136,62,.03));border:2px solid rgba(240,136,62,.35);margin-bottom:16px;border-radius:12px;padding:14px 18px">
+          <div style="margin-bottom:8px;font-size:12px;font-weight:700;color:var(--accent)">💡 对整部小说大纲有修改意见？</div>
+          <textarea v-model="outlineFeedback" rows="1" placeholder="用自然语言说，如：节奏太慢加冲突戏 / 中间需要一个背叛转折 / 主角太弱了…" style="flex:1;min-height:42px;font-size:14px;background:var(--bg);border:1px solid var(--border)"></textarea>
+          <button class="btn btn-primary" @click="doRegenerateOutline" :disabled="isBusy || !outlineFeedback.trim()" style="flex-shrink:0;padding:8px 20px;white-space:nowrap;font-size:14px">
+            <span v-if="isRegenerating"><span class="spinner"></span> 修改中…</span>
+            <span v-else>🔄 AI 重新生成大纲</span>
+          </button>
+        </div>
+        <div v-if="isRegenerating" class="create-progress mb-12">
+          <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
+          <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
+        </div>
+
         <div class="flex justify-between items-center mb-16">
           <div>
             <h2 style="font-size:18px;margin:0;border:none;padding:0">{{ activeNovel.title }}</h2>
@@ -503,19 +518,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div class="co-title">{{ currentOutline.title }}</div>
           <div class="co-summary">{{ currentOutline.summary }}</div>
           <div class="co-meta"><span>🎭 {{ currentOutline.emotion_curve }}</span><span>👤 {{ (currentOutline.characters||[]).join('、') }}</span></div>
-        </div>
-
-        <!-- 写作页直接修改大纲 -->
-        <div v-if="activeNovel" class="outline-feedback mb-12" style="background:rgba(240,136,62,.05);border-color:rgba(240,136,62,.2)">
-          <textarea v-model="outlineFeedback" rows="1" placeholder="💡 对大纲有意见？用自然语言说：节奏太慢 / 加暗线 / 中间转折不足…" style="flex:1;min-height:40px;font-size:13px"></textarea>
-          <button class="btn btn-primary btn-xs" @click="doRegenerateOutline" :disabled="isBusy || !outlineFeedback.trim()" style="flex-shrink:0;padding:6px 12px;white-space:nowrap">
-            <span v-if="isRegenerating"><span class="spinner"></span></span>
-            <span v-else>🔄 修改大纲</span>
-          </button>
-        </div>
-        <div v-if="isRegenerating" class="create-progress mb-12">
-          <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
-          <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
         </div>
 
         <button class="btn btn-primary w-full mb-12" style="padding:12px" v-if="!writing.done && !(activeNovel.state.completed_chapters||[]).includes(writing.chapter)" @click="doGenerateChapter" :disabled="isBusy">
@@ -632,7 +634,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   <nav class="bottom-nav">
     <div class="bn-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="bn-icon">📚</span>书架</div>
     <div class="bn-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="bn-icon">✨</span>新建</div>
-    <div class="bn-item" :class="{active:currentView==='create'&&activeNovel&&planResult}" @click="openOutline" v-if="activeNovel"><span class="bn-icon">📋</span>大纲</div>
+    <div class="bn-item" :class="{active:currentView==='create'&&activeNovel}" @click="openOutline" v-if="activeNovel"><span class="bn-icon">📋</span>修改大纲</div>
     <div class="bn-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="bn-icon">✍️</span>写作</div>
     <div class="bn-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="bn-icon">↗</span>导出</div>
     <div class="bn-item" @click="toggleTheme"><span class="bn-icon">{{ theme==='dark'?'☀️':'🌙' }}</span>主题</div>
