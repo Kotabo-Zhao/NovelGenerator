@@ -50,7 +50,7 @@ engine = NovelEngine()
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
 
 
-# ── Frontend Route ──
+# ── Frontend Route (仅/，子路径走 StaticFiles) ──
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend():
@@ -61,6 +61,15 @@ async def serve_frontend():
             return f.read()
     return HTMLResponse("<h1>NovelGenerator</h1><p>Frontend not found</p>", status_code=404)
 
+
+# ── Static JS/CSS assets (自托管，不依赖外部CDN) ──
+
+@app.get("/vue.global.prod.js")
+async def serve_vue():
+    path = os.path.join(WEB_DIR, "vue.global.prod.js")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="application/javascript")
+    return Response("// vue not found", status_code=404)
 
 @app.get("/sw.js")
 async def serve_sw():

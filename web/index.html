@@ -9,7 +9,7 @@
     <title>NovelGenerator</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
-<script src="https://cdn.jsdelivr.net/npm/vue@3.5/dist/vue.global.prod.js"></script>
+<script src="/vue.global.prod.js"></script>
 <style>
 :root {
   --bg: #0d1117; --bg2: #161b22; --card: #1c2129; --card-hover: #212830;
@@ -753,6 +753,34 @@ createApp({
     onMounted(async () => {
       applyAppearance();
       await loadStyles(); await loadShelf(); await loadStyleSeeds();
+      // 刷新恢复：从sessionStorage恢复上次选中的小说
+      const savedId = sessionStorage.getItem('activeNovelId');
+      if (savedId && novels.value.length > 0) {
+        const found = novels.value.find(n => n.id === savedId);
+        if (found) {
+          activeNovel.value = found;
+          // 异步加载plan
+          fetch(API+'/api/novels/'+encodeURIComponent(savedId))
+            .then(r=>r.json()).then(d=>{planResult.value=d.novel;})
+            .catch(()=>{});
+          // 恢复上次的视图（大纲页或写作页）
+          const savedView = sessionStorage.getItem('lastView');
+          if (savedView && ['create','write'].includes(savedView)) {
+            currentView.value = savedView;
+            const done = (found.state.completed_chapters||[]);
+            const total = found.state.total_chapters||1;
+            let next = 1; while(next<=total && done.includes(next)) next++;
+            writing.chapter = Math.min(next, total);
+            if (done.includes(writing.chapter)) {
+              // 已生成章节，预加载内容
+              fetch(API+'/api/novels/'+encodeURIComponent(savedId)+'/chapters/'+writing.chapter)
+                .then(r=>r.ok?r.json():null)
+                .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
+                .catch(()=>{});
+            }
+          }
+        }
+      }
     });
 
     function applyAppearance() {
@@ -767,6 +795,14 @@ createApp({
     }
     function toggleTheme() { theme.value = theme.value === 'dark' ? 'light' : 'dark'; applyAppearance(); }
     function toggleUIStyle() { uiStyle.value = uiStyle.value === 'macOS' ? 'iOS' : 'macOS'; applyAppearance(); }
+
+    // 刷新恢复：保存当前小说和视图到 sessionStorage
+    function _saveSession() {
+      if (activeNovel.value) {
+        sessionStorage.setItem('activeNovelId', activeNovel.value.id);
+        sessionStorage.setItem('lastView', currentView.value);
+      }
+    }
 
     async function loadStyles() { try { const r=await fetch(API+'/api/styles'); styleCategories.value=(await r.json()).categories||{}; } catch(e){} }
     let _shelfDebounce=null;
@@ -792,9 +828,10 @@ createApp({
       _shelfDebounce = setTimeout(() => { _shelfDebounce=null; loadShelf(); }, 500);
     }
     function openCreate() { planResult.value=null; error.value=''; currentView.value='create'; }
-    function openWrite() { if(activeNovel.value) currentView.value='write'; }
+    function openWrite() { if(activeNovel.value) { currentView.value='write'; _saveSession(); } }
     function openOutline() {
       if(!activeNovel.value) return;
+      _saveSession();
       // 从服务端重新加载plan（保留最新版本）
       fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id))
         .then(r=>r.json()).then(d=>{planResult.value=d.novel;})
@@ -811,7 +848,7 @@ createApp({
         const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames})});
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
-          else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); }
+          else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
@@ -820,6 +857,7 @@ createApp({
 
     function openNovel(novel) {
       activeNovel.value=novel; error.value='';
+      _saveSession();
       const done=(novel.state.completed_chapters||[]), total=novel.state.total_chapters||1;
       planResult.value=null; // 先清空，立即切换视图
       let next=1; while(next<=total && done.includes(next)) next++;
