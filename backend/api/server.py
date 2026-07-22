@@ -125,11 +125,30 @@ async def get_styles():
     """返回所有可用风格（分组）"""
     from core.styles import get_style_categories, STYLES
     categories = get_style_categories()
-    # 附带简短的作者标签
     result = {}
     for cat, names in categories.items():
-        result[cat] = [{"name": n, "author": STYLES[n]["author"]} for n in names]
+        result[cat] = [{
+            "name": n,
+            "author": STYLES[n]["author"],
+            "desc": STYLES[n].get("prose", "")[:80] + "…",
+            "is_custom": STYLES[n].get("is_custom", False),
+        } for n in names]
     return {"categories": result}
+
+
+@app.get("/api/styles/params")
+async def get_style_params():
+    """返回自定义风格的参数化配置选项"""
+    from core.styles import CUSTOM_STYLE_PARAMS
+    return {"params": CUSTOM_STYLE_PARAMS}
+
+
+@app.post("/api/styles/build-custom")
+async def build_custom_style_api(req: dict):
+    """从用户选择的参数构建自定义风格"""
+    from core.styles import build_parameterized_style
+    style = build_parameterized_style(req)
+    return {"style": style}
 
 
 # ── Style Seeds ──
