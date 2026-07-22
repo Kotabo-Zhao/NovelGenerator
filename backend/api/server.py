@@ -1,5 +1,6 @@
 """NovelGenerator — FastAPI Server (serves frontend + API)"""
 import json
+import asyncio
 import logging
 import sys
 import os
