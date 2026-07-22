@@ -12,3 +12,9 @@ services:
         value: deepseek-chat
       - key: HOST
         value: 0.0.0.0
+      - key: NOVELS_DIR
+        value: /var/data/novels
+    disk:
+      name: novel-storage
+      mountPath: /var/data
+      sizeGB: 1
