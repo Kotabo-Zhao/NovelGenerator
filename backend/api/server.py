@@ -194,6 +194,25 @@ async def get_chapter(novel_id: str, chapter_num: int):
     return {"content": content, "chapter_num": chapter_num}
 
 
+@app.get("/api/novels/{novel_id}/chapters/{chapter_num}/exists")
+async def chapter_exists(novel_id: str, chapter_num: int):
+    """检查章节文件是否存在（避免前端切换空白）"""
+    exists = engine.memory.chapter_exists(novel_id, chapter_num)
+    return {"exists": exists, "chapter_num": chapter_num}
+
+
+@app.post("/api/novels/{novel_id}/sync-state")
+async def sync_novel_state(novel_id: str):
+    """修复 state.json 与实际文件不同步的问题"""
+    state = engine.memory.get_novel_state(novel_id)
+    chapters = engine.memory.scan_chapters(novel_id)
+    return {
+        "state": state,
+        "chapters_on_disk": chapters,
+        "synced": state.get("completed_chapters") == chapters,
+    }
+
+
 @app.put("/api/novels/{novel_id}")
 async def update_novel_plan(novel_id: str, plan_data: dict):
     """保存用户修改后的大纲"""
@@ -226,7 +245,7 @@ async def create_novel(req: CreateNovelRequest):
 
 @app.post("/api/novels/create-stream")
 async def create_novel_stream(req: CreateNovelRequest):
-    """流式创建新小说 — 三阶段进度条"""
+    """流式创建新小说 — 三阶段进度条 + 自动降级"""
     async def event_stream():
         try:
             async for event in engine.create_novel_stream({
@@ -240,7 +259,8 @@ async def create_novel_stream(req: CreateNovelRequest):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("create_novel_stream crashed")
-            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
+            # Always send error event so frontend doesn't hang
+            yield f"data: {json.dumps({'type':'error','message':f'生成过程出错: {str(e)}'}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         event_stream(),
@@ -261,7 +281,7 @@ async def generate_chapter(req: GenerateChapterRequest):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("generate_chapter crashed")
-            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type':'error','message':f'章节生成出错: {str(e)}'}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         event_stream(),

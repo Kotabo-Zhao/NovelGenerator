@@ -276,14 +276,8 @@ class Planner:
         return plan
 
     async def plan_stream(self, creative_input: dict):
-        """3阶段流式规划 — 前端可显示进度条
-        
-        Yields:
-            {"type":"progress","phase":"worldbuilding","pct":25,"label":"构建世界观…"}
-            {"type":"progress","phase":"characters","pct":55,"label":"设计角色…"}
-            {"type":"progress","phase":"outline","pct":85,"label":"生成大纲…"}
-            {"type":"done","plan":{...}}
-        """
+        """3阶段流式规划 — 失败自动降级，保证始终返回可用计划"""
+        fallback_count = 0
         genre = creative_input.get("genre", "玄幻")
         style_name = creative_input.get("style", "热血爽文")
         inspiration = creative_input.get("inspiration", "")
@@ -328,8 +322,21 @@ class Planner:
 
         wb = await self._call_llm(wb_prompt, "worldbuilding")
         if not wb:
-            yield {"type": "error", "message": "世界观生成失败"}
-            return
+            # 降级: 使用默认世界观
+            log.warning("Worldbuilding failed, using default")
+            wb = {
+                "title": title or inspiration[:15] or "未命名小说",
+                "genre": genre,
+                "worldbuilding": {
+                    "era": "架空世界",
+                    "geography": "待扩展",
+                    "power_system": "待定义",
+                    "core_conflict": inspiration[:50] if inspiration else "待定义",
+                    "factions": [{"name":"主角阵营","description":"","alignment":"正"}]
+                }
+            }
+            yield {"type": "warning", "message": "世界观生成部分降级，已使用默认设定"}
+            fallback_count += 1
 
         yield {"type": "progress", "phase": "worldbuilding", "pct": 30, "label": "世界观完成 ✓"}
 
@@ -377,8 +384,25 @@ class Planner:
 
         chars = await self._call_llm(char_prompt, "characters")
         if not chars:
-            yield {"type": "error", "message": "角色生成失败"}
-            return
+            # 降级: 使用默认角色
+            log.warning("Characters generation failed, using default")
+            chars = {
+                "characters": {
+                    "protagonist": {
+                        "name": inspiration[:3] if inspiration else "主角",
+                        "identity": "修士", "age": "18",
+                        "personality": {"surface":"坚韧","true_self":"善良","flaw":"执着"},
+                        "arc": "成长变强",
+                        "motivation": {"want":"变强","need":"被认可"},
+                        "cheat": "待揭示", "secret": "待揭示",
+                    },
+                    "supporting": [{"name":"挚友","identity":"同伴","relation":"挚友","personality":"忠诚","role":"助手","meaning":"盟友"}],
+                    "antagonist": [{"name":"宿敌","motivation":"理念冲突","power":"强大","conflict":"生存竞争","humanity":"有苦衷"}],
+                    "bible_summary": "主角与挚友并肩对抗宿敌"
+                }
+            }
+            yield {"type": "warning", "message": "角色生成部分降级，已使用默认设定"}
+            fallback_count += 1
 
         yield {"type": "progress", "phase": "characters", "pct": 55, "label": "角色设计完成 ✓"}
 
@@ -407,21 +431,22 @@ class Planner:
 只输出JSON。"""
 
         structure_result = await self._call_llm(structure_prompt, "outline_structure", max_tokens=2048)
-        if not structure_result:
-            yield {"type": "error", "message": "卷结构规划失败"}
-            return
-
-        # Handle both dict wrapper and raw list
-        volumes_meta = structure_result if isinstance(structure_result, list) else structure_result.get("volumes", [])
-        if not volumes_meta and isinstance(structure_result, dict):
-            # Try extracting from values
-            for v in structure_result.values():
-                if isinstance(v, list): volumes_meta = v; break
+        
+        # Fallback volume structure
+        volumes_meta = []
+        if structure_result:
+            volumes_meta = structure_result if isinstance(structure_result, list) else structure_result.get("volumes", [])
+            if not volumes_meta and isinstance(structure_result, dict):
+                for v in structure_result.values():
+                    if isinstance(v, list): volumes_meta = v; break
+        
         if not volumes_meta:
-            # Fallback: create default volume structure
+            log.warning("Volume structure failed, using fallback")
             volumes_meta = [{"vol": i+1, "title": f"第{i+1}卷", "act": ["第一幕·建置","第二幕·对抗","第三幕·解决"][min(i,2)],
                             "theme": "主线推进", "ch_count": ch_per_vol, "act_function": "推进故事"}
                            for i in range(vol_count)]
+            yield {"type": "warning", "message": "卷结构使用默认规划"}
+            fallback_count += 1
 
         # Phase 3b+: 逐卷生成章节
         all_volumes = []
@@ -460,6 +485,7 @@ class Planner:
             if not ch_result:
                 # 单卷失败 → 生成最小化fallback章节
                 log.warning(f"Volume {vol_num} chapter generation failed, using fallback")
+                fallback_count += 1
                 ch_result = [
                     {"number": chapter_counter + j + 1, "title": f"第{chapter_counter + j + 1}章",
                      "summary": f"第{vol_num}卷第{j+1}章核心剧情", "emotion_curve": "平稳→起伏→悬念",
@@ -515,6 +541,8 @@ class Planner:
                 "model": self.model,
                 "creative_input": creative_input,
                 "streamed": True,
+                "fallback_count": fallback_count,
+                "is_partial": fallback_count > 0,
             },
         }
         

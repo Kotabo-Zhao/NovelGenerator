@@ -545,6 +545,15 @@ class SharedMemoryManager:
         if "current_chapter" not in state:
             chs = state.get("completed_chapters", [])
             state["current_chapter"] = max(chs) if chs else 0
+        # Auto-sync: ADD chapters that exist on disk but aren't in state
+        # (Don't REMOVE — state may know about chapters not yet saved to disk)
+        disk_chapters = self.scan_chapters(novel_id)
+        missing = [c for c in disk_chapters if c not in state.get("completed_chapters", [])]
+        if missing:
+            log.info(f"State auto-sync: adding {missing} from disk")
+            state["completed_chapters"] = sorted(state.get("completed_chapters", []) + missing)
+            state["current_chapter"] = max(state["completed_chapters"])
+            self.write("state", novel_id, state)
         return state
 
     def get_core_context(self, novel_id: str) -> str:
