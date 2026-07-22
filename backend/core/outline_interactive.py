@@ -210,22 +210,22 @@ class OutlineInteractive:
                 return None
             
             # ── 同步更新角色设定和世界观 ──
-            # 优先使用 Decomposer 显式标注的 affected_aspects（精确），
-            # 回退到 regen_prompt 关键词匹配（兜底，覆盖离线模式）
+            # 策略: Decomposer 标注 + 关键词兜底，取并集（防止 LLM 漏标 affected_aspects）
             affected = action.get("affected_aspects", [])
-            needs_chars = "characters" in affected or (
-                not affected and any(kw in regen_prompt for kw in [
-                    "主角", "主人公", "男主", "女主", "角色", "人设", "性格",
-                    "身世", "出身", "背景", "身份", "金手指", "能力", "天赋",
-                    "反派", "配角", "后代", "之后", "之子",
-                ])
-            )
-            needs_wb = "worldbuilding" in affected or (
-                not affected and any(kw in regen_prompt for kw in [
-                    "世界观", "世界", "时代", "设定", "力量体系",
-                    "修炼体系", "魔法", "灵力", "灵气", "斗气",
-                ])
-            )
+            
+            # 关键词兜底（无论 affected_aspects 是否标注，都做）
+            _kw_needs_chars = any(kw in regen_prompt for kw in [
+                "主角", "主人公", "男主", "女主", "角色", "人设", "性格",
+                "身世", "出身", "背景", "身份", "金手指", "能力", "天赋",
+                "反派", "配角", "后代", "之后", "之子",
+            ])
+            _kw_needs_wb = any(kw in regen_prompt for kw in [
+                "世界观", "世界", "时代", "设定", "力量体系",
+                "修炼体系", "魔法", "灵力", "灵气", "斗气",
+            ])
+            
+            needs_chars = "characters" in affected or _kw_needs_chars
+            needs_wb = "worldbuilding" in affected or _kw_needs_wb
             
             if needs_chars:
                 new_chars = await self._regenerate_with_prompt(
