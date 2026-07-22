@@ -207,16 +207,41 @@ class NovelEngine:
         yield {"type": "done", "plan": plan}
 
     def get_novel(self, novel_id: str) -> Optional[dict]:
-        """获取已有小说的规划数据"""
-        plan_path = os.path.join(self.memory.get_novel_dir(novel_id), "plan.json")
-        if not os.path.exists(plan_path):
-            return None
-        plan = safe_read_json(plan_path)
-        if not isinstance(plan, dict):
-            log.warning(f"get_novel: plan.json for '{novel_id}' is {type(plan).__name__}, not dict. Resetting.")
-            plan = {}
-        plan["state"] = self.memory.get_novel_state(novel_id)
-        return plan
+        """获取已有小说的规划数据（支持 URL 编码和多种匹配方式）"""
+        # 尝试 URL 解码
+        from urllib.parse import unquote
+        decoded_id = unquote(novel_id)
+        
+        # 按顺序尝试匹配
+        for try_id in [novel_id, decoded_id]:
+            novel_dir = self.memory.get_novel_dir(try_id)
+            plan_path = os.path.join(novel_dir, "plan.json")
+            if os.path.exists(plan_path):
+                plan = safe_read_json(plan_path)
+                if not isinstance(plan, dict):
+                    plan = {}
+                plan["state"] = self.memory.get_novel_state(try_id)
+                return plan
+        
+        # 智能匹配：在 novels 目录中查找名称相近的
+        if os.path.exists(self.memory.novels_dir):
+            for d in sorted(os.listdir(self.memory.novels_dir)):
+                dir_path = os.path.join(self.memory.novels_dir, d)
+                if os.path.isdir(dir_path):
+                    plan_file = os.path.join(dir_path, "plan.json")
+                    if os.path.exists(plan_file):
+                        plan_data = safe_read_json(plan_file)
+                        if isinstance(plan_data, dict) and plan_data.get("title", "") == novel_id:
+                            log.info(f"get_novel: matched by title '{novel_id}' → dir '{d}'")
+                            plan_data["state"] = self.memory.get_novel_state(d)
+                            return plan_data
+        
+        log.warning(f"get_novel: plan.json not found for novel_id='{novel_id}' (decoded='{decoded_id}')")
+        if os.path.exists(self.memory.novels_dir):
+            dirs = [d for d in os.listdir(self.memory.novels_dir) 
+                   if os.path.isdir(os.path.join(self.memory.novels_dir, d))]
+            log.warning(f"get_novel: available novel dirs: {dirs[:10]}")
+        return None
 
     def update_plan(self, novel_id: str, plan_data: dict) -> bool:
         """保存用户修改后的大纲

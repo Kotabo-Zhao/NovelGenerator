@@ -111,12 +111,29 @@ async def health():
     import os as _os
     novels_exist = _os.path.exists(NOVELS_DIR)
     novel_count = len([f for f in _os.listdir(NOVELS_DIR) if _os.path.isdir(_os.path.join(NOVELS_DIR, f)) and f != ".gitkeep"]) if novels_exist else 0
+    # 列出所有 novel 目录和对应的书名
+    novel_list = []
+    if novels_exist:
+        for d in sorted(_os.listdir(NOVELS_DIR)):
+            dpath = _os.path.join(NOVELS_DIR, d)
+            if _os.path.isdir(dpath) and d != ".gitkeep":
+                plan_f = _os.path.join(dpath, "plan.json")
+                title = d
+                if _os.path.exists(plan_f):
+                    try:
+                        import json
+                        with open(plan_f, 'r', encoding='utf-8') as f:
+                            pd = json.load(f)
+                        title = pd.get("title", d) if isinstance(pd, dict) else d
+                    except: pass
+                novel_list.append({"dir": d, "title": title, "has_plan": _os.path.exists(plan_f)})
     return {
         "status": "ok",
         "service": "NovelGenerator",
         "storage": NOVELS_DIR,
         "storage_exists": novels_exist,
         "novel_count": novel_count,
+        "novels": novel_list,
     }
 
 
