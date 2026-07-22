@@ -208,6 +208,30 @@ class OutlineInteractive:
                 result["effect"] = f"大纲已更新为 {new_outline.get('total_chapters', 0)} 章"
             else:
                 return None
+            
+            # 同步更新角色设定和世界观（如果修改意见涉及）
+            scope = target.get("scope", "global")
+            needs_chars = (scope == "character" or "角色" in regen_prompt or "主角" in regen_prompt 
+                          or "人设" in regen_prompt or "反派" in regen_prompt or "配角" in regen_prompt
+                          or "性格" in regen_prompt or "金手指" in regen_prompt)
+            needs_wb = (scope == "worldbuilding" or "世界观" in regen_prompt or "背景" in regen_prompt 
+                       or "设定" in regen_prompt or "力量体系" in regen_prompt or "世界" in regen_prompt)
+            
+            if needs_chars:
+                new_chars = await self._regenerate_with_prompt(
+                    plan, regen_prompt, planner, mode="characters"
+                )
+                if new_chars:
+                    plan["characters"] = new_chars
+                    result["effect"] += " + 角色设定已同步"
+            
+            if needs_wb:
+                new_wb = await self._regenerate_with_prompt(
+                    plan, regen_prompt, planner, mode="worldbuilding"
+                )
+                if new_wb:
+                    plan["worldbuilding"] = new_wb
+                    result["effect"] += " + 世界观已同步"
         
         elif act in ("modify", "add") and scope == "volume":
             vol_nums = target.get("volume_numbers", [])
@@ -345,6 +369,55 @@ class OutlineInteractive:
 {{"title":"","summary":"","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":3000}}
 ```"""
             return await self._safe_llm_call(prompt, planner, f"ch_{chapter_num}", max_tokens=1024)
+        
+        elif mode == "characters":
+            prompt = f"""你是角色设计师。请根据修改指令重新设计角色体系。
+
+【当前角色设定】
+{json.dumps(plan.get("characters", {}), ensure_ascii=False, indent=2)[:2000]}
+
+【故事背景】
+题材: {genre}  风格: {style}  目标字数: {target_words}字
+世界观: {json.dumps(plan.get('worldbuilding', {}), ensure_ascii=False)[:500]}
+
+【修改指令】
+{regen_prompt}
+
+【输出要求】
+- 只改指令涉及的角色，保留未提及角色的所有设定
+- 每个角色必须有: name, identity, personality, motivation, arc
+- protagonist 额外有: cheat（金手指）, weakness（弱点）
+- supporting 角色有: relation（与主角关系）
+- antagonist 有: goal（目标）, method（手段）
+
+输出JSON（完整的characters对象）:
+```json
+{{"protagonist":{{"name":"","identity":"","personality":"","cheat":"","weakness":"","motivation":"","arc":""}},"supporting":[],"antagonist":[]}}
+```"""
+            return await self._safe_llm_call(prompt, planner, "characters_update", max_tokens=4096)
+        
+        elif mode == "worldbuilding":
+            prompt = f"""你是世界观设计师。请根据修改指令更新世界观设定。
+
+【当前世界观】
+{json.dumps(plan.get("worldbuilding", {}), ensure_ascii=False, indent=2)[:2000]}
+
+【故事背景】
+题材: {genre}  风格: {style}
+
+【修改指令】
+{regen_prompt}
+
+【输出要求】
+- 只改指令涉及的设定，保留未提及的部分
+- 必须有: era, power_system, core_conflict, world_rules
+- world_rules 列出3-5条核心规则
+
+输出JSON:
+```json
+{{"era":"","power_system":"","core_conflict":"","world_rules":[""],"key_organizations":[],"key_locations":[""]}}
+```"""
+            return await self._safe_llm_call(prompt, planner, "worldbuilding_update", max_tokens=2048)
         
         return None
 
