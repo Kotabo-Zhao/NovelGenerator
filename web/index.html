@@ -1007,9 +1007,9 @@ createApp({
     }
 
     async function doRegenerateOutline() {
-      if(!activeNovel.value||!outlineFeedback.value.trim()){ error.value='请输入修改意见'; return; }
+      const novelId = planResult.value?.title || activeNovel.value?.id;
+      if(!novelId || !outlineFeedback.value.trim()){ error.value='请输入修改意见'; return; }
       if(isBusy.value){ error.value='有任务正在进行中'; return; }
-      const novelId = activeNovel.value.id;
       isRegenerating.value=true; error.value=''; createPhaseLabel.value='正在分析修改意见…'; createProgress.value=5;
       try {
         const r=await fetch(API+'/api/novels/'+encodeURIComponent(novelId)+'/interactive-outline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feedback:outlineFeedback.value.trim()})});
