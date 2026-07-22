@@ -417,10 +417,11 @@ class Planner:
 
         # ── Phase 3: 大纲 (55% → 95%) ──
         # ── Phase 3: 大纲（分卷生成，每卷独立 LLM 调用，杜绝截断）──
-        chapter_words = 2000
-        estimated_chapters = min(40, max(10, target_words // chapter_words))
-        vol_count = max(3, estimated_chapters // 8)
-        ch_per_vol = max(5, estimated_chapters // vol_count)
+        # 每章字数根据总目标动态调整：短篇(≤5万字)以2000字/章为主，中篇2000-3000，长篇3000-5000
+        chapter_words = 2000 if target_words <= 50000 else (3000 if target_words <= 200000 else 4000)
+        estimated_chapters = min(60, max(8, target_words // chapter_words))
+        vol_count = max(2, estimated_chapters // 8)
+        ch_per_vol = max(5, min(12, estimated_chapters // vol_count))
 
         # Phase 3a: 生成卷结构
         yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划卷结构…"}

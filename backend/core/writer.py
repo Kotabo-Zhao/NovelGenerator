@@ -182,8 +182,8 @@ class Writer:
         log.info(f"Writing chapter: {genre}/{style}/{writing_mode}, pass 1/2 (draft)")
         
         draft = ""
-        # max_tokens 硬上限防止 API 截断（2000字 ≈ 6000 tokens，留有余量）
-        safe_max_tokens = min(target_words * 3, 6000)
+        # max_tokens 根据目标字数动态计算，长章节不受 6000 硬限制
+        safe_max_tokens = min(int(target_words * 3), 12000)
         stream = self._create(
             model=self.model,
             messages=[
