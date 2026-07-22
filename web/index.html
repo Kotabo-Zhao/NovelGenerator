@@ -10,6 +10,16 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
 <script src="/vue.global.prod.js"></script>
+<script>
+// SW 更新自动重载 — 解决缓存导致旧版本卡住的问题
+if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data && event.data.type === 'SW_UPDATED') {
+      window.location.reload();
+    }
+  });
+}
+</script>
 <style>
 :root {
   --bg: #0d1117; --bg2: #161b22; --card: #1c2129; --card-hover: #212830;
@@ -1112,6 +1122,17 @@ createApp({
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').then(r => {
     console.log('SW registered:', r.scope);
+    // 检测 SW 更新，有新版自动刷
+    r.addEventListener('updatefound', () => {
+      const newWorker = r.installing;
+      if (newWorker) {
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+            window.location.reload();
+          }
+        });
+      }
+    });
   }).catch(e => console.log('SW failed:', e));
 }
 </script>
