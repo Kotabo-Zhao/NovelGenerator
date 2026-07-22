@@ -105,6 +105,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .param-btn:hover{border-color:var(--accent);color:var(--accent)}
 .param-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
 
+/* Requirements */
+.req-list{max-height:200px;overflow-y:auto}
+.req-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border-left:3px solid var(--border);margin-bottom:3px;font-size:12px}
+.req-status{flex-shrink:0}
+.req-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.req-priority{flex-shrink:0;font-size:10px;font-weight:600}
+
 /* ── Shelf Grid ── */
 .shelf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
 .book-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:all .2s}
@@ -541,6 +548,49 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <button class="btn btn-ghost btn-xs" @click="openOutline" style="font-size:12px">📋 编辑大纲</button>
         </div>
 
+        <!-- 需求管理 & 质量监督 -->
+        <div class="card" style="margin-top:12px;background:var(--bg2)">
+          <div class="flex justify-between items-center" style="margin-bottom:8px">
+            <div class="card-title" style="margin:0;font-size:14px">🧪 需求管理 & 质量监督</div>
+            <div class="flex gap-6">
+              <button class="btn btn-xs btn-ghost" @click="decomposeRequirements" :disabled="isBusy">拆解需求</button>
+              <button class="btn btn-xs btn-ghost" @click="superviseRequirements" :disabled="isBusy||!requirements.subtasks?.length">监督质量</button>
+              <button class="btn btn-xs btn-primary" @click="runVerifyLoop" :disabled="isBusy||!requirements.subtasks?.length">🔄 循环校验</button>
+            </div>
+          </div>
+          
+          <!-- 需求拆解进度 -->
+          <div v-if="requirements.subtasks?.length" class="req-list">
+            <div class="req-summary" style="font-size:12px;color:var(--text3);margin-bottom:8px">
+              {{ requirements.passed_count||0 }}/{{ requirements.subtasks.length }} 已通过 · 评分: {{ requirements.overall_score||'--' }}
+            </div>
+            <div v-for="t in requirements.subtasks" :key="t.id" class="req-item" 
+                 :style="{borderLeftColor: t.status==='passed'?'#4caf50':t.status==='failed'?'#f44336':'var(--border)'}">
+              <span class="req-status">{{ t.status==='passed'?'✅':t.status==='failed'?'❌':'⏳' }}</span>
+              <span class="req-title" style="font-size:12px">{{ t.title?.substring(0,50) }}</span>
+              <span class="req-priority" :style="{color:t.priority==='P0'?'#f44336':'var(--text3)'}">{{ t.priority }}</span>
+            </div>
+          </div>
+          
+          <!-- 监督报告 -->
+          <div v-if="supervisionReport" class="supervision-report" style="margin-top:8px;padding:10px;background:var(--bg);border-radius:var(--radius-xs)">
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">
+              监督报告 · 评分 {{ supervisionReport.overall_score }}
+              <span :style="{color:supervisionReport.overall_status==='passed'?'#4caf50':'#f44336'}">
+                {{ supervisionReport.overall_status==='passed'?'✅ 全部通过':'❌ 未达标' }}
+              </span>
+            </div>
+            <div style="font-size:11px;color:var(--text3)">{{ supervisionReport.summary_report }}</div>
+          </div>
+          
+          <!-- 新需求输入 -->
+          <div v-if="showReqInput" style="margin-top:8px;display:flex;gap:8px">
+            <input v-model="reqInspiration" placeholder="输入追加需求…" style="flex:1;font-size:12px;padding:6px 10px">
+            <button class="btn btn-xs btn-ghost" @click="addRequirements" :disabled="!reqInspiration.trim()">追加</button>
+          </div>
+          <button v-else class="btn btn-ghost btn-xs" style="margin-top:4px;font-size:11px" @click="showReqInput=true">+ 追加需求</button>
+        </div>
+
         <!-- 大纲修改意见 — 紧凑行 -->
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:rgba(240,136,62,.06);border:1px solid rgba(240,136,62,.15);border-radius:8px">
           <span style="font-size:12px;color:var(--accent);white-space:nowrap;font-weight:600">💡 修改大纲</span>
@@ -728,6 +778,8 @@ createApp({
       dialogue_ratio:'medium', description_density:'moderate',
       emotion_tendency:'positive', length_preference:'medium', keyword:''
     });
+    const requirements = reactive({subtasks:[]}); const reqInspiration = ref(''); const showReqInput = ref(false);
+    const supervisionReport = ref(null);
     const theme = ref(localStorage.getItem('theme') || 'dark');
     const uiStyle = ref(localStorage.getItem('uiStyle') || 'macOS');
     const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
@@ -1174,6 +1226,54 @@ createApp({
         const d=await r.json();
         if(d.style){ form.style=d.style.name; form._customStyle=d.style; }
       } catch(e){ console.error(e); }
+    }
+    
+    // ── 需求管理系统 ──
+    async function decomposeRequirements() {
+      const insp = form.inspiration || prompt('输入核心灵感/需求:', '');
+      if (!insp) return;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/requirements/decompose', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({inspiration:insp})
+        });
+        const d = await r.json();
+        Object.assign(requirements, d.requirements);
+        supervisionReport.value = null;
+      } catch(e){ reportError(e.message||'拆解失败'); }
+    }
+    async function superviseRequirements() {
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/requirements/supervise', {method:'POST'});
+        const d = await r.json();
+        supervisionReport.value = d;
+        if (d.results) d.results.forEach(res => {
+          const t = requirements.subtasks.find(s => s.id===res.subtask_id);
+          if (t) { t.status = res.passed ? 'passed' : 'failed'; t.feedback = (res.issues||[]).join('; ')||'达标'; }
+        });
+        requirements.overall_score = d.overall_score;
+        requirements.passed_count = d.passed_count;
+      } catch(e){ reportError(e.message||'监督失败'); }
+    }
+    async function runVerifyLoop() {
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/requirements/verify-loop', {method:'POST'});
+        await readSSE(r, evt => {
+          if (evt.type==='progress') { createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
+          else if (evt.type==='supervision') { supervisionReport.value=evt.report; }
+          else if (evt.type==='done') { createProgress.value=100; createPhaseLabel.value='校验完成'; loadNovelPlan(); }
+        });
+      } catch(e){ reportError(e.message||'校验失败'); }
+    }
+    async function addRequirements() {
+      const insp = reqInspiration.value.trim(); if(!insp) return;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/requirements/update', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({inspiration:insp})
+        });
+        const d = await r.json();
+        Object.assign(requirements, d.requirements);
+        reqInspiration.value = ''; showReqInput.value = false;
+      } catch(e){ reportError(e.message||'追加失败'); }
     }
     async function loadStyleSeeds() { try { styleSeeds.value=(await (await fetch(API+'/api/styles/seeds')).json()).seeds||[]; } catch(e){} }
     async function saveStyleSeed() {
