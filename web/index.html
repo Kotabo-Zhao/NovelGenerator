@@ -164,7 +164,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .error-msg{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.2);border-radius:var(--radius-xs);padding:12px 16px;color:var(--red);font-size:13px;margin:12px 0}
 /* Toast / Error Modal */
 .toast-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center}
-.toast-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);max-width:420px;width:90%;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.toast-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);max-width:420px;width:90%;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.3);position:relative}
 .toast-box .toast-icon{font-size:32px;text-align:center;margin-bottom:12px}
 .toast-box .toast-title{font-size:16px;font-weight:600;margin-bottom:8px;text-align:center}
 .toast-box .toast-body{font-size:14px;color:var(--text2);margin-bottom:20px;text-align:center;line-height:1.6;white-space:pre-wrap;word-break:break-word}
@@ -1093,7 +1093,7 @@ createApp({
     async function loadStyleSeed(seed) { try { const s=(await (await fetch(API+'/api/styles/seeds')).json()).seeds.find(x=>x.name===seed.name); if(s){ customStyleDesc.value=s.description||''; applyCustomStyle(); } } catch(e){} }
     async function deleteStyleSeed(seed) { try { await fetch(API+'/api/styles/seeds/'+encodeURIComponent(seed.filename),{method:'DELETE'}); await loadStyleSeeds(); } catch(e){} }
 
-    return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,
+    return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,toast,
       form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
