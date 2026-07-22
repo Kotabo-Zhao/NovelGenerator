@@ -127,12 +127,18 @@ async def get_styles():
     categories = get_style_categories()
     result = {}
     for cat, names in categories.items():
-        result[cat] = [{
-            "name": n,
-            "author": STYLES[n]["author"],
-            "desc": STYLES[n].get("prose", "")[:80] + "…",
-            "is_custom": STYLES[n].get("is_custom", False),
-        } for n in names]
+        items = []
+        for n in names:
+            s = STYLES.get(n)
+            if not s: continue
+            items.append({
+                "name": n,
+                "author": s["author"],
+                "desc": s.get("prose", "")[:80] + "…",
+                "is_custom": s.get("is_custom", False),
+            })
+        if items:
+            result[cat] = items
     return {"categories": result}
 
 
