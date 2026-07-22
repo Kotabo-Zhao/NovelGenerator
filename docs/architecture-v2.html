@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NovelGenerator v2 — 智能小说创作系统架构设计</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --card: #1a1d27;
+  --card2: #212433;
+  --text: #e1e4eb;
+  --text2: #9ca3af;
+  --accent: #6366f1;
+  --accent2: #8b5cf6;
+  --green: #10b981;
+  --orange: #f59e0b;
+  --red: #ef4444;
+  --blue: #3b82f6;
+  --cyan: #06b6d4;
+  --border: #2d3148;
+  --radius: 8px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; line-height: 1.7; padding: 0; }
+.container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+h1 { font-size: 2.2em; margin-bottom: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.subtitle { color: var(--text2); font-size: 1.05em; margin-bottom: 32px; }
+h2 { font-size: 1.5em; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); display: inline-block; }
+h3 { font-size: 1.2em; margin: 28px 0 12px; color: var(--cyan); }
+h4 { font-size: 1.05em; margin: 20px 0 8px; color: var(--text); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin: 16px 0; box-shadow: var(--shadow); }
+.card2 { background: var(--card2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin: 12px 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; margin-right: 6px; }
+.badge-new { background: rgba(99,102,241,0.2); color: var(--accent); border: 1px solid rgba(99,102,241,0.3); }
+.badge-existing { background: rgba(156,163,175,0.15); color: var(--text2); border: 1px solid rgba(156,163,175,0.2); }
+.badge-p0 { background: rgba(239,68,68,0.15); color: var(--red); }
+.badge-p1 { background: rgba(245,158,11,0.15); color: var(--orange); }
+.badge-api { background: rgba(16,185,129,0.15); color: var(--green); }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--card2); color: var(--accent); font-weight: 600; font-size: 0.9em; }
+td { font-size: 0.92em; }
+code { background: var(--card2); padding: 2px 8px; border-radius: 4px; font-size: 0.9em; color: var(--cyan); }
+pre { background: var(--card2); padding: 16px; border-radius: var(--radius); overflow-x: auto; font-size: 0.85em; line-height: 1.6; margin: 12px 0; border: 1px solid var(--border); }
+pre code { background: none; padding: 0; color: var(--text); }
+.flow { margin: 24px 0; }
+.flow-box { background: var(--card2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; display: inline-block; margin: 4px; text-align: center; min-width: 120px; }
+.flow-arrow { display: inline-block; margin: 0 8px; color: var(--accent); font-size: 1.2em; }
+.flow-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; margin: 16px 0; }
+.module-name { font-weight: 700; color: var(--accent); }
+.module-desc { font-size: 0.82em; color: var(--text2); }
+.feature-list { list-style: none; padding: 0; }
+.feature-list li { padding: 6px 0; padding-left: 20px; position: relative; }
+.feature-list li::before { content: '▸'; position: absolute; left: 0; color: var(--accent); }
+.highlight { background: linear-gradient(90deg, rgba(99,102,241,0.15), transparent); padding: 2px 8px; border-radius: 4px; }
+.warn-box { background: rgba(239,68,68,0.08); border-left: 3px solid var(--red); padding: 14px 18px; border-radius: 0 var(--radius) var(--radius) 0; margin: 16px 0; }
+.info-box { background: rgba(59,130,246,0.08); border-left: 3px solid var(--blue); padding: 14px 18px; border-radius: 0 var(--radius) var(--radius) 0; margin: 16px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>NovelGenerator v2</h1>
+<p class="subtitle">智能小说创作系统 — 多智能体架构设计方案 · 2026-07-22</p>
+
+<div class="card">
+  <h3 style="margin-top:0">文档概述</h3>
+  <p>本文档给出 NovelGenerator v2 的完整系统架构设计，涵盖<strong>五大核心功能</strong>的模块划分、协作关系、数据流转及 API 接口定义。在 v1 成熟管线（Planner → Writer → Embellisher → ContextUpdater）基础上，新增四个独立 Agent 模块和一个交互式引擎。</p>
+</div>
+
+<!-- ============================================ -->
+<h2>一、总体架构</h2>
+<!-- ============================================ -->
+
+<div class="card">
+  <h3 style="margin-top:0">1.1 分层架构图</h3>
+  
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                     Web Frontend (Vue 3 SPA)                      │
+│                     web/index.html  +  PWA                        │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTP/SSE
+┌──────────────────────────▼──────────────────────────────────────┐
+│                  API Layer (FastAPI)                              │
+│  backend/api/server.py                                            │
+│  Routes: novels, generate, validate, analyze, design-twists...   │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│               Engine Layer (Orchestrator)                         │
+│  backend/core/engine.py  —  NovelEngine                          │
+│                                                                   │
+│  ┌────────────────────── Pipeline ──────────────────────────┐    │
+│  │  create → plan → write → validate → optimize → twist     │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                   │
+│  ┌─ 创作管线 ───────────────────────────────────────────────┐    │
+│  │ Planner ──► Writer ──► Embellisher ──► ContextUpdater    │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                   │
+│  ┌─ 质量保障 (NEW) ─────────────────────────────────────────┐    │
+│  │ ConsistencyValidator ──► OpeningOptimizer                 │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                   │
+│  ┌─ 创意增强 (NEW) ─────────────────────────────────────────┐    │
+│  │ TwistDesigner ──► OutlineInteractive                      │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                   │
+│  ┌─ 辅助模块 ───────────────────────────────────────────────┐    │
+│  │ ForeshadowingDesigner │ PacingChecker │ Humanizer         │    │
+│  │ NovelMemory (L1/L2/L3) │ StyleFingerprint                 │    │
+│  └──────────────────────────────────────────────────────────┘    │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│               LLM Layer (DeepSeek API)                             │
+│           deepseek-chat / deepseek-v4-flash                       │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre>
+</div>
+
+<div class="card">
+  <h3>1.2 模块总览</h3>
+  <table>
+    <tr>
+      <th>模块</th><th>类型</th><th>文件</th><th>职责</th>
+    </tr>
+    <tr>
+      <td><span class="badge badge-existing">v1</span> Planner</td>
+      <td>创作管线</td>
+      <td><code>planner.py</code></td>
+      <td>世界观 + 角色 + 大纲生成（3阶段流式）</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-existing">v1</span> Writer</td>
+      <td>创作管线</td>
+      <td><code>writer.py</code></td>
+      <td>章节流式生成（两遍: 初稿 + 风格打磨）</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-existing">v1</span> Embellisher</td>
+      <td>创作管线</td>
+      <td><code>embellisher.py</code></td>
+      <td>风格注入 + 文字打磨</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-existing">v1</span> ContextUpdater</td>
+      <td>状态管理</td>
+      <td><code>context_updater.py</code></td>
+      <td>章节完成后更新全局角色状态</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-existing">v1</span> NovelMemory</td>
+      <td>状态管理</td>
+      <td><code>memory.py</code></td>
+      <td>L1/L2/L3 分层上下文管理</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-existing">v1</span> Humanizer</td>
+      <td>质量保障</td>
+      <td><code>humanizer.py</code></td>
+      <td>30+ AI写作痕迹检测 + 评分</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-existing">v1</span> PacingChecker</td>
+      <td>质量保障</td>
+      <td><code>pacing_checker.py</code></td>
+      <td>节奏量化分析（句长/段落/对话比）</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-existing">v1</span> ForeshadowingDesigner</td>
+      <td>辅助模块</td>
+      <td><code>foreshadowing_designer.py</code></td>
+      <td>伏笔生命周期规划</td>
+    </tr>
+    <tr style="background:rgba(99,102,241,0.05)">
+      <td><span class="badge badge-new">NEW</span> <strong>ConsistencyValidator</strong></td>
+      <td>质量保障</td>
+      <td><code>consistency_validator.py</code></td>
+      <td>L1规则引擎 + L2 LLM 逻辑一致性校验</td>
+    </tr>
+    <tr style="background:rgba(99,102,241,0.05)">
+      <td><span class="badge badge-new">NEW</span> <strong>OpeningOptimizer</strong></td>
+      <td>质量保障</td>
+      <td><code>opening_optimizer.py</code></td>
+      <td>开头吸引力分析 + 替代方案生成</td>
+    </tr>
+    <tr style="background:rgba(99,102,241,0.05)">
+      <td><span class="badge badge-new">NEW</span> <strong>TwistDesigner</strong></td>
+      <td>创意增强</td>
+      <td><code>twist_designer.py</code></td>
+      <td>反转类型库 + 反转节奏规划</td>
+    </tr>
+    <tr style="background:rgba(99,102,241,0.05)">
+      <td><span class="badge badge-new">NEW</span> <strong>OutlineInteractive</strong></td>
+      <td>交互引擎</td>
+      <td><code>outline_interactive.py</code></td>
+      <td>结构化反馈解析 + 针对性大纲重生成</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ============================================ -->
+<h2>二、功能一: 交互式大纲生成</h2>
+<!-- ============================================ -->
+
+<div class="card">
+  <h3 style="margin-top:0">2.1 设计目标</h3>
+  <ul class="feature-list">
+    <li>用户提出修改意见后，系统解析为<strong>结构化指令</strong>（分类 + 影响范围 + 目标章节）</li>
+    <li><strong>最小化修改</strong>: 只重生成被反馈影响的章节，未提及部分保持不变</li>
+    <li><strong>反馈闭环</strong>: 用户意见必须确实生效，通过 diff 对比验证</li>
+    <li><strong>迭代追踪</strong>: 每次修改保存完整历史，支持回退</li>
+  </ul>
+
+  <h3>2.2 反馈分类体系</h3>
+  <table>
+    <tr><th>分类</th><th>影响范围</th><th>触发关键词</th><th>处理策略</th></tr>
+    <tr><td>pacing (节奏)</td><td>volume</td><td>节奏、太快、太慢、高潮分布</td><td>重生成受影响卷的章节数和节奏曲线</td></tr>
+    <tr><td>character_arc (角色弧线)</td><td>global</td><td>主角、成长、升级、反派、配角</td><td>全量重生成大纲（嵌入角色弧线调整）</td></tr>
+    <tr><td>plot_logic (情节逻辑)</td><td>volume</td><td>矛盾、不合理、逻辑、漏洞</td><td>重生成受影响卷（保持前后一致）</td></tr>
+    <tr><td>structure (结构)</td><td>global</td><td>卷、比例、三幕、太长、太短</td><td>全量重生成（调整卷数和章数分布）</td></tr>
+    <tr><td>conflict (冲突)</td><td>volume</td><td>冲突、强度、不够刺激</td><td>重生成受影响卷的冲突设计</td></tr>
+    <tr><td>hooks (钩子)</td><td>chapter</td><td>钩子、悬念、结尾、章末</td><td>标记特定章节待重写</td></tr>
+    <tr><td>ending (结局)</td><td>global</td><td>结局、高潮、决战、收尾</td><td>全量重生成（重点调整最后1-2卷）</td></tr>
+  </table>
+
+  <h3>2.3 数据流转</h3>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-box">
+        <div class="module-name">用户反馈</div>
+        <div class="module-desc">自由文本</div>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box">
+        <div class="module-name">parse_feedback()</div>
+        <div class="module-desc">关键词匹配 + 范围提取</div>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box">
+        <div class="module-name">结构化指令</div>
+        <div class="module-desc">{category, scope, target_chapters}</div>
+      </div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-box">
+        <div class="module-name">regenerate_with_feedback()</div>
+        <div class="module-desc">针对性 LLM 调用</div>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box">
+        <div class="module-name">get_diff_summary()</div>
+        <div class="module-desc">变更新旧对比</div>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box">
+        <div class="module-name">保存 plan.json</div>
+        <div class="module-desc">+ 迭代历史</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-box">
+    <strong>关键设计决策:</strong> 用户反馈通过<code>parse_feedback()</code>从自由文本中提取7种结构化类别。global 级修改触发全量规划重生成(保留世界观和角色)，volume 级仅重生成受影响卷，chapter 级标记特定章节待重写。每次迭代保存完整历史，可通过 diff 验证变化确实生效。
+  </div>
+</div>
+
+<!-- ============================================ -->
+<h2>三、功能二: 逻辑一致性校验 Agent</h2>
+<!-- ============================================ -->
+
+<div class="card">
+  <h3 style="margin-top:0">3.1 双层校验架构</h3>
+  <table>
+    <tr>
+      <th>层级</th><th>方法</th><th>速度</th><th>覆盖</th><th>误报率</th>
+    </tr>
+    <tr>
+      <td><strong>L1 规则引擎</strong></td>
+      <td>正则匹配 + 知识库查表</td>
+      <td>毫秒级</td>
+      <td>硬性约束（时空、姓氏、等级）</td>
+      <td>极低</td>
+    </tr>
+    <tr>
+      <td><strong>L2 LLM 深度校验</strong></td>
+      <td>DeepSeek API 语义推理</td>
+      <td>秒级</td>
+      <td>软性逻辑（情节合理性、角色决策）</td>
+      <td>低</td>
+    </tr>
+  </table>
+
+  <h3>3.2 检查维度</h3>
+  <div class="grid2">
+    <div class="card2">
+      <h4>时空一致性 <span class="badge badge-p0">P0</span></h4>
+      <ul class="feature-list">
+        <li>移动距离 vs 时间流逝（古代交通速度知识库）</li>
+        <li>跨章位置跳跃检测（前章末尾 vs 本章开头）</li>
+        <li>时间单位规范化（一炷香=0.5h，一息=5s）</li>
+      </ul>
+    </div>
+    <div class="card2">
+      <h4>角色关系一致性 <span class="badge badge-p0">P0</span></h4>
+      <ul class="feature-list">
+        <li>直系血亲必须同姓规则</li>
+        <li>辈分关系不可混淆</li>
+        <li>年龄合理性（父辈≥子辈+15岁）</li>
+      </ul>
+    </div>
+    <div class="card2">
+      <h4>力量体系一致性 <span class="badge badge-p1">P1</span></h4>
+      <ul class="feature-list">
+        <li>等级不可倒退检测</li>
+        <li>能力边界不突变</li>
+        <li>修为倒退需有原因（受伤/封印）</li>
+      </ul>
+    </div>
+    <div class="card2">
+      <h4>情节逻辑 <span class="badge badge-p1">P1</span></h4>
+      <ul class="feature-list">
+        <li>事件因果链完整性</li>
+        <li>角色决策符合性格设定</li>
+        <li>道具/能力使用前后一致</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>3.3 集成点</h3>
+  <div class="info-box">
+    <strong>Pipeline 集成:</strong> ConsistencyValidator 在章节生成完成后自动调用（<code>generate_chapter_stream</code> 末尾）。L1 规则引擎始终运行（无额外成本），L2 深度校验为可选（通过 <code>run_deep</code> 参数控制，减少 API 调用）。校验结果中的 P0 级违规触发自动重写流程。
+  </div>
+
+  <div class="warn-box">
+    <strong>违规严重度:</strong> P0 = 致命错误（-30分/条，必须修复），P1 = 明显问题（-15分/条，强烈建议修复），P2 = 轻微警告（-5分/条）。通过 <code>build_fix_prompt()</code> 将违规报告转化为 Writer 可执行的修复指令。
+  </div>
+</div>
+
+<!-- ============================================ -->
+<h2>四、功能三: 开头吸引力优化</h2>
+<!-- ============================================ -->
+
+<div class="card">
+  <h3 style="margin-top:0">4.1 钩子类型体系</h3>
+  <table>
+    <tr><th>类型</th><th>强度</th><th>适用场景</th><th>AI味风险</th></tr>
+    <tr><td><strong>动作冲击型</strong></td><td>⭐⭐⭐⭐⭐ 9</td><td>爽文/战斗/快节奏</td><td>低</td></tr>
+    <tr><td><strong>悬念牵引型</strong></td><td>⭐⭐⭐⭐ 8</td><td>悬疑/烧脑/慢热</td><td>低</td></tr>
+    <tr><td><strong>对话切入型</strong></td><td>⭐⭐⭐⭐ 7</td><td>任何风格</td><td>低</td></tr>
+    <tr><td><strong>情感共鸣型</strong></td><td>⭐⭐⭐⭐ 7</td><td>女频/文学/虐恋</td><td>中</td></tr>
+    <tr><td><strong>氛围渲染型</strong></td><td>⭐⭐⭐ 5</td><td>文艺/古风</td><td>高 ⚠️</td></tr>
+    <tr><td><strong>哲思切入型</strong></td><td>⭐⭐ 4</td><td>猫腻/priest风</td><td>高 ⚠️</td></tr>
+  </table>
+
+  <h3>4.2 AI味开头检测规则</h3>
+  <pre><code># 6条自动检测规则（正则）
+1. ^(阳光|月光|天空|大地|风|雨|雪|雾|云)        → 环境描写开篇(AI高频)
+2. ^(在这|那是|这是).{0,20}(世界|大陆|时代|天地)  → 模板化世界观开篇
+3. ^(众所周知|自古以来|相传|传说)                 → 百科式开篇
+4. ^.{0,30}(平静|宁静|安静|祥和|繁华)              → 万能形容词开篇
+5. ^(少年|少女|青年|男子|女子).{0,10}(名叫|姓)     → 人物介绍式开篇
+6. ^(随着|伴随着|自从|自从……以来)                  → 通用过渡词开篇</code></pre>
+
+  <h3>4.3 分析输出</h3>
+  <pre><code>{
+  "score": 65,                    // 0-100 (第一章要求 ≥75)
+  "hook_type": "environment",     // 当前开头类型
+  "hook_strength": 5,             // 1-10
+  "first_sentence_impact": 4,     // 第一句冲击力 1-10
+  "issues": [
+    "以环境描写开篇 — AI高频模式",
+    "第一句话过长（>50字），削弱冲击力"
+  ],
+  "suggestions": [
+    "替换为动作/对话/悬念开篇",
+    "第一句控制在15-30字"
+  ],
+  "alternative_openings": [       // LLM生成3个替代方案
+    { "type": "action", "text": "...", "strength": 9 },
+    { "type": "mystery", "text": "...", "strength": 8 }
+  ]
+}</code></pre>
+</div>
+
+<!-- ============================================ -->
+<h2>五、功能四: 剧情反转设计</h2>
+<!-- ============================================ -->
+
+<div class="card">
+  <h3 style="margin-top:0">5.1 反转类型目录</h3>
+  <table>
+    <tr><th>类型</th><th>强度</th><th>所需伏笔</th><th>最佳位置</th><th>子类型</th></tr>
+    <tr>
+      <td>identity_reveal<br><span style="font-size:0.8em;color:var(--text2)">身份揭露</span></td>
+      <td>9</td><td>≥3个</td><td>章末 / 卷末</td>
+      <td>卧底反转、误解反转、隐藏身份、身世揭露</td>
+    </tr>
+    <tr>
+      <td>information_bomb<br><span style="font-size:0.8em;color:var(--text2)">信息炸弹</span></td>
+      <td>9</td><td>≥4个</td><td>卷末 / 幕转折</td>
+      <td>世界观真相、历史真相、设定含义</td>
+    </tr>
+    <tr>
+      <td>perspective_flip<br><span style="font-size:0.8em;color:var(--text2)">视角翻转</span></td>
+      <td>8</td><td>≥2个</td><td>章末 / 弧中点</td>
+      <td>善行背后的残酷真相、反派动机合理性</td>
+    </tr>
+    <tr>
+      <td>expectation_subversion<br><span style="font-size:0.8em;color:var(--text2)">预期颠覆</span></td>
+      <td>8</td><td>≥1个</td><td>任意</td>
+      <td>反退婚流、奇遇是陷阱、金手指代价</td>
+    </tr>
+    <tr>
+      <td>false_outcome<br><span style="font-size:0.8em;color:var(--text2)">虚假胜负</span></td>
+      <td>7</td><td>≥2个</td><td>章末 / 章中</td>
+      <td>假胜实败、假败实胜、双输第三方获利</td>
+    </tr>
+  </table>
+
+  <h3>5.2 反转节奏规划</h3>
+  <table>
+    <tr><th>小说规模</th><th>小反转</th><th>中等反转</th><th>大反转</th></tr>
+    <tr><td>&lt;100章</td><td>5个</td><td>2个</td><td>1个</td></tr>
+    <tr><td>100-300章</td><td>12个</td><td>4个</td><td>2个</td></tr>
+    <tr><td>&gt;300章</td><td>20个</td><td>8个</td><td>3个</td></tr>
+  </table>
+
+  <h3>5.3 反转适用性判断</h3>
+  <pre><code># 判断某章是否适合放置反转
+✅ 适合: 卷末章、每5章周期点、非高潮过渡章
+❌ 不适合: 已有强度5冲突的章节、卷首章（需先建立预期）
+🎯 最佳: 幕转折处（信息炸弹）、卷末（身份揭露）
+
+# 反转后处理
+- 反转前保持自然叙述，不刻意暗示
+- 反转点放在 70%-90% 位置（给读者消化空间）  
+- 反转后留白——不立即解释，让冲击力沉淀
+- 确保前文至少有一个可回溯的微小线索</code></pre>
+</div>
+
+<!-- ============================================ -->
+<h2>六、整体系统架构</h2>
+<!-- ============================================ -->
+
+<div class="card">
+  <h3 style="margin-top:0">6.1 创作全链路数据流转</h3>
+  
+<pre><code>
+用户输入灵感
+    │
+    ▼
+┌─────────────────────────────────────────────────────┐
+│ Phase 1: 规划                                        │
+│ Planner.plan_stream()                                │
+│   ├─ 世界观 (LLM) ──► worldbuilding                   │
+│   ├─ 角色 (LLM) ──► characters + character_bible      │
+│   └─ 大纲 (LLM, 分卷) ──► outline (volumes/chapters) │
+│                          │                            │
+│                          ▼ 保存 plan.json             │
+└─────────────────────────────────────────────────────┘
+    │
+    │ 用户审阅大纲
+    │ 提出修改意见
+    ▼
+┌─────────────────────────────────────────────────────┐
+│ Phase 1b: 交互式大纲迭代 (NEW)                       │
+│ OutlineInteractive.parse_feedback()                   │
+│   ├─ 关键词匹配 → 7类结构化指令                       │
+│   ├─ 范围提取 → 目标章节/卷                           │
+│   └─ regenerate_with_feedback()                       │
+│        ├─ global → 全量重生成                         │
+│        ├─ volume → 指定卷重生成                       │
+│        └─ chapter → 标记待重写                        │
+│                          │                            │
+│                          ▼ get_diff_summary()         │
+│                          输出差异 → 用户确认          │
+└─────────────────────────────────────────────────────┘
+    │
+    │ 用户确认大纲
+    ▼
+┌─────────────────────────────────────────────────────┐
+│ Phase 2: 逐章写作循环                                 │
+│ for each chapter:                                     │
+│   ├─ memory.build_writer_context()                    │
+│   │    L1(核心设定) + L2(上一章结尾) + L3(伏笔)        │
+│   ├─ Writer.write_stream()                            │
+│   │    pass 1: 初稿 → pass 2: 风格打磨 → pass 3: Humanizer
+│   ├─ OpeningOptimizer.analyze_opening() (NEW)         │
+│   │    开头强度评分 + AI味检测 + 替代方案              │
+│   ├─ TwistDesigner.design_chapter_twist() (NEW)       │
+│   │    单章反转设计 + 伏笔检查                        │
+│   ├─ ConsistencyValidator.validate_chapter() (NEW)    │
+│   │    L1规则引擎 + L2 LLM深度校验 → 违规报告          │
+│   ├─ ContextUpdater.update()                           │
+│   │    角色状态 + 位置 + 伏笔更新                      │
+│   └─ PacingChecker.analyze()                           │
+│        节奏量化 + 问题检测                             │
+│                          │                            │
+│                          ▼ 保存 chapter_NNNN.md        │
+│                          ▼ 更新 state.json             │
+└─────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────┐
+│ Phase 3: 导出                                        │
+│ export_novel() → TXT / EPUB / PDF                     │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+</div>
+
+<div class="card">
+  <h3>6.2 模块间数据契约</h3>
+  <table>
+    <tr><th>生产者</th><th>消费者</th><th>数据</th><th>格式</th></tr>
+    <tr><td>Planner</td><td>Writer, Memory, Validator</td><td>plan.json</td><td>JSON (世界观+角色+大纲)</td></tr>
+    <tr><td>Writer</td><td>ContextUpdater, Validator</td><td>章节正文</td><td>Markdown (chapter_NNNN.md)</td></tr>
+    <tr><td>ContextUpdater</td><td>Memory (build_writer_context)</td><td>global_state.json</td><td>JSON (角色状态+位置+力量)</td></tr>
+    <tr><td>ConsistencyValidator</td><td>Writer (via build_fix_prompt)</td><td>违规报告</td><td>{violations, score, fix_prompt}</td></tr>
+    <tr><td>OpeningOptimizer</td><td>Writer (via build_optimization_prompt)</td><td>开头分析 + 替代方案</td><td>{score, hook_type, alternatives}</td></tr>
+    <tr><td>TwistDesigner</td><td>Writer (via build_twist_prompt)</td><td>反转设计</td><td>{twist_type, twist_text, foreshadowing}</td></tr>
+    <tr><td>OutlineInteractive</td><td>Planner</td><td>结构化指令</td><td>{instructions, scope, targets}</td></tr>
+    <tr><td>ForeshadowingDesigner</td><td>Memory (foreshadowing.json)</td><td>伏笔规划</td><td>[{description, plant_ch, reveal_ch}]</td></tr>
+    <tr><td>PacingChecker</td><td>Writer (via build_pacing_prompt)</td><td>节奏报告</td><td>{overall_score, issues, suggestions}</td></tr>
+    <tr><td>Humanizer</td><td>Writer (via build_humanizer_prompt)</td><td>AI味检测</td><td>{detected, score, prompt}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>6.3 新增 API 路由一览</h3>
+  <table>
+    <tr><th>端点</th><th>方法</th><th>功能</th></tr>
+    <tr><td><code>/api/novels/{id}/interactive-outline</code></td><td>POST (SSE)</td><td>交互式大纲: 反馈解析 → 分类 → 针对性重生成 → 差异输出</td></tr>
+    <tr><td><code>/api/novels/{id}/validate-chapter/{ch}</code></td><td>POST</td><td>章节逻辑一致性校验 (L1+L2)</td></tr>
+    <tr><td><code>/api/novels/{id}/validate-outline</code></td><td>GET</td><td>大纲逻辑一致性校验</td></tr>
+    <tr><td><code>/api/novels/{id}/analyze-opening</code></td><td>POST</td><td>开头吸引力分析（强度 + AI味 + 建议）</td></tr>
+    <tr><td><code>/api/novels/{id}/opening-alternatives</code></td><td>POST</td><td>生成替代开头方案 (3种类型)</td></tr>
+    <tr><td><code>/api/novels/{id}/design-twists</code></td><td>GET</td><td>整部小说反转点规划</td></tr>
+    <tr><td><code>/api/novels/{id}/design-chapter-twist</code></td><td>POST</td><td>单章反转钩子设计</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>6.4 关键设计决策</h3>
+  
+  <div class="card2">
+    <h4>1. 双层校验架构 (ConsistencyValidator)</h4>
+    <p>L1 规则引擎（毫秒级正则匹配）覆盖硬性约束，L2 LLM（秒级语义推理）覆盖软性逻辑。L1始终运行（零API成本），L2可选（通过 <code>run_deep</code> 参数控制）。这种设计在成本和覆盖之间取得平衡——大部分常规错误被L1捕获，复杂逻辑问题由L2处理。</p>
+  </div>
+  
+  <div class="card2">
+    <h4>2. 反馈→指令转化 (OutlineInteractive)</h4>
+    <p>用户的自然语言反馈被解析为7种结构化类别，每种有确定的影响范围（global/volume/chapter）。这个转化是关键——确保"修改意见确实生效"。global级触发全量重生成（成本高但影响大），chapter级仅标记待重写（成本低）。每次迭代保存完整历史+diff输出，用户可验证变化。</p>
+  </div>
+  
+  <div class="card2">
+    <h4>3. 分析-修复分离模式</h4>
+    <p>ConsistencyValidator、OpeningOptimizer、TwistDesigner 都遵循"分析 → 生成修复提示 → Writer执行修复"的分离模式。校验Agent不直接修改文本，而是输出结构化修复指令（<code>build_fix_prompt()</code>），由Writer在重写时注入上下文中。这保持了Writer的对文本质量的最终控制权。</p>
+  </div>
+
+  <div class="card2">
+    <h4>4. 反转与伏笔联动</h4>
+    <p>TwistDesigner 规划的反转点会自动向 ForeshadowingDesigner 注册伏笔需求。每个反转类型有明确的所需伏笔数量（身份揭露≥3个，信息炸弹≥4个）。反转章节生成时，Memory的L3层自动注入相关伏笔提醒，确保Writer埋设足够线索。</p>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<h2>七、项目结构 (v2)</h2>
+<!-- ============================================ -->
+
+<div class="card">
+<pre><code>NovelGenerator/
+├── backend/
+│   ├── api/
+│   │   └── server.py              # FastAPI (新增7个路由)
+│   ├── core/
+│   │   ├── engine.py              # 🆕 集成全部新模块
+│   │   ├── planner.py             # 规划器
+│   │   ├── writer.py              # 写手
+│   │   ├── memory.py              # 分层记忆
+│   │   ├── embellisher.py         # 润色师
+│   │   ├── context_updater.py     # 状态更新
+│   │   ├── pacing_checker.py      # 节奏检查
+│   │   ├── humanizer.py           # AI味检测
+│   │   ├── foreshadowing_designer.py  # 伏笔设计
+│   │   ├── styles.py              # 风格引擎
+│   │   ├── style_fingerprint.py   # 风格指纹
+│   │   ├── atomic_io.py           # 原子IO
+│   │   ├── consistency_validator.py  # 🆕 逻辑一致性校验
+│   │   ├── opening_optimizer.py      # 🆕 开头吸引力优化
+│   │   ├── twist_designer.py         # 🆕 剧情反转设计
+│   │   └── outline_interactive.py    # 🆕 交互式大纲引擎
+│   ├── config.py                  # 配置
+│   └── requirements.txt
+├── web/
+│   └── index.html                 # Vue 3 SPA
+├── novels/                        # 已创作小说
+└── research/                      # 调研报告
+</code></pre>
+</div>
+
+<div class="card" style="text-align:center; margin-top:40px; padding:16px;">
+  <p style="color:var(--text2); font-size:0.9em;">NovelGenerator v2 Architecture Design · 2026-07-22</p>
+  <p style="color:var(--text2); font-size:0.85em;">Generated by WorkBuddy · DeepSeek V4 Pro</p>
+</div>
+
+</div>
+</body>
+</html>

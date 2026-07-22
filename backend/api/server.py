@@ -467,6 +467,78 @@ async def regenerate_outline(novel_id: str, req: dict):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@app.post("/api/novels/{novel_id}/interactive-outline")
+async def interactive_outline(novel_id: str, req: dict):
+    """交互式大纲生成: 解析反馈 → 分类 → 针对性重生成 → 差异输出"""
+    feedback = req.get("feedback", "")
+    if not feedback.strip():
+        raise HTTPException(status_code=400, detail="请输入修改意见")
+    
+    async def event_stream():
+        try:
+            async for event in engine.interactive_outline_stream(novel_id, feedback):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            log.exception("interactive_outline crashed")
+            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Consistency Validator ──
+
+@app.post("/api/novels/{novel_id}/validate-chapter/{chapter_num}")
+async def validate_chapter_consistency(novel_id: str, chapter_num: int, req: dict = None):
+    """对已生成章节执行逻辑一致性校验"""
+    run_deep = req.get("run_deep", True) if req else True
+    result = engine.validate_chapter_consistency(novel_id, chapter_num, run_deep=run_deep)
+    return {"result": result}
+
+
+@app.get("/api/novels/{novel_id}/validate-outline")
+async def validate_outline_consistency(novel_id: str):
+    """校验大纲逻辑一致性"""
+    result = engine.validate_outline_consistency(novel_id)
+    return {"result": result}
+
+
+# ── Opening Optimizer ──
+
+@app.post("/api/novels/{novel_id}/analyze-opening")
+async def analyze_opening(novel_id: str, req: dict = None):
+    """分析章节开头吸引力"""
+    chapter_num = req.get("chapter_num", 1) if req else 1
+    result = engine.analyze_opening(novel_id, chapter_num)
+    return {"result": result}
+
+
+@app.post("/api/novels/{novel_id}/opening-alternatives")
+async def opening_alternatives(novel_id: str, req: dict):
+    """生成替代开头方案"""
+    chapter_num = req.get("chapter_num", 1)
+    count = req.get("count", 3)
+    result = await engine.generate_opening_alternatives(novel_id, chapter_num, count)
+    return {"alternatives": result}
+
+
+# ── Twist Designer ──
+
+@app.get("/api/novels/{novel_id}/design-twists")
+async def design_twists(novel_id: str):
+    """为整部小说规划反转点"""
+    result = engine.design_twists(novel_id)
+    return {"result": result}
+
+
+@app.post("/api/novels/{novel_id}/design-chapter-twist")
+async def design_chapter_twist(novel_id: str, req: dict):
+    """为单章设计反转钩子"""
+    chapter_num = req.get("chapter_num", 1)
+    result = engine.design_chapter_twist(novel_id, chapter_num)
+    return {"result": result}
+
+
 # ── Pacing Check ──
 
 @app.post("/api/novels/{novel_id}/pacing-check/{chapter_num}")

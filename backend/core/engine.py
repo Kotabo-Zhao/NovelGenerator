@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import copy
 import logging
 import asyncio
 from typing import AsyncGenerator, Optional, AsyncIterator
@@ -20,13 +21,22 @@ from .embellisher import Embellisher
 from .foreshadowing_designer import ForeshadowingDesigner
 from .context_updater import ContextUpdater
 from .pacing_checker import PacingChecker
+from .consistency_validator import ConsistencyValidator
+from .opening_optimizer import OpeningOptimizer
+from .twist_designer import TwistDesigner
+from .outline_interactive import OutlineInteractive
+from .outline_interactive import FEEDBACK_CATEGORIES
 from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
 
 log = logging.getLogger(__name__)
 
 
 class NovelEngine:
-    """小说创作引擎 — 多智能体架构: Planner→Writer→Embellisher→ContextUpdater→PacingChecker"""
+    """小说创作引擎 — 多智能体架构:
+    Pipeline: Planner → Writer → ConsistencyValidator → OpeningOptimizer → TwistDesigner
+    Support: Embellisher → ContextUpdater → PacingChecker
+    Interactive: OutlineInteractive (反馈式大纲迭代)
+    """
 
     def __init__(self):
         self.client = OpenAI(
@@ -40,6 +50,10 @@ class NovelEngine:
         self.fd_designer = ForeshadowingDesigner(self.client, self.model)
         self.context_updater = ContextUpdater(self.client, self.model)
         self.pacing_checker = PacingChecker(self.client, self.model)
+        self.consistency_validator = ConsistencyValidator(self.client, self.model)
+        self.opening_optimizer = OpeningOptimizer(self.client, self.model)
+        self.twist_designer = TwistDesigner(self.client, self.model)
+        self.outline_interactive = OutlineInteractive(self.client, self.model)
         self.memory = NovelMemory(config.NOVELS_DIR)
         os.makedirs(config.NOVELS_DIR, exist_ok=True)
 
@@ -525,3 +539,178 @@ class NovelEngine:
         buf = io.BytesIO()
         epub.write_epub(buf, book)
         return buf.getvalue(), None
+
+    # ═══════════════════════════════════════════════════════
+    # Phase 4: 交互式大纲 (新)
+    # ═══════════════════════════════════════════════════════
+
+    async def interactive_outline_stream(self, novel_id: str, feedback: str) -> AsyncIterator[dict]:
+        """交互式大纲生成: 解析反馈 → 分类 → 针对性重生成 → 差异输出"""
+        plan = self.get_novel(novel_id)
+        if not plan:
+            yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+            return
+
+        # 1. 解析反馈
+        yield {"type": "progress", "phase": "analyze", "pct": 5, "label": "分析修改意见…"}
+        parsed = self.outline_interactive.parse_feedback(feedback)
+
+        categories = parsed.get("categories", [])
+        cat_names = [FEEDBACK_CATEGORIES.get(c, {}).get("name", c) for c in categories]
+        yield {"type": "progress", "phase": "analyze", "pct": 15,
+               "label": f"识别修改类型: {', '.join(cat_names)}"}
+
+        # 2. 保存旧版本用于diff
+        old_plan = copy.deepcopy(plan)
+
+        # 3. 针对性重生成
+        async for event in self.outline_interactive.regenerate_with_feedback(
+            plan, parsed, self.planner
+        ):
+            if event["type"] == "done":
+                new_plan = event["plan"]
+                # 保存
+                novel_dir = self.memory.get_novel_dir(novel_id)
+                new_plan["_meta"] = plan.get("_meta", {})
+                new_plan["_meta"]["last_interactive_edit"] = __import__("datetime").datetime.now().isoformat()
+                new_plan["_meta"]["last_feedback"] = feedback
+                atomic_write_json(os.path.join(novel_dir, "plan.json"), new_plan)
+
+                # 更新状态
+                total = new_plan.get("outline", {}).get("total_chapters", 0)
+                self.memory.save_novel_state(novel_id, {
+                    "current_chapter": 0,
+                    "total_chapters": total,
+                    "total_words": 0,
+                    "status": "outline_regenerated",
+                })
+
+                # 输出差异摘要
+                diff = self.outline_interactive.get_diff_summary(old_plan, new_plan)
+                yield {"type": "diff", "changes": diff}
+                yield event
+            else:
+                yield event
+
+    # ═══════════════════════════════════════════════════════
+    # Phase 5: 一致性校验 (新)
+    # ═══════════════════════════════════════════════════════
+
+    def validate_chapter_consistency(
+        self, novel_id: str, chapter_num: int, run_deep: bool = True
+    ) -> dict:
+        """对已生成章节执行逻辑一致性校验"""
+        content = self.get_chapter(novel_id, chapter_num)
+        if not content:
+            return {"error": f"第{chapter_num}章不存在"}
+
+        plan = self.get_novel(novel_id)
+        if not plan:
+            return {"error": f"小说 '{novel_id}' 不存在"}
+
+        # 获取前文
+        prev_chapters = {}
+        state = self.memory.get_novel_state(novel_id)
+        for ch in state.get("completed_chapters", []):
+            if ch < chapter_num:
+                ch_content = self.get_chapter(novel_id, ch)
+                if ch_content:
+                    prev_chapters[ch] = ch_content
+
+        # 获取全局状态
+        novel_dir = self.memory.get_novel_dir(novel_id)
+        state_path = os.path.join(novel_dir, "global_state.json")
+        global_state = {}
+        if os.path.exists(state_path):
+            global_state = safe_read_json(state_path, {})
+
+        # 执行校验
+        result = self.consistency_validator.validate_chapter(
+            chapter_text=content,
+            chapter_num=chapter_num,
+            plan=plan,
+            prev_chapters=prev_chapters,
+            global_state=global_state,
+            run_deep=run_deep,
+        )
+        return result
+
+    def validate_outline_consistency(self, novel_id: str) -> dict:
+        """校验大纲逻辑一致性"""
+        plan = self.get_novel(novel_id)
+        if not plan:
+            return {"error": f"小说 '{novel_id}' 不存在"}
+        return self.consistency_validator.validate_outline(plan)
+
+    # ═══════════════════════════════════════════════════════
+    # Phase 6: 开头分析 (新)
+    # ═══════════════════════════════════════════════════════
+
+    def analyze_opening(self, novel_id: str, chapter_num: int = 1) -> dict:
+        """分析章节开头吸引力"""
+        content = self.get_chapter(novel_id, chapter_num)
+        if not content:
+            return {"error": f"第{chapter_num}章不存在"}
+
+        plan = self.get_novel(novel_id)
+        style = plan.get("style", "热血爽文") if plan else "热血爽文"
+
+        return self.opening_optimizer.analyze_opening(
+            chapter_text=content,
+            chapter_num=chapter_num,
+            style=style,
+            is_first_chapter=(chapter_num == 1),
+        )
+
+    async def generate_opening_alternatives(
+        self, novel_id: str, chapter_num: int = 1, count: int = 3
+    ) -> list:
+        """生成替代开头方案"""
+        content = self.get_chapter(novel_id, chapter_num)
+        if not content:
+            return [{"error": f"第{chapter_num}章不存在"}]
+
+        plan = self.get_novel(novel_id)
+        style = plan.get("style", "热血爽文") if plan else "热血爽文"
+
+        return self.opening_optimizer.generate_alternatives(
+            chapter_text=content,
+            chapter_num=chapter_num,
+            plan=plan or {},
+            style=style,
+            count=count,
+        )
+
+    # ═══════════════════════════════════════════════════════
+    # Phase 7: 反转设计 (新)
+    # ═══════════════════════════════════════════════════════
+
+    def design_twists(self, novel_id: str) -> dict:
+        """为整部小说规划反转点"""
+        plan = self.get_novel(novel_id)
+        if not plan:
+            return {"error": f"小说 '{novel_id}' 不存在"}
+        return self.twist_designer.design_twists(plan)
+
+    def design_chapter_twist(self, novel_id: str, chapter_num: int) -> dict:
+        """为单章设计反转钩子"""
+        plan = self.get_novel(novel_id)
+        if not plan:
+            return {"error": f"小说 '{novel_id}' 不存在"}
+
+        chapter_outline = self._find_chapter_outline(plan, chapter_num)
+        if not chapter_outline:
+            return {"error": f"第{chapter_num}章大纲不存在"}
+
+        # 获取前情摘要
+        prev_summary = ""
+        state = self.memory.get_novel_state(novel_id)
+        for ch in sorted(state.get("completed_chapters", []))[-3:]:
+            prev_summary += f"第{ch}章已完成\n"
+
+        return self.twist_designer.design_chapter_twist(
+            chapter_num=chapter_num,
+            plan=plan,
+            chapter_outline=chapter_outline,
+            prev_chapters_summary=prev_summary,
+        )
