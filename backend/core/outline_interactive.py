@@ -408,69 +408,69 @@ class OutlineInteractive:
         
         elif mode == "characters":
             # 强制角色更新指令 — 防止 LLM 把大纲修改 prompt 当成不改角色的理由
-            char_instruction = f"""【强制任务】以下用户意见涉及角色设定的修改，你必须同步更新 character 数据，不能保持原样。
-如果意见说"改成X"，就要真的改成X，不是审阅或建议。"""
+            char_instruction = f"""⚠️ 你的唯一任务是：读取【当前角色设定】和【修改指令】，输出修改后的角色数据。
+你不能输出原封不动的数据。如果指令要求改什么，你返回的 JSON 中对应字段必须是新值。
 
-            prompt = f"""你是角色设计师。请根据修改指令重新设计角色体系。
+举例：如果指令说"把名字改成林玄"，你返回的 protagonist.name 必须是"林玄"，不能是旧名。
+举例：如果指令说"把身份改成将军之后"，你返回的 protagonist.identity 必须是"将军之后"。
+举例：如果指令说"金手指改成家传剑法"，你返回的 protagonist.cheat 必须是"家传剑法"。
+
+你没有选择权。修改指令要求改什么，你就必须返回改完的结果。不讨论，不审阅，不保持原样。"""
+
+            prompt = f"""你是角色设计师。根据修改指令输出更新后的角色体系JSON。
 
 {char_instruction}
 
-【当前角色设定】
+【当前角色设定（这是旧数据，你必须根据修改指令生成新数据）】
 {json.dumps(plan.get("characters", {}), ensure_ascii=False, indent=2)[:2000]}
 
 【故事背景】
 题材: {genre}  风格: {style}  目标字数: {target_words}字
 世界观: {json.dumps(plan.get('worldbuilding', {}), ensure_ascii=False)[:500]}
 
-【修改指令 — 其中涉及角色的部分必须执行】
+【修改指令 — 逐条执行，不得遗漏】
 {regen_prompt}
 
-【输出要求】
-- 必须执行修改指令中对角色的所有变更，不要保持原样
-- 只改指令涉及的角色，保留未提及角色的所有设定
-- 每个角色必须有: name, identity, personality, motivation, arc
-- protagonist 额外有: cheat（金手指）, weakness（弱点）
-- supporting 角色有: relation（与主角关系）
-- antagonist 有: goal（目标）, method（手段）
+【输出约束 — 违反任何一条都是错误输出】
+1. 返回的 JSON 必须反映修改指令中的所有变更，字段值必须是指令要求的新值
+2. 修改指令未提及的字段保持旧值
+3. protagonist 必须包含: name, identity, personality, cheat, weakness, motivation, arc
+4. 如果 name 变了，在 changed_fields 中加入 "name"，在 previous_name 中记录旧名
+5. 如果 identity 变了，在 changed_fields 中加入 "identity"
+6. supporting/antagonist 数组中每个角色都必须是完整对象
 
-【主角信息变更检测（关键！）】
-- 如果修改涉及主角的 name 或 identity 的变更，必须在返回结果中标注
-- 在 protagonist 对象中加入 "changed_fields" 字段，列出被修改的字段名
-- 例如: "name" 被修改时 changed_fields: ["name"]，同时旧名通过 "previous_name" 字段记录
-- 如果主角名变了，调用方会自动同步大纲中所有提及旧名的地方
-- 如果主角身份/背景变了，请确保 arc（成长弧）也相应调整
-
-输出JSON（完整的characters对象，必须反映所有修改）:
+只输出 JSON:
 ```json
-{{"protagonist":{{"name":"","identity":"","personality":"","cheat":"","weakness":"","motivation":"","arc":"","changed_fields":[],"previous_name":""}},"supporting":[],"antagonist":[]}}
+{{"protagonist":{{"name":"新名字","identity":"新身份","personality":"","cheat":"","weakness":"","motivation":"","arc":"","changed_fields":[],"previous_name":""}},"supporting":[],"antagonist":[]}}
 ```"""
             return await self._safe_llm_call(prompt, planner, "characters_update", max_tokens=4096)
         
         elif mode == "worldbuilding":
-            wb_instruction = f"""【强制任务】以下用户意见涉及世界观设定的修改，你必须同步更新 worldbuilding 数据，不能保持原样。"""
+            wb_instruction = f"""⚠️ 你的唯一任务是：读取【当前世界观】和【修改指令】，输出修改后的世界观数据。
+你不能输出原封不动的数据。指令要求改什么，返回的 JSON 对应字段必须是新值。
+你没有选择权。不讨论，不审阅，不保持原样。"""
 
-            prompt = f"""你是世界观设计师。请根据修改指令更新世界观设定。
+            prompt = f"""你是世界观设计师。根据修改指令输出更新后的世界观JSON。
 
 {wb_instruction}
 
-【当前世界观】
+【当前世界观（旧数据，必须根据指令修改）】
 {json.dumps(plan.get("worldbuilding", {}), ensure_ascii=False, indent=2)[:2000]}
 
 【故事背景】
 题材: {genre}  风格: {style}
 
-【修改指令 — 其中涉及世界观的部分必须执行】
+【修改指令 — 逐条执行】
 {regen_prompt}
 
-【输出要求】
-- 必须执行修改指令中对世界观的所有变更
-- 只改指令涉及的设定，保留未提及的部分
-- 必须有: era, power_system, core_conflict, world_rules
-- world_rules 列出3-5条核心规则
+【输出约束】
+- 返回的 JSON 必须反映修改指令中的所有变更
+- 修改指令未提及的字段保持旧值
+- 返回完整的 worldbuilding 对象: era, power_system, core_conflict, world_rules(3-5条), key_organizations, key_locations
 
-输出JSON:
+只输出 JSON:
 ```json
-{{"era":"","power_system":"","core_conflict":"","world_rules":[""],"key_organizations":[],"key_locations":[""]}}
+{{"era":"新值","power_system":"新值","core_conflict":"新值","world_rules":[""],"key_organizations":[],"key_locations":[""]}}
 ```"""
             return await self._safe_llm_call(prompt, planner, "worldbuilding_update", max_tokens=2048)
         
