@@ -568,9 +568,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <!-- 需求拆解进度 -->
           <div v-if="requirements.subtasks?.length" class="req-list">
             <div class="req-summary" style="font-size:12px;color:var(--text3);margin-bottom:8px">
-              {{ requirements.passed_count||0 }}/{{ requirements.subtasks.length }} 已通过 · 评分: {{ requirements.overall_score||'--' }}
+              {{ requirements.passed_count||0 }}/{{ (requirements.subtasks||[]).length }} 已通过 · 评分: {{ requirements.overall_score||'--' }}
             </div>
-            <div v-for="t in requirements.subtasks" :key="t.id" class="req-item" 
+            <div v-for="t in (requirements.subtasks||[])" :key="t.id" class="req-item" 
                  :style="{borderLeftColor: t.status==='passed'?'#4caf50':t.status==='failed'?'#f44336':'var(--border)'}">
               <span class="req-status">{{ t.status==='passed'?'✅':t.status==='failed'?'❌':'⏳' }}</span>
               <span class="req-title" style="font-size:12px">{{ t.title?.substring(0,50) }}</span>
@@ -1343,7 +1343,10 @@ createApp({
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,
       createProgress,createPhase,createPhaseLabel,reviewFeedback,doRegenerate,
-      chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating };
+      chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
+      requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,
+      decomposeRequirements,superviseRequirements,runVerifyLoop,addRequirements,
+      loadStyleSeeds,loadStyleParams,applyParamStyle };
   }
 }).mount('#app');
 </script>

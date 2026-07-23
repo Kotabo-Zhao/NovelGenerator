@@ -11,14 +11,14 @@ sys.setrecursionlimit(10000)
 # Load .env from project root (local dev only; Render uses env vars)
 try:
     from dotenv import load_dotenv
-    _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     _dotenv_path = os.path.join(_ROOT, ".env")
     if os.path.exists(_dotenv_path):
         load_dotenv(_dotenv_path)
 except Exception:
     pass
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,8 +46,9 @@ app.add_middleware(
 
 engine = NovelEngine()
 
-# 前端文件目录
-WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
+# 前端文件目录 — 使用 abspath 防止 __file__ 为相对路径时解析错误
+_WEB_BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+WEB_DIR = os.path.join(_WEB_BASE, "web")
 
 
 # ── Frontend Route (仅/，子路径走 StaticFiles) ──
