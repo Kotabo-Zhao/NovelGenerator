@@ -487,8 +487,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div><b>拆解出 {{ decomposeSummary.subtask_count }} 条创作需求</b> · 其中 {{ decomposeSummary.p0_count }} 条为强制要求(P0)</div>
           <div v-if="decomposeSummary.summary" style="margin-top:4px;color:var(--text3)">{{ decomposeSummary.summary }}</div>
           <div v-if="decomposeSummary.offline_mode" style="margin-top:4px;color:var(--orange)">⚠️ 离线模式拆解，建议开启 LLM 以获得更精准的需求分析</div>
-          <div v-if="decomposeSummary.name_warning" style="margin-top:8px;padding:8px;background:rgba(255,100,50,.1);border-radius:6px;color:var(--orange);font-size:12px;white-space:pre-wrap">
-            ⚠️ 角色名不一致:
+          <div v-if="decomposeSummary.name_warning" style="margin-top:8px;padding:8px;background:rgba(255,150,50,.1);border-radius:6px;color:var(--orange);font-size:12px;white-space:pre-wrap">
+            ⚠️ 疑似角色名误写:
 {{ decomposeSummary.name_warning }}
             <div style="margin-top:4px;opacity:.7">{{ decomposeSummary.name_suggestion }}</div>
           </div>

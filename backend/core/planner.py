@@ -903,6 +903,9 @@ class Planner:
         expected_names.discard("")  # 去掉空名
         
         name_mismatches = []
+        new_introductions = []  # 新登场角色（非错误）
+        first_occurrence = {}   # 记录每个新角色首次登场
+        
         for vol in plan.get("outline", {}).get("volumes", []):
             if not isinstance(vol, dict):
                 continue
@@ -911,17 +914,31 @@ class Planner:
                     continue
                 ch_num = ch.get("number", "?")
                 ch_chars = set(ch.get("characters", []) or [])
-                # 检查是否有角色名不在预期列表中
                 unknown = ch_chars - expected_names - {"主角", "配角", "反派", ""}
-                if unknown:
-                    name_mismatches.append(f" 第{ch_num}章出现未知角色: {', '.join(unknown)}")
+                
+                for name in unknown:
+                    if name not in first_occurrence:
+                        first_occurrence[name] = ch_num
+                        # 检查是否像是已有角色的改名（同姓或相似）
+                        similar = [en for en in expected_names if en and name and (
+                            (len(name) >= 2 and len(en) >= 2 and name[0] == en[0]) or  # 同姓
+                            name in en or en in name  # 包含关系
+                        )]
+                        if similar:
+                            name_mismatches.append(f" 第{ch_num}章「{name}」疑似为「{'/'.join(similar)}」的误写")
+                        else:
+                            new_introductions.append(f" 第{ch_num}章新登场: {name}")
         
+        # 只报疑似误写，新角色不报错
         if name_mismatches:
-            mismatch_text = "\n".join(name_mismatches[:10])
-            suggestion = f"角色卡设有 {len(expected_names)} 个角色，大纲中出现未设定角色。请在大纲编辑页面修正角色名，或回到角色卡片补充新角色。"
-            log.warning(f"Name check: {len(name_mismatches)} chapters with unknown characters out of {chapter_counter}")
-            yield {"type": "name_check", "mismatches": mismatch_text[:500],
-                   "suggestion": suggestion, "expected_count": len(expected_names)}
+            mismatch_text = "\n".join(name_mismatches[:5])
+            yield {"type": "name_check", "mismatches": mismatch_text,
+                   "suggestion": f"以上角色名疑似与角色卡片不符，请在大纲编辑中修正",
+                   "severity": "warning"}
+        
+        if new_introductions and len(new_introductions) <= 5:
+            # 少量新角色正常，只在 log 记录
+            log.info(f"New characters introduced in outline: {len(new_introductions)} — {', '.join([n.split(': ',1)[-1] for n in new_introductions[:5]])}")
         
         yield {"type": "progress", "phase": "done", "pct": 100, "label": "创作方案完成！"}
         yield {"type": "done", "plan": plan}
