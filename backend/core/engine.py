@@ -22,6 +22,7 @@ from .foreshadowing_designer import ForeshadowingDesigner
 from .context_updater import ContextUpdater
 from .pacing_checker import PacingChecker
 from .consistency_validator import ConsistencyValidator
+from .logic_supervisor import LogicSupervisor
 from .opening_optimizer import OpeningOptimizer
 from .twist_designer import TwistDesigner
 from .feedback_decomposer import FeedbackDecomposer
@@ -55,6 +56,7 @@ class NovelEngine:
         self.context_updater = ContextUpdater(self.client, self.model)
         self.pacing_checker = PacingChecker(self.client, self.model)
         self.consistency_validator = ConsistencyValidator(self.client, self.model)
+        self.logic_supervisor = LogicSupervisor(self.client, self.model)
         self.opening_optimizer = OpeningOptimizer(self.client, self.model)
         self.twist_designer = TwistDesigner(self.client, self.model)
         self.feedback_decomposer = FeedbackDecomposer(self.client, self.model)
@@ -746,8 +748,8 @@ class NovelEngine:
         if os.path.exists(state_path):
             global_state = safe_read_json(state_path, {})
 
-        # 执行校验
-        result = self.consistency_validator.validate_chapter(
+        # 执行校验 — 使用增强版 LogicSupervisor
+        result = self.logic_supervisor.validate_chapter(
             chapter_text=content,
             chapter_num=chapter_num,
             plan=plan,
@@ -762,7 +764,18 @@ class NovelEngine:
         plan = self.get_novel(novel_id)
         if not plan:
             return {"error": f"小说 '{novel_id}' 不存在"}
-        return self.consistency_validator.validate_outline(plan)
+        return self.logic_supervisor.validate_outline(plan)
+
+    def validate_chapter_full(self, novel_id: str, chapter_num: int, run_deep: bool = True) -> dict:
+        """全维度逻辑监督（增强版，含 12 大类 + 分类得分 + 修复提示）"""
+        return self.validate_chapter_consistency(novel_id, chapter_num, run_deep)
+
+    def build_logic_fix_prompt(self, result: dict) -> str:
+        """根据监督结果生成 Writer 修复提示"""
+        return self.logic_supervisor.build_fix_prompt(
+            result.get("violations", []),
+            result.get("warnings", []),
+        )
 
     # ═══════════════════════════════════════════════════════
     # Phase 6: 开头分析 (新)

@@ -638,7 +638,39 @@ async def chapter_feedback(novel_id: str, chapter_num: int, req: dict):
     return {"result": result}
 
 
-# ── Consistency Validator ──
+# ── Logic Supervisor (v2.3 全维度) ──
+
+@app.post("/api/novels/{novel_id}/logic-check/{chapter_num}")
+async def logic_check_chapter(novel_id: str, chapter_num: int, req: dict = None):
+    """全维度逻辑监督 — 12 大类逻辑错误检测 + 分类得分 + 修复提示"""
+    run_deep = req.get("run_deep", True) if req else True
+    result = engine.validate_chapter_consistency(novel_id, chapter_num, run_deep=run_deep)
+    # 附加修复提示
+    if result.get("violations") or result.get("warnings"):
+        result["fix_prompt"] = engine.build_logic_fix_prompt(result)
+    return {"result": result}
+
+
+@app.post("/api/novels/{novel_id}/logic-check-batch")
+async def logic_check_batch(novel_id: str, req: dict):
+    """批量逻辑监督（L1快速扫描，无LLM调用）"""
+    plan = engine.get_novel(novel_id)
+    if not plan:
+        raise HTTPException(404, "小说不存在")
+    
+    start = req.get("start", 1)
+    end = req.get("end", 1)
+    chapters = {}
+    for ch in range(start, end + 1):
+        content = engine.get_chapter(novel_id, ch)
+        if content:
+            chapters[ch] = content
+    
+    result = engine.logic_supervisor.validate_chapter_batch(chapters, plan)
+    return {"result": result}
+
+
+# ── Consistency Validator (原有接口，保持兼容) ──
 
 @app.post("/api/novels/{novel_id}/validate-chapter/{chapter_num}")
 async def validate_chapter_consistency(novel_id: str, chapter_num: int, req: dict = None):
