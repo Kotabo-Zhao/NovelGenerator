@@ -512,16 +512,16 @@ class Planner:
         tw = target_words
         if normal_pacing:
             # 正常节奏：更短章节，更丰富的细节展开
-            if tw <= 50000:   chapter_words, max_ch = 1500, 35
-            elif tw <= 200000: chapter_words, max_ch = 2000, 55
-            elif tw <= 500000: chapter_words, max_ch = 2500, 70
-            else:              chapter_words, max_ch = 3000, 85
+            if tw <= 10000:    chapter_words, max_ch = 1000, 12
+            elif tw <= 50000:  chapter_words, max_ch = 1500, 35
+            elif tw <= 150000: chapter_words, max_ch = 2000, 55
+            else:              chapter_words, max_ch = 2000, 70   # 20W-30W
         else:
             # 默认快节奏：更长章节，少章节高密度，拒绝灌水
-            if tw <= 50000:   chapter_words, max_ch = 2500, 20
-            elif tw <= 200000: chapter_words, max_ch = 3000, 40
-            elif tw <= 500000: chapter_words, max_ch = 3500, 60
-            else:              chapter_words, max_ch = 4000, 80
+            if tw <= 10000:    chapter_words, max_ch = 1500, 10
+            elif tw <= 50000:  chapter_words, max_ch = 2500, 20
+            elif tw <= 150000: chapter_words, max_ch = 3000, 40
+            else:              chapter_words, max_ch = 3000, 60   # 20W-30W
         
         estimated_chapters = min(max_ch, max(8, tw // chapter_words))
         vol_count = max(2, min(5, estimated_chapters // 8))   # 卷数控制在2-5卷
