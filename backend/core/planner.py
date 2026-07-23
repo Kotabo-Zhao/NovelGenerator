@@ -506,10 +506,25 @@ class Planner:
 
         # ── Phase 3: 大纲 (55% → 95%) ──
         # ── Phase 3: 大纲（分卷生成，每卷独立 LLM 调用，杜绝截断）──
-        # 每章字数根据总目标动态调整：短篇800字，中篇1000-1500，长篇1500
-        chapter_words = 800 if target_words <= 50000 else (1200 if target_words <= 200000 else 1500)
-        estimated_chapters = min(60, max(8, target_words // chapter_words))
-        vol_count = max(2, estimated_chapters // 8)
+        # v2.2: 按字数+节奏动态计算章节数
+        # 快节奏：少章多字，每章信息密度高，冲突集中
+        # 正常节奏：多章均衡，铺陈充分，信息密度适中
+        tw = target_words
+        if normal_pacing:
+            # 正常节奏：更短章节，更丰富的细节展开
+            if tw <= 50000:   chapter_words, max_ch = 1500, 35
+            elif tw <= 200000: chapter_words, max_ch = 2000, 55
+            elif tw <= 500000: chapter_words, max_ch = 2500, 70
+            else:              chapter_words, max_ch = 3000, 85
+        else:
+            # 默认快节奏：更长章节，少章节高密度，拒绝灌水
+            if tw <= 50000:   chapter_words, max_ch = 2500, 20
+            elif tw <= 200000: chapter_words, max_ch = 3000, 40
+            elif tw <= 500000: chapter_words, max_ch = 3500, 60
+            else:              chapter_words, max_ch = 4000, 80
+        
+        estimated_chapters = min(max_ch, max(8, tw // chapter_words))
+        vol_count = max(2, min(5, estimated_chapters // 8))   # 卷数控制在2-5卷
         ch_per_vol = max(5, min(12, estimated_chapters // vol_count))
 
         # Phase 3a: 生成卷结构
@@ -567,6 +582,9 @@ class Planner:
         all_volumes = []
         chapter_counter = 0
         total_chapters = sum(v.get("ch_count", ch_per_vol) for v in volumes_meta[:vol_count])
+        
+        # v2.2: 跟踪前卷摘要，防止情节循环
+        prev_volumes_summary = []
 
         for idx, vol_meta in enumerate(volumes_meta[:vol_count]):
             vol_num = vol_meta.get("vol", idx + 1)
@@ -580,6 +598,16 @@ class Planner:
             yield {"type": "progress", "phase": "outline", "pct": pct,
                    "label": f"生成第{vol_num}卷「{vol_title}」({n_ch}章)…"}
 
+            # v2.2: 构建前卷上下文（防止故事来回循环）
+            prev_context = ""
+            if prev_volumes_summary:
+                prev_context = "## ⚠️ 前卷已写内容（严禁重复！故事必须向前推进）\n\n"
+                for pv in prev_volumes_summary:
+                    prev_context += f"- 第{pv['vol']}卷「{pv['title']}」({pv['act']}):\n"
+                    for ps in pv['summaries']:
+                        prev_context += f"  第{ps['ch']}章: {ps['summary']}\n"
+                prev_context += "\n**重要：以上内容已经写过了，本卷必须推进新剧情，不要重复前面的模式或事件！**\n"
+
             ch_prompt = f"""生成第{vol_num}卷「{vol_title}」的{n_ch}章大纲。
 卷信息: act={vol_act}, theme={vol_theme}, function={vol_function}
 起始章号: {chapter_counter + 1}
@@ -588,7 +616,15 @@ class Planner:
 主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
 风格: {style_config['name']}
 {pacing_instruction}
+{prev_context}
 {outline_requirements_block}
+
+【防止情节循环 — 最重要】
+- 你已经写了前面的卷和章节，本卷的故事必须是全新的推进，不是前面的翻版
+- 每章的核心事件必须与前面所有章节不同
+- 不要重复“遇到敌人→战斗→升级→遇到更强敌人”的死循环
+- 冲突层次必须升级：从个人恩怨→组织对抗→世界观层面的冲突
+- 角色的能力和认知必须在本卷有实质性的进步
 
 【章节标题多样性要求（关键！）】
 - 禁止使用固定格式模板，每章标题应该有独特风格
@@ -653,6 +689,21 @@ class Planner:
                 "chapters": chapters
             })
             chapter_counter += len(chapters)
+            
+            # v2.2: 记录本卷摘要，供后续卷参考（防止情节循环）
+            vol_summaries = []
+            for ch in chapters[:6]:  # 最多取前6章摘要
+                if isinstance(ch, dict):
+                    vol_summaries.append({
+                        "ch": ch.get("number", "?"), 
+                        "summary": ch.get("summary", "")[:40]
+                    })
+            prev_volumes_summary.append({
+                "vol": vol_num,
+                "title": vol_title,
+                "act": vol_act,
+                "summaries": vol_summaries,
+            })
 
         yield {"type": "progress", "phase": "outline", "pct": 92, "label": "组装最终文档…"}
 
