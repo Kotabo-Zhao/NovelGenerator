@@ -549,6 +549,20 @@ class Planner:
         antagonists = chars.get('characters', {}).get('antagonist', [])
         protagonist_name = protagonist.get('name', '主角')  # v2.2: 锁定主角名
         
+        # v2.2: 收集全部已设定角色名，生成名字锁
+        all_char_names = []
+        if protagonist_name and protagonist_name not in ('主角', '待定', ''):
+            all_char_names.append(protagonist_name)
+        for c in supporting:
+            if isinstance(c, dict) and c.get('name', '') not in ('', '配角', '待定'):
+                all_char_names.append(c['name'])
+        for c in antagonists:
+            if isinstance(c, dict) and c.get('name', '') not in ('', '反派', '待定'):
+                all_char_names.append(c['name'])
+        name_lock = ""
+        if all_char_names:
+            name_lock = f"## ⚠️ 角色名锁定 — 只允许使用以下{len(all_char_names)}个已设定角色\n\n**主角：{protagonist_name}**\n**已设定角色：{' / '.join(all_char_names[1:6]) if len(all_char_names) > 1 else '（暂无其他）'}**\n\n🚫 **禁止创造新角色名。所有出场角色必须从以上列表选取。如需新角色，必须给出与已有角色完全不同的身份和功能。**\n"
+        
         character_roster = f"""## 👥 角色花名册（全书角色池，不要创造重复功能的新角色）
 
 ### 主角
@@ -639,8 +653,7 @@ class Planner:
         
         skeleton_prompt = f"""你是小说大纲规划师。请为这{vol_count}卷{total_chapters}章的小说规划全局章节骨架。
 
-⚠️ 主角名:「{protagonist_name}」— 骨架中必须使用此名，禁止改成其他名字。
-
+{name_lock}
 {worldbuilding_summary}
 {character_roster}
 
@@ -731,8 +744,8 @@ class Planner:
                 skeleton_guide += "\n**按骨架逐章展开即可，不要增加或减少章节。**\n"
 
             ch_prompt = f"""展开第{vol_num}卷「{vol_title}」的{n_ch}章详细大纲。
-⚠️ 主角名:「{protagonist_name}」— 大纲中必须使用此名，禁止改成其他名字。
 
+{name_lock}
 {worldbuilding_summary}
 {character_roster}
 {skeleton_guide}
@@ -876,10 +889,11 @@ class Planner:
                     name_mismatches.append(f" 第{ch_num}章出现未知角色: {', '.join(unknown)}")
         
         if name_mismatches:
-            mismatch_text = "\n".join(name_mismatches[:8])
-            log.warning(f"Name consistency check found {len(name_mismatches)} chapter(s) with unknown characters")
+            mismatch_text = "\n".join(name_mismatches[:10])
+            suggestion = f"角色卡设有 {len(expected_names)} 个角色，大纲中出现未设定角色。请在大纲编辑页面修正角色名，或回到角色卡片补充新角色。"
+            log.warning(f"Name check: {len(name_mismatches)} chapters with unknown characters out of {chapter_counter}")
             yield {"type": "name_check", "mismatches": mismatch_text[:500],
-                   "suggestion": "大纲中的角色名与角色卡片不匹配，建议在编辑页面修正"}
+                   "suggestion": suggestion, "expected_count": len(expected_names)}
         
         yield {"type": "progress", "phase": "done", "pct": 100, "label": "创作方案完成！"}
         yield {"type": "done", "plan": plan}
