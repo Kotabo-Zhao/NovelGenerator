@@ -251,36 +251,36 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 }
 
 /* ── iOS 风格 ── */
-[data-ui="ios"] {
+[data-ui="iOS"] {
   --radius: 20px; --radius-sm: 16px; --radius-xs: 12px;
   --shadow: 0 2px 8px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.06);
   --font: -apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','PingFang SC','Helvetica Neue',sans-serif;
 }
-[data-ui="ios"] .sidebar{display:none !important}
-[data-ui="ios"] .main{max-width:100% !important;padding:24px 20px 110px !important}
-[data-ui="ios"] .bottom-nav{display:flex !important}
-[data-ui="ios"] .bottom-nav .bn-item{font-size:10px;padding:6px 4px}
-[data-ui="ios"] .bottom-nav .bn-icon{font-size:22px}
-[data-ui="ios"] .card{border-radius:20px;padding:24px;margin-bottom:16px;border:none !important;background:var(--card)}
-[data-ui="ios"] .btn{padding:10px 22px;font-size:14px;font-weight:600;border-radius:12px}
-[data-ui="ios"] .btn-sm{padding:8px 16px;font-size:13px}
-[data-ui="ios"] .btn-xs{padding:6px 12px;font-size:12px}
-[data-ui="ios"] input, [data-ui="ios"] textarea, [data-ui="ios"] select{padding:12px 16px;border-radius:12px;font-size:15px}
-[data-ui="ios"] .chapter-picker .cp-btn{min-width:40px;height:36px;border-radius:10px;font-size:13px}
-[data-ui="ios"] .chapter-content{font-size:17px;line-height:2.2}
-[data-ui="ios"] .reading-container{max-width:100% !important}
-[data-ui="ios"] .book-card{border-radius:20px}
-[data-ui="ios"] .book-cover{height:120px;border-radius:20px 20px 0 0}
-[data-ui="ios"] .style-card{border-radius:14px;padding:14px}
-[data-ui="ios"] .export-item{border-radius:16px;padding:16px 20px}
-[data-ui="ios"] .chapter-outline{border-radius:16px;padding:16px 20px}
-[data-ui="ios"] .review-section{border-radius:20px;padding:20px}
-[data-ui="ios"] .create-progress{border-radius:16px;padding:18px 22px}
-[data-ui="ios"] .batch-preview{border-radius:14px}
-[data-ui="ios"] .form-row{gap:14px}
+[data-ui="iOS"] .sidebar{display:none !important}
+[data-ui="iOS"] .main{max-width:100% !important;padding:24px 20px 110px !important}
+[data-ui="iOS"] .bottom-nav{display:flex !important}
+[data-ui="iOS"] .bottom-nav .bn-item{font-size:10px;padding:6px 4px}
+[data-ui="iOS"] .bottom-nav .bn-icon{font-size:22px}
+[data-ui="iOS"] .card{border-radius:20px;padding:24px;margin-bottom:16px;border:none !important;background:var(--card)}
+[data-ui="iOS"] .btn{padding:10px 22px;font-size:14px;font-weight:600;border-radius:12px}
+[data-ui="iOS"] .btn-sm{padding:8px 16px;font-size:13px}
+[data-ui="iOS"] .btn-xs{padding:6px 12px;font-size:12px}
+[data-ui="iOS"] input, [data-ui="iOS"] textarea, [data-ui="iOS"] select{padding:12px 16px;border-radius:12px;font-size:15px}
+[data-ui="iOS"] .chapter-picker .cp-btn{min-width:40px;height:36px;border-radius:10px;font-size:13px}
+[data-ui="iOS"] .chapter-content{font-size:17px;line-height:2.2}
+[data-ui="iOS"] .reading-container{max-width:100% !important}
+[data-ui="iOS"] .book-card{border-radius:20px}
+[data-ui="iOS"] .book-cover{height:120px;border-radius:20px 20px 0 0}
+[data-ui="iOS"] .style-card{border-radius:14px;padding:14px}
+[data-ui="iOS"] .export-item{border-radius:16px;padding:16px 20px}
+[data-ui="iOS"] .chapter-outline{border-radius:16px;padding:16px 20px}
+[data-ui="iOS"] .review-section{border-radius:20px;padding:20px}
+[data-ui="iOS"] .create-progress{border-radius:16px;padding:18px 22px}
+[data-ui="iOS"] .batch-preview{border-radius:14px}
+[data-ui="iOS"] .form-row{gap:14px}
 
 /* iOS 浅色主题 */
-[data-ui="ios"][data-theme="light"] {
+[data-ui="iOS"][data-theme="light"] {
   --bg: #f2f2f7; --bg2: #ffffff; --card: #ffffff; --card-hover: #f0f0f5;
   --text: #000000; --text2: #3c3c43; --text3: #aeaeb2;
   --accent: #007aff; --blue: #007aff; --green: #34c759; --red: #ff3b30;
@@ -289,7 +289,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 }
 
 /* iOS 深色主题 */
-[data-ui="ios"][data-theme="dark"] {
+[data-ui="iOS"][data-theme="dark"] {
   --bg: #000000; --bg2: #1c1c1e; --card: #1c1c1e; --card-hover: #2c2c2e;
   --text: #ffffff; --text2: #aeaeb2; --text3: #636366;
   --accent: #0a84ff; --blue: #0a84ff; --green: #30d158; --red: #ff453a;
@@ -328,7 +328,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <div class="theme-toggle" @click="toggleUIStyle" :title="uiStyle==='macOS'?'切换iOS风格':'切换macOS风格'" style="font-size:13px">
         {{ uiStyle === 'macOS' ? '🍎' : '📱' }}
       </div>
-      v0.8 · macOS/iOS
+      v0.9 · macOS/iOS
     </div>
   </aside>
 

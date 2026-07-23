@@ -36,7 +36,7 @@ from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, DEFAULT_CHAPTER_WORDS
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("api")
 
-app = FastAPI(title="NovelGenerator API", version="0.1.0")
+app = FastAPI(title="NovelGenerator API", version="0.9.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
