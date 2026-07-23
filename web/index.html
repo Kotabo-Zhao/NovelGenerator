@@ -487,6 +487,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div><b>拆解出 {{ decomposeSummary.subtask_count }} 条创作需求</b> · 其中 {{ decomposeSummary.p0_count }} 条为强制要求(P0)</div>
           <div v-if="decomposeSummary.summary" style="margin-top:4px;color:var(--text3)">{{ decomposeSummary.summary }}</div>
           <div v-if="decomposeSummary.offline_mode" style="margin-top:4px;color:var(--orange)">⚠️ 离线模式拆解，建议开启 LLM 以获得更精准的需求分析</div>
+          <div v-if="decomposeSummary.name_warning" style="margin-top:8px;padding:8px;background:rgba(255,100,50,.1);border-radius:6px;color:var(--orange);font-size:12px;white-space:pre-wrap">
+            ⚠️ 角色名不一致:
+{{ decomposeSummary.name_warning }}
+            <div style="margin-top:4px;opacity:.7">{{ decomposeSummary.name_suggestion }}</div>
+          </div>
         </div>
       </div>
 
@@ -1067,6 +1072,10 @@ createApp({
             createPhaseLabel.value=`已分析出 ${evt.subtask_count} 条创作需求`;
           }
           else if(evt.type==='warning'){ showToast(evt.message, '提示', 'ℹ️'); }
+          // v2.2: 角色名一致性警告
+          else if(evt.type==='name_check'){ 
+            decomposeSummary.value = { ...decomposeSummary.value, name_warning: evt.mismatches, name_suggestion: evt.suggestion };
+          }
           else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });

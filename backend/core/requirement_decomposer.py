@@ -26,6 +26,9 @@ DECOMPOSER_SYSTEM = """你是一位资深小说策划编辑和需求分析师。
 2. **穷尽细节**: 用户提到的每个关键词都要拆出对应的子任务，不能遗漏。
 3. **具象化**: "主角很强" → "主角具备什么能力？强在哪里？怎么体现？有没有弱点？"
 4. **可验证**: 每条子任务必须有明确的验证标准，可以判断"是/否"而非"好/坏"
+5. **⚠️ 时间范围识别**: 用户说"开篇""开头""最初""一开始"→ scope=opening，只说一次就够了
+   用户说"最后""结尾""结局""最终"→ scope=ending，只在最终卷体现
+   用户说"全程""一直""每""总是"或没有时间限定词 → scope=global，贯穿全书
 
 ## 拆解维度（必须逐个维度扫描，不能跳过）
 
@@ -82,6 +85,8 @@ DECOMPOSER_SYSTEM = """你是一位资深小说策划编辑和需求分析师。
       "generation_hint": "给生成Agent的具体提示（注入到prompt中），说明这个子任务在生成时要注意什么",
       "quality_criteria": ["达标标准1（可判断是/否）", "达标标准2"],
       "priority": "P0|P1|P2",
+      "scope": "global|opening|mid|ending",
+      "scope_volume": "在第几卷体现（global=全部，opening=第1卷，ending=最后一卷，具体数字指明卷号）",
       "depends_on": ["依赖的其他子任务ID"]
     }
   ],
@@ -245,7 +250,9 @@ class RequirementDecomposer:
             priority = t.get("priority", "P1")
 
             # 构建单条需求的上下文文本
-            parts = [f"【{title}】"]
+            scope = t.get("scope", "global")
+            scope_label = {"opening": "【仅开篇】", "ending": "【仅结局】", "mid": "【中期】"}.get(scope, "")
+            parts = [f"【{title}】{scope_label}"]
             if desc and desc != title:
                 parts.append(f"要求: {desc}")
             if must_inc:
@@ -254,6 +261,10 @@ class RequirementDecomposer:
                 parts.append(f"必须避免: {', '.join(must_avoid)}")
             if hint:
                 parts.append(f"提示: {hint}")
+            if scope != "global":
+                scope_vol = t.get("scope_volume", "")
+                if scope_vol:
+                    parts.append(f"⏱ 适用范围: {scope_vol}")
             
             requirement_text = "\n".join(parts)
             context["all_requirements"].append(requirement_text)
@@ -374,15 +385,32 @@ class RequirementDecomposer:
         """离线降级：基于关键词启发式拆解（v2.2 增强版，更多维度）"""
         subtasks = []
         rid = 1
+        
+        # v2.2: 从整体灵感中检测时间限定词
+        has_opening = any(kw in inspiration for kw in ["开篇", "开头", "最初", "一开始", "刚开始", "第一章"])
+        has_ending = any(kw in inspiration for kw in ["最后", "结尾", "结局", "最终", "末尾"])
+        if has_opening and not has_ending:
+            insp_scope = "opening"
+        elif has_ending and not has_opening:
+            insp_scope = "ending"
+        elif has_opening and has_ending:
+            insp_scope = "distributed"
+        else:
+            insp_scope = "global"
 
-        def add_task(cat, sub_cat, priority, title, desc, must_inc, must_avoid, hint, criteria):
+        def add_task(cat, sub_cat, priority, title, desc, must_inc, must_avoid, hint, criteria, scope=None):
             nonlocal rid
+            if scope is None:
+                # plot/character 类受灵感时间限定，worldbuilding/style/structure 始终全局
+                scope = insp_scope if cat in ("plot", "character") else "global"
             subtasks.append({
                 "id": f"R{rid:03d}", "category": cat, "sub_category": sub_cat,
                 "title": title, "description": desc,
                 "must_include": must_inc, "must_avoid": must_avoid,
                 "generation_hint": hint, "quality_criteria": criteria,
-                "priority": priority, "depends_on": [],
+                "priority": priority, "scope": scope,
+                "scope_volume": {"opening":"第1卷","ending":"最后一卷","mid":"中间卷"}.get(scope, "全部"),
+                "depends_on": [],
                 "status": "pending", "feedback": "", "retry_count": 0,
             })
             rid += 1

@@ -343,7 +343,7 @@ class TestPlannerStream(unittest.TestCase):
         asyncio.run(run())
 
     def test_42_plan_stream_full_flow(self):
-        """完整3阶段流程"""
+        """完整3阶段流程 (v2.2: 含逐卷章节生成)"""
         client = mock_client()
         p = Planner(client, 'mock')
         
@@ -355,16 +355,22 @@ class TestPlannerStream(unittest.TestCase):
         
         wb = {"title": "测试书", "worldbuilding": {"era": "古代", "geography": "大陆", "power_system": "灵气", "core_conflict": "正邪", "factions": [{"name": "正派", "description": "正道", "alignment": "正"}]}}
         chars = {"characters": {"protagonist": {"name": "主角"}, "supporting": [], "antagonist": [], "bible_summary": ""}}
-        outline = {"outline": {"volumes": [{"number": 1, "title": "卷一", "chapters": [{"number": 1, "title": "首章", "summary": "开始", "emotion_curve": "平稳", "conflict": "", "characters": ["主角"], "hook": "悬念", "target_words": 3000}], "act": "第一幕·建置", "theme": "", "act_function": ""}], "total_chapters": 1, "three_act_map": "", "rhythm_notes": ""}}
-        
-        client.chat.completions.create.side_effect = [make_resp(wb), make_resp(chars), make_resp(outline)]
+        vol_chapter = [
+            {"number": 1, "title": "首章", "summary": "开始", "emotion_curve": "平稳", "conflict": "", "characters": ["主角"], "hook": "悬念", "target_words": 3000}
+        ]
+        # 结构prompt返回卷数组，每卷章节调用返回章节数组
+        client.chat.completions.create.side_effect = (
+            [make_resp(wb), make_resp(chars)] + 
+            [make_resp([{"vol": 1, "title": "卷一", "act": "第一幕·建置", "theme": "", "ch_count": 1, "act_function": ""}])] +
+            [make_resp(vol_chapter)] * 3  # 3 volumes worth of chapter calls
+        )
         
         async def run():
             events = []
             async for e in p.plan_stream({"genre": "修仙", "inspiration": "测试", "target_words": 100000}):
                 events.append(e)
             done = [e for e in events if e["type"] == "done"]
-            self.assertEqual(len(done), 1)
+            self.assertEqual(len(done), 1, f"Expected 1 done event, got {len(done)}. Event types: {[e.get('type') for e in events]}")
         asyncio.run(run())
 
 

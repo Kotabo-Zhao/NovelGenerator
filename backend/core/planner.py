@@ -605,16 +605,20 @@ class Planner:
 
         structure_result = await self._call_llm(structure_prompt, "outline_structure", max_tokens=2048)
         
-        # Fallback volume structure — 支持 {"volumes": [...]} 或 {"data": [...]} 或 直接 [...]
+        # Fallback volume structure — 支持多种格式
         volumes_meta = []
         if structure_result:
             if isinstance(structure_result, list):
                 volumes_meta = structure_result
             elif isinstance(structure_result, dict):
-                volumes_meta = structure_result.get("data") or structure_result.get("volumes", [])
+                volumes_meta = (structure_result.get("data") or 
+                               structure_result.get("volumes") or
+                               structure_result.get("outline", {}).get("volumes") or [])
             if not volumes_meta and isinstance(structure_result, dict):
                 for v in structure_result.values():
                     if isinstance(v, list): volumes_meta = v; break
+                    elif isinstance(v, dict) and isinstance(v.get("volumes"), list):
+                        volumes_meta = v["volumes"]; break
         
         if not volumes_meta:
             log.warning("Volume structure failed, using fallback")
@@ -665,14 +669,40 @@ class Planner:
                 if introduced_characters:
                     prev_context += f"\n**前卷已出场角色: {', '.join(introduced_characters)}\n这些角色已经存在于故事中，后续卷可以直接使用，不要重新介绍他们。**\n"
 
-            # v2.2: 需求块标注 — 需求应分布在不同卷，不要每卷重复
+            # v2.2: 需求块标注 — 根据scope过滤，开篇需求只在第1卷，结局需求只在最后卷
             distributed_req_block = ""
             if outline_requirements_block:
-                distributed_req_block = f"""## ⚠️ 用户需求清单（分布在全书中，本卷只需满足其中一部分）
+                # 从requirements中获取scope信息
+                requirements = (creative_input.get("_requirements") or {}).get("subtasks", [])
+                vol_scoped_reqs = []
+                for req in requirements:
+                    scope = req.get("scope", "global")
+                    if scope == "opening" and vol_num != 1:
+                        continue  # 开篇需求只在第1卷
+                    if scope == "ending" and vol_num != vol_count:
+                        continue  # 结局需求只在最后卷
+                    vol_scoped_reqs.append(req)
+                
+                if vol_scoped_reqs:
+                    req_lines = []
+                    for r in vol_scoped_reqs:
+                        scope_tag = ""
+                        if r.get("scope") in ("opening", "ending"):
+                            scope_tag = "【本卷专属】" if (
+                                (r["scope"] == "opening" and vol_num == 1) or
+                                (r["scope"] == "ending" and vol_num == vol_count)
+                            ) else ""
+                        title = r.get("title", "")
+                        hint = r.get("generation_hint", "")
+                        if scope_tag:
+                            req_lines.append(f"- {scope_tag} {title}: {hint[:80] if hint else ''}")
+                        else:
+                            req_lines.append(f"- {title}: {hint[:80] if hint else ''}")
+                    distributed_req_block = f"""## ⚠️ 本卷需求清单（共{vol_count}卷，本卷是第{vol_num}卷）
 
-{outline_requirements_block}
+{chr(10).join(req_lines[:8])}
 
-**关键: 以上需求需要分布在{vol_count}卷中逐步满足，本卷是第{vol_num}卷（共{vol_count}卷），你只需要从需求清单中选取与第{vol_num}卷主题最相关、最合理出现在此卷的需求来满足。不要把全部需求塞进这一卷。**
+**已自动过滤：开篇专属需求只在第1卷，结局专属需求只在最后卷。**
 """
 
             ch_prompt = f"""生成第{vol_num}卷「{vol_title}」的{n_ch}章大纲。
@@ -846,6 +876,36 @@ class Planner:
         if validation["issues"]:
             log.warning(f"Outline validation: {len(validation['issues'])} issues, auto-repairing...")
             plan["outline"] = self.repair_outline(plan["outline"])
+        
+        # ── v2.2: 角色名一致性交叉校验 ──
+        # 检查大纲中出现的角色名是否与角色卡片一致
+        char_data = plan.get("characters", {})
+        expected_names = set()
+        expected_names.add(char_data.get("protagonist", {}).get("name", ""))
+        for c in char_data.get("supporting", []) + char_data.get("antagonist", []):
+            if isinstance(c, dict):
+                expected_names.add(c.get("name", ""))
+        expected_names.discard("")  # 去掉空名
+        
+        name_mismatches = []
+        for vol in plan.get("outline", {}).get("volumes", []):
+            if not isinstance(vol, dict):
+                continue
+            for ch in vol.get("chapters", []):
+                if not isinstance(ch, dict):
+                    continue
+                ch_num = ch.get("number", "?")
+                ch_chars = set(ch.get("characters", []) or [])
+                # 检查是否有角色名不在预期列表中
+                unknown = ch_chars - expected_names - {"主角", "配角", "反派", ""}
+                if unknown:
+                    name_mismatches.append(f" 第{ch_num}章出现未知角色: {', '.join(unknown)}")
+        
+        if name_mismatches:
+            mismatch_text = "\n".join(name_mismatches[:8])
+            log.warning(f"Name consistency check found {len(name_mismatches)} chapter(s) with unknown characters")
+            yield {"type": "name_check", "mismatches": mismatch_text[:500],
+                   "suggestion": "大纲中的角色名与角色卡片不匹配，建议在编辑页面修正"}
         
         yield {"type": "progress", "phase": "done", "pct": 100, "label": "创作方案完成！"}
         yield {"type": "done", "plan": plan}
