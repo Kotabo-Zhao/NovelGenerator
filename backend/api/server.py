@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 import os
+import urllib.parse
 
 # 提高递归深度限制，防止大型 JSON 解析时触发 RecursionError
 sys.setrecursionlimit(10000)
@@ -449,10 +450,11 @@ async def export_novel(novel_id: str, fmt: str = "txt"):
     if err:
         raise HTTPException(status_code=404, detail=err)
     
+    safe_name = novel_id.encode("ascii", errors="replace").decode().replace("?", "_") or "novel"
     return PlainTextResponse(
         content,
         media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={novel_id}.txt"}
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{urllib.parse.quote(novel_id)}.txt"}
     )
 
 
