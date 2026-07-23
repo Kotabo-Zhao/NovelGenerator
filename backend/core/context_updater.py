@@ -137,8 +137,12 @@ class ContextUpdater:
         if not os.path.exists(state_path):
             return ""
         
-        with open(state_path, "r", encoding="utf-8") as f:
-            state = json.load(f)
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except (IOError, UnicodeDecodeError, json.JSONDecodeError) as e:
+            log.warning(f"Failed to read global_state.json: {e}")
+            return ""
         
         parts = ["## 全局状态\n"]
         

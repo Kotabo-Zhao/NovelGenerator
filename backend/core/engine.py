@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import time
 import copy
 import logging
 import asyncio
@@ -124,6 +125,10 @@ class NovelEngine:
                 if not isinstance(plan, dict):
                     log.error(f"create_novel_stream: plan is {type(plan).__name__}, not dict")
                     yield {"type": "error", "message": "大纲数据结构异常，请重试"}
+                    return
+                if "title" not in plan or not plan["title"]:
+                    log.error(f"create_novel_stream: plan missing title, keys={list(plan.keys())[:10]}")
+                    yield {"type": "error", "message": "大纲缺少书名，请重试"}
                     return
                 novel_dir = self.memory.get_novel_dir(plan["title"])
                 os.makedirs(novel_dir, exist_ok=True)
@@ -317,8 +322,12 @@ class NovelEngine:
         ch_file = os.path.join(chapters_dir, f"chapter_{chapter_num:04d}.md")
         if not os.path.exists(ch_file):
             return None
-        with open(ch_file, "r", encoding="utf-8") as f:
-            return f.read()
+        try:
+            with open(ch_file, "r", encoding="utf-8") as f:
+                return f.read()
+        except (IOError, UnicodeDecodeError) as e:
+            log.error(f"Failed to read chapter {chapter_num}: {e}")
+            return None
 
     async def generate_chapter_stream(
         self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel",
@@ -329,6 +338,30 @@ class NovelEngine:
         Args:
             feedback: 用户修改意见（用于重生成，不改大纲结构）
         """
+        # ── 并发锁：防止同一章被两个Tab同时生成 ──
+        novel_dir = self.memory.get_novel_dir(novel_id)
+        lock_file = os.path.join(novel_dir, f".generating_{chapter_num:04d}.lock")
+        if os.path.exists(lock_file):
+            # 检查锁是否过期（超过300秒视为僵尸锁）
+            try:
+                lock_age = time.time() - os.path.getmtime(lock_file)
+                if lock_age < 300:
+                    yield {"type": "error", "message": f"第{chapter_num}章正在生成中，请等待完成（已运行{int(lock_age)}秒）"}
+                    return
+                else:
+                    log.warning(f"Stale lock file for chapter {chapter_num}, removing")
+                    os.remove(lock_file)
+            except OSError:
+                pass
+        
+        # 写入锁文件
+        os.makedirs(novel_dir, exist_ok=True)
+        try:
+            with open(lock_file, "w") as lf:
+                lf.write(str(time.time()))
+        except IOError:
+            pass  # 锁写入失败不阻塞，继续生成
+        
         try:
             plan = self.get_novel(novel_id)
             if not plan:
@@ -368,8 +401,10 @@ class NovelEngine:
             style = plan.get("style", "热血爽文")
             target_words = chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS)
 
-            # 流式生成
+            # 流式生成 + 增量保存（每500字写盘，防断线丢内容）
             full_text = ""
+            last_save_len = 0
+            chapter_title = chapter_outline.get("title", f"第{chapter_num}章")
             async for text in self.writer.write_stream(
                 context=context,
                 genre=genre,
@@ -378,6 +413,14 @@ class NovelEngine:
                 writing_mode=writing_mode,
             ):
                 full_text += text
+                # 每500字增量保存一次
+                if len(full_text) - last_save_len >= 500:
+                    try:
+                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}\n\n<!-- 生成中，尚未完成 -->"
+                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        last_save_len = len(full_text)
+                    except Exception as e:
+                        log.warning(f"Incremental save failed (non-fatal): {e}")
                 yield {"type": "text", "content": text}
 
             # ── AI 检测 & 人类化改写 (架构层去AI味) ──
@@ -405,8 +448,7 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"AI Humanizer skipped: {e}")
 
-            # 保存章节
-            chapter_title = chapter_outline.get("title", f"第{chapter_num}章")
+            # 最终保存章节（覆盖增量保存的临时文件）
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
 
@@ -459,6 +501,13 @@ class NovelEngine:
         except Exception as e:
             log.exception(f"Chapter generation failed: {e}")
             yield {"type": "error", "message": str(e)}
+        finally:
+            # 清理并发锁
+            try:
+                if os.path.exists(lock_file):
+                    os.remove(lock_file)
+            except OSError:
+                pass
 
     def _find_chapter_outline(self, plan: dict, chapter_num: int) -> Optional[dict]:
         """在大纲中查找指定章节（兼容字符串/整数章节号，防御脏数据）"""
@@ -584,9 +633,13 @@ class NovelEngine:
         if fmt == "txt":
             lines = [f"{title}\n{'=' * 40}\n"]
             for ch_file in chapters:
-                with open(os.path.join(chapters_dir, ch_file), "r", encoding="utf-8") as f:
-                    lines.append(f.read())
-                    lines.append("\n\n" + "—" * 40 + "\n\n")
+                try:
+                    with open(os.path.join(chapters_dir, ch_file), "r", encoding="utf-8") as f:
+                        lines.append(f.read())
+                        lines.append("\n\n" + "—" * 40 + "\n\n")
+                except (IOError, UnicodeDecodeError) as e:
+                    log.warning(f"Failed to read {ch_file} for export: {e}")
+                    lines.append(f"[无法读取: {ch_file}]\n\n")
             return "\n".join(lines), None
 
         return None, f"暂不支持 {fmt} 格式"
@@ -630,8 +683,12 @@ class NovelEngine:
         
         # 逐章
         for ch_file in chapters:
-            with open(os.path.join(chapters_dir, ch_file), "r", encoding="utf-8") as f:
-                content = f.read()
+            try:
+                with open(os.path.join(chapters_dir, ch_file), "r", encoding="utf-8") as f:
+                    content = f.read()
+            except (IOError, UnicodeDecodeError) as e:
+                log.warning(f"Failed to read {ch_file} for EPUB: {e}")
+                continue
             ch_num = int(ch_file.split("_")[1].split(".")[0]) if "_" in ch_file else 0
             ch_title = f"第{ch_num}章"
             

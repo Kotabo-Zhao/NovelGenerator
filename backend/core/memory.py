@@ -56,8 +56,12 @@ class NovelMemory:
         for ch_num in range(max(1, current_chapter - 3), current_chapter):
             ch_path = os.path.join(chapters_dir, f"chapter_{ch_num:04d}.md")
             if os.path.exists(ch_path):
-                with open(ch_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                try:
+                    with open(ch_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except (IOError, UnicodeDecodeError) as e:
+                    log.warning(f"Failed to read chapter {ch_num} for context: {e}")
+                    continue
                 summary = content[:1000] + ("..." if len(content) > 1000 else "")
                 context_parts.append(f"### 第{ch_num}章摘要\n{summary}")
         return "\n\n".join(context_parts)

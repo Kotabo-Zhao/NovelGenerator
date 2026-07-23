@@ -846,6 +846,11 @@ createApp({
     const writing = reactive({ chapter:1, content:'', done:false });
 
     const batchStart = ref(1); const batchEnd = ref(1);
+    // 批量上限自动裁剪：batchStart 变化时 clamp batchEnd
+    watch(batchStart, (v) => {
+      const maxEnd = (v||1) + 9;
+      if (batchEnd.value > maxEnd) batchEnd.value = maxEnd;
+    });
     const batchProgress = ref(0); const batchCurrent = ref(0);
     const exportProgress = ref(0);
 
@@ -1048,7 +1053,7 @@ createApp({
       let next=1; while(next<=total && done.includes(next)) next++;
       writing.chapter=Math.min(next, total); writing.content=''; writing.done=false;
       currentView.value='write';
-      batchStart.value=Math.min(next, total); batchEnd.value=total;
+      batchStart.value=Math.min(next, total); batchEnd.value=Math.min(total, next+9);
       // 异步加载plan和章节内容
       fetch(API+'/api/novels/'+encodeURIComponent(novel.id))
         .then(r=>r.json()).then(d=>{planResult.value=d.novel;})

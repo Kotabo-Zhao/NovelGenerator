@@ -1,6 +1,7 @@
-"""NovelGenerator — Writer: 章节生成（两遍式 + Humanizer后处理 + 截断检测）"""
+"""NovelGenerator — Writer: 章节生成（两遍式 + Humanizer后处理 + 截断检测 + API重试）"""
 import logging
 import re
+import time
 from typing import AsyncGenerator
 from openai import OpenAI
 from .styles import get_style, build_style_prompt, build_custom_style
@@ -157,10 +158,25 @@ class Writer:
         self.model = model
 
     def _create(self, **kwargs):
-        """创建 LLM 请求，v4 系列自动禁用 reasoning"""
+        """创建 LLM 请求，v4 系列自动禁用 reasoning，非流式调用自动重试"""
         if "v4" in self.model:
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-        return self.client.chat.completions.create(**kwargs)
+        
+        is_stream = kwargs.get("stream", False)
+        max_retries = 0 if is_stream else 3  # 流式不重试（会丢上下文），非流式重试3次
+        
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self.client.chat.completions.create(**kwargs)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait = 2 ** attempt  # 1s, 2s, 4s
+                    log.warning(f"API call failed (attempt {attempt+1}/{max_retries+1}), retrying in {wait}s: {e}")
+                    time.sleep(wait)
+                else:
+                    raise last_error
 
     async def write_stream(
         self,
