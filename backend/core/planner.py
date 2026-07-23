@@ -580,20 +580,11 @@ class Planner:
                     'arc': '',
                 }
         
-        name_lock = f"""## 🎭 角色场景映射 — 确保每个角色用对场景
-
-**主角「{protagonist_name}」** — 所有章节的核心人物，始终出场
-"""
+        name_lock = "## 🎭 角色池（根据每章内容，从池中选取合适的角色出场）\n\n"
+        name_lock += f"主角「{protagonist_name}」— 每章必出场\n"
         for name, info in char_role_map.items():
-            name_lock += f"- **{name}** — {info['identity']} | 功能: {info['role']} | 弧线: {info['arc']}\n"
-        
-        name_lock += """
-**⚠️ 使用规则**:
-- 每章的 characters 列表从以上角色中选取，按场景功能对号入座
-- 恋爱场景 → 感情线角色，训练场景 → 导师角色，冲突场景 → 反派/对手
-- 不要把一个角色的功能错误地分配给另一个角色
-- 新增角色仅限功能完全不同的独立人物，不能替代已有角色的功能
-"""
+            name_lock += f"- {name} — {info['identity']} · {info['role']}\n"
+        name_lock += "\n**每章 characters 列表从以上角色池中选取。只有当章节确实需要一个全新功能的人物时才新增角色。**\n"
         
         character_roster = f"""## 👥 角色花名册（全书角色池，不要创造重复功能的新角色）
 
