@@ -690,6 +690,7 @@ class Planner:
 
 ## 要求
 - 每个章节写一句20字内的核心事件描述
+- **骨架中使用到的所有角色名必须从上面角色池中选取，禁止发明新名字**
 - 章节之间的事件必须**严格连续**——每章是上一章的直接发展，不能跳跃
 - 故事必须有清晰的**上升弧线**: 建置(前25%)→对抗升级(中50%)→高潮解决(后25%)
 - 冲突类型必须多样化: 不要>3章连续用同一冲突类型
@@ -718,18 +719,22 @@ class Planner:
             log.warning(f"Skeleton only covered {len(skeleton_map)}/{total_chapters} chapters, will fall back to per-volume generation")
             skeleton_map = {}  # 降级：不用骨架
         
-        # v2.2: 骨架主角名校验
-        if skeleton_map and protagonist_name and protagonist_name not in ('主角', '待定', ''):
-            wrong_names = set()
-            for sk_text in skeleton_map.values():
-                # 检测骨架中是否出现了不同的两字中文名作为主角
-                import re as _re
-                for m in _re.finditer(r'主角[是为](\w{2,3})', sk_text):
-                    if m.group(1) != protagonist_name:
-                        wrong_names.add(m.group(1))
-            if wrong_names:
-                log.warning(f"Skeleton uses wrong protagonist names: {wrong_names} (expected: {protagonist_name})")
-                yield {"type": "warning", "message": f"骨架中主角名不一致，出现: {', '.join(wrong_names)}，应为: {protagonist_name}"}
+        # v2.2: 骨架角色名校验 — 扫描全部角色名而非仅主角
+        if skeleton_map and all_char_names:
+            all_sk_text = " ".join(skeleton_map.values())
+            wrong = []
+            for name in all_char_names:
+                # 检查骨架中是否没有使用已设定的角色名（说明LLM可能用了别名）
+                pass  # 主要是检查未知名
+            # 用简单方式检测：骨架中出现的中文2-3字名称，不在角色池中
+            import re as _re
+            potential_names = set(_re.findall(r'(?:[主角]是)?([\u4e00-\u9fff]{2,3})(?:[，。！、\s]|$)', all_sk_text))
+            # 过滤掉常见词
+            stop_words = {'主角', '配角', '反派', '师兄', '师弟', '师姐', '师妹', '长老', '掌门', '宗主', '他们', '自己', '这个', '那个', '一个', '然后', '突然', '发现', '开始', '决定', '准备'}
+            unknown_names = potential_names - set(all_char_names) - stop_words
+            if unknown_names:
+                log.warning(f"Skeleton contains unknown character names: {unknown_names}")
+                yield {"type": "warning", "message": f"骨架出现未设定角色名: {', '.join(list(unknown_names)[:5])}。这些名字在角色池中不存在，将在展开阶段自动修正。"}
         
         has_skeleton = len(skeleton_map) > 0
         
