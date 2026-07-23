@@ -527,6 +527,34 @@ class Planner:
         vol_count = max(2, min(5, estimated_chapters // 8))   # 卷数控制在2-5卷
         ch_per_vol = max(5, min(12, estimated_chapters // vol_count))
 
+        # v2.2: 构建角色花名册 — 每卷生成时注入，防止重新发明角色
+        protagonist = chars.get('characters', {}).get('protagonist', {})
+        supporting = chars.get('characters', {}).get('supporting', [])
+        antagonists = chars.get('characters', {}).get('antagonist', [])
+        
+        character_roster = f"""## 👥 角色花名册（全书角色池，不要创造重复功能的新角色）
+
+### 主角
+- {protagonist.get('name', '主角')} — {protagonist.get('identity', '')} · {protagonist.get('personality', {}).get('surface', '') if isinstance(protagonist.get('personality'), dict) else protagonist.get('personality', '')}
+  动机: {protagonist.get('motivation', {}).get('want', '') if isinstance(protagonist.get('motivation'), dict) else ''}
+  成长弧: {protagonist.get('arc', '')}
+  {'金手指: ' + protagonist.get('cheat', '') if protagonist.get('cheat') else ''}
+
+### 已设定配角（必须使用这些角色，不要新造同功能的替代品）
+"""
+        for i, c in enumerate(supporting[:6]):
+            character_roster += f"- {c.get('name', f'配角{i+1}')} — {c.get('identity', '')} · {c.get('relation', '')} · 作用: {c.get('role', '')} · 弧线: {c.get('mini_arc', '')}\n"
+        
+        if antagonists:
+            character_roster += "\n### 已设定反派\n"
+            for i, c in enumerate(antagonists[:3]):
+                character_roster += f"- {c.get('name', f'反派{i+1}')} — {c.get('conflict', '')} · 动机: {c.get('motivation', '')}\n"
+        
+        if support := chars.get('characters', {}).get('bible_summary', ''):
+            character_roster += f"\n### 人物关系\n{support[:300]}\n"
+        
+        character_roster += "\n**⚠️ 以上就是本书所有角色。禁止创造功能重复的新角色。需要新角色时必须给出与已有角色不同的独立身份和功能。**"
+
         # Phase 3a: 生成卷结构
         yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划卷结构…"}
 
@@ -543,7 +571,7 @@ class Planner:
         structure_prompt = f"""你是小说结构师。根据设定和用户需求规划{vol_count}卷结构。
 
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:300]}
-主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
+{character_roster}
 创意: {inspiration}  风格: {style_config['name']}  总目标: {target_words}字
 {pacing_instruction}
 {outline_requirements_block}
@@ -627,7 +655,7 @@ class Planner:
 本卷进度: 第{vol_num}/{vol_count}卷
 
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:200]}
-主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
+{character_roster}
 风格: {style_config['name']}
 {pacing_instruction}
 {prev_context}
