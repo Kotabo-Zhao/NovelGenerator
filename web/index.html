@@ -392,6 +392,17 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </label>
           <span>自然命名 <span style="opacity:.55">（禁用"云星辰叶尘无极天帝"等AI高频词）</span></span>
         </div>
+        <!-- v2.2: 节奏开关 -->
+        <div class="flex items-center gap-8 mt-8" style="font-size:13px;color:var(--text2)">
+          <label class="toggle-switch">
+            <input type="checkbox" v-model="form.normalPacing">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>
+            <span v-if="!form.normalPacing">⚡ 快节奏 <span style="opacity:.5">— 短平快，冲突密集，进展迅速</span></span>
+            <span v-else>📖 正常节奏 <span style="opacity:.5">— 铺陈充分，张弛有度，细节丰富</span></span>
+          </span>
+        </div>
       </div>
 
       <!-- Style -->
@@ -852,7 +863,7 @@ createApp({
       }
     }
 
-    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true });
+    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     const writingModeLiterary = ref(false);
     const writing = reactive({ chapter:1, content:'', done:false });
@@ -1047,7 +1058,7 @@ createApp({
       createProgress.value=0; createPhase.value='start'; createPhaseLabel.value='准备中…';
       decomposeSummary.value=null;
       try {
-        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames})});
+        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames, normal_pacing:form.normalPacing})});
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
           // v2.2: 需求拆解完成

@@ -104,6 +104,7 @@ class Planner:
         inspiration = creative_input.get("inspiration", "")
         target_words = creative_input.get("target_words", 500000)
         title = creative_input.get("title", "")
+        normal_pacing = creative_input.get("normal_pacing", False)
 
         # 获取风格模板（支持自定义风格）
         if style_name.startswith("自定义") or style_name == "自定义风格":
@@ -114,6 +115,13 @@ class Planner:
         style_guide = build_style_prompt(style_config)
         structure_hint = style_config.get("structure",
             "遵循「三章一小高潮、五章一中高潮、一卷一大高潮」的节奏")
+
+        # v2.2: 节奏指令
+        pacing_block = ""
+        if normal_pacing:
+            pacing_block = "\n【节奏】正常节奏 — 铺陈充分，张弛有度，允许慢热铺垫和细节展开\n"
+        else:
+            pacing_block = "\n【节奏】快节奏 — 短平快！开篇即冲突，章章有事件推进，章末有强钩子，拒绝纯铺垫。每3章一小高潮，每5章一中高潮。对话简洁，描写精炼，世界观通过行动展现。\n"
 
         system_prompt = PLANNER_SYSTEM.format(
             style_guide=style_guide,
@@ -127,7 +135,8 @@ class Planner:
 【风格】{style_name}（{style_config['author']}）
 【核心创意】{inspiration}
 【目标字数】{target_words} 字
-{f'【书名】{title}' if title else '【书名】请根据创意自动生成一个有吸引力的书名'}
+{'' if title else '【书名】请根据创意自动生成一个有吸引力的书名'}{pacing_block}
+{f'【书名】{title}' if title else ''}
 
 请严格按照以下 JSON 格式输出（不要输出其他内容）：
 
@@ -298,6 +307,30 @@ class Planner:
         enhanced_inspiration = creative_input.get("_enhanced_inspiration", "")
         target_words = creative_input.get("target_words", 500000)
         title = creative_input.get("title", "")
+        
+        # v2.2: 节奏模式 — 默认快节奏(False)
+        normal_pacing = creative_input.get("normal_pacing", False)
+        
+        # 构建节奏指令
+        if normal_pacing:
+            pacing_instruction = """## 节奏：正常节奏（铺陈充分）
+
+- 每章有完整的起承转合，允许慢热铺垫
+- 角色心理和世界观细节可以充分展开
+- 冲突逐级递进，给读者喘息空间
+- 章节间可以有过渡性的日常/对话场景
+- 伏笔可以跨较长章节慢慢展开"""
+        else:
+            pacing_instruction = """## 节奏：快节奏（默认 · 短平快）
+
+- 每章必须有明确的事件推进，拒绝纯铺垫
+- 开篇即冲突——前三段就要抓住读者
+- 章末钩子必须有强悬念（生死/秘密/背叛/实力暴涨）
+- 跳过冗长的角色心理描写和环境描写
+- 冲突密度高：每3章一个小高潮，每5章一个中高潮
+- 对话简洁有力，不写无意义的寒暄
+- 世界观通过行动和冲突自然展现，不做教科式介绍
+- 每章字数集中在一个核心事件上，不枝蔓"""
         
         # v2.2: 阶段上下文注入
         phase_context = creative_input.get("_phase_context", {}) or {}
@@ -497,6 +530,7 @@ class Planner:
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:300]}
 主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
 创意: {inspiration}  风格: {style_config['name']}  总目标: {target_words}字
+{pacing_instruction}
 {outline_requirements_block}
 {constraints_note}
 
@@ -553,6 +587,7 @@ class Planner:
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:200]}
 主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
 风格: {style_config['name']}
+{pacing_instruction}
 {outline_requirements_block}
 
 【章节标题多样性要求（关键！）】
