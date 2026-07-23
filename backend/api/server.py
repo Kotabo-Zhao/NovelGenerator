@@ -803,9 +803,37 @@ async def get_character_bible(novel_id: str):
 
 # ── 多Agent需求拆解与监督 ──
 
+@app.post("/api/requirements/preview-decompose")
+async def preview_decompose(req: dict):
+    """预拆解用户灵感（创建小说前预览需求拆解结果）
+    
+    v2.2: 新增端点，让用户在创建小说之前预览AI对其需求的理解。
+    不依赖 novel_id，直接拆解灵感文本。
+    """
+    inspiration = req.get("inspiration", "")
+    if not inspiration.strip():
+        raise HTTPException(status_code=400, detail="请输入灵感或需求")
+    
+    # 直接拆解，不关联任何小说
+    result = engine.requirement_decomposer.decompose(inspiration)
+    
+    # 同时返回阶段上下文
+    phase_context = engine.requirement_decomposer.decompose_to_context(result)
+    
+    return {
+        "requirements": result,
+        "phase_context": {
+            "worldbuilding_count": len(phase_context.get("worldbuilding_context", "").split("---")) if phase_context.get("worldbuilding_context") else 0,
+            "character_count": len(phase_context.get("character_context", "").split("---")) if phase_context.get("character_context") else 0,
+            "outline_count": len(phase_context.get("outline_context", "").split("---")) if phase_context.get("outline_context") else 0,
+            "p0_count": len(phase_context.get("p0_requirements", [])),
+        }
+    }
+
+
 @app.post("/api/novels/{novel_id}/requirements/decompose")
 async def decompose_requirements(novel_id: str, req: dict):
-    """拆解用户灵感为可执行子任务"""
+    """拆解用户灵感为可执行子任务（关联已创建的小说）"""
     inspiration = req.get("inspiration", "")
     if not inspiration.strip():
         raise HTTPException(status_code=400, detail="请输入灵感或需求")

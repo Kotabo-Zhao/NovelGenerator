@@ -285,13 +285,31 @@ class Planner:
         return plan
 
     async def plan_stream(self, creative_input: dict):
-        """3阶段流式规划 — 失败自动降级，保证始终返回可用计划"""
+        """3阶段流式规划 — 失败自动降级，保证始终返回可用计划
+        
+        v2.2: 支持 requirements_context（来自 RequirementDecomposer 的拆解结果）
+        将其注入到各阶段 prompt 中，确保生成内容满足用户需求。
+        """
         fallback_count = 0
         genre = creative_input.get("genre", "玄幻")
         style_name = creative_input.get("style", "热血爽文")
         inspiration = creative_input.get("inspiration", "")
+        # v2.2: 支持增强版灵感（来自需求拆解）
+        enhanced_inspiration = creative_input.get("_enhanced_inspiration", "")
         target_words = creative_input.get("target_words", 500000)
         title = creative_input.get("title", "")
+        
+        # v2.2: 阶段上下文注入
+        phase_context = creative_input.get("_phase_context", {}) or {}
+        wb_context = phase_context.get("worldbuilding_context", "")
+        char_context = phase_context.get("character_context", "")
+        outline_context = phase_context.get("outline_context", "")
+        style_context = phase_context.get("style_context", "")
+        global_constraints = phase_context.get("global_constraints", [])
+        p0_reqs = phase_context.get("p0_requirements", [])
+        
+        # 如果有增强版灵感，用它替代原始灵感
+        effective_inspiration = enhanced_inspiration or inspiration
 
         if style_name.startswith("自定义") or style_name == "自定义风格":
             style_config = build_custom_style(style_name)
@@ -302,16 +320,35 @@ class Planner:
         structure_hint = style_config.get("structure",
             "遵循「三章一小高潮、五章一中高潮、一卷一大高潮」的节奏")
 
+        # v2.2: 全局约束提示
+        constraints_note = ""
+        if global_constraints:
+            constraints_note = "\n\n## ⚠️ 全局约束（必须全部满足）\n" + "\n".join(
+                f"- {c}" for c in global_constraints[:10]
+            )
+        
         yield {"type": "progress", "phase": "start", "pct": 5, "label": "分析创意…"}
 
         # ── Phase 1: 世界观 (5% → 30%) ──
         yield {"type": "progress", "phase": "worldbuilding", "pct": 10, "label": "构建世界观体系…"}
         
-        wb_prompt = f"""你是一位世界观架构师。请根据以下创意生成世界设定。
+        # v2.2: 注入世界观相关需求
+        wb_requirements_block = ""
+        if wb_context:
+            wb_requirements_block = f"""
+
+## ⚠️ 用户需求（必须逐条满足，不得遗漏）
+
+{wb_context}
+"""
+        
+        wb_prompt = f"""你是一位世界观架构师。请根据以下创意和用户需求生成世界设定。
 
 风格: {style_config['name']} ({style_config['author']})
 创意: {inspiration}
 题材: {genre}
+{wb_requirements_block}
+{constraints_note}
 
 输出 JSON:
 ```json
@@ -364,11 +401,30 @@ class Planner:
 - 示例好名字: 周怀瑾, 柳如意, 沈砚, 顾长卿, 卫小蝶, 曹阿满, 姜白石, 陆青崖
 """
 
-        char_prompt = f"""你是一位角色设计师。请根据以下世界观为小说创作角色体系。
+        # v2.2: 注入角色相关需求
+        char_requirements_block = ""
+        if char_context:
+            char_requirements_block = f"""
+
+## ⚠️ 用户角色需求（必须逐条满足，不得遗漏）
+
+{char_context}
+"""
+        if style_context:
+            char_requirements_block += f"""
+
+## 风格要求
+
+{style_context}
+"""
+
+        char_prompt = f"""你是一位角色设计师。请根据以下世界观和用户需求为小说创作角色体系。
 
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:500]}
 风格: {style_config['name']}
 创意: {inspiration}
+{char_requirements_block}
+{constraints_note}
 
 {naming_rules}
 
@@ -426,11 +482,23 @@ class Planner:
         # Phase 3a: 生成卷结构
         yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划卷结构…"}
 
-        structure_prompt = f"""你是小说结构师。根据设定规划{vol_count}卷结构。
+        # v2.2: 注入大纲相关需求
+        outline_requirements_block = ""
+        if outline_context:
+            outline_requirements_block = f"""
+
+## ⚠️ 用户情节/结构需求（必须逐条满足，不得遗漏）
+
+{outline_context}
+"""
+
+        structure_prompt = f"""你是小说结构师。根据设定和用户需求规划{vol_count}卷结构。
 
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:300]}
 主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
 创意: {inspiration}  风格: {style_config['name']}  总目标: {target_words}字
+{outline_requirements_block}
+{constraints_note}
 
 只输出JSON数组，{vol_count}个对象:
 ```json
@@ -485,6 +553,7 @@ class Planner:
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:200]}
 主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
 风格: {style_config['name']}
+{outline_requirements_block}
 
 【章节标题多样性要求（关键！）】
 - 禁止使用固定格式模板，每章标题应该有独特风格

@@ -76,16 +76,48 @@ class NovelEngine:
     # ── Phase 1: 规划 ──
 
     def create_novel(self, creative_input: dict) -> dict:
-        """创建新小说：灵感 → 世界观 + 角色 + 大纲
+        """创建新小说：灵感 → 需求拆解 → 世界观 + 角色 + 大纲
+        
+        v2.2: 先生成大纲前先拆解灵感为详细需求
         
         Args:
             creative_input: {genre, style, inspiration, target_words, title?}
         Returns:
             plan dict (结构化设定文档)
         """
-        plan = self.planner.plan(creative_input)
+        inspiration = creative_input.get("inspiration", "")
+        
+        # v2.2: 需求拆解
+        if inspiration.strip():
+            try:
+                enhanced_input = self.requirement_decomposer.decompose_and_inject(
+                    inspiration, creative_input
+                )
+                requirements = enhanced_input.get("_requirements", {})
+                self._requirements[creative_input.get("title", inspiration[:20])] = requirements
+                log.info(f"Requirements decomposed: {requirements.get('total_count', 0)} subtasks")
+            except Exception as e:
+                log.warning(f"Requirement decomposition failed: {e}")
+                enhanced_input = dict(creative_input)
+        else:
+            enhanced_input = dict(creative_input)
+        
+        plan = self.planner.plan(enhanced_input)
         if not plan:
             raise RuntimeError("规划生成失败，请重试")
+        
+        # v2.2: 附加需求拆解元数据
+        if inspiration.strip():
+            reqs = self._requirements.get(plan.get("title", ""), {})
+            if reqs and not isinstance(plan.get("_meta"), dict):
+                plan["_meta"] = {}
+            if isinstance(plan.get("_meta"), dict) and reqs:
+                plan["_meta"]["requirements"] = {
+                    "summary": reqs.get("summary", ""),
+                    "core_theme": reqs.get("core_theme", ""),
+                    "subtask_count": reqs.get("total_count", 0),
+                    "decomposed_at": reqs.get("created_at", ""),
+                }
         
         # 保存规划
         novel_dir = self.memory.get_novel_dir(plan["title"])
@@ -116,10 +148,59 @@ class NovelEngine:
     async def create_novel_stream(self, creative_input: dict) -> AsyncIterator[dict]:
         """流式创建小说 — 前端可显示分阶段进度条
         
-        Yields progress events from Planner.plan_stream(),
+        v2.2: 新增需求拆解阶段。
+        在生成大纲之前，先用 RequirementDecomposer 深度分析用户灵感，
+        将拆解后的需求注入到各生成阶段的 prompt 中。
+        
+        Yields progress events from:
+        1. RequirementDecomposer.decompose_and_inject()
+        2. Planner.plan_stream(enhanced_input)
         then saves plan + bible on 'done'.
         """
-        async for event in self.planner.plan_stream(creative_input):
+        inspiration = creative_input.get("inspiration", "")
+        
+        # ── v2.2 Phase 0: 需求深度拆解 ──
+        if inspiration.strip():
+            yield {"type": "progress", "phase": "decompose_requirements", "pct": 2,
+                   "label": "正在深度分析您的创作需求…"}
+            
+            try:
+                # 在线程池中运行（避免阻塞事件循环）
+                enhanced_input = await asyncio.to_thread(
+                    self.requirement_decomposer.decompose_and_inject,
+                    inspiration, creative_input
+                )
+                
+                requirements = enhanced_input.get("_requirements", {})
+                subtask_count = requirements.get("total_count", 0)
+                
+                yield {"type": "progress", "phase": "decompose_requirements", "pct": 4,
+                       "label": f"已拆解出 {subtask_count} 条创作需求"}
+                
+                # 输出拆解摘要给前端展示
+                yield {
+                    "type": "requirements_decomposed",
+                    "summary": requirements.get("summary", ""),
+                    "core_theme": requirements.get("core_theme", ""),
+                    "subtask_count": subtask_count,
+                    "p0_count": sum(1 for t in requirements.get("subtasks", []) 
+                                   if t.get("priority") == "P0"),
+                    "offline_mode": requirements.get("offline_mode", False),
+                }
+                
+                # 保存需求到内存
+                # novel_id 还没生成，先用临时 key
+                self._pending_requirements = requirements
+                
+            except Exception as e:
+                log.warning(f"Requirement decomposition failed, proceeding without it: {e}")
+                enhanced_input = dict(creative_input)
+                yield {"type": "warning", "message": f"需求深度拆解跳过: {e}，使用原始灵感生成"}
+        else:
+            enhanced_input = dict(creative_input)
+        
+        # ── Phase 1-3: 标准流式规划（使用增强版输入）──
+        async for event in self.planner.plan_stream(enhanced_input):
             if event["type"] == "done":
                 plan = event.get("plan")
                 if not isinstance(plan, dict):
@@ -132,6 +213,21 @@ class NovelEngine:
                     return
                 novel_dir = self.memory.get_novel_dir(plan["title"])
                 os.makedirs(novel_dir, exist_ok=True)
+                
+                # v2.2: 将需求拆解结果附加到 plan._meta 中
+                if hasattr(self, '_pending_requirements') and self._pending_requirements:
+                    if not isinstance(plan.get("_meta"), dict):
+                        plan["_meta"] = {}
+                    plan["_meta"]["requirements"] = {
+                        "summary": self._pending_requirements.get("summary", ""),
+                        "core_theme": self._pending_requirements.get("core_theme", ""),
+                        "subtask_count": self._pending_requirements.get("total_count", 0),
+                        "decomposed_at": self._pending_requirements.get("created_at", ""),
+                    }
+                    
+                    # 保存到 _requirements dict (用 title 做 key)
+                    self._requirements[plan["title"]] = self._pending_requirements
+                    del self._pending_requirements
                 
                 atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
                 
@@ -150,7 +246,8 @@ class NovelEngine:
                 hooks_path = os.path.join(novel_dir, "foreshadowing.json")
                 atomic_write_json(hooks_path, [])
                 
-                log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)")
+                log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)"
+                        f" — requirements: {self._requirements.get(plan['title'], {}).get('total_count', 0)} subtasks")
             
             yield event
 
