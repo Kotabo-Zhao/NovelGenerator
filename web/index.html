@@ -468,6 +468,17 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         生成大纲
       </button>
 
+      <!-- v2.2: 需求拆解摘要 -->
+      <div v-if="decomposeSummary" class="card" style="margin-top:12px;background:var(--bg2);border-color:var(--accent)">
+        <div class="card-title" style="color:var(--accent)">📋 需求分析结果</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.6">
+          <div v-if="decomposeSummary.core_theme" style="margin-bottom:4px"><b>核心主题：</b>{{ decomposeSummary.core_theme }}</div>
+          <div><b>拆解出 {{ decomposeSummary.subtask_count }} 条创作需求</b> · 其中 {{ decomposeSummary.p0_count }} 条为强制要求(P0)</div>
+          <div v-if="decomposeSummary.summary" style="margin-top:4px;color:var(--text3)">{{ decomposeSummary.summary }}</div>
+          <div v-if="decomposeSummary.offline_mode" style="margin-top:4px;color:var(--orange)">⚠️ 离线模式拆解，建议开启 LLM 以获得更精准的需求分析</div>
+        </div>
+      </div>
+
       <!-- Creation Result -->
       <template v-if="planResult && !loading.create">
         <div class="card mt-16">
@@ -789,6 +800,7 @@ createApp({
     const theme = ref(localStorage.getItem('theme') || 'dark');
     const uiStyle = ref(localStorage.getItem('uiStyle') || 'macOS');
     const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
+    const decomposeSummary = ref(null);  // v2.2: 需求拆解摘要
     const reviewFeedback = ref(''); const batchStreaming = ref('');
     const chapterProgress = ref(0); const chapterProgressLabel = ref('');
     const outlineFeedback = ref(''); const isRegenerating = ref(false);
@@ -1015,7 +1027,7 @@ createApp({
         })
         .catch(()=>{});
     }
-    function openCreate() { if(isBusy.value) return; planResult.value=null; error.value=''; currentView.value='create'; }
+    function openCreate() { if(isBusy.value) return; planResult.value=null; decomposeSummary.value=null; error.value=''; currentView.value='create'; }
     function openWrite() { if(isBusy.value) return; if(activeNovel.value) { currentView.value='write'; _saveSession(); } }
     function openOutline() {
       if(isBusy.value) return;
@@ -1033,10 +1045,17 @@ createApp({
       if (loading.write || loading.batch) { reportError('有任务正在进行中，请等待完成'); return; }
       error.value=''; planResult.value=null; loading.create=true;
       createProgress.value=0; createPhase.value='start'; createPhaseLabel.value='准备中…';
+      decomposeSummary.value=null;
       try {
         const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames})});
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
+          // v2.2: 需求拆解完成
+          else if(evt.type==='requirements_decomposed'){ 
+            decomposeSummary.value=evt;
+            createPhaseLabel.value=`已分析出 ${evt.subtask_count} 条创作需求`;
+          }
+          else if(evt.type==='warning'){ showToast(evt.message, '提示', 'ℹ️'); }
           else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
@@ -1391,7 +1410,7 @@ createApp({
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,
-      createProgress,createPhase,createPhaseLabel,reviewFeedback,doRegenerate,
+      createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,
       decomposeRequirements,superviseRequirements,runVerifyLoop,addRequirements,
