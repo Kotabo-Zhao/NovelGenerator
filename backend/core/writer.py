@@ -185,11 +185,13 @@ class Writer:
         style: str = "热血爽文",
         target_words: int = 1500,
         writing_mode: str = "webnovel",
+        normal_pacing: bool = False,
     ) -> AsyncGenerator[str, None]:
         """流式生成章节正文
         
         Args:
             writing_mode: 'webnovel' (网文) or 'literary' (文学)
+            normal_pacing: False=快节奏默认, True=正常节奏
         """
         # 解析风格
         if style in ("自定义风格",) or style.startswith("自定义"):
@@ -199,12 +201,28 @@ class Writer:
         
         style_prompt = build_style_prompt(style_config)
 
+        # v2.2: 节奏指令注入
+        if normal_pacing:
+            pacing_instruction = ""
+        else:
+            pacing_instruction = """## 节奏强制要求 — 快节奏模式
+
+- 前三段必须包含冲突或悬念，不要让读者等
+- 少写环境描写和心理独白，用动作和对话推进
+- 每段控制在 3-5 句，避免大段叙述
+- 对话占比 > 40%，短句占比 > 30%
+- 章末必须有强力钩子（生死危机/身份揭露/重大抉择）
+
+"""
+
         # ── 第一遍: 生成初稿 ──
         template = LITERARY_SYSTEM if writing_mode == "literary" else WRITER_SYSTEM
         system_prompt = template.format(
             style_guide=style_prompt,
             target_words=target_words,
         )
+        # v2.2: 追加节奏指令到 system prompt
+        system_prompt += pacing_instruction
 
         log.info(f"Writing chapter: {genre}/{style}/{writing_mode}, pass 1/2 (draft)")
         

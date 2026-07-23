@@ -511,6 +511,7 @@ class NovelEngine:
                 style=style,
                 target_words=target_words,
                 writing_mode=writing_mode,
+                normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
             ):
                 full_text += text
                 # 每500字增量保存一次

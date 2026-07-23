@@ -378,7 +378,7 @@ class Planner:
         wb_prompt = f"""你是一位世界观架构师。请根据以下创意和用户需求生成世界设定。
 
 风格: {style_config['name']} ({style_config['author']})
-创意: {inspiration}
+创意: {effective_inspiration}
 题材: {genre}
 {wb_requirements_block}
 {constraints_note}
@@ -419,6 +419,21 @@ class Planner:
 
         yield {"type": "progress", "phase": "worldbuilding", "pct": 30, "label": "世界观完成 ✓"}
 
+        # v2.2: 构建可读的世界观摘要（用于后续阶段注入）
+        _wb = wb.get('worldbuilding', {})
+        _factions = _wb.get('factions', [])
+        _faction_text = ""
+        if isinstance(_factions, list):
+            for f in _factions[:6]:
+                if isinstance(f, dict):
+                    _faction_text += f"- {f.get('name','')} ({f.get('alignment','中立')}): {f.get('description','')[:60]}\n"
+        wb_summary_compact = f"""## 🌍 世界观
+- 时代: {_wb.get('era', '')}
+- 地点: {_wb.get('geography', '')[:200]}
+- 力量体系: {_wb.get('power_system', '')[:200]}
+- 核心冲突: {_wb.get('core_conflict', '')}
+- 势力: {_faction_text.strip() or '待展开'}"""
+
         # ── Phase 2: 角色 (30% → 55%) ──
         yield {"type": "progress", "phase": "characters", "pct": 32, "label": "设计角色关系网…"}
         
@@ -453,9 +468,9 @@ class Planner:
 
         char_prompt = f"""你是一位角色设计师。请根据以下世界观和用户需求为小说创作角色体系。
 
-世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:500]}
+{wb_summary_compact}
 风格: {style_config['name']}
-创意: {inspiration}
+创意: {effective_inspiration}
 {char_requirements_block}
 {constraints_note}
 
@@ -555,23 +570,8 @@ class Planner:
         
         character_roster += "\n**⚠️ 以上就是本书所有角色。禁止创造功能重复的新角色。需要新角色时必须给出与已有角色不同的独立身份和功能。**"
 
-        # v2.2: 世界观摘要（替代截断的 JSON dump，传给每卷）
-        _wb = wb.get('worldbuilding', {})
-        _factions = _wb.get('factions', [])
-        _faction_text = ""
-        if isinstance(_factions, list):
-            for f in _factions[:6]:
-                if isinstance(f, dict):
-                    _faction_text += f"- {f.get('name','')} ({f.get('alignment','中立')}): {f.get('description','')[:60]}\n"
-        worldbuilding_summary = f"""## 🌍 世界观
-
-- 时代: {_wb.get('era', '')}
-- 关键地点: {_wb.get('geography', '')[:200]}
-- 力量体系: {_wb.get('power_system', '')[:200]}
-- 核心冲突: {_wb.get('core_conflict', '')}
-- 势力分布:
-{_faction_text or '（待展开）'}
-"""
+        # v2.2: 复用已构建的世界观摘要
+        worldbuilding_summary = wb_summary_compact
 
         # Phase 3a: 生成卷结构
         yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划卷结构…"}
