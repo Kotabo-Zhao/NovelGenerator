@@ -612,7 +612,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         </div>
 
         <div class="chapter-picker">
-          <div v-for="ch in availableChapters" :key="ch" class="cp-btn" :class="{active:ch===writing.chapter, done:(activeNovel.state.completed_chapters||[]).includes(ch)}" @click="selectChapter(ch)">{{ ch }}</div>
+          <div v-for="ch in availableChapters" :key="ch" class="cp-btn" :class="{active:ch===writing.chapter, done:(activeNovel.state.completed_chapters||[]).includes(ch)}" @click="!isBusy && selectChapter(ch)" :style="isBusy?{opacity:.4,cursor:'not-allowed'}:{}">{{ ch }}</div>
         </div>
 
         <div v-if="currentOutline" class="chapter-outline">
@@ -639,13 +639,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
             <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)">
               <span>批量：从</span>
-              <input v-model.number="batchStart" type="number" min="1" :max="activeNovel.state.total_chapters" :disabled="loading.batch" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
-              <span>到</span>
-              <input v-model.number="batchEnd" type="number" min="1" :max="activeNovel.state.total_chapters" :disabled="loading.batch" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
+              <input v-model.number="batchStart" type="number" min="1" :max="activeNovel.state.total_chapters" :disabled="isBusy" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
+              <span>到 {{ batchEnd - batchStart + 1 > 10 ? '(最多10章)' : '' }}</span>
+              <input v-model.number="batchEnd" type="number" min="1" :max="Math.min(activeNovel.state.total_chapters, batchStart + 9)" :disabled="isBusy" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;text-align:center">
             </div>
             <div style="display:flex;gap:6px">
               <button v-if="loading.batch" class="btn btn-sm" style="background:var(--red);color:#fff" @click="cancelBatch">⏹ 中断</button>
-              <button v-else class="btn btn-secondary btn-sm" @click="doBatchGenerate" :disabled="loading.write">📦 批量生成</button>
+              <button v-else class="btn btn-secondary btn-sm" @click="doBatchGenerate" :disabled="isBusy">📦 批量生成</button>
             </div>
           </div>
           <div v-if="loading.batch" style="margin-top:8px">
@@ -1010,9 +1010,10 @@ createApp({
         })
         .catch(()=>{});
     }
-    function openCreate() { planResult.value=null; error.value=''; currentView.value='create'; }
-    function openWrite() { if(activeNovel.value) { currentView.value='write'; _saveSession(); } }
+    function openCreate() { if(isBusy.value) return; planResult.value=null; error.value=''; currentView.value='create'; }
+    function openWrite() { if(isBusy.value) return; if(activeNovel.value) { currentView.value='write'; _saveSession(); } }
     function openOutline() {
+      if(isBusy.value) return;
       if(!activeNovel.value) return;
       _saveSession();
       // 从服务端重新加载plan（保留最新版本）
@@ -1039,6 +1040,7 @@ createApp({
     }
 
     function openNovel(novel) {
+      if(isBusy.value){ showToast('有任务正在进行中，请等待完成'); return; }
       activeNovel.value=novel; error.value='';
       _saveSession();
       const done=(novel.state.completed_chapters||[]), total=novel.state.total_chapters||1;
@@ -1091,6 +1093,7 @@ createApp({
 
     let _chFetchAbort=null;
     function selectChapter(ch, skipFetch) {
+      if(isBusy.value) return;
       writing.chapter=ch; writing.content=''; writing.done=false; error.value='';
       // 取消进行中的请求
       if (_chFetchAbort) { _chFetchAbort.abort(); _chFetchAbort=null; }
@@ -1144,9 +1147,11 @@ createApp({
 
     async function doBatchGenerate() {
       if(!activeNovel.value||loading.batch) return;
-      if(loading.create||loading.write){ error.value='有任务正在进行中，请等待完成'; return; }
+      if(isBusy.value){ reportError('有任务正在进行中，请等待完成'); return; }
       const start=batchStart.value||1, end=batchEnd.value||1;
       if(start>end) return;
+      const count = end - start + 1;
+      if(count > 10) { reportError('批量生成上限为10章，请缩小范围'); return; }
       loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value=''; batchStreaming.value='';
       const ctrl=new AbortController(); abortCtrl.value=ctrl;
       let failedChapters = [];
@@ -1279,6 +1284,7 @@ createApp({
       planResult.value.outline.total_chapters=n;
     }
     async function savePlan() {
+      if(isBusy.value) return;
       if(!planResult.value) return; loading.saving=true; editSaved.value=false; error.value=''; renumberChapters();
       try {
         const r=await fetch(API+'/api/novels/'+encodeURIComponent(planResult.value.title),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(planResult.value)});
