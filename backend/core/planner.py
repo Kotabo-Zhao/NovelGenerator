@@ -547,6 +547,7 @@ class Planner:
         protagonist = chars.get('characters', {}).get('protagonist', {})
         supporting = chars.get('characters', {}).get('supporting', [])
         antagonists = chars.get('characters', {}).get('antagonist', [])
+        protagonist_name = protagonist.get('name', '主角')  # v2.2: 锁定主角名
         
         character_roster = f"""## 👥 角色花名册（全书角色池，不要创造重复功能的新角色）
 
@@ -638,6 +639,8 @@ class Planner:
         
         skeleton_prompt = f"""你是小说大纲规划师。请为这{vol_count}卷{total_chapters}章的小说规划全局章节骨架。
 
+⚠️ 主角名:「{protagonist_name}」— 骨架中必须使用此名，禁止改成其他名字。
+
 {worldbuilding_summary}
 {character_roster}
 
@@ -679,6 +682,19 @@ class Planner:
             log.warning(f"Skeleton only covered {len(skeleton_map)}/{total_chapters} chapters, will fall back to per-volume generation")
             skeleton_map = {}  # 降级：不用骨架
         
+        # v2.2: 骨架主角名校验
+        if skeleton_map and protagonist_name and protagonist_name not in ('主角', '待定', ''):
+            wrong_names = set()
+            for sk_text in skeleton_map.values():
+                # 检测骨架中是否出现了不同的两字中文名作为主角
+                import re as _re
+                for m in _re.finditer(r'主角[是为](\w{2,3})', sk_text):
+                    if m.group(1) != protagonist_name:
+                        wrong_names.add(m.group(1))
+            if wrong_names:
+                log.warning(f"Skeleton uses wrong protagonist names: {wrong_names} (expected: {protagonist_name})")
+                yield {"type": "warning", "message": f"骨架中主角名不一致，出现: {', '.join(wrong_names)}，应为: {protagonist_name}"}
+        
         has_skeleton = len(skeleton_map) > 0
         
         # Phase 3c: 逐卷展开 — 将骨架章节展开为详细大纲
@@ -715,8 +731,10 @@ class Planner:
                 skeleton_guide += "\n**按骨架逐章展开即可，不要增加或减少章节。**\n"
 
             ch_prompt = f"""展开第{vol_num}卷「{vol_title}」的{n_ch}章详细大纲。
-{worldbuilding_summary[:300]}
-{character_roster[:600]}
+⚠️ 主角名:「{protagonist_name}」— 大纲中必须使用此名，禁止改成其他名字。
+
+{worldbuilding_summary}
+{character_roster}
 {skeleton_guide}
 风格: {style_config['name']}
 {pacing_instruction}
