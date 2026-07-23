@@ -631,16 +631,59 @@ class Planner:
             yield {"type": "warning", "message": "卷结构使用默认规划"}
             fallback_count += 1
 
-        # Phase 3b+: 逐卷生成章节
-        all_volumes = []
-        chapter_counter = 0
+        # Phase 3b: 全局章节骨架 — 一次性规划全部章节概要，保证故事连续
+        yield {"type": "progress", "phase": "outline", "pct": 62, "label": "规划全书章节骨架…"}
+        
         total_chapters = sum(v.get("ch_count", ch_per_vol) for v in volumes_meta[:vol_count])
         
-        # v2.2: 跟踪前卷摘要+已用情节元素，防止跨卷重复
-        prev_volumes_summary = []
-        used_plot_elements = []  # 追踪已在前卷使用过的关键情节元素
-        last_volume_hook = None   # 上一卷结尾钩子
-        introduced_characters = []  # 追踪已出场的角色名
+        skeleton_prompt = f"""你是小说大纲规划师。请为这{vol_count}卷{total_chapters}章的小说规划全局章节骨架。
+
+{worldbuilding_summary}
+{character_roster}
+
+## 卷结构
+"""
+        for v in volumes_meta[:vol_count]:
+            skeleton_prompt += f"- 第{v.get('vol','?')}卷「{v.get('title','')}」({v.get('act','')}): {v.get('theme','')} — {v.get('ch_count', ch_per_vol)}章\n"
+
+        skeleton_prompt += f"""
+{pacing_instruction}
+
+## 要求
+- 每个章节写一句20字内的核心事件描述
+- 章节之间的事件必须**严格连续**——每章是上一章的直接发展，不能跳跃
+- 故事必须有清晰的**上升弧线**: 建置(前25%)→对抗升级(中50%)→高潮解决(后25%)
+- 冲突类型必须多样化: 不要>3章连续用同一冲突类型
+- 重要: 第1章必须是一个**立即抓住读者**的场景(动作/冲突/悬念)，不能是背景介绍
+
+只输出 JSON 数组，{total_chapters}个对象:
+```json
+[{{"ch":1,"skeleton":"主角在外门被师兄当众羞辱，玉佩意外激活"}},{{"ch":2,"skeleton":"..."}}]
+```
+只输出JSON。"""
+
+        skeleton_result = await self._call_llm(skeleton_prompt, "global_skeleton", max_tokens=4096)
+        skeleton_map = {}  # {chapter_num: skeleton_text}
+        if skeleton_result:
+            if isinstance(skeleton_result, list):
+                for s in skeleton_result:
+                    if isinstance(s, dict):
+                        skeleton_map[int(s.get("ch", 0))] = s.get("skeleton", "")
+            elif isinstance(skeleton_result, dict):
+                items = skeleton_result.get("data") or skeleton_result.get("chapters") or []
+                for s in items:
+                    if isinstance(s, dict):
+                        skeleton_map[int(s.get("ch", 0))] = s.get("skeleton", "")
+        
+        if len(skeleton_map) < total_chapters * 0.5:
+            log.warning(f"Skeleton only covered {len(skeleton_map)}/{total_chapters} chapters, will fall back to per-volume generation")
+            skeleton_map = {}  # 降级：不用骨架
+        
+        has_skeleton = len(skeleton_map) > 0
+        
+        # Phase 3c: 逐卷展开 — 将骨架章节展开为详细大纲
+        all_volumes = []
+        chapter_counter = 0
 
         for idx, vol_meta in enumerate(volumes_meta[:vol_count]):
             vol_num = vol_meta.get("vol", idx + 1)
@@ -648,108 +691,36 @@ class Planner:
             vol_act = vol_meta.get("act", "")
             vol_theme = vol_meta.get("theme", "")
             vol_function = vol_meta.get("act_function", "")
-            n_ch = min(ch_per_vol, vol_meta.get("ch_count", ch_per_vol))  # 绝对值不过每卷预算
-            # v2.2: 剩余预算约束，绝不超过总目标
+            n_ch = min(ch_per_vol, vol_meta.get("ch_count", ch_per_vol))
             remaining = total_chapters_target - chapter_counter
             n_ch = min(n_ch, remaining) if remaining > 0 else n_ch
 
-            pct = 58 + int(34 * (idx + 1) / vol_count)
+            pct = 62 + int(30 * (idx + 1) / vol_count) if has_skeleton else 58 + int(34 * (idx + 1) / vol_count)
             yield {"type": "progress", "phase": "outline", "pct": pct,
-                   "label": f"生成第{vol_num}卷「{vol_title}」({n_ch}章)…"}
+                   "label": f"展开第{vol_num}卷「{vol_title}」({n_ch}章)…"}
 
-            # v2.2: 构建前卷上下文（防止故事来回循环）
-            prev_context = ""
-            if prev_volumes_summary:
-                # ── 故事连续摘要（比逐章列表更有效）──
-                all_prev_summaries = []
-                for pv in prev_volumes_summary:
-                    for ps in pv['summaries']:
-                        all_prev_summaries.append(ps['summary'])
-                story_so_far = " → ".join(all_prev_summaries[:12])  # 最多12章摘要连成故事线
-                
-                prev_context = f"""## ⚠️ 前卷已写完的故事（绝对不能重复，必须在这些基础上向前发展）
+            # v2.2: 骨架驱动 — 取出本卷骨架作为"剧本"，连续性由骨架保证
+            skeleton_guide = ""
+            if has_skeleton:
+                skeleton_guide = "## 📜 全局章节骨架（按骨架展开，不要自创剧情）\n\n"
+                if chapter_counter >= 2:
+                    sk = skeleton_map.get(chapter_counter, "")
+                    if sk:
+                        skeleton_guide += f"**上一章（已写完）**: 第{chapter_counter}章: {sk}\n"
+                skeleton_guide += "**本卷骨架**:\n"
+                for ci in range(chapter_counter + 1, chapter_counter + n_ch + 1):
+                    sk = skeleton_map.get(ci, "")
+                    if sk:
+                        skeleton_guide += f"- 第{ci}章: {sk}\n"
+                skeleton_guide += "\n**按骨架逐章展开即可，不要增加或减少章节。**\n"
 
-**故事线（已发生事件链）**: {story_so_far[:500]}
-
-### 逐章详情
-"""
-                for pv in prev_volumes_summary:
-                    prev_context += f"- 第{pv['vol']}卷「{pv['title']}」({pv['act']}):\n"
-                    for ps in pv['summaries']:
-                        prev_context += f"  第{ps['ch']}章: {ps['summary']}\n"
-
-                if last_volume_hook:
-                    prev_context += f"\n**🔗 上一卷结尾钩子 → 这是本卷的起点，必须从这里接上**: {last_volume_hook}\n"
-                
-                # 当前故事状态
-                last_ch_summary = all_prev_summaries[-1] if all_prev_summaries else ""
-                prev_context += f"\n**📍 当前故事状态（本卷开始时）**: {last_ch_summary}\n"
-                
-                prev_context += "\n**🚫 硬规则——违反即不合格**:\n"
-                prev_context += "- 以上所有事件已经被写过了。本卷只能写这些事件之后发生的新事情\n"
-                prev_context += "- 不能重复同一类型的冲突（如\"被人看不起\"只能出现一次，之后必须是新的矛盾类型）\n"
-                prev_context += "- 不能重复同一模式（如\"获得法宝→打败敌人\"的循环必须打破，加入政治/情感/道德等其他维度）\n"
-                prev_context += "- 角色的关系必须随着剧情发展而变化，不能维持同一互动模式跨卷不变\n"
-                if used_plot_elements:
-                    prev_context += f"- **以下元素已在前卷中使用，本卷禁止再出现: {', '.join(sorted(set(used_plot_elements))[:15])}**\n"
-                if introduced_characters:
-                    prev_context += f"- **已出场角色: {', '.join(introduced_characters[:12])}** — 他们已存在于故事中，直接用，不要重新介绍\n"
-
-            # v2.2: 需求块标注 — 根据scope过滤，开篇需求只在第1卷，结局需求只在最后卷
-            distributed_req_block = ""
-            if outline_requirements_block:
-                # 从requirements中获取scope信息
-                requirements = (creative_input.get("_requirements") or {}).get("subtasks", [])
-                vol_scoped_reqs = []
-                for req in requirements:
-                    scope = req.get("scope", "global")
-                    if scope == "opening" and vol_num != 1:
-                        continue  # 开篇需求只在第1卷
-                    if scope == "ending" and vol_num != vol_count:
-                        continue  # 结局需求只在最后卷
-                    vol_scoped_reqs.append(req)
-                
-                if vol_scoped_reqs:
-                    req_lines = []
-                    for r in vol_scoped_reqs:
-                        scope_tag = ""
-                        if r.get("scope") in ("opening", "ending"):
-                            scope_tag = "【本卷专属】" if (
-                                (r["scope"] == "opening" and vol_num == 1) or
-                                (r["scope"] == "ending" and vol_num == vol_count)
-                            ) else ""
-                        title = r.get("title", "")
-                        hint = r.get("generation_hint", "")
-                        if scope_tag:
-                            req_lines.append(f"- {scope_tag} {title}: {hint[:80] if hint else ''}")
-                        else:
-                            req_lines.append(f"- {title}: {hint[:80] if hint else ''}")
-                    distributed_req_block = f"""## ⚠️ 本卷需求清单（共{vol_count}卷，本卷是第{vol_num}卷）
-
-{chr(10).join(req_lines[:8])}
-
-**已自动过滤：开篇专属需求只在第1卷，结局专属需求只在最后卷。**
-"""
-
-            ch_prompt = f"""生成第{vol_num}卷「{vol_title}」的{n_ch}章大纲。
-卷信息: act={vol_act}, theme={vol_theme}, function={vol_function}
-起始章号: {chapter_counter + 1}
-本卷进度: 第{vol_num}/{vol_count}卷
-**硬约束: 本卷刚好生成{n_ch}章，全书共{total_chapters_target}章，已用{chapter_counter}章，剩余{total_chapters_target - chapter_counter}章**
-
-{worldbuilding_summary}
-{character_roster}
+            ch_prompt = f"""展开第{vol_num}卷「{vol_title}」的{n_ch}章详细大纲。
+{worldbuilding_summary[:300]}
+{character_roster[:600]}
+{skeleton_guide}
 风格: {style_config['name']}
 {pacing_instruction}
-{prev_context}
-{distributed_req_block}
-
-【防止情节重复 — 绝对最重要】
-- 上面「前卷已写完的故事」里的每件事都已经发生过了。本卷的剧情必须接在最后一件事之后，向前推进
-- 禁止重复**任何**已出现的冲突类型：如果前卷有"被看不起""被追杀""获得宝物""拜师学艺"，本卷不能再用
-- 禁止重复**关系互动模式**：如果前卷已经有A对B冷嘲热讽，本卷不能换成C对B做同样的事
-- 冲突层次必须**实质升级**：表面的敌意→背后的阴谋→势力的博弈→世界观的碰撞
-- 每个章节的核心事件必须是全新的、在前卷基础上递进的，不是换个名字再来一遍
+全书进度: 第{vol_num}/{vol_count}卷 · 本章起始号{chapter_counter+1}
 
 【章节标题多样性要求（关键！）】
 - 禁止使用固定格式模板，每章标题应该有独特风格
@@ -813,49 +784,6 @@ class Planner:
                 "chapters": chapters
             })
             chapter_counter += len(chapters)
-            
-            # v2.2: 记录本卷摘要+提取关键情节元素（防止后续卷重复）
-            vol_summaries = []
-            vol_elements = set()
-            vol_hook = None
-            vol_characters = set()
-            for i, ch in enumerate(chapters[:10]):
-                if isinstance(ch, dict):
-                    summary = ch.get("summary", "")
-                    conflict = ch.get("conflict", "")
-                    hook = ch.get("hook", "")
-                    combined = f"{summary} {conflict} {hook}"
-                    vol_summaries.append({
-                        "ch": ch.get("number", "?"), 
-                        "summary": summary[:40]
-                    })
-                    # 提取关键情节元素
-                    for kw in ["皇嫂", "嫂子", "师叔", "师父", "仇人", "父子", "师徒",
-                                "退婚", "背叛", "夺宝", "比试", "宗门", "秘境",
-                                "身份暴露", "实力暴涨", "复仇", "联姻", "刺杀",
-                                "看不起", "嘲笑", "排挤", "霸凌", "打压",
-                                "遗物", "传承", "觉醒", "血脉", "天赋",
-                                "试炼", "考核", "选拔", "排名", "挑战",
-                                "青梅竹马", "救命之恩", "破镜重圆", "宿敌", "卧底"]:
-                        if kw in combined:
-                            vol_elements.add(kw)
-                    # 追踪出场角色
-                    for name in (ch.get("characters", []) or []):
-                        if isinstance(name, str) and name not in ("主角", "配角", "反派"):
-                            vol_characters.add(name)
-                    # 追踪最后一章的钩子
-                    if i == len(chapters[:6]) - 1 or ch.get("hook"):
-                        vol_hook = hook if hook else vol_hook
-            prev_volumes_summary.append({
-                "vol": vol_num,
-                "title": vol_title,
-                "act": vol_act,
-                "summaries": vol_summaries,
-            })
-            used_plot_elements.extend(sorted(vol_elements))
-            if vol_hook:
-                last_volume_hook = vol_hook
-            introduced_characters.extend(sorted(vol_characters))
 
         yield {"type": "progress", "phase": "outline", "pct": 92, "label": "组装最终文档…"}
 

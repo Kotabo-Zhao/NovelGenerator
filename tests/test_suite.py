@@ -358,11 +358,13 @@ class TestPlannerStream(unittest.TestCase):
         vol_chapter = [
             {"number": 1, "title": "首章", "summary": "开始", "emotion_curve": "平稳", "conflict": "", "characters": ["主角"], "hook": "悬念", "target_words": 3000}
         ]
-        # 结构prompt返回卷数组，每卷章节调用返回章节数组
+        # v2.2: 新增skeleton调用 + 结构prompt + 逐卷章节调用
+        skeleton_data = [{"ch": 1, "skeleton": "主角首章"}]  # 骨架mock
         client.chat.completions.create.side_effect = (
             [make_resp(wb), make_resp(chars)] + 
             [make_resp([{"vol": 1, "title": "卷一", "act": "第一幕·建置", "theme": "", "ch_count": 1, "act_function": ""}])] +
-            [make_resp(vol_chapter)] * 3  # 3 volumes worth of chapter calls
+            [make_resp(skeleton_data)] +  # 骨架prompt
+            [make_resp(vol_chapter)] * 3  # 逐卷章节调用
         )
         
         async def run():
