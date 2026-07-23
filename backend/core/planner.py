@@ -559,9 +559,41 @@ class Planner:
         for c in antagonists:
             if isinstance(c, dict) and c.get('name', '') not in ('', '反派', '待定'):
                 all_char_names.append(c['name'])
-        name_lock = ""
-        if all_char_names:
-            name_lock = f"## ⚠️ 角色名锁定 — 只允许使用以下{len(all_char_names)}个已设定角色\n\n**主角：{protagonist_name}**\n**已设定角色：{' / '.join(all_char_names[1:6]) if len(all_char_names) > 1 else '（暂无其他）'}**\n\n🚫 **禁止创造新角色名。所有出场角色必须从以上列表选取。如需新角色，必须给出与已有角色完全不同的身份和功能。**\n"
+        
+        # v2.2: 角色场景映射指南 — 告诉LLM什么场景该用谁
+        char_guide_lines = []
+        # 从配角中提取功能和场景提示
+        char_role_map = {}
+        for c in supporting:
+            if isinstance(c, dict) and c.get('name'):
+                role = c.get('role', '') or c.get('meaning', '') or c.get('relation', '')
+                char_role_map[c['name']] = {
+                    'identity': c.get('identity', ''),
+                    'role': role,
+                    'arc': c.get('mini_arc', ''),
+                }
+        for c in antagonists:
+            if isinstance(c, dict) and c.get('name'):
+                char_role_map[c['name']] = {
+                    'identity': c.get('conflict', ''),
+                    'role': '反派: ' + c.get('motivation', ''),
+                    'arc': '',
+                }
+        
+        name_lock = f"""## 🎭 角色场景映射 — 确保每个角色用对场景
+
+**主角「{protagonist_name}」** — 所有章节的核心人物，始终出场
+"""
+        for name, info in char_role_map.items():
+            name_lock += f"- **{name}** — {info['identity']} | 功能: {info['role']} | 弧线: {info['arc']}\n"
+        
+        name_lock += """
+**⚠️ 使用规则**:
+- 每章的 characters 列表从以上角色中选取，按场景功能对号入座
+- 恋爱场景 → 感情线角色，训练场景 → 导师角色，冲突场景 → 反派/对手
+- 不要把一个角色的功能错误地分配给另一个角色
+- 新增角色仅限功能完全不同的独立人物，不能替代已有角色的功能
+"""
         
         character_roster = f"""## 👥 角色花名册（全书角色池，不要创造重复功能的新角色）
 
