@@ -583,8 +583,9 @@ class Planner:
         chapter_counter = 0
         total_chapters = sum(v.get("ch_count", ch_per_vol) for v in volumes_meta[:vol_count])
         
-        # v2.2: 跟踪前卷摘要，防止情节循环
+        # v2.2: 跟踪前卷摘要+已用情节元素，防止跨卷重复
         prev_volumes_summary = []
+        used_plot_elements = []  # 追踪已在前卷使用过的关键情节元素
 
         for idx, vol_meta in enumerate(volumes_meta[:vol_count]):
             vol_num = vol_meta.get("vol", idx + 1)
@@ -607,24 +608,39 @@ class Planner:
                     for ps in pv['summaries']:
                         prev_context += f"  第{ps['ch']}章: {ps['summary']}\n"
                 prev_context += "\n**重要：以上内容已经写过了，本卷必须推进新剧情，不要重复前面的模式或事件！**\n"
+                if used_plot_elements:
+                    prev_context += f"\n**前卷已使用的情节元素（本卷禁止再用！）: {', '.join(used_plot_elements)}**\n"
+
+            # v2.2: 需求块标注 — 需求应分布在不同卷，不要每卷重复
+            distributed_req_block = ""
+            if outline_requirements_block:
+                distributed_req_block = f"""## ⚠️ 用户需求清单（分布在全书中，本卷只需满足其中一部分）
+
+{outline_requirements_block}
+
+**关键: 以上需求需要分布在{vol_count}卷中逐步满足，本卷是第{vol_num}卷（共{vol_count}卷），你只需要从需求清单中选取与第{vol_num}卷主题最相关、最合理出现在此卷的需求来满足。不要把全部需求塞进这一卷。**
+"""
 
             ch_prompt = f"""生成第{vol_num}卷「{vol_title}」的{n_ch}章大纲。
 卷信息: act={vol_act}, theme={vol_theme}, function={vol_function}
 起始章号: {chapter_counter + 1}
+本卷进度: 第{vol_num}/{vol_count}卷
 
 世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:200]}
 主角: {chars.get('characters',{}).get('protagonist',{}).get('name','主角')}
 风格: {style_config['name']}
 {pacing_instruction}
 {prev_context}
-{outline_requirements_block}
+{distributed_req_block}
 
-【防止情节循环 — 最重要】
-- 你已经写了前面的卷和章节，本卷的故事必须是全新的推进，不是前面的翻版
+【防止情节重复 — 绝对最重要】
+- 这是第{vol_num}卷，前面已经有{vol_num-1}卷写过了。本卷的故事必须是全新的、在前几卷基础上递进的推进
+- 前卷已经使用的情节元素（人物关系、冲突模式、场景类型）本卷禁止重复
+- 如果前卷有"男主叫女主皇嫂"的情节，本卷绝对不能以此为核心事件，除非是矛盾升级后的质变（如关系破裂/升级而不是同样的互动模式）
 - 每章的核心事件必须与前面所有章节不同
-- 不要重复“遇到敌人→战斗→升级→遇到更强敌人”的死循环
-- 冲突层次必须升级：从个人恩怨→组织对抗→世界观层面的冲突
+- 冲突层次必须升级：个人恩怨→组织对抗→世界观层面的冲突
 - 角色的能力和认知必须在本卷有实质性的进步
+- **不要重复同一个互动模式**：如果前面出现过"男主因为身份关系被看不起"，本卷不能再用同样的冲突方式
 
 【章节标题多样性要求（关键！）】
 - 禁止使用固定格式模板，每章标题应该有独特风格
@@ -690,20 +706,34 @@ class Planner:
             })
             chapter_counter += len(chapters)
             
-            # v2.2: 记录本卷摘要，供后续卷参考（防止情节循环）
+            # v2.2: 记录本卷摘要+提取关键情节元素（防止后续卷重复）
             vol_summaries = []
-            for ch in chapters[:6]:  # 最多取前6章摘要
+            vol_elements = set()
+            for ch in chapters[:6]:
                 if isinstance(ch, dict):
+                    # 提取关键词作为已使用情节元素
+                    summary = ch.get("summary", "")
+                    conflict = ch.get("conflict", "")
+                    hook = ch.get("hook", "")
+                    # 从摘要/冲突/钩子中提取关键名词短语（含身份关系类关键词）
+                    combined = f"{summary} {conflict} {hook}"
                     vol_summaries.append({
                         "ch": ch.get("number", "?"), 
-                        "summary": ch.get("summary", "")[:40]
+                        "summary": summary[:40]
                     })
+                    # 简单关键词提取：捕获身份关系、核心事件类型
+                    for kw in ["皇嫂", "嫂子", "师叔", "师父", "仇人", "父子", "师徒",
+                                "退婚", "背叛", "夺宝", "比试", "宗门", "秘境",
+                                "身份暴露", "实力暴涨", "复仇", "联姻", "刺杀"]:
+                        if kw in combined:
+                            vol_elements.add(kw)
             prev_volumes_summary.append({
                 "vol": vol_num,
                 "title": vol_title,
                 "act": vol_act,
                 "summaries": vol_summaries,
             })
+            used_plot_elements.extend(sorted(vol_elements))
 
         yield {"type": "progress", "phase": "outline", "pct": 92, "label": "组装最终文档…"}
 
