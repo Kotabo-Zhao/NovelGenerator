@@ -660,20 +660,40 @@ class Planner:
             # v2.2: 构建前卷上下文（防止故事来回循环）
             prev_context = ""
             if prev_volumes_summary:
-                prev_context = "## ⚠️ 前卷已写内容（严禁重复！故事必须向前推进）\n\n"
+                # ── 故事连续摘要（比逐章列表更有效）──
+                all_prev_summaries = []
+                for pv in prev_volumes_summary:
+                    for ps in pv['summaries']:
+                        all_prev_summaries.append(ps['summary'])
+                story_so_far = " → ".join(all_prev_summaries[:12])  # 最多12章摘要连成故事线
+                
+                prev_context = f"""## ⚠️ 前卷已写完的故事（绝对不能重复，必须在这些基础上向前发展）
+
+**故事线（已发生事件链）**: {story_so_far[:500]}
+
+### 逐章详情
+"""
                 for pv in prev_volumes_summary:
                     prev_context += f"- 第{pv['vol']}卷「{pv['title']}」({pv['act']}):\n"
                     for ps in pv['summaries']:
                         prev_context += f"  第{ps['ch']}章: {ps['summary']}\n"
-                # v2.2: 上一卷结尾钩子
+
                 if last_volume_hook:
-                    prev_context += f"\n**🔗 上一卷结尾钩子（本章必须回应）: {last_volume_hook}**\n"
-                prev_context += "\n**重要：以上内容已经写过了，本卷必须推进新剧情，不要重复前面的模式或事件！**\n"
+                    prev_context += f"\n**🔗 上一卷结尾钩子 → 这是本卷的起点，必须从这里接上**: {last_volume_hook}\n"
+                
+                # 当前故事状态
+                last_ch_summary = all_prev_summaries[-1] if all_prev_summaries else ""
+                prev_context += f"\n**📍 当前故事状态（本卷开始时）**: {last_ch_summary}\n"
+                
+                prev_context += "\n**🚫 硬规则——违反即不合格**:\n"
+                prev_context += "- 以上所有事件已经被写过了。本卷只能写这些事件之后发生的新事情\n"
+                prev_context += "- 不能重复同一类型的冲突（如\"被人看不起\"只能出现一次，之后必须是新的矛盾类型）\n"
+                prev_context += "- 不能重复同一模式（如\"获得法宝→打败敌人\"的循环必须打破，加入政治/情感/道德等其他维度）\n"
+                prev_context += "- 角色的关系必须随着剧情发展而变化，不能维持同一互动模式跨卷不变\n"
                 if used_plot_elements:
-                    prev_context += f"\n**前卷已使用的情节元素（本卷禁止再用！）: {', '.join(used_plot_elements)}**\n"
-                # v2.2: 已出场角色状态
+                    prev_context += f"- **以下元素已在前卷中使用，本卷禁止再出现: {', '.join(sorted(set(used_plot_elements))[:15])}**\n"
                 if introduced_characters:
-                    prev_context += f"\n**前卷已出场角色: {', '.join(introduced_characters)}\n这些角色已经存在于故事中，后续卷可以直接使用，不要重新介绍他们。**\n"
+                    prev_context += f"- **已出场角色: {', '.join(introduced_characters[:12])}** — 他们已存在于故事中，直接用，不要重新介绍\n"
 
             # v2.2: 需求块标注 — 根据scope过滤，开篇需求只在第1卷，结局需求只在最后卷
             distributed_req_block = ""
@@ -725,13 +745,11 @@ class Planner:
 {distributed_req_block}
 
 【防止情节重复 — 绝对最重要】
-- 这是第{vol_num}卷，前面已经有{vol_num-1}卷写过了。本卷的故事必须是全新的、在前几卷基础上递进的推进
-- 前卷已经使用的情节元素（人物关系、冲突模式、场景类型）本卷禁止重复
-- 如果前卷有"男主叫女主皇嫂"的情节，本卷绝对不能以此为核心事件，除非是矛盾升级后的质变（如关系破裂/升级而不是同样的互动模式）
-- 每章的核心事件必须与前面所有章节不同
-- 冲突层次必须升级：个人恩怨→组织对抗→世界观层面的冲突
-- 角色的能力和认知必须在本卷有实质性的进步
-- **不要重复同一个互动模式**：如果前面出现过"男主因为身份关系被看不起"，本卷不能再用同样的冲突方式
+- 上面「前卷已写完的故事」里的每件事都已经发生过了。本卷的剧情必须接在最后一件事之后，向前推进
+- 禁止重复**任何**已出现的冲突类型：如果前卷有"被看不起""被追杀""获得宝物""拜师学艺"，本卷不能再用
+- 禁止重复**关系互动模式**：如果前卷已经有A对B冷嘲热讽，本卷不能换成C对B做同样的事
+- 冲突层次必须**实质升级**：表面的敌意→背后的阴谋→势力的博弈→世界观的碰撞
+- 每个章节的核心事件必须是全新的、在前卷基础上递进的，不是换个名字再来一遍
 
 【章节标题多样性要求（关键！）】
 - 禁止使用固定格式模板，每章标题应该有独特风格
@@ -801,7 +819,7 @@ class Planner:
             vol_elements = set()
             vol_hook = None
             vol_characters = set()
-            for i, ch in enumerate(chapters[:6]):
+            for i, ch in enumerate(chapters[:10]):
                 if isinstance(ch, dict):
                     summary = ch.get("summary", "")
                     conflict = ch.get("conflict", "")
@@ -814,7 +832,11 @@ class Planner:
                     # 提取关键情节元素
                     for kw in ["皇嫂", "嫂子", "师叔", "师父", "仇人", "父子", "师徒",
                                 "退婚", "背叛", "夺宝", "比试", "宗门", "秘境",
-                                "身份暴露", "实力暴涨", "复仇", "联姻", "刺杀"]:
+                                "身份暴露", "实力暴涨", "复仇", "联姻", "刺杀",
+                                "看不起", "嘲笑", "排挤", "霸凌", "打压",
+                                "遗物", "传承", "觉醒", "血脉", "天赋",
+                                "试炼", "考核", "选拔", "排名", "挑战",
+                                "青梅竹马", "救命之恩", "破镜重圆", "宿敌", "卧底"]:
                         if kw in combined:
                             vol_elements.add(kw)
                     # 追踪出场角色
