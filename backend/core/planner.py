@@ -555,6 +555,24 @@ class Planner:
         
         character_roster += "\n**⚠️ 以上就是本书所有角色。禁止创造功能重复的新角色。需要新角色时必须给出与已有角色不同的独立身份和功能。**"
 
+        # v2.2: 世界观摘要（替代截断的 JSON dump，传给每卷）
+        _wb = wb.get('worldbuilding', {})
+        _factions = _wb.get('factions', [])
+        _faction_text = ""
+        if isinstance(_factions, list):
+            for f in _factions[:6]:
+                if isinstance(f, dict):
+                    _faction_text += f"- {f.get('name','')} ({f.get('alignment','中立')}): {f.get('description','')[:60]}\n"
+        worldbuilding_summary = f"""## 🌍 世界观
+
+- 时代: {_wb.get('era', '')}
+- 关键地点: {_wb.get('geography', '')[:200]}
+- 力量体系: {_wb.get('power_system', '')[:200]}
+- 核心冲突: {_wb.get('core_conflict', '')}
+- 势力分布:
+{_faction_text or '（待展开）'}
+"""
+
         # Phase 3a: 生成卷结构
         yield {"type": "progress", "phase": "outline", "pct": 58, "label": "规划卷结构…"}
 
@@ -570,7 +588,7 @@ class Planner:
 
         structure_prompt = f"""你是小说结构师。根据设定和用户需求规划{vol_count}卷结构。
 
-世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:300]}
+{worldbuilding_summary}
 {character_roster}
 创意: {inspiration}  风格: {style_config['name']}  总目标: {target_words}字
 {pacing_instruction}
@@ -614,6 +632,8 @@ class Planner:
         # v2.2: 跟踪前卷摘要+已用情节元素，防止跨卷重复
         prev_volumes_summary = []
         used_plot_elements = []  # 追踪已在前卷使用过的关键情节元素
+        last_volume_hook = None   # 上一卷结尾钩子
+        introduced_characters = []  # 追踪已出场的角色名
 
         for idx, vol_meta in enumerate(volumes_meta[:vol_count]):
             vol_num = vol_meta.get("vol", idx + 1)
@@ -635,9 +655,15 @@ class Planner:
                     prev_context += f"- 第{pv['vol']}卷「{pv['title']}」({pv['act']}):\n"
                     for ps in pv['summaries']:
                         prev_context += f"  第{ps['ch']}章: {ps['summary']}\n"
+                # v2.2: 上一卷结尾钩子
+                if last_volume_hook:
+                    prev_context += f"\n**🔗 上一卷结尾钩子（本章必须回应）: {last_volume_hook}**\n"
                 prev_context += "\n**重要：以上内容已经写过了，本卷必须推进新剧情，不要重复前面的模式或事件！**\n"
                 if used_plot_elements:
                     prev_context += f"\n**前卷已使用的情节元素（本卷禁止再用！）: {', '.join(used_plot_elements)}**\n"
+                # v2.2: 已出场角色状态
+                if introduced_characters:
+                    prev_context += f"\n**前卷已出场角色: {', '.join(introduced_characters)}\n这些角色已经存在于故事中，后续卷可以直接使用，不要重新介绍他们。**\n"
 
             # v2.2: 需求块标注 — 需求应分布在不同卷，不要每卷重复
             distributed_req_block = ""
@@ -654,7 +680,7 @@ class Planner:
 起始章号: {chapter_counter + 1}
 本卷进度: 第{vol_num}/{vol_count}卷
 
-世界观: {json.dumps(wb.get('worldbuilding',{}), ensure_ascii=False)[:200]}
+{worldbuilding_summary}
 {character_roster}
 风格: {style_config['name']}
 {pacing_instruction}
@@ -737,24 +763,31 @@ class Planner:
             # v2.2: 记录本卷摘要+提取关键情节元素（防止后续卷重复）
             vol_summaries = []
             vol_elements = set()
-            for ch in chapters[:6]:
+            vol_hook = None
+            vol_characters = set()
+            for i, ch in enumerate(chapters[:6]):
                 if isinstance(ch, dict):
-                    # 提取关键词作为已使用情节元素
                     summary = ch.get("summary", "")
                     conflict = ch.get("conflict", "")
                     hook = ch.get("hook", "")
-                    # 从摘要/冲突/钩子中提取关键名词短语（含身份关系类关键词）
                     combined = f"{summary} {conflict} {hook}"
                     vol_summaries.append({
                         "ch": ch.get("number", "?"), 
                         "summary": summary[:40]
                     })
-                    # 简单关键词提取：捕获身份关系、核心事件类型
+                    # 提取关键情节元素
                     for kw in ["皇嫂", "嫂子", "师叔", "师父", "仇人", "父子", "师徒",
                                 "退婚", "背叛", "夺宝", "比试", "宗门", "秘境",
                                 "身份暴露", "实力暴涨", "复仇", "联姻", "刺杀"]:
                         if kw in combined:
                             vol_elements.add(kw)
+                    # 追踪出场角色
+                    for name in (ch.get("characters", []) or []):
+                        if isinstance(name, str) and name not in ("主角", "配角", "反派"):
+                            vol_characters.add(name)
+                    # 追踪最后一章的钩子
+                    if i == len(chapters[:6]) - 1 or ch.get("hook"):
+                        vol_hook = hook if hook else vol_hook
             prev_volumes_summary.append({
                 "vol": vol_num,
                 "title": vol_title,
@@ -762,6 +795,9 @@ class Planner:
                 "summaries": vol_summaries,
             })
             used_plot_elements.extend(sorted(vol_elements))
+            if vol_hook:
+                last_volume_hook = vol_hook
+            introduced_characters.extend(sorted(vol_characters))
 
         yield {"type": "progress", "phase": "outline", "pct": 92, "label": "组装最终文档…"}
 
