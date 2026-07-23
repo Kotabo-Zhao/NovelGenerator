@@ -534,8 +534,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     </template>
 
     <!-- ====== Write ====== -->
-    <template v-if="currentView==='write' && activeNovel">
-      <div class="reading-container">
+    <template v-if="currentView==='write'">
+      <div v-if="!activeNovel" style="text-align:center;padding:80px 20px;color:var(--text3)">
+        <div style="font-size:48px;margin-bottom:16px">📝</div>
+        <div style="font-size:16px;margin-bottom:8px">正在加载小说数据…</div>
+        <div style="font-size:13px">如果长时间无反应，请返回书架重新打开</div>
+        <button class="btn btn-ghost mt-16" @click="currentView='shelf';loadShelf()">← 返回书架</button>
+      </div>
+      <div v-else class="reading-container">
 
         <div class="flex justify-between items-center mb-12">
           <div>
@@ -1243,7 +1249,19 @@ createApp({
       } catch(e){ error.value=e.message; }
       loading.saving=false;
     }
-    async function confirmAndStart() { await savePlan(); if(!error.value) startWriting(planResult.value.title); }
+    async function confirmAndStart() {
+      await savePlan();
+      if (!error.value && planResult.value) {
+        startWriting(planResult.value.title);
+        // 安全兜底：如果 300ms 后 activeNovel 仍未设置，回退
+        setTimeout(() => {
+          if (currentView.value === 'write' && !activeNovel.value) {
+            currentView.value = 'create';
+            reportError('无法进入写作页面，请从书架重新打开小说', '跳转失败');
+          }
+        }, 300);
+      }
+    }
 
     function applyCustomStyle() { const d=customStyleDesc.value.trim(); if(d) form.style='自定义: '+d; }
     async function loadStyleParams() { try { const r=await fetch(API+'/api/styles/params'); const d=await r.json(); styleParams.value=d.params; } catch(e){ console.error(e); } }
