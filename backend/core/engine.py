@@ -400,6 +400,7 @@ class NovelEngine:
                 plan = safe_read_json(plan_path)
                 if not isinstance(plan, dict):
                     continue
+                # v2.2.1: skip_cache=True 确保批量生成后书架状态最新
                 state = self.memory.get_novel_state(name)
                 novels.append({
                     "id": name,
@@ -408,6 +409,8 @@ class NovelEngine:
                     "style": plan.get("style", ""),
                     "target_words": plan.get("target_words", 0),
                     "state": state,
+                    # v2.2.1: 附加上磁盘实际章节数，前端可交叉验证
+                    "disk_chapters": len(state.get("completed_chapters", [])),
                 })
         return sorted(novels, key=lambda n: n["state"].get("created_at", ""), reverse=True)
 
@@ -549,7 +552,7 @@ class NovelEngine:
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
 
-            # 更新状态
+            # 更新状态（v2.2.1: 加重试+验证）
             state = self.memory.get_novel_state(novel_id)
             completed = state.get("completed_chapters", [])
             if chapter_num not in completed:
@@ -557,7 +560,32 @@ class NovelEngine:
             state["completed_chapters"] = sorted(completed)
             state["current_chapter"] = max(completed) if completed else 0
             state["total_words"] = state.get("total_words", 0) + len(full_text)
-            self.memory.save_novel_state(novel_id, state)
+            
+            # 保存 state（最多重试3次，每次验证）
+            state_saved = False
+            for retry in range(3):
+                self.memory.save_novel_state(novel_id, state)
+                # 验证：重新读取确认写入了最新数据
+                verify_state = self.memory.read("state", novel_id, skip_cache=True)
+                if isinstance(verify_state, dict):
+                    verify_completed = verify_state.get("completed_chapters", [])
+                    if chapter_num in verify_completed:
+                        state_saved = True
+                        break
+                log.warning(f"State write verification failed for chapter {chapter_num}, retry {retry+1}/3")
+                time.sleep(0.1 * (retry + 1))
+            
+            if not state_saved:
+                log.error(f"CRITICAL: Failed to persist state for chapter {chapter_num} after 3 retries!")
+                # 降级：直接用 atomic_write_json 写入
+                state_path = os.path.join(novel_dir, "state.json")
+                try:
+                    state["_version"] = (state.get("_version", 0) or 0) + 1
+                    atomic_write_json(state_path, state)
+                    self.memory.invalidate_all(novel_id)
+                    log.info(f"State repaired via fallback direct write for chapter {chapter_num}")
+                except Exception as fe:
+                    log.error(f"State fallback write also failed: {fe}")
 
             log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
 

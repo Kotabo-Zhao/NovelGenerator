@@ -882,6 +882,37 @@ async def verify_and_fix_loop(novel_id: str):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# ── v2.2.1: State 修复与容灾 ──
+
+@app.post("/api/repair-states")
+async def repair_all_states():
+    """修复所有小说的 state.json 一致性（以磁盘章节文件为准）"""
+    results = engine.memory.repair_all_states()
+    return {"repaired": len(results), "details": results}
+
+
+@app.post("/api/novels/{novel_id}/repair-state")
+async def repair_state(novel_id: str):
+    """修复指定小说的 state.json"""
+    result = engine.memory.repair_state(novel_id)
+    return result
+
+
+@app.on_event("startup")
+async def startup_repair():
+    """服务器启动时自动扫描并修复 state 不一致"""
+    try:
+        results = engine.memory.repair_all_states()
+        if results:
+            log.warning(f"Startup repair: fixed state for {len(results)} novel(s)")
+            for r in results:
+                log.warning(f"  {r['novel_id']}: added chapters {r['added']}")
+        else:
+            log.info("Startup repair: all states consistent")
+    except Exception as e:
+        log.error(f"Startup repair failed: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
     log.info(f"Starting NovelGenerator API on {HOST}:{PORT}")

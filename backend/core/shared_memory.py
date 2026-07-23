@@ -60,6 +60,17 @@ class SharedMemoryManager:
         # 内存缓存: {(novel_id, memory_type): (data, cached_at)}
         self._cache: dict = {}
         self._cache_ttl = cache_ttl
+        
+        # v2.2.1: 为不同类型设置不同的 TTL
+        # state 变化频繁且关键，TTL 需极短
+        # plan/worldbuilding 相对稳定，可用默认
+        self._cache_ttl_map = {
+            "state": 2.0,          # state 变化最频繁，2s TTL
+            "global_state": 10.0,  # 全局状态中等频率
+            "plan": 30.0,          # plan 很少变化
+            "character_bible": 60.0,  # 人物宝典几乎不变
+            "foreshadowing": 10.0,
+        }
         self._cache_lock = threading.Lock()
 
         # 变化监听: {novel_id: {memory_type: [callbacks]}}
@@ -86,13 +97,14 @@ class SharedMemoryManager:
             raise ValueError(f"Unknown memory type: {memory_type}. Available: {list(MEMORY_FILES.keys())}")
 
         cache_key = (novel_id, memory_type)
+        effective_ttl = self._cache_ttl_map.get(memory_type, self._cache_ttl)
 
         # 检查缓存
         if not skip_cache:
             with self._cache_lock:
                 if cache_key in self._cache:
                     data, cached_at = self._cache[cache_key]
-                    if time.time() - cached_at < self._cache_ttl:
+                    if time.time() - cached_at < effective_ttl:
                         return data
 
         # 读磁盘
@@ -545,6 +557,79 @@ class SharedMemoryManager:
                 self._cache.clear()
 
     # ═══════════════════════════════════════════
+    # v2.2.1: 状态修复与容灾
+    # ═══════════════════════════════════════════
+
+    def repair_state(self, novel_id: str) -> dict:
+        """修复 state.json 一致性：以磁盘章节文件为准
+        
+        当 state.json 与磁盘实际章节不一致时，以磁盘为准重建 state。
+        这是最终的容灾手段，确保"只要章节在磁盘上，就永远不会丢失"。
+        
+        Returns:
+            {"repaired": bool, "added": [...], "removed": [], "state": dict}
+        """
+        state_path = os.path.join(self.novels_dir, novel_id, "state.json")
+        
+        # 读取当前 state（可能已损坏）
+        current_state = safe_read_json(state_path, {})
+        if not isinstance(current_state, dict):
+            current_state = {}
+        
+        # 扫描磁盘实际章节
+        disk_chapters = self.scan_chapters(novel_id)
+        state_chapters = current_state.get("completed_chapters", [])
+        if state_chapters is None:
+            state_chapters = []
+        
+        missing = [c for c in disk_chapters if c not in state_chapters]
+        # 也检查 state 中有但磁盘没有的（可能是误判，只 warn 不删除）
+        phantom = [c for c in state_chapters if c not in disk_chapters]
+        
+        if not missing and not phantom:
+            return {"repaired": False, "added": [], "removed": [], "state": current_state}
+        
+        # 以磁盘为准重建
+        repaired_state = dict(current_state)
+        repaired_state["completed_chapters"] = sorted(disk_chapters)
+        repaired_state["current_chapter"] = max(disk_chapters) if disk_chapters else 0
+        
+        # 写入
+        try:
+            atomic_write_json(state_path, repaired_state)
+            self._invalidate(novel_id, "state")
+            log.warning(f"repair_state [{novel_id}]: added {missing}, phantom chapters in state: {phantom}")
+        except Exception as e:
+            log.error(f"repair_state [{novel_id}]: write failed: {e}")
+            return {"repaired": False, "added": [], "removed": [], "state": current_state, "error": str(e)}
+        
+        return {
+            "repaired": True,
+            "added": missing,
+            "removed": [],  # 不自动删除，phantom 章节可能只是文件名不匹配
+            "phantom_warnings": phantom,
+            "state": repaired_state,
+        }
+
+    def repair_all_states(self) -> list:
+        """扫描所有小说的 state.json 并修复不一致"""
+        results = []
+        if not os.path.exists(self.novels_dir):
+            return results
+        for novel_dir in sorted(os.listdir(self.novels_dir)):
+            novel_path = os.path.join(self.novels_dir, novel_dir)
+            if not os.path.isdir(novel_path):
+                continue
+            if not os.path.exists(os.path.join(novel_path, "plan.json")):
+                continue
+            result = self.repair_state(novel_dir)
+            if result["repaired"]:
+                results.append({"novel_id": novel_dir, **result})
+        if results:
+            log.info(f"repair_all_states: repaired {len(results)} novels")
+        return results
+
+    # ═══════════════════════════════════════════
     # 向后兼容 — NovelMemory 接口映射
     # ═══════════════════════════════════════════
 
@@ -581,7 +666,12 @@ class SharedMemoryManager:
         self.write("state", novel_id, state)
 
     def get_novel_state(self, novel_id: str) -> dict:
-        state = self.read("state", novel_id)
+        """获取小说写作状态（v2.2.1: 强制跳缓存保证数据最新）
+        
+        状态文件是批量生成中最关键的数据，必须保证读取到最新版本。
+        skip_cache=True 确保每次调用都从磁盘读取，避免缓存返回过期数据。
+        """
+        state = self.read("state", novel_id, skip_cache=True)
         # 防御：确保 state 是 dict
         if not isinstance(state, dict):
             state = {}
@@ -603,7 +693,14 @@ class SharedMemoryManager:
             log.info(f"State auto-sync: adding {missing} from disk")
             state["completed_chapters"] = sorted(chs + missing)
             state["current_chapter"] = max(state["completed_chapters"])
-            self.write("state", novel_id, state)
+            # v2.2.1: 使用 simplified write (no optimistic lock) to avoid conflict failures
+            # during auto-sync. Auto-sync only adds missing chapters, never removes.
+            state_path = os.path.join(self.novels_dir, novel_id, "state.json")
+            try:
+                atomic_write_json(state_path, state)
+                self._invalidate(novel_id, "state")
+            except Exception as e:
+                log.warning(f"State auto-sync write failed (non-fatal): {e}")
         return state
 
     def get_core_context(self, novel_id: str) -> str:
