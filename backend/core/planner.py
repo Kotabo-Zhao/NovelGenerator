@@ -519,28 +519,29 @@ class Planner:
 
         yield {"type": "progress", "phase": "characters", "pct": 55, "label": "角色设计完成 ✓"}
 
+        # v2.2: 角色数量校验 — LLM 可能忽略约束
+        supp_count = len(chars.get('characters', {}).get('supporting', []) or [])
+        antag_count = len(chars.get('characters', {}).get('antagonist', []) or [])
+        protag_name = chars.get('characters', {}).get('protagonist', {}).get('name', '')
+        if not protag_name or protag_name in ('主角', '待定', ''):
+            yield {"type": "warning", "message": "主角未设定真实姓名，LLM可能生成了占位符"}
+        if supp_count < 2:
+            yield {"type": "warning", "message": f"配角数量不足({supp_count}个，建议2-4个)，大纲可能缺少角色互动"}
+
         # ── Phase 3: 大纲 (55% → 95%) ──
         # ── Phase 3: 大纲（分卷生成，每卷独立 LLM 调用，杜绝截断）──
-        # v2.2: 按字数+节奏动态计算章节数
-        # 快节奏：少章多字，每章信息密度高，冲突集中
-        # 正常节奏：多章均衡，铺陈充分，信息密度适中
+        # v2.2: 固定每章2000字，按总字数反推章数。章节数是硬约束，LLM不能随意增减。
+        CHAPTER_WORDS = 2000
         tw = target_words
+        total_chapters_target = max(8, tw // CHAPTER_WORDS)  # 最少8章
+        # 节奏只影响卷数，不影响章数：快节奏少卷多章/卷，正常节奏多卷少章/卷
         if normal_pacing:
-            # 正常节奏：更短章节，更丰富的细节展开
-            if tw <= 10000:    chapter_words, max_ch = 1000, 12
-            elif tw <= 50000:  chapter_words, max_ch = 1500, 35
-            elif tw <= 150000: chapter_words, max_ch = 2000, 55
-            else:              chapter_words, max_ch = 2000, 70   # 20W-30W
+            vol_count = max(2, min(6, total_chapters_target // 6))   # 正常:每卷6章左右
         else:
-            # 默认快节奏：更长章节，少章节高密度，拒绝灌水
-            if tw <= 10000:    chapter_words, max_ch = 1500, 10
-            elif tw <= 50000:  chapter_words, max_ch = 2500, 20
-            elif tw <= 150000: chapter_words, max_ch = 3000, 40
-            else:              chapter_words, max_ch = 3000, 60   # 20W-30W
-        
-        estimated_chapters = min(max_ch, max(8, tw // chapter_words))
-        vol_count = max(2, min(5, estimated_chapters // 8))   # 卷数控制在2-5卷
-        ch_per_vol = max(5, min(12, estimated_chapters // vol_count))
+            vol_count = max(2, min(5, total_chapters_target // 10))  # 快节奏:每卷10章
+        ch_per_vol = max(3, (total_chapters_target + vol_count - 1) // vol_count)  # 向上取整均分
+        # 章节总数硬约束
+        chapter_words = CHAPTER_WORDS
 
         # v2.2: 构建角色花名册 — 每卷生成时注入，防止重新发明角色
         protagonist = chars.get('characters', {}).get('protagonist', {})
@@ -588,9 +589,11 @@ class Planner:
 
         structure_prompt = f"""你是小说结构师。根据设定和用户需求规划{vol_count}卷结构。
 
+**硬约束: {total_chapters_target}章（{tw}字 ÷ {CHAPTER_WORDS}字/章），卷数{vol_count}卷，每卷不超过{ch_per_vol}章。不准超！**
+
 {worldbuilding_summary}
 {character_roster}
-创意: {inspiration}  风格: {style_config['name']}  总目标: {target_words}字
+创意: {inspiration}  风格: {style_config['name']}
 {pacing_instruction}
 {outline_requirements_block}
 {constraints_note}
@@ -645,7 +648,10 @@ class Planner:
             vol_act = vol_meta.get("act", "")
             vol_theme = vol_meta.get("theme", "")
             vol_function = vol_meta.get("act_function", "")
-            n_ch = min(10, vol_meta.get("ch_count", ch_per_vol))  # 单卷上限10章
+            n_ch = min(ch_per_vol, vol_meta.get("ch_count", ch_per_vol))  # 绝对值不过每卷预算
+            # v2.2: 剩余预算约束，绝不超过总目标
+            remaining = total_chapters_target - chapter_counter
+            n_ch = min(n_ch, remaining) if remaining > 0 else n_ch
 
             pct = 58 + int(34 * (idx + 1) / vol_count)
             yield {"type": "progress", "phase": "outline", "pct": pct,
@@ -709,6 +715,7 @@ class Planner:
 卷信息: act={vol_act}, theme={vol_theme}, function={vol_function}
 起始章号: {chapter_counter + 1}
 本卷进度: 第{vol_num}/{vol_count}卷
+**硬约束: 本卷刚好生成{n_ch}章，全书共{total_chapters_target}章，已用{chapter_counter}章，剩余{total_chapters_target - chapter_counter}章**
 
 {worldbuilding_summary}
 {character_roster}
@@ -777,8 +784,7 @@ class Planner:
                           "target_words": chapter_words}
                     chapters[j] = ch
                 ch["number"] = chapter_counter + j + 1
-                if "target_words" not in ch:
-                    ch["target_words"] = chapter_words
+                ch["target_words"] = chapter_words  # 强制覆盖，LLM 不能改字数
 
             all_volumes.append({
                 "number": vol_num,
