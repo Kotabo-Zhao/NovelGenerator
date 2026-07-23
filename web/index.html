@@ -879,27 +879,45 @@ createApp({
         if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
       }
       loading.shelf = false;
-      // 恢复上次session
+      // 恢复上次session — 两步兜底：
+      //   1) 书架里找（最优，带完整 state）
+      //   2) 书架没找到/加载失败 → 直接用 sessionStorage 的 ID 去 API 拿
       const savedId = sessionStorage.getItem('activeNovelId');
-      if (savedId && novels.value.length > 0) {
-        const found = novels.value.find(n => n.id === savedId);
-        if (found) {
-          activeNovel.value = found;
-          fetch(API+'/api/novels/'+encodeURIComponent(savedId))
-            .then(r=>r.json()).then(d=>{planResult.value=d.novel;}).catch(()=>{});
-          const savedView = sessionStorage.getItem('lastView');
-          if (savedView && ['create','write'].includes(savedView)) {
-            currentView.value = savedView;
-            const done = (found.state.completed_chapters||[]);
-            const total = found.state.total_chapters||1;
-            let next = 1; while(next<=total && done.includes(next)) next++;
-            writing.chapter = Math.min(next, total);
-            if (done.includes(writing.chapter)) {
-              fetch(API+'/api/novels/'+encodeURIComponent(savedId)+'/chapters/'+writing.chapter)
-                .then(r=>r.ok?r.json():null)
-                .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
-                .catch(()=>{});
+      const savedView = sessionStorage.getItem('lastView');
+      if (savedId) {
+        let novel = novels.value.find(n => n.id === savedId);
+        if (novel) {
+          // 书架里找到了 → 直接恢复
+          _restoreSession(novel, savedView);
+        } else if (novels.value.length > 0) {
+          // 书架有数据但没找到 → 可能是 ID 不匹配，静默忽略
+          console.warn('Saved novel not in shelf, clearing session');
+          sessionStorage.removeItem('activeNovelId');
+          sessionStorage.removeItem('lastView');
+        } else {
+          // 书架为空（API 挂了）→ 兜底：直接 fetch 小说数据
+          console.log('Shelf empty, fallback fetch for session restore');
+          try {
+            const r = await fetch(API+'/api/novels/'+encodeURIComponent(savedId));
+            if (r.ok) {
+              const d = await r.json();
+              if (d.novel) {
+                // 用 API 返回的数据构造最小 novel 对象
+                const st = d.novel.state || {};
+                novel = {
+                  id: d.novel.title || savedId,
+                  title: d.novel.title || savedId,
+                  genre: d.novel.genre || '',
+                  style: d.novel.style || '',
+                  state: { total_chapters: st.total_chapters||1, completed_chapters: st.completed_chapters||[], current_chapter: st.current_chapter||0 }
+                };
+                novels.value = [novel]; // 顺手填充书架
+                planResult.value = d.novel;
+                _restoreSession(novel, savedView, true);
+              }
             }
+          } catch(e) {
+            console.warn('Fallback session restore failed:', e.message);
           }
         }
       }
@@ -919,6 +937,26 @@ createApp({
     function toggleUIStyle() { uiStyle.value = uiStyle.value === 'macOS' ? 'iOS' : 'macOS'; applyAppearance(); }
 
     // 刷新恢复：保存当前小说和视图到 sessionStorage
+    function _restoreSession(novel, savedView, skipPlanFetch) {
+      activeNovel.value = novel;
+      if (!skipPlanFetch) {
+        fetch(API+'/api/novels/'+encodeURIComponent(novel.id))
+          .then(r=>r.json()).then(d=>{planResult.value=d.novel;}).catch(()=>{});
+      }
+      if (savedView && ['create','write'].includes(savedView)) {
+        currentView.value = savedView;
+        const done = (novel.state.completed_chapters||[]);
+        const total = novel.state.total_chapters||1;
+        let next = 1; while(next<=total && done.includes(next)) next++;
+        writing.chapter = Math.min(next, total);
+        if (done.includes(writing.chapter)) {
+          fetch(API+'/api/novels/'+encodeURIComponent(novel.id)+'/chapters/'+writing.chapter)
+            .then(r=>r.ok?r.json():null)
+            .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
+            .catch(()=>{});
+        }
+      }
+    }
     function _saveSession() {
       if (activeNovel.value) {
         sessionStorage.setItem('activeNovelId', activeNovel.value.id);
@@ -1226,12 +1264,12 @@ createApp({
 
     function addChapter(vol) {
       const max=Math.max(0,...vol.chapters.map(c=>c.number||0));
-      vol.chapters.push({number:max+1,title:'新章节',summary:'待填写',emotion_curve:'平稳→紧张',characters:['主角'],hook:'悬念',target_words:3000});
+      vol.chapters.push({number:max+1,title:'新章节',summary:'待填写',emotion_curve:'平稳→紧张',characters:['主角'],hook:'悬念',target_words:1500});
       renumberChapters();
     }
     function addVolume() {
       const vols=planResult.value.outline.volumes;
-      vols.push({number:(Math.max(0,...vols.map(v=>v.number||0))+1),title:'新卷',theme:'待填写',chapters:[{number:1,title:'第一章',summary:'待填写',emotion_curve:'平稳→紧张',characters:['主角'],hook:'悬念',target_words:3000}]});
+      vols.push({number:(Math.max(0,...vols.map(v=>v.number||0))+1),title:'新卷',theme:'待填写',chapters:[{number:1,title:'第一章',summary:'待填写',emotion_curve:'平稳→紧张',characters:['主角'],hook:'悬念',target_words:1500}]});
       renumberChapters();
     }
     function removeVolume(vi) { planResult.value.outline.volumes.splice(vi,1); renumberChapters(); }

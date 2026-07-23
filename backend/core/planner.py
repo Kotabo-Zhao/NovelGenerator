@@ -217,7 +217,7 @@ class Planner:
             ],
             "characters": ["出场角色"],
             "hook": "本章结尾钩子（余韵态具体内容）",
-            "target_words": 3000
+            "target_words": 1500
           }}
         ]
       }}
@@ -265,7 +265,7 @@ class Planner:
                 for ch in vol.get("chapters", []):
                     if isinstance(ch, dict):
                         ch["number"] = int(ch.get("number", 1))
-                        ch["target_words"] = int(ch.get("target_words", 3000))
+                        ch["target_words"] = int(ch.get("target_words", 1500))
             if isinstance(plan.get("outline"), dict):
                 plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
             plan["target_words"] = int(plan.get("target_words", 0))
@@ -417,8 +417,8 @@ class Planner:
 
         # ── Phase 3: 大纲 (55% → 95%) ──
         # ── Phase 3: 大纲（分卷生成，每卷独立 LLM 调用，杜绝截断）──
-        # 每章字数根据总目标动态调整：短篇(≤5万字)以2000字/章为主，中篇2000-3000，长篇3000-5000
-        chapter_words = 2000 if target_words <= 50000 else (3000 if target_words <= 200000 else 4000)
+        # 每章字数根据总目标动态调整：短篇800字，中篇1000-1500，长篇1500
+        chapter_words = 800 if target_words <= 50000 else (1200 if target_words <= 200000 else 1500)
         estimated_chapters = min(60, max(8, target_words // chapter_words))
         vol_count = max(2, estimated_chapters // 8)
         ch_per_vol = max(5, min(12, estimated_chapters // vol_count))
@@ -586,7 +586,7 @@ class Planner:
             for ch in vol.get("chapters", []):
                 if isinstance(ch, dict):
                     ch["number"] = int(ch.get("number", 1))
-                    ch["target_words"] = int(ch.get("target_words", 3000))
+                    ch["target_words"] = int(ch.get("target_words", 1500))
         plan["outline"]["total_chapters"] = chapter_counter
         plan["target_words"] = int(plan.get("target_words", 0))
 
@@ -888,7 +888,7 @@ class Planner:
                 counter += 1
                 ch["number"] = counter
                 if "target_words" not in ch:
-                    ch["target_words"] = 3000
+                    ch["target_words"] = 1500
                 if "emotion_curve" not in ch:
                     ch["emotion_curve"] = "平稳→起伏→悬念"
                 if "characters" not in ch:
@@ -997,7 +997,7 @@ class Planner:
                     "conflict": "",
                     "characters": ["主角"],
                     "hook": "",
-                    "target_words": 3000,
+                    "target_words": 1500,
                 }
                 current_vol["chapters"].append(ch)
         

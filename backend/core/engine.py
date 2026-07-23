@@ -169,7 +169,7 @@ class NovelEngine:
 
 【重要】只修改大纲，保留世界观和角色不变。只输出JSON，且只包含"outline"字段。每章摘要控制在30字内。
 ```json
-{{"outline":{{"volumes":[{{"number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"","chapters":[{{"number":1,"title":"","summary":"","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":3000}}]}}],"total_chapters":0,"three_act_map":"","rhythm_notes":""}}}}
+{{"outline":{{"volumes":[{{"number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"","chapters":[{{"number":1,"title":"","summary":"","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":1500}}]}}],"total_chapters":0,"three_act_map":"","rhythm_notes":""}}}}
 ```"""
         
         yield {"type": "progress", "phase": "outline", "pct": 30, "label": "重新规划章节…"}
@@ -269,7 +269,7 @@ class NovelEngine:
             for ch in vol.get("chapters", []):
                 if isinstance(ch, dict):
                     ch["number"] = int(ch.get("number", 1))
-                    ch["target_words"] = int(ch.get("target_words", 3000))
+                    ch["target_words"] = int(ch.get("target_words", config.DEFAULT_CHAPTER_WORDS))
         if isinstance(plan_data.get("outline"), dict):
             plan_data["outline"]["total_chapters"] = int(plan_data.get("outline", {}).get("total_chapters", 0))
         else:

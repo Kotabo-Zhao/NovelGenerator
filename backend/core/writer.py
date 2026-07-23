@@ -167,7 +167,7 @@ class Writer:
         context: str,
         genre: str = "玄幻",
         style: str = "热血爽文",
-        target_words: int = 3000,
+        target_words: int = 1500,
         writing_mode: str = "webnovel",
     ) -> AsyncGenerator[str, None]:
         """流式生成章节正文
