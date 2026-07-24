@@ -886,6 +886,84 @@ async def verify_and_fix_loop(novel_id: str):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# ── v2.3: 剧情图谱 & 弧规划 & 校准 API ──
+
+def _read_novel_file(novel_id: str, filename: str) -> dict:
+    """安全读取小说目录下的 JSON 文件"""
+    novel_dir = engine.memory.get_novel_dir(novel_id)
+    path = os.path.join(novel_dir, filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"{filename} 不存在，请先生成大纲")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取 {filename} 失败: {str(e)}")
+
+
+@app.get("/api/novels/{novel_id}/storygraph")
+async def get_storygraph(novel_id: str):
+    """获取剧情图谱数据（剧情线/伏笔账本/角色快照/因果链）"""
+    data = _read_novel_file(novel_id, "storygraph.json")
+    return {
+        "novel_id": novel_id,
+        "plot_threads": data.get("plot_threads", {}),
+        "foreshadow_ledger": data.get("foreshadow_ledger", {}),
+        "char_snapshots": data.get("char_snapshots", {}),
+        "causal_links": data.get("causal_links", []),
+        "version": data.get("version", 0),
+        "last_updated_chapter": data.get("last_updated_chapter", 0),
+        # 计算摘要统计
+        "stats": {
+            "total_threads": len(data.get("plot_threads", {})),
+            "active_threads": sum(1 for t in data.get("plot_threads", {}).values() if t.get("status") in ("active", "advancing", "climax")),
+            "total_foreshadows": len(data.get("foreshadow_ledger", {})),
+            "unresolved_foreshadows": sum(1 for f in data.get("foreshadow_ledger", {}).values() if f.get("status") in ("planted", "hinted")),
+            "resolved_foreshadows": sum(1 for f in data.get("foreshadow_ledger", {}).values() if f.get("status") == "resolved"),
+            "tracked_characters": len(data.get("char_snapshots", {})),
+            "causal_links": len(data.get("causal_links", [])),
+        }
+    }
+
+
+@app.get("/api/novels/{novel_id}/arcs")
+async def get_arcs(novel_id: str):
+    """获取剧情弧规划数据"""
+    data = _read_novel_file(novel_id, "arcplans.json")
+    arcs = data.get("arcs", [])
+    # 计算当前弧
+    state = engine.memory.get_novel_state(novel_id)
+    current_chapter = state.get("completed_chapters", 0) + 1
+    current_arc = None
+    for arc in arcs:
+        ch_list = arc.get("chapters", [])
+        if ch_list and current_chapter in ch_list:
+            pos = ch_list.index(current_chapter) + 1
+            current_arc = {**arc, "current_position": pos, "total_in_arc": len(ch_list)}
+            break
+    return {
+        "novel_id": novel_id,
+        "arcs": arcs,
+        "current_chapter": current_chapter,
+        "current_arc": current_arc,
+        "stats": {
+            "total_arcs": len(arcs),
+            "completed_arcs": sum(1 for a in arcs if a.get("end_chapter", 0) < current_chapter),
+            "type_distribution": {
+                t: sum(1 for a in arcs if a.get("type") == t)
+                for t in ["setup", "rising", "climax", "resolution"]
+            },
+        }
+    }
+
+
+@app.get("/api/novels/{novel_id}/calibration")
+async def get_calibration(novel_id: str):
+    """获取最新的剧情校准报告"""
+    data = _read_novel_file(novel_id, "calibration.json")
+    return data
+
+
 # ── v2.2.1: State 修复与容灾 ──
 
 @app.post("/api/repair-states")
