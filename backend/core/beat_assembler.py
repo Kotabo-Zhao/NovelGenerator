@@ -64,6 +64,10 @@ class BeatAssembler:
         # ── 步骤4: 格式化 ──
         formatted = self._format_chapter(assembled, chapter_title, chapter_num)
         
+        # ── 步骤4.5: 句子级去重（装配后扫一遍，去掉相邻重复句）──
+        assembled = self._deduplicate_sentences(assembled)
+        formatted = self._format_chapter(assembled, chapter_title, chapter_num)
+        
         # ── 步骤5: 质量评估 ──
         quality = self._evaluate(assembled)
         
@@ -257,6 +261,27 @@ class BeatAssembler:
                     pass
         
         return issues
+    
+    def _deduplicate_sentences(self, text: str) -> str:
+        """去掉相邻重复句（装配后清理beat拼接处的重复）"""
+        sentences = re.split(r'([。！？\n]+)', text)
+        cleaned = []
+        prev_content = None
+        i = 0
+        while i < len(sentences):
+            current = sentences[i].strip()
+            sep = sentences[i+1] if i+1 < len(sentences) else ''
+            if current and current == prev_content:
+                if sep:
+                    cleaned.append(sep)
+            else:
+                cleaned.append(sentences[i])
+                if sep:
+                    cleaned.append(sep)
+                if current:
+                    prev_content = current
+            i += 2 if i+1 < len(sentences) else 1
+        return ''.join(cleaned)
     
     def _format_chapter(self, text: str, title: str, ch_num: int) -> str:
         """格式化章节文本"""

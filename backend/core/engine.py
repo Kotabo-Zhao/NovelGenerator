@@ -753,7 +753,7 @@ class NovelEngine:
                 
                 # 保存
                 atomic_write_json(sg_path, sg.to_dict())
-                self.memory.invalidate("storygraph", novel_id)
+                self.memory.invalidate_all(novel_id)
                 log.info(f"StoryGraph updated after chapter {chapter_num}")
             except Exception as e:
                 log.warning(f"StoryGraph update skipped: {e}")
@@ -1061,7 +1061,7 @@ class NovelEngine:
                 )
                 apply_extraction(sg, extract_result, chapter_num)
                 atomic_write_json(sg_path, sg.to_dict())
-                self.memory.invalidate("storygraph", novel_id)
+                self.memory.invalidate_all(novel_id)
             except Exception as e:
                 log.warning(f"StoryGraph update skipped in atomic: {e}")
             
