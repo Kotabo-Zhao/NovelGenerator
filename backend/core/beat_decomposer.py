@@ -34,91 +34,101 @@ BEAT_TEMPLATES = {
         "goal": "立刻建立冲突或悬念，让读者想知道'然后呢'",
         "emotion_start": "紧张/好奇",
         "emotion_end": "好奇/紧张",
-        "min_words": 80,
-        "max_words": 250,
+        "min_words": 120,
+        "max_words": 300,
         "temperature": 0.9,
         "hook_required": False,
+        "paragraph_style": "节奏型：1-2句短句开场 → 中间2-3句展开 → 1句收束。每段2-3句，不要单句成段。",
     },
     "obstacle_build": {
         "goal": "堆叠障碍，制造'为什么这么难/这么不公平'的感觉",
         "emotion_start": "压抑/挫折",
         "emotion_end": "压抑/期待反弹",
-        "min_words": 150,
-        "max_words": 350,
+        "min_words": 180,
+        "max_words": 400,
         "temperature": 0.85,
         "hook_required": False,
+        "paragraph_style": "描写型：用具体的环境/身体感受来写压抑，不要用抽象形容词。每段≥2句。用1-2句超过25字的长句来营造沉重感。",
     },
     "conflict_ignition": {
         "goal": "核心矛盾在此爆发，正面对决/价值观碰撞/意志对抗",
         "emotion_start": "紧张/对抗",
         "emotion_end": "爆发/震撼",
         "min_words": 200,
-        "max_words": 400,
+        "max_words": 450,
         "temperature": 0.9,
         "hook_required": False,
+        "paragraph_style": "冲击型：允许30%短句制造紧张，但必须穿插≥20字的长句做锚点。每3句短句后必须有1句描写/感受的长句。禁止连续4句短句。",
     },
     "turning_point": {
         "goal": "意外的转折——预期违背/身份揭露/新信息改变一切",
         "emotion_start": "意外/困惑",
         "emotion_end": "恍然/震惊",
-        "min_words": 120,
-        "max_words": 300,
+        "min_words": 150,
+        "max_words": 350,
         "temperature": 0.95,
         "hook_required": False,
+        "paragraph_style": "揭晓型：先用2-3句铺垫当前的认知 → 1-2句短句炸开转折 → 再用3-4句展开新认知的含义。禁止一句话一个段落。",
     },
     "character_highlight": {
         "goal": "通过一个选择或行动，展示角色最核心的特质",
         "emotion_start": "共鸣/欣赏",
         "emotion_end": "共鸣/记忆",
-        "min_words": 100,
-        "max_words": 250,
+        "min_words": 180,
+        "max_words": 350,
         "temperature": 0.85,
         "hook_required": False,
+        "paragraph_style": "描写型：用具体的行为/选择/细节来展示性格。每段2-4句。允许内心独白（1-2句），但不能全是内心戏。禁止全短句。",
     },
     "climax_release": {
         "goal": "爽感顶点——打脸/碾压/告白/胜利，给读者释放感",
         "emotion_start": "高潮/释放",
         "emotion_end": "满足/余韵",
-        "min_words": 150,
-        "max_words": 350,
+        "min_words": 180,
+        "max_words": 400,
         "temperature": 0.85,
         "hook_required": False,
+        "paragraph_style": "释放型：先短句制造冲击（占比≤40%）→ 中段用描写+反应展开 → 结尾1-2句长句收束。短句不超过连续的3句。",
     },
     "closing_hook": {
         "goal": "在最高点截断——危机悬停/反转预告/打脸前置/秘密揭晓",
         "emotion_start": "满足/好奇",
         "emotion_end": "强烈好奇/必看",
-        "min_words": 60,
-        "max_words": 150,
+        "min_words": 80,
+        "max_words": 180,
         "temperature": 0.9,
         "hook_required": True,
+        "paragraph_style": "钩子型：先1-2段交代当前状态（每段≥2句），最后1-2句短句做钩子收尾。钩子前面的内容不能也是短句。",
     },
     "emotion_settle": {
-        "goal": "战斗/冲突后的缓冲——一句环境、一个日常细节、一段沉默",
+        "goal": "战斗/冲突后的缓冲——环境描写、日常细节、内心反思",
         "emotion_start": "疲惫/释放",
         "emotion_end": "平静/反思",
-        "min_words": 80,
-        "max_words": 200,
+        "min_words": 150,
+        "max_words": 300,
         "temperature": 0.75,
         "hook_required": False,
+        "paragraph_style": "沉浸型：这是缓冲节拍，必须用长段落。每段≥3句，用≥25字的长句写环境/感受/回忆。禁止短句。人物可以发呆、看风景、想事情。",
     },
     "info_reveal": {
         "goal": "揭示新线索、秘密或世界观规则，让读者'哦！原来如此'",
         "emotion_start": "好奇/困惑",
         "emotion_end": "恍然/新好奇",
-        "min_words": 100,
-        "max_words": 250,
+        "min_words": 150,
+        "max_words": 350,
         "temperature": 0.85,
         "hook_required": False,
+        "paragraph_style": "信息型：1-2段描写发现过程（每段≥2句）→ 1段展开信息含义 → 最后1句埋下新疑问。禁止干巴巴罗列信息。",
     },
     "setup_payoff": {
         "goal": "回收一个前文伏笔，给忠实读者'我就知道'的满足感",
         "emotion_start": "似曾相识/期待",
         "emotion_end": "满足/闭环",
-        "min_words": 80,
-        "max_words": 200,
+        "min_words": 120,
+        "max_words": 250,
         "temperature": 0.8,
         "hook_required": False,
+        "paragraph_style": "闭环型：先1-2句暗示前文（不直说），然后2-3句展开回收过程，最后1句落定。每段2-3句。",
     },
 }
 
@@ -128,7 +138,8 @@ class Beat:
     __slots__ = ("index", "function", "goal", "emotion_start", "emotion_end",
                  "conflict_type", "conflict_intensity", "hook_type",
                  "min_words", "max_words", "temperature",
-                 "outline_ref", "character_focus", "key_event")
+                 "outline_ref", "character_focus", "key_event",
+                 "paragraph_style")
     
     def __init__(self, index: int, function: str):
         self.index = index
@@ -140,6 +151,7 @@ class Beat:
         self.min_words = tmpl["min_words"]
         self.max_words = tmpl["max_words"]
         self.temperature = tmpl["temperature"]
+        self.paragraph_style = tmpl.get("paragraph_style", "")
         self.conflict_type = "IR"
         self.conflict_intensity = 3
         self.hook_type = None
@@ -159,7 +171,8 @@ class Beat:
             "key_event": self.key_event,
         }
     
-    def to_prompt(self, prev_beat_last_sentence: str = "", char_snapshots: str = "") -> str:
+    def to_prompt(self, prev_beat_last_sentence: str = "", char_snapshots: str = "",
+                  rhythm_hint: str = "") -> str:
         """生成此 beat 的 writing prompt"""
         lines = [
             f"## 节拍 {self.index+1}: {self.function}",
@@ -168,6 +181,10 @@ class Beat:
             f"冲突类型: {self.conflict_type} | 强度: {self.conflict_intensity}/5",
             f"字数范围: {self.min_words}-{self.max_words}字",
         ]
+        if self.paragraph_style:
+            lines.append(f"段落节奏: {self.paragraph_style}")
+        if rhythm_hint:
+            lines.append(f"⚠️ 整章节奏提示: {rhythm_hint}")
         if self.key_event:
             lines.append(f"核心事件: {self.key_event}")
         if self.character_focus:

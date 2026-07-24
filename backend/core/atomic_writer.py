@@ -83,7 +83,7 @@ class AtomicWriter:
     
     def write_beat(self, beat: Beat, prev_last_sentence: str = "",
                    char_snapshots: str = "", style_guide: str = "",
-                   num_candidates: int = 3) -> dict:
+                   rhythm_hint: str = "", num_candidates: int = 3) -> dict:
         """生成一个节拍，返回最佳候选
         
         Args:
@@ -96,7 +96,7 @@ class AtomicWriter:
         Returns:
             {"text": str, "candidates": list, "selected_index": int, "temperature": float}
         """
-        prompt = self._build_beat_prompt(beat, prev_last_sentence, char_snapshots)
+        prompt = self._build_beat_prompt(beat, prev_last_sentence, char_snapshots, rhythm_hint)
         system = ATOMIC_WRITER_SYSTEM
         if style_guide:
             system += f"\n\n## 风格要求\n{style_guide}"
@@ -175,14 +175,30 @@ class AtomicWriter:
         每个beat独立LLM调用 → 最大随机性。
         """
         prev_last = ""
+        rhythm_log = []  # 记录已生成beat的短句占比
+        
         for i, beat in enumerate(beats):
             log.info(f"Ch{chapter_num} Beat {i}/{len(beats)}: {beat.function} (t={beat.temperature})")
             
+            rhythm_hint = self._compute_rhythm_hint(rhythm_log, beat, i, len(beats))
+            
             result = await asyncio.to_thread(
-                self.write_beat, beat, prev_last, char_snapshots, style_guide
+                self.write_beat, beat, prev_last, char_snapshots, style_guide, rhythm_hint
             )
             
             text = result["text"]
+            # 记录短句占比到日志
+            import re
+            sentences = re.split(r'[。！？\n]+', text)
+            sentences = [s.strip() for s in sentences if s.strip()]
+            if sentences:
+                short_ratio = sum(1 for s in sentences if len(s) <= 12) / len(sentences)
+                rhythm_log.append({
+                    "function": beat.function,
+                    "short_ratio": short_ratio,
+                    "avg_len": sum(len(s) for s in sentences) / len(sentences),
+                })
+            
             yield {
                 "type": "beat",
                 "beat_index": i,
@@ -193,10 +209,30 @@ class AtomicWriter:
                 "selected_candidate": result["selected_index"],
             }
             
-            # 提取末句作为下一beat的衔接上下文
             prev_last = _extract_last_sentence(text)
     
-    def _build_beat_prompt(self, beat: Beat, prev_last: str, char_snapshots: str) -> str:
+    def _compute_rhythm_hint(self, log: list, current_beat, index: int, total: int) -> str:
+        """计算节奏反平衡提示"""
+        if not log or index == 0:
+            return ""
+        recent = log[-3:]
+        avg_short = sum(r["short_ratio"] for r in recent) / len(recent)
+        avg_len = sum(r["avg_len"] for r in recent) / len(recent)
+        hints = []
+        if avg_short > 0.6 and current_beat.function not in ("closing_hook", "conflict_ignition"):
+            hints.append("前几个节拍短句过多，你的节拍用2-3句组成的自然段来平衡节奏，每段至少2句话。")
+        elif avg_len < 15 and current_beat.function in ("emotion_settle", "character_highlight", "info_reveal"):
+            hints.append("当前句式偏短，用≥25字的长句写环境/感受，每段3-4句。")
+        action_funcs = {"conflict_ignition", "climax_release", "turning_point", "obstacle_build"}
+        recent_actions = sum(1 for r in recent if r["function"] in action_funcs)
+        if recent_actions >= 2 and current_beat.function not in action_funcs:
+            hints.append("前面连续动作节拍导致节奏过紧，放慢——多用描写少用动作。")
+        if index >= total - 2 and current_beat.function != "closing_hook":
+            hints.append("接近章末，不要用碎片短句，用完整段落铺陈。")
+        return " | ".join(hints) if hints else ""
+    
+    def _build_beat_prompt(self, beat: Beat, prev_last: str, char_snapshots: str,
+                           rhythm_hint: str = "") -> str:
         """构建单个 beat 的 prompt"""
         lines = [
             f"## 当前节拍",
@@ -205,6 +241,10 @@ class AtomicWriter:
             f"冲突: {beat.conflict_type} {beat.conflict_intensity}/5",
             f"目标字数: {beat.min_words}-{beat.max_words}字",
         ]
+        if beat.paragraph_style:
+            lines.append(f"段落节奏: {beat.paragraph_style}")
+        if rhythm_hint:
+            lines.append(f"⚠️ 全章节奏提示: {rhythm_hint}")
         if beat.key_event:
             lines.append(f"核心事件: {beat.key_event}")
         if beat.character_focus:
