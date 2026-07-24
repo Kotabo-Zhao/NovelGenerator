@@ -40,10 +40,11 @@ ATOMIC_WRITER_SYSTEM = """你是一个小说节拍写手。你只写一个节拍
 - 每段1-5句不等，禁止连续三段都是3句。
 
 ## ⚠️ 段落结构（防止句式碎片化）
-- **禁止连续3段单句成段**。每3段中至少有1段≥2句。
-- 每段至少要有1句超过15字的长句和1句≤8字的短句搭配。
-- 动作场景可以短句多，但每5句短句后必须跟一句描写/心理/环境的≥20字句子缓冲。
-- 禁止写出全是"XX了。YY还在。他做了ZZ。"这种每句独立成段的流水账。
+- **短句(= ≤8字) 限量**：每100字最多2句≤8字的短句。短句是调味料，不是主菜。
+- **长句锚点**：每段至少要有1句≥20字的长句。描写、感受、环境用长句。
+- **段落长度**：每段2-4句，禁止连续3段单句成段。
+- **禁止单调节奏**：不要写出全是「XX了。YY还在。他做了ZZ。」这种每句独立成段的流水账。
+- 动作场景短句可以多，但每3句短句后跟1句≥20字的描写/感受缓冲。
 
 ## 输出格式
 只输出节拍正文。不要标题、不要序号、不要说明文字。一段或多段均可。"""
@@ -147,18 +148,26 @@ class AtomicWriter:
             elif len(text) > beat.max_words * 4:
                 len_score = 0.3
             
-            # 句式多样性（短句占比）— 防止碎片化
+            # 句式多样性 — 中文网文标准：≤8字=短句爆破，≥20字=长句锚点
             import re
             sentences = re.split(r'[。！？\n]', text)
             sentences = [s.strip() for s in sentences if s.strip()]
-            has_short = any(len(s) <= 8 for s in sentences)
-            has_long = any(len(s) >= 20 for s in sentences)
-            all_short = all(len(s) < 15 for s in sentences)
-            short_bonus = 0.2 if has_short else 0
-            frag_penalty = -0.6 if all_short else 0  # 全是短句 → 严重扣分
-            long_bonus = 0.2 if has_long else 0  # 有长句 → 加分
+            total = len(sentences)
+            short8 = sum(1 for s in sentences if len(s) <= 8)  # 真正短句(≤8字)
+            long20 = sum(1 for s in sentences if len(s) >= 20)  # 长句锚点(≥20字)
             
-            scored.append((len_score + short_bonus + long_bonus + frag_penalty + self.rng.uniform(0, 0.15), c))
+            # 短句占比惩罚
+            short_ratio = short8 / total if total > 0 else 0
+            if total >= 3 and short_ratio > 0.6:
+                frag_penalty = -1.0  # >60%短句 → 严重扣分，基本不选
+            elif total >= 3 and short_ratio > 0.4:
+                frag_penalty = -0.5  # >40%短句 → 扣分
+            else:
+                frag_penalty = 0
+            
+            long_bonus = 0.3 if long20 >= 2 else (0.15 if long20 >= 1 else 0)  # 有长句加分
+            
+            scored.append((len_score + long_bonus + frag_penalty + self.rng.uniform(0, 0.15), c))
         
         # 不是选最高分，而是在 top 2 中随机选（增加随机性）
         scored.sort(key=lambda x: -x[0])
@@ -192,16 +201,19 @@ class AtomicWriter:
             )
             
             text = result["text"]
-            # 记录短句占比到日志
+            # 记录短句占比（≤8字 = 真正短句）
             import re
             sentences = re.split(r'[。！？\n]+', text)
             sentences = [s.strip() for s in sentences if s.strip()]
             if sentences:
-                short_ratio = sum(1 for s in sentences if len(s) <= 12) / len(sentences)
+                total = len(sentences)
+                short8 = sum(1 for s in sentences if len(s) <= 8)
+                short_ratio = short8 / total
                 rhythm_log.append({
                     "function": beat.function,
                     "short_ratio": short_ratio,
-                    "avg_len": sum(len(s) for s in sentences) / len(sentences),
+                    "sentence_count": total,
+                    "avg_len": sum(len(s) for s in sentences) / total,
                 })
             
             yield {
@@ -217,23 +229,26 @@ class AtomicWriter:
             prev_last = _extract_last_sentence(text)
     
     def _compute_rhythm_hint(self, log: list, current_beat, index: int, total: int) -> str:
-        """计算节奏反平衡提示"""
+        """计算节奏反平衡提示
+        
+        短句判定: ≤8字（中文网文标准）
+        """
         if not log or index == 0:
             return ""
         recent = log[-3:]
         avg_short = sum(r["short_ratio"] for r in recent) / len(recent)
         avg_len = sum(r["avg_len"] for r in recent) / len(recent)
         hints = []
-        if avg_short > 0.6 and current_beat.function not in ("closing_hook", "conflict_ignition"):
-            hints.append("前几个节拍短句过多，你的节拍用2-3句组成的自然段来平衡节奏，每段至少2句话。")
-        elif avg_len < 15 and current_beat.function in ("emotion_settle", "character_highlight", "info_reveal"):
-            hints.append("当前句式偏短，用≥25字的长句写环境/感受，每段3-4句。")
+        if avg_short > 0.4 and current_beat.function not in ("closing_hook", "conflict_ignition"):
+            hints.append(f"前几个节拍短句(≤8字)占比{avg_short:.0%}偏高，你的节拍必须用≥20字的长句写环境和感受，每段2-3句，短句(≤8字)不超过1句。")
+        elif avg_len < 12 and current_beat.function in ("emotion_settle", "character_highlight", "info_reveal"):
+            hints.append("当前句式过短，用≥25字的长句写环境/感受/回忆，禁止≤8字的短句。")
         action_funcs = {"conflict_ignition", "climax_release", "turning_point", "obstacle_build"}
         recent_actions = sum(1 for r in recent if r["function"] in action_funcs)
         if recent_actions >= 2 and current_beat.function not in action_funcs:
-            hints.append("前面连续动作节拍导致节奏过紧，放慢——多用描写少用动作。")
+            hints.append("前面连续动作节拍导致节奏过紧，放慢——多用描写少用动作，每段至少2句。")
         if index >= total - 2 and current_beat.function != "closing_hook":
-            hints.append("接近章末，不要用碎片短句，用完整段落铺陈。")
+            hints.append("接近章末，不要用≤8字的碎片短句，用≥20字的完整长句铺陈。")
         return " | ".join(hints) if hints else ""
     
     def _build_beat_prompt(self, beat: Beat, prev_last: str, char_snapshots: str,

@@ -58,7 +58,7 @@ BEAT_TEMPLATES = {
         "max_words": 450,
         "temperature": 0.9,
         "hook_required": False,
-        "paragraph_style": "冲击型：允许30%短句制造紧张，但必须穿插≥20字的长句做锚点。每3句短句后必须有1句描写/感受的长句。禁止连续4句短句。",
+        "paragraph_style": "冲击型：≤8字的短句占比≤30%。每3句短句后必须有1句≥20字的长句描写缓冲。禁止连续4句短句。每段2-3句。",
     },
     "turning_point": {
         "goal": "意外的转折——预期违背/身份揭露/新信息改变一切",
