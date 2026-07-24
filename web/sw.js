@@ -1,6 +1,6 @@
-/* NovelGenerator — Service Worker v3 */
-const CACHE = 'novel-v3';
-const VERSION = 3;
+/* NovelGenerator — Service Worker v4 */
+const CACHE = 'novel-v4';
+const VERSION = 4;
 
 const CACHE_ASSETS = [
   '/vue.global.prod.js',
@@ -20,12 +20,7 @@ self.addEventListener('activate', event => {
       Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
     )
   );
-  // 激活后通知所有页面刷新（清除旧缓存后的页面不会自动更新）
-  self.clients.matchAll().then(clients => {
-    clients.forEach(client => {
-      client.postMessage({ type: 'SW_UPDATED', version: VERSION });
-    });
-  });
+  // 只在 service worker 首次激活或版本变更时通知，避免死循环
   self.clients.claim();
 });
 
