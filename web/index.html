@@ -1020,6 +1020,7 @@ window.addEventListener('vue-error', (e) => {
 
 const app = createApp({
   setup() {
+    try {
     const currentView = ref('shelf');
     const novels = ref([]); const activeNovel = ref(null);
     const planResult = ref(null); const error = ref(''); const preview = ref(null);
@@ -1804,6 +1805,11 @@ const app = createApp({
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
       switchToStoryGraph,loadStoryGraph };
+    } catch(e) {
+      console.error('SETUP ERROR:', e.message, e.stack);
+      document.body.innerHTML = '<div style=\"padding:40px;color:red;font-size:16px;font-family:monospace\"><h2>❌ Setup 错误</h2><pre>' + (e.stack || e.message) + '</pre></div>';
+      return {};
+    }
   }
 });
   
