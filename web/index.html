@@ -938,6 +938,12 @@ const app = createApp({
     }
 
     async function readSSE(response, onEvent, timeoutMs = 300000) {
+      if (!response.ok) {
+        // 尝试读取错误详情
+        let detail = '';
+        try { const err = await response.json(); detail = err.detail || err.message || ''; } catch(_) {}
+        throw new Error(`服务器错误 (${response.status}): ${detail || response.statusText}`);
+      }
       const reader = response.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
