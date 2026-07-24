@@ -36,7 +36,7 @@ from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
 from .beat_decomposer import BeatDecomposer, Beat
 from .atomic_writer import AtomicWriter
 from .beat_assembler import BeatAssembler
-from .evaluation_system import evaluate_chapter, compare_ab, generate_html_report
+from .storygraph_interventions import analyze_and_inject
 
 log = logging.getLogger(__name__)
 
@@ -604,6 +604,18 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"Twist injection skipped: {e}")
 
+            # ── v2.3.1: 剧情图谱反哺 — 主动干预指令注入 ──
+            try:
+                novel_dir = self.memory.get_novel_dir(novel_id)
+                intervention_ctx = analyze_and_inject(
+                    novel_dir, chapter_num, chapter_outline
+                )
+                if intervention_ctx:
+                    context += "\n\n" + intervention_ctx
+                    log.info(f"StoryGraph interventions injected for Ch{chapter_num}")
+            except Exception as e:
+                log.warning(f"Intervention injection skipped: {e}")
+
             # 注入修改意见（重生成场景）
             if feedback and feedback.strip():
                 context = (
@@ -981,6 +993,14 @@ class NovelEngine:
             style = plan.get("style", "热血爽文")
             genre = plan.get("genre", "玄幻")
             style_guide = _get_style_guide(style, genre)
+            
+            # v2.3.1: 剧情图谱反哺 + 活人感注入
+            try:
+                intervention_ctx = analyze_and_inject(novel_dir, chapter_num, chapter_outline)
+                if intervention_ctx:
+                    char_context += "\n\n" + intervention_ctx
+            except Exception as e:
+                log.warning(f"Intervention injection skipped in atomic: {e}")
             
             beats_text = []
             async for beat_result in self.atomic_writer.write_beats_stream(
