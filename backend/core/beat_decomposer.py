@@ -38,7 +38,7 @@ BEAT_TEMPLATES = {
         "max_words": 300,
         "temperature": 0.9,
         "hook_required": False,
-        "paragraph_style": "节奏型：1-2句短句开场 → 中间2-3句展开 → 1句收束。每段2-3句，不要单句成段。",
+        "paragraph_style": "节奏型：默认句长≥15字。每段2-3句。只在收束或强调时用1句≤8字的短句。",
     },
     "obstacle_build": {
         "goal": "堆叠障碍，制造'为什么这么难/这么不公平'的感觉",
@@ -48,7 +48,7 @@ BEAT_TEMPLATES = {
         "max_words": 400,
         "temperature": 0.85,
         "hook_required": False,
-        "paragraph_style": "描写型：用具体的环境/身体感受来写压抑，不要用抽象形容词。每段≥2句。用1-2句超过25字的长句来营造沉重感。",
+        "paragraph_style": "描写型：用≥20字的环境/身体感受来写压抑。每段≥2句。禁止≤8字的超短句。",
     },
     "conflict_ignition": {
         "goal": "核心矛盾在此爆发，正面对决/价值观碰撞/意志对抗",
@@ -58,7 +58,7 @@ BEAT_TEMPLATES = {
         "max_words": 450,
         "temperature": 0.9,
         "hook_required": False,
-        "paragraph_style": "冲击型：≤8字的短句占比≤30%。每3句短句后必须有1句≥20字的长句描写缓冲。禁止连续4句短句。每段2-3句。",
+        "paragraph_style": "紧张型：默认句长≥12字，允许少量≤8字短句(占比≤20%)，但必须有≥20字的长句描写。禁止连续2句都≤12字。每段2-3句。",
     },
     "turning_point": {
         "goal": "意外的转折——预期违背/身份揭露/新信息改变一切",
@@ -68,7 +68,7 @@ BEAT_TEMPLATES = {
         "max_words": 350,
         "temperature": 0.95,
         "hook_required": False,
-        "paragraph_style": "揭晓型：先用2-3句铺垫当前的认知 → 1-2句短句炸开转折 → 再用3-4句展开新认知的含义。禁止一句话一个段落。",
+        "paragraph_style": "揭晓型：默认句长≥15字。先用2-3句长句铺垫 → 1句收束(可以≤8字) → 再用≥20字的长句展开后果。每段2-3句。",
     },
     "character_highlight": {
         "goal": "通过一个选择或行动，展示角色最核心的特质",
@@ -78,7 +78,7 @@ BEAT_TEMPLATES = {
         "max_words": 350,
         "temperature": 0.85,
         "hook_required": False,
-        "paragraph_style": "描写型：用具体的行为/选择/细节来展示性格。每段2-4句。允许内心独白（1-2句），但不能全是内心戏。禁止全短句。",
+        "paragraph_style": "描写型：默认句长≥18字。用具体行为/细节/内心活动展示性格。每段2-4句。禁止≤8字超短句。",
     },
     "climax_release": {
         "goal": "爽感顶点——打脸/碾压/告白/胜利，给读者释放感",
@@ -88,7 +88,7 @@ BEAT_TEMPLATES = {
         "max_words": 400,
         "temperature": 0.85,
         "hook_required": False,
-        "paragraph_style": "释放型：先短句制造冲击（占比≤40%）→ 中段用描写+反应展开 → 结尾1-2句长句收束。短句不超过连续的3句。",
+        "paragraph_style": "释放型：默认句长≥12字。允许≤8字短句占比≤25%，但≥20字的长句必须占比≥40%。每段2-3句。",
     },
     "closing_hook": {
         "goal": "在最高点截断——危机悬停/反转预告/打脸前置/秘密揭晓",
@@ -98,7 +98,7 @@ BEAT_TEMPLATES = {
         "max_words": 180,
         "temperature": 0.9,
         "hook_required": True,
-        "paragraph_style": "钩子型：先1-2段交代当前状态（每段≥2句），最后1-2句短句做钩子收尾。钩子前面的内容不能也是短句。",
+        "paragraph_style": "钩子型：先用1-2段≥15字的正常句子交代状态，最后收钩用1句≤8字短句。钩子前的铺垫不能也是短句。",
     },
     "emotion_settle": {
         "goal": "战斗/冲突后的缓冲——环境描写、日常细节、内心反思",
@@ -108,7 +108,7 @@ BEAT_TEMPLATES = {
         "max_words": 300,
         "temperature": 0.75,
         "hook_required": False,
-        "paragraph_style": "沉浸型：这是缓冲节拍，必须用长段落。每段≥3句，用≥25字的长句写环境/感受/回忆。禁止短句。人物可以发呆、看风景、想事情。",
+        "paragraph_style": "沉浸型：这是缓冲节拍。**句长必须≥20字**。每段3-4句。人物可以发呆、看风景、想事情。**禁止任何≤12字的句子。**",
     },
     "info_reveal": {
         "goal": "揭示新线索、秘密或世界观规则，让读者'哦！原来如此'",
@@ -118,7 +118,7 @@ BEAT_TEMPLATES = {
         "max_words": 350,
         "temperature": 0.85,
         "hook_required": False,
-        "paragraph_style": "信息型：1-2段描写发现过程（每段≥2句）→ 1段展开信息含义 → 最后1句埋下新疑问。禁止干巴巴罗列信息。",
+        "paragraph_style": "信息型：默认句长≥15字。每段≥2句。禁止干巴巴罗列信息。用完整的描写句来承载信息。",
     },
     "setup_payoff": {
         "goal": "回收一个前文伏笔，给忠实读者'我就知道'的满足感",
@@ -128,7 +128,7 @@ BEAT_TEMPLATES = {
         "max_words": 250,
         "temperature": 0.8,
         "hook_required": False,
-        "paragraph_style": "闭环型：先1-2句暗示前文（不直说），然后2-3句展开回收过程，最后1句落定。每段2-3句。",
+        "paragraph_style": "闭环型：默认句长≥15字。每段2-3句。禁止≤8字超短句。",
     },
 }
 

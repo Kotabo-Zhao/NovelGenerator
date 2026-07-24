@@ -39,12 +39,13 @@ ATOMIC_WRITER_SYSTEM = """你是一个小说节拍写手。你只写一个节拍
 - 不用「似乎」「仿佛」「或许」堆砌。
 - 每段1-5句不等，禁止连续三段都是3句。
 
-## ⚠️ 段落结构（防止句式碎片化）
-- **短句(= ≤8字) 限量**：每100字最多2句≤8字的短句。短句是调味料，不是主菜。
-- **长句锚点**：每段至少要有1句≥20字的长句。描写、感受、环境用长句。
-- **段落长度**：每段2-4句，禁止连续3段单句成段。
-- **禁止单调节奏**：不要写出全是「XX了。YY还在。他做了ZZ。」这种每句独立成段的流水账。
-- 动作场景短句可以多，但每3句短句后跟1句≥20字的描写/感受缓冲。
+## ⚠️ 句长硬规则（违反 = 不合格）
+- **默认句长 ≥15 字**。每句话应该填满一行。≤8字的超短句仅作段落收束或强调使用，**每段最多1句**，整段最多2句超短句。
+- 描写、感受、环境必须用 ≥20 字的长句。
+- 禁止连续2句都 ≤12 字。
+- 如果你发现自己在写「XX了。」「YY还在。」这种 3-5 字的句子，停下来——改成 ≥15 字的完整描写句。
+- 正确示例：「火灭了。灰烬还烫着。」→ 错误，两句都不满一行。
+- 正确示例：「火已经灭了半个时辰，灰烬却还烫着手心，像不肯冷掉的记忆。」→ 正确，一句满一行。
 
 ## 输出格式
 只输出节拍正文。不要标题、不要序号、不要说明文字。一段或多段均可。"""
@@ -148,26 +149,36 @@ class AtomicWriter:
             elif len(text) > beat.max_words * 4:
                 len_score = 0.3
             
-            # 句式多样性 — 中文网文标准：≤8字=短句爆破，≥20字=长句锚点
+            # 句长评分 — 严格标准：默认句长≥15字，超短句(≤8字)超限则重罚
             import re
             sentences = re.split(r'[。！？\n]', text)
             sentences = [s.strip() for s in sentences if s.strip()]
             total = len(sentences)
-            short8 = sum(1 for s in sentences if len(s) <= 8)  # 真正短句(≤8字)
-            long20 = sum(1 for s in sentences if len(s) >= 20)  # 长句锚点(≥20字)
             
-            # 短句占比惩罚
-            short_ratio = short8 / total if total > 0 else 0
-            if total >= 3 and short_ratio > 0.6:
-                frag_penalty = -1.0  # >60%短句 → 严重扣分，基本不选
-            elif total >= 3 and short_ratio > 0.4:
-                frag_penalty = -0.5  # >40%短句 → 扣分
+            if total >= 3:
+                ultra_short = sum(1 for s in sentences if len(s) <= 8)       # ≤8字=不可接受
+                very_short = sum(1 for s in sentences if len(s) <= 12)       # ≤12字=太短
+                long_enough = sum(1 for s in sentences if len(s) >= 15)      # ≥15字=合格
+                
+                ultra_ratio = ultra_short / total
+                
+                # 评分规则
+                if ultra_ratio > 0.3:
+                    length_score = -2.0   # >30%超短句 → 直接淘汰
+                elif ultra_short > 1:
+                    length_score = -1.0   # >1句超短句 → 严重扣分
+                elif ultra_short == 1 and total <= 4:
+                    length_score = -0.5   # 小段落1句超短还算勉强
+                elif long_enough / total >= 0.7:
+                    length_score = 0.5    # ≥70%句子≥15字 → 奖励
+                elif long_enough / total >= 0.5:
+                    length_score = 0.2    # ≥50%合格 → 小奖励
+                else:
+                    length_score = -0.3   # 不合格
             else:
-                frag_penalty = 0
+                length_score = 0
             
-            long_bonus = 0.3 if long20 >= 2 else (0.15 if long20 >= 1 else 0)  # 有长句加分
-            
-            scored.append((len_score + long_bonus + frag_penalty + self.rng.uniform(0, 0.15), c))
+            scored.append((len_score + length_score + self.rng.uniform(0, 0.15), c))
         
         # 不是选最高分，而是在 top 2 中随机选（增加随机性）
         scored.sort(key=lambda x: -x[0])
@@ -239,10 +250,10 @@ class AtomicWriter:
         avg_short = sum(r["short_ratio"] for r in recent) / len(recent)
         avg_len = sum(r["avg_len"] for r in recent) / len(recent)
         hints = []
-        if avg_short > 0.4 and current_beat.function not in ("closing_hook", "conflict_ignition"):
-            hints.append(f"前几个节拍短句(≤8字)占比{avg_short:.0%}偏高，你的节拍必须用≥20字的长句写环境和感受，每段2-3句，短句(≤8字)不超过1句。")
-        elif avg_len < 12 and current_beat.function in ("emotion_settle", "character_highlight", "info_reveal"):
-            hints.append("当前句式过短，用≥25字的长句写环境/感受/回忆，禁止≤8字的短句。")
+        if avg_short > 0.25 and current_beat.function not in ("closing_hook", "conflict_ignition"):
+            hints.append(f"前几个节拍≤8字超短句占比{avg_short:.0%}过高。你的节拍默认句长必须≥15字，禁止≤8字超短句，用≥20字长句写环境和感受。")
+        elif avg_len < 14 and current_beat.function in ("emotion_settle", "character_highlight", "info_reveal"):
+            hints.append("当前句长不足(均<14字)。用≥20字的长句写，每段3-4句。禁止≤12字的句子。")
         action_funcs = {"conflict_ignition", "climax_release", "turning_point", "obstacle_build"}
         recent_actions = sum(1 for r in recent if r["function"] in action_funcs)
         if recent_actions >= 2 and current_beat.function not in action_funcs:
