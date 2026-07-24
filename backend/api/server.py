@@ -401,6 +401,28 @@ async def generate_chapter(req: GenerateChapterRequest):
     )
 
 
+@app.post("/api/novels/generate/atomic")
+async def generate_chapter_atomic(req: GenerateChapterRequest):
+    """原子化生成章节 (逐beat独立LLM → 装配 → 评估)"""
+    async def event_stream():
+        async for data in _sse_with_heartbeat(
+            engine.atomic_generate_chapter_stream(
+                req.novel_id, req.chapter_num, req.writing_mode,
+                feedback=req.feedback,
+            )
+        ):
+            yield data
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
 @app.post("/api/novels/{novel_id}/generate/batch")
 async def generate_batch(novel_id: str, req: dict):
     """批量生成章节 (SSE 流式进度)"""

@@ -33,6 +33,10 @@ from .chapter_summarizer import ChapterSummarizer, check_and_compress
 from .requirement_decomposer import RequirementDecomposer
 from .requirement_supervisor import RequirementSupervisor
 from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
+from .beat_decomposer import BeatDecomposer, Beat
+from .atomic_writer import AtomicWriter
+from .beat_assembler import BeatAssembler
+from .evaluation_system import evaluate_chapter, compare_ab, generate_html_report
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +76,10 @@ class NovelEngine:
         self.requirement_decomposer = RequirementDecomposer(self.client, self.model)
         self.requirement_supervisor = RequirementSupervisor(self.client, self.model)
         self._requirements = {}  # novel_id → requirements dict
+        # v2.3: 原子化生成引擎
+        self.atomic_writer = AtomicWriter(self.client, self.model)
+        self.beat_assembler = BeatAssembler()
+        self._use_atomic = True  # 默认启用原子化生成
 
     # ── Phase 1: 规划 ──
 
@@ -872,6 +880,201 @@ class NovelEngine:
             except OSError:
                 pass
 
+    async def atomic_generate_chapter_stream(
+        self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel",
+        feedback: str = None,
+    ) -> AsyncGenerator[dict, None]:
+        """原子化生成章节：逐beat独立LLM调用 → 装配 → 评估
+        
+        与 generate_chapter_stream 的区别：
+        - 传统: 1次LLM调用 → 整章2000字（趋同）
+        - 原子化: 5-7次独立LLM调用 → 每beat 200-400字 → 装配（多样性爆炸）
+        """
+        novel_dir = self.memory.get_novel_dir(novel_id)
+        lock_file = os.path.join(novel_dir, f".generating_{chapter_num:04d}.lock")
+        
+        # 并发锁（与generate_chapter_stream共享）
+        if os.path.exists(lock_file):
+            try:
+                lock_age = time.time() - os.path.getmtime(lock_file)
+                if lock_age < 300:
+                    yield {"type": "error", "message": f"第{chapter_num}章正在生成中"}
+                    return
+                else:
+                    os.remove(lock_file)
+            except OSError:
+                pass
+        
+        os.makedirs(novel_dir, exist_ok=True)
+        try:
+            with open(lock_file, "w") as lf:
+                lf.write(str(time.time()))
+        except IOError:
+            pass
+        
+        try:
+            plan = self.get_novel(novel_id)
+            if not plan:
+                yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+                return
+            
+            chapter_outline = self._find_chapter_outline(plan, chapter_num)
+            if not chapter_outline:
+                chapter_outline = {
+                    "number": chapter_num, "title": f"第{chapter_num}章",
+                    "summary": "继续推进主线", "emotion_curve": "平稳→紧张→悬念",
+                    "characters": ["主角"], "hook": "留下悬念",
+                    "target_words": config.DEFAULT_CHAPTER_WORDS,
+                }
+            
+            # ── Phase 1: 拆解为 beat ──
+            yield {"type": "status", "message": f"拆解第{chapter_num}章为节拍..."}
+            
+            is_first = (chapter_num == 1)
+            
+            # 判断是否高潮章（检查 arcplan）
+            is_climax = False
+            try:
+                from .arcplanner import is_arc_climax
+                sg_path = os.path.join(novel_dir, "storygraph.json")
+                if os.path.exists(sg_path):
+                    sg_data = safe_read_json(sg_path)
+                    if sg_data and sg_data.get("arcs"):
+                        for arc in sg_data["arcs"]:
+                            if is_arc_climax(arc, chapter_num):
+                                is_climax = True
+                                break
+            except Exception:
+                pass
+            
+            # 获取角色快照
+            chars = chapter_outline.get("characters", [])
+            try:
+                sg_path = os.path.join(novel_dir, "storygraph.json")
+                if os.path.exists(sg_path):
+                    sg_data = safe_read_json(sg_path)
+                    if sg_data:
+                        snaps = sg_data.get("char_snapshots", {})
+                        char_context = "\n".join(
+                            f"{n}: {s.get('current_emotion','?')} @{s.get('current_location','?')}"
+                            for n, s in snaps.items() if n in chars
+                        )
+                    else:
+                        char_context = ""
+                else:
+                    char_context = ""
+            except Exception:
+                char_context = ""
+            
+            decomposer = BeatDecomposer(seed=chapter_num * 100 + int(time.time()) % 100)
+            beats = decomposer.decompose(
+                chapter_outline, chapter_num,
+                is_first_chapter=is_first,
+                is_climax_chapter=is_climax,
+                available_characters=chars,
+            )
+            
+            yield {"type": "beats_decomposed", "count": len(beats),
+                   "functions": [b.function for b in beats]}
+            
+            # ── Phase 2: 逐 beat 独立生成 ──
+            style = plan.get("style", "热血爽文")
+            genre = plan.get("genre", "玄幻")
+            style_guide = _get_style_guide(style, genre)
+            
+            beats_text = []
+            async for beat_result in self.atomic_writer.write_beats_stream(
+                beats, char_context, style_guide, chapter_num
+            ):
+                beats_text.append({
+                    "index": beat_result["beat_index"],
+                    "function": beat_result["beat_function"],
+                    "text": beat_result["text"],
+                    "temperature": beat_result["temperature"],
+                })
+                yield {
+                    "type": "beat_progress",
+                    "beat_index": beat_result["beat_index"],
+                    "total_beats": len(beats),
+                    "function": beat_result["beat_function"],
+                }
+            
+            # ── Phase 3: 装配章节 ──
+            yield {"type": "status", "message": "装配节拍..."}
+            
+            assembly = await asyncio.to_thread(
+                self.beat_assembler.assemble,
+                beats_text,
+                chapter_outline.get("title", f"第{chapter_num}章"),
+                chapter_num,
+            )
+            
+            full_text = assembly["raw_text"]
+            formatted = assembly["full_text"]
+            
+            # ── Phase 4: 保存 ──
+            self.memory.save_chapter(novel_id, chapter_num, formatted)
+            
+            # 更新状态
+            state = self.memory.get_novel_state(novel_id)
+            completed = state.get("completed_chapters", [])
+            if chapter_num not in completed:
+                completed.append(chapter_num)
+                completed.sort()
+            state["completed_chapters"] = completed
+            self.memory.save_novel_state(novel_id, state)
+            
+            # ── Phase 5: 质量评估 ──
+            yield {"type": "status", "message": "质量评估..."}
+            
+            evaluation = assembly["quality_report"]
+            
+            yield {
+                "type": "evaluation",
+                "overall_score": evaluation.get("overall_score", 0),
+                "verdict": evaluation.get("verdict", ""),
+                "distinct_1": evaluation.get("distinct_1", 0),
+                "hook_strength": evaluation.get("hook", {}).get("strength", 0),
+                "dopamine_density": evaluation.get("dopamine", {}).get("density_per_2000", 0),
+                "ai_slop_score": evaluation.get("ai_slop", {}).get("score", 100),
+                "coherence": evaluation.get("coherence", {}).get("verdict", ""),
+                "duplicates_removed": assembly["duplicates_removed"],
+                "transitions_added": len(assembly["transitions"]),
+            }
+            
+            # ── 流式输出正文 ──
+            yield {"type": "text", "content": full_text}
+            yield {"type": "done", "content": formatted, "chapter_num": chapter_num,
+                   "atomic": True, "beat_count": len(beats)}
+            
+            # 更新校验
+            try:
+                from .storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
+                sg_path = os.path.join(novel_dir, "storygraph.json")
+                sg_data = safe_read_json(sg_path) or {}
+                sg = StoryGraph.from_dict(sg_data)
+                extract_result = await asyncio.to_thread(
+                    extract_storygraph_from_chapter,
+                    chapter_text=full_text, current_graph=sg_data,
+                    chapter_num=chapter_num, chapter_outline=chapter_outline,
+                    client=self.client, model=self.model,
+                )
+                apply_extraction(sg, extract_result, chapter_num)
+                atomic_write_json(sg_path, sg.to_dict())
+                self.memory.invalidate("storygraph", novel_id)
+            except Exception as e:
+                log.warning(f"StoryGraph update skipped in atomic: {e}")
+            
+        except Exception as e:
+            log.exception(f"Atomic chapter generation failed: {e}")
+            yield {"type": "error", "message": str(e)}
+        finally:
+            try:
+                if os.path.exists(lock_file):
+                    os.remove(lock_file)
+            except OSError:
+                pass
+
     def _find_chapter_outline(self, plan: dict, chapter_num: int) -> Optional[dict]:
         """在大纲中查找指定章节（兼容字符串/整数章节号，防御脏数据）"""
         volumes = plan.get("outline", {}).get("volumes", [])
@@ -1379,3 +1582,13 @@ class NovelEngine:
         yield {"type": "done", "iterations": max_iterations,
                "result": "max_iterations_reached",
                "message": f"已达最大迭代次数 {max_iterations}，仍有未达标项"}
+
+
+def _get_style_guide(style: str, genre: str) -> str:
+    """获取简化的风格指南（用于 AtomicWriter）"""
+    from .styles import get_style, build_style_prompt
+    try:
+        style_config = get_style(style)
+        return build_style_prompt(style_config)
+    except Exception:
+        return f"写作风格：{style}。题材：{genre}。"

@@ -211,6 +211,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .empty .empty-icon{font-size:40px;margin-bottom:12px;opacity:.25}
 .empty h3{font-size:16px;font-weight:600;margin-bottom:4px}
 .empty p{font-size:13px;color:var(--text2);margin-bottom:16px}
+.toggle-sm.toggle-switch{width:32px;height:18px}
+.toggle-sm .toggle-slider:before{width:12px;height:12px;bottom:3px;left:3px}
+.toggle-sm input:checked+.toggle-slider:before{transform:translateX(14px)}
 
 /* ── Create Progress ── */
 .create-progress{background:var(--bg2);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:16px 20px;margin-top:12px}
@@ -734,6 +737,16 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </label>
           <span>📖 文学</span>
         </div>
+        <!-- v2.3: 原子化生成开关 -->
+        <div class="flex items-center gap-8" style="margin-top:8px;font-size:12px;color:var(--text2)">
+          <span>📦 标准</span>
+          <label class="toggle-switch toggle-sm">
+            <input type="checkbox" v-model="useAtomicMode" @change="onModeChange">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>🧬 原子化</span>
+          <span class="text-xs color-text3" style="margin-left:4px">逐beat生成 · 高随机性</span>
+        </div>
 
         <div v-if="writing.content" class="chapter-content" ref="preview">{{ writing.content }}</div>
         <div v-else-if="!loading.write && (activeNovel.state.completed_chapters||[]).includes(writing.chapter) && writing.done" class="chapter-empty">
@@ -1117,6 +1130,7 @@ const app = createApp({
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     const writingModeLiterary = ref(false);
+    const useAtomicMode = ref(true);  // v2.3: 默认启用原子化生成
     const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
 
     // v2.3: 剧情图谱
@@ -1454,9 +1468,22 @@ const app = createApp({
       chapterProgress.value=0; chapterProgressLabel.value='准备中…';
       const targetChars = (currentOutline.value?.target_words || 3000) * 2;
       try {
-        const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel'})});
+        const endpoint = useAtomicMode.value ? '/api/novels/generate/atomic' : '/api/novels/generate';
+        const r=await fetch(API+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel'})});
         await readSSE(r, (evt) => {
-          if(evt.type==='text'){
+          // v2.3: 原子化模式的事件
+          if(evt.type==='beats_decomposed'){
+            chapterProgressLabel.value = `拆解为${evt.count}个节拍`;
+          }
+          else if(evt.type==='beat_progress'){
+            chapterProgressLabel.value = `Beat ${evt.beat_index+1}/${evt.total_beats} · ${evt.function}`;
+            chapterProgress.value = Math.round((evt.beat_index+1)/evt.total_beats*50); // 前半段50%
+          }
+          else if(evt.type==='evaluation'){
+            chapterProgress.value = 85;
+            chapterProgressLabel.value = `${evt.verdict||''} · ${evt.overall_score||0}分`;
+          }
+          else if(evt.type==='text'){
             writing.content+=evt.content; chapterProgress.value=Math.min(95, Math.round(writing.content.length/targetChars*100));
             chapterProgressLabel.value=`${writing.content.length}字`;
             nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
@@ -1565,7 +1592,8 @@ const app = createApp({
       if(loading.batch){ error.value='批量生成运行中，请等待完成'; return; }
       loading.write=true; writing.content=''; writing.done=false; error.value=''; chapterProgress.value=0;
       try {
-        const r=await fetch(API+'/api/novels/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel',feedback:reviewFeedback.value.trim()})});
+        const endpoint = useAtomicMode.value ? '/api/novels/generate/atomic' : '/api/novels/generate';
+        const r=await fetch(API+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel',feedback:reviewFeedback.value.trim()})});
         await readSSE(r, (evt) => {
           if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
           else if(evt.type==='done'){ writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
@@ -1753,7 +1781,7 @@ const app = createApp({
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
-      batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,theme,uiStyle,
+      batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
