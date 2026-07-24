@@ -360,6 +360,64 @@ def ai_slop_score(text: str) -> dict:
     }
 
 
+# ── L7.5: 句式碎片化检测 ──
+
+def sentence_fragmentation(text: str) -> dict:
+    """检测句式碎片化程度
+    
+    症状: 大量单句段落，每段一句话就换行。
+    正常网文: 每2-4句话为一个自然段。
+    碎片化: 连续5+段都是单句段落。
+    """
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    if len(paragraphs) < 5:
+        return {"score": 100, "verdict": "文本太短", "single_sentence_ratio": 0}
+    
+    # 统计单句段落（以。！？结尾且长度<35字）
+    single_count = 0
+    consecutive_max = 0
+    current_consecutive = 0
+    
+    for p in paragraphs:
+        stripped = p.strip()
+        is_single = (len(stripped) < 35 and 
+                    any(stripped.rstrip().endswith(c) for c in '。！？'))
+        if is_single:
+            single_count += 1
+            current_consecutive += 1
+            consecutive_max = max(consecutive_max, current_consecutive)
+        else:
+            current_consecutive = 0
+    
+    ratio = single_count / len(paragraphs)
+    
+    # 评分: 单句段占比越低越好
+    # <20% = 100分, 20-40% = 80分, 40-60% = 50分, >60% = 20分
+    if ratio < 0.2: score = 100
+    elif ratio < 0.3: score = 85
+    elif ratio < 0.4: score = 70
+    elif ratio < 0.5: score = 50
+    elif ratio < 0.6: score = 30
+    else: score = 15
+    
+    # 连续单句段惩罚
+    if consecutive_max >= 8:
+        score = max(10, score - 30)
+    elif consecutive_max >= 5:
+        score = max(15, score - 15)
+    
+    return {
+        "score": score,
+        "verdict": "优秀·段落节奏好" if score >= 80 else (
+            "良好" if score >= 60 else (
+            "碎片化·需合并段落" if score >= 30 else "严重碎片化")),
+        "single_sentence_ratio": round(ratio, 2),
+        "total_paragraphs": len(paragraphs),
+        "single_sentence_count": single_count,
+        "max_consecutive_single": consecutive_max,
+    }
+
+
 # ── L8: 综合评估报告 ──
 
 def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None) -> dict:
@@ -372,6 +430,7 @@ def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None)
         "hook": hook_strength(text),
         "dopamine": dopamine_density(text),
         "ai_slop": ai_slop_score(text),
+        "fragmentation": sentence_fragmentation(text),
     }
     
     if texts_for_diversity and len(texts_for_diversity) >= 2:
@@ -400,6 +459,8 @@ def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None)
     scores.append(("爽点密度", min(100, dp / 6 * 100), 0.20))
     # 去AI味
     scores.append(("去AI味", report["ai_slop"]["score"], 0.15))
+    # 句式碎片化
+    scores.append(("段落节奏", report["fragmentation"]["score"], 0.10))
     # 语义多样性（如有）
     if "semantic_diversity" in report:
         sd = report["semantic_diversity"]["mean_pairwise_distance"]

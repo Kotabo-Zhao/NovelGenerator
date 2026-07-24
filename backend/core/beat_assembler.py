@@ -58,6 +58,9 @@ class BeatAssembler:
         # ── 步骤2: 生成过渡句 ──
         assembled, transitions = self._stitch(texts, functions)
         
+        # ── 步骤2.5: 段落合并（修复句式碎片化）──
+        assembled = self._merge_fragments(assembled)
+        
         # ── 步骤3: 一致性检查 ──
         issues = self._consistency_check(assembled, char_snapshots or {})
         
@@ -261,6 +264,62 @@ class BeatAssembler:
                     pass
         
         return issues
+    
+    def _merge_fragments(self, text: str) -> str:
+        """合并相邻短句段落，修复句式碎片化
+        
+        策略: 扫描全文，将连续的单句段落（<35字）合并为多句段落。
+        每2-3句合并为一段，保留少量单句段作为节奏点。
+        """
+        paragraphs = text.split('\n\n')
+        if len(paragraphs) < 4:
+            return text
+        
+        merged = []
+        singles = []  # 收集连续的单句段落
+        
+        def flush_singles():
+            """将收集的单句段合并输出"""
+            nonlocal merged
+            if not singles:
+                return
+            # 每隔2-3句合并为一段
+            chunk_size = 3
+            for j in range(0, len(singles), chunk_size):
+                chunk = singles[j:j+chunk_size]
+                if len(chunk) >= 2:
+                    merged.append(''.join(chunk))
+                elif len(chunk) == 1 and j > 0:
+                    # 落单的单句，如果前面已合并，并入前一段
+                    if merged and len(merged[-1]) < 120:
+                        merged[-1] += chunk[0]
+                    else:
+                        merged.append(chunk[0])
+                else:
+                    merged.append(chunk[0])
+            singles.clear()
+        
+        for para in paragraphs:
+            stripped = para.strip()
+            if not stripped:
+                flush_singles()
+                merged.append('')
+                continue
+            
+            is_single = (len(stripped) < 35 and 
+                        any(stripped.rstrip().endswith(c) for c in '。！？'))
+            
+            if is_single:
+                singles.append(stripped)
+            else:
+                flush_singles()
+                merged.append(stripped)
+        
+        flush_singles()
+        result = '\n\n'.join(merged)
+        if result != text:
+            log.info(f"BeatAssembler: merged fragments ({len(paragraphs)}→{len(merged)} paras)")
+        return result
     
     def _deduplicate_sentences(self, text: str) -> str:
         """去掉相邻重复句（装配后清理beat拼接处的重复）"""

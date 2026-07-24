@@ -266,7 +266,12 @@ class BeatDecomposer:
         ]
     
     def _standard_chapter_sequence(self, ch_num: int) -> list:
-        """标准章: 多种变体轮换，防止千篇一律"""
+        """标准章: 多种变体轮换，防止千篇一律
+        
+        后期章节(>15章)自动添加描写/反思节拍，防止纯动作碎片化
+        """
+        is_late = ch_num > 15
+        
         variants = [
             # 变体A: 障碍→冲突→人设→转折→钩子
             ["opening_hook", "obstacle_build", "conflict_ignition", "character_highlight", "turning_point", "closing_hook"],
@@ -277,6 +282,16 @@ class BeatDecomposer:
             # 变体D: 人设高光→障碍→转折→信息揭示→钩子
             ["character_highlight", "obstacle_build", "turning_point", "info_reveal", "closing_hook"],
         ]
+        
+        # 后期章节：插入描写/反思节拍，防止纯动作碎片化
+        if is_late:
+            variants.append(
+                ["emotion_settle", "info_reveal", "character_highlight", "obstacle_build", "conflict_ignition", "closing_hook"]
+            )
+            variants.append(
+                ["character_highlight", "emotion_settle", "turning_point", "info_reveal", "obstacle_build", "closing_hook"]
+            )
+        
         # 基于章节号选择变体（确定性但看起来随机）
         return variants[ch_num % len(variants)]
     
