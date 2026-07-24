@@ -824,7 +824,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
 <script>
 const API = window.location.origin;
-const { createApp, ref, reactive, computed, watch, nextTick, onMounted } = Vue;
+const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onErrorCaptured } = Vue;
 
 // ── Vue 错误边界（防止页面崩溃黑屏）──
 window.addEventListener('error', e => {
@@ -836,7 +836,29 @@ window.addEventListener('error', e => {
     </div>`;
 });
 
-createApp({
+// ── 全局错误捕获（防止 Vue 静默崩溃黑屏）──
+window.onerror = function(msg, url, line, col, err) {
+  const m = err ? err.message || err.toString() : msg;
+  console.error('FATAL:', m);
+  // 在页面底部显示错误横幅
+  const banner = document.getElementById('crash-banner') || (() => {
+    const el = document.createElement('div');
+    el.id = 'crash-banner';
+    el.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#e33;color:#fff;padding:12px 16px;font-size:13px;z-index:99999;line-height:1.5;text-align:left';
+    document.body.appendChild(el);
+    return el;
+  })();
+  banner.textContent = '⚠️ 页面遇到错误: ' + (m.length > 200 ? m.slice(0,200) + '...' : m);
+  return false; // 让默认错误处理也跑
+};
+
+// 额外监听 Vue 错误事件
+window.addEventListener('vue-error', (e) => {
+  const banner = document.getElementById('crash-banner');
+  if (banner) banner.textContent = '⚠️ Vue 渲染错误: ' + String(e.detail).slice(0, 200);
+});
+
+const app = createApp({
   setup() {
     const currentView = ref('shelf');
     const novels = ref([]); const activeNovel = ref(null);
@@ -1491,6 +1513,12 @@ createApp({
     async function loadStyleSeed(seed) { try { const s=(await (await fetch(API+'/api/styles/seeds')).json()).seeds.find(x=>x.name===seed.name); if(s){ customStyleDesc.value=s.description||''; applyCustomStyle(); } } catch(e){} }
     async function deleteStyleSeed(seed) { try { await fetch(API+'/api/styles/seeds/'+encodeURIComponent(seed.filename),{method:'DELETE'}); await loadStyleSeeds(); } catch(e){} }
 
+    // ── 组件级错误捕获 ──
+    onErrorCaptured((err) => {
+      console.error('🛡️ onErrorCaptured:', err?.message);
+      return false;  // 阻止向上传播，由全局 handler 处理
+    });
+
     return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,toast,
       form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,
       selectedCount,allSelected,availableChapters,currentOutline,
@@ -1508,7 +1536,17 @@ createApp({
       decomposeRequirements,superviseRequirements,runVerifyLoop,addRequirements,
       loadStyleSeeds,loadStyleParams,applyParamStyle };
   }
-}).mount('#app');
+});
+  
+app.config.errorHandler = (err, instance, info) => {
+  const msg = err?.message || String(err || 'unknown error');
+  console.error('⛔ Vue Error:', msg, 'info:', info);
+  // 触发下方 window.onerror（更新错误横幅）
+  window.dispatchEvent(new CustomEvent('vue-error', { detail: msg }));
+};
+app.config.warnHandler = () => {};  // 静默 V3 兼容性警告
+
+app.mount('#app');
 </script>
 <script>
 if ('serviceWorker' in navigator) {
