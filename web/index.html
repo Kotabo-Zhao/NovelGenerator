@@ -826,6 +826,16 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 const API = window.location.origin;
 const { createApp, ref, reactive, computed, watch, nextTick, onMounted } = Vue;
 
+// ── Vue 错误边界（防止页面崩溃黑屏）──
+window.addEventListener('error', e => {
+  console.error('🛡️ [App Error]', e.message);
+  document.getElementById('app').innerHTML +=
+    `<div style="position:fixed;bottom:0;left:0;right:0;padding:12px;background:#c0392b;color:#fff;font-size:13px;z-index:99999">
+      ⚠️ 页面遇到错误: ${e.message?.substring(0, 100)}
+      <button onclick="this.parentElement.remove()" style="float:right;background:none;border:none;color:#fff;cursor:pointer">✕</button>
+    </div>`;
+});
+
 createApp({
   setup() {
     const currentView = ref('shelf');
@@ -869,13 +879,14 @@ createApp({
     const uiStyle = ref(localStorage.getItem('uiStyle') || 'macOS');
     const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
     const decomposeSummary = ref(null);  // v2.2: 需求拆解摘要
-    // v2.3: 按 category 分组子任务
+    // v2.3: 按 category 分组子任务（带防御）
     function groupedSubtasks(cat) {
-      if (!decomposeSummary.value || !decomposeSummary.value.subtasks) return [];
-      const items = decomposeSummary.value.subtasks.filter(s => s.category === cat);
-      // 默认全部收起，展开用 _expanded 控制
-      items.forEach(s => { if (s._expanded === undefined) s._expanded = false; });
-      return items;
+      try {
+        if (!decomposeSummary.value) return [];
+        const list = decomposeSummary.value.subtasks;
+        if (!Array.isArray(list) || !list.length) return [];
+        return list.filter(s => s && s.category === cat);
+      } catch(e) { console.warn('groupedSubtasks error:', e); return []; }
     }
     const reviewFeedback = ref(''); const batchStreaming = ref('');
     const chapterProgress = ref(0); const chapterProgressLabel = ref('');
@@ -1134,6 +1145,7 @@ createApp({
           else if(evt.type==='warning'){ showToast(evt.message, '提示', 'ℹ️'); }
           // v2.2: 角色名一致性警告
           else if(evt.type==='name_check'){ 
+            if (!decomposeSummary.value) decomposeSummary.value = {};
             decomposeSummary.value = { ...decomposeSummary.value, name_warning: evt.mismatches, name_suggestion: evt.suggestion };
           }
           else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); }
