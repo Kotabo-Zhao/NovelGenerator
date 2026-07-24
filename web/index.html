@@ -479,19 +479,71 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         生成大纲
       </button>
 
-      <!-- v2.2: 需求拆解摘要 -->
+      <!-- v2.3: 需求分析结果——结构化子任务展示 -->
       <div v-if="decomposeSummary" class="card" style="margin-top:12px;background:var(--bg2);border-color:var(--accent)">
-        <div class="card-title" style="color:var(--accent)">📋 需求分析结果</div>
-        <div style="font-size:13px;color:var(--text2);line-height:1.6">
-          <div v-if="decomposeSummary.core_theme" style="margin-bottom:4px"><b>核心主题：</b>{{ decomposeSummary.core_theme }}</div>
-          <div><b>拆解出 {{ decomposeSummary.subtask_count }} 条创作需求</b> · 其中 {{ decomposeSummary.p0_count }} 条为强制要求(P0)</div>
-          <div v-if="decomposeSummary.summary" style="margin-top:4px;color:var(--text3)">{{ decomposeSummary.summary }}</div>
-          <div v-if="decomposeSummary.offline_mode" style="margin-top:4px;color:var(--orange)">⚠️ 离线模式拆解，建议开启 LLM 以获得更精准的需求分析</div>
-          <div v-if="decomposeSummary.name_warning" style="margin-top:8px;padding:8px;background:rgba(255,150,50,.1);border-radius:6px;color:var(--orange);font-size:12px;white-space:pre-wrap">
-            ⚠️ 疑似角色名误写:
-{{ decomposeSummary.name_warning }}
-            <div style="margin-top:4px;opacity:.7">{{ decomposeSummary.name_suggestion }}</div>
+        <div class="card-title" style="color:var(--accent);display:flex;align-items:center;justify-content:space-between">
+          <span>📋 需求分析结果</span>
+          <span style="font-size:12px;font-weight:400;color:var(--text3)" v-if="decomposeSummary.subtasks">
+            {{ decomposeSummary.p0_count }}个P0 · 共{{ decomposeSummary.subtask_count }}项
+          </span>
+        </div>
+
+        <!-- 概览 -->
+        <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">
+          <div v-if="decomposeSummary.core_theme" style="margin-bottom:2px">
+            <b>核心主题：</b>{{ decomposeSummary.core_theme }}
           </div>
+          <div v-if="decomposeSummary.target_audience" style="margin-bottom:2px">
+            <b>目标读者：</b>{{ decomposeSummary.target_audience }}
+          </div>
+          <div v-if="decomposeSummary.summary" style="color:var(--text3);font-size:12px;margin-bottom:4px">
+            {{ decomposeSummary.summary }}
+          </div>
+          <div v-if="decomposeSummary.offline_mode" style="margin-top:2px;color:var(--orange);font-size:12px">
+            ⚠️ 离线模式拆解，建议开启 LLM 以获得更精准的需求分析
+          </div>
+        </div>
+
+        <!-- 子任务列表（按 category 分组） -->
+        <template v-if="decomposeSummary.subtasks && decomposeSummary.subtasks.length">
+          <div v-for="cat in ['worldbuilding','character','plot','style','structure']" :key="cat">
+            <div v-if="groupedSubtasks(cat).length" style="margin-bottom:8px">
+              <div style="font-size:12px;font-weight:600;color:var(--text2);padding:4px 0;border-bottom:1px solid var(--border-light);margin-bottom:4px">
+                {{ {worldbuilding:'🌍 世界观',character:'👤 角色',plot:'📖 剧情',style:'🎨 风格',structure:'🏗️ 结构'}[cat] || cat }}
+              </div>
+              <div v-for="st in groupedSubtasks(cat)" :key="st.id" 
+                   style="font-size:12px;padding:4px 8px;margin:2px 0;border-radius:4px;background:rgba(255,255,255,.03);cursor:pointer"
+                   @click="st._expanded = !st._expanded">
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span v-if="st.priority==='P0'" style="color:var(--red);font-weight:600;font-size:10px;padding:1px 4px;border:1px solid var(--red);border-radius:3px">P0</span>
+                  <span v-else-if="st.priority==='P1'" style="color:var(--orange);font-size:10px;padding:1px 4px;border:1px solid var(--orange);border-radius:3px">P1</span>
+                  <span style="flex:1">{{ st.title }}</span>
+                  <span style="color:var(--text3);font-size:11px">{{ st.sub_category }}</span>
+                  <span v-if="st._expanded">▲</span>
+                  <span v-else>▼</span>
+                </div>
+                <!-- 展开详情 -->
+                <div v-if="st._expanded" style="margin-top:4px;padding:6px 8px;background:rgba(0,0,0,.05);border-radius:4px;font-size:11px;color:var(--text3);line-height:1.5">
+                  <div v-if="st.description" style="margin-bottom:4px">📝 {{ st.description }}</div>
+                  <div v-if="st.must_include && st.must_include.length" style="margin-bottom:2px">
+                    <span style="color:var(--green)">✅ 必须包含：</span>
+                    <span v-for="(m,mi) in st.must_include" :key="mi">{{ m }}<span v-if="mi<st.must_include.length-1"> · </span></span>
+                  </div>
+                  <div v-if="st.must_avoid && st.must_avoid.length">
+                    <span style="color:var(--red)">❌ 必须避免：</span>
+                    <span v-for="(a,ai) in st.must_avoid" :key="ai">{{ a }}<span v-if="ai<st.must_avoid.length-1"> · </span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- 角色名警告 -->
+        <div v-if="decomposeSummary.name_warning" style="margin-top:6px;padding:8px;background:rgba(255,150,50,.1);border-radius:6px;color:var(--orange);font-size:12px;white-space:pre-wrap">
+          ⚠️ 疑似角色名误写:
+{{ decomposeSummary.name_warning }}
+          <div style="margin-top:4px;opacity:.7">{{ decomposeSummary.name_suggestion }}</div>
         </div>
       </div>
 
@@ -817,6 +869,14 @@ createApp({
     const uiStyle = ref(localStorage.getItem('uiStyle') || 'macOS');
     const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
     const decomposeSummary = ref(null);  // v2.2: 需求拆解摘要
+    // v2.3: 按 category 分组子任务
+    function groupedSubtasks(cat) {
+      if (!decomposeSummary.value || !decomposeSummary.value.subtasks) return [];
+      const items = decomposeSummary.value.subtasks.filter(s => s.category === cat);
+      // 默认全部收起，展开用 _expanded 控制
+      items.forEach(s => { if (s._expanded === undefined) s._expanded = false; });
+      return items;
+    }
     const reviewFeedback = ref(''); const batchStreaming = ref('');
     const chapterProgress = ref(0); const chapterProgressLabel = ref('');
     const outlineFeedback = ref(''); const isRegenerating = ref(false);

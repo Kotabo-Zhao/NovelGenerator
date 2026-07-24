@@ -248,22 +248,55 @@ class Planner:
 - 示例好标题: 「墙上的影子先碎了」「三碗酒」「剑还在转」「他不叫叶凡」"""
         log.info(f"Planning novel: {genre}/{style_name} - {inspiration[:50]}...")
         
-        kwargs = dict(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.8,
-            max_tokens=8192,
-        )
-        if "v4" in self.model:
-            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        # 重试机制：3次 API 调用 + 温度递减 + 简化兜底
+        plan = None
+        last_raw = ""
+        retry_configs = [
+            (0.8, False),  # 第一次：正常温度
+            (0.4, False),  # 第二次：低温度
+            (0.2, True),   # 第三次：最低温 + 简化prompt兜底
+        ]
+        for attempt, (temp, use_simple) in enumerate(retry_configs):
+            try:
+                api_kwargs = dict(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": 
+                            (user_prompt + "\n\n⚠️ 直接输出纯JSON，不要```json标记，不要任何解释文字。")
+                            if use_simple else user_prompt},
+                    ],
+                    temperature=temp,
+                    max_tokens=8192,
+                )
+                if "v4" in self.model:
+                    api_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+                
+                response = self.client.chat.completions.create(**api_kwargs)
+                content = response.choices[0].message.content
+                last_raw = content or ""
+                plan = self._parse_json(content)
+                if plan:
+                    if attempt > 0:
+                        log.info(f"Plan: OK on retry #{attempt}")
+                    break
+                # 尝试部分解析
+                partial = self._parse_partial(content) if content else None
+                if partial and not plan:
+                    plan = partial
+                    log.warning(f"Plan: using partial parse as fallback (attempt {attempt+1})")
+                    break
+                log.warning(f"Plan: JSON parse failed (attempt {attempt+1}), retrying...")
+            except Exception as e:
+                log.warning(f"Plan: {type(e).__name__}: {e} (attempt {attempt+1}), retrying...")
+            if attempt < len(retry_configs) - 1:
+                __import__("time").sleep(attempt + 1)  # 退避
         
-        response = self.client.chat.completions.create(**kwargs)
-
-        content = response.choices[0].message.content
-        plan = self._parse_json(content)
+        # 最后兜底：强制提取
+        if not plan and last_raw:
+            plan = self._force_extract(last_raw)
+            if plan:
+                log.warning("Plan: using force-extracted result")
         
         if plan:
             # 标准化章节号

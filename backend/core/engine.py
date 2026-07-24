@@ -142,8 +142,11 @@ class NovelEngine:
         hooks_path = os.path.join(novel_dir, "foreshadowing.json")
         atomic_write_json(hooks_path, [])
         
-        # 初始化剧情图谱 + 弧规划
-        self._init_storygraph_and_arcs(plan, novel_dir)
+        # 初始化剧情图谱 + 弧规划（不阻断大纲生成）
+        try:
+            self._init_storygraph_and_arcs(plan, novel_dir)
+        except Exception as e:
+            log.warning(f"StoryGraph init skipped: {e}")
         
         log.info(f"Novel created: {plan['title']} ({total_chapters} chapters)")
         return plan
@@ -241,19 +244,31 @@ class NovelEngine:
                 
                 requirements = enhanced_input.get("_requirements", {})
                 subtask_count = requirements.get("total_count", 0)
+                subtasks = requirements.get("subtasks", [])
                 
                 yield {"type": "progress", "phase": "decompose_requirements", "pct": 4,
                        "label": f"已拆解出 {subtask_count} 条创作需求"}
                 
-                # 输出拆解摘要给前端展示
+                # 输出拆解摘要给前端展示（含子任务详情）
                 yield {
                     "type": "requirements_decomposed",
                     "summary": requirements.get("summary", ""),
                     "core_theme": requirements.get("core_theme", ""),
                     "subtask_count": subtask_count,
-                    "p0_count": sum(1 for t in requirements.get("subtasks", []) 
-                                   if t.get("priority") == "P0"),
+                    "p0_count": sum(1 for t in subtasks if t.get("priority") == "P0"),
                     "offline_mode": requirements.get("offline_mode", False),
+                    "target_audience": requirements.get("target_audience", ""),
+                    # 子任务列表（前端展示用）
+                    "subtasks": [{
+                        "id": t.get("id", ""),
+                        "title": t.get("title", ""),
+                        "category": t.get("category", ""),
+                        "sub_category": t.get("sub_category", ""),
+                        "priority": t.get("priority", ""),
+                        "description": t.get("description", t.get("generation_hint", ""))[:200],
+                        "must_include": t.get("must_include", [])[:3],
+                        "must_avoid": t.get("must_avoid", [])[:3],
+                    } for t in subtasks],
                 }
                 
                 # 保存需求到内存
@@ -314,8 +329,11 @@ class NovelEngine:
                 hooks_path = os.path.join(novel_dir, "foreshadowing.json")
                 atomic_write_json(hooks_path, [])
                 
-                # 初始化剧情图谱 + 弧规划
-                await asyncio.to_thread(self._init_storygraph_and_arcs, plan, novel_dir)
+                # 初始化剧情图谱 + 弧规划（不阻断大纲生成）
+                try:
+                    await asyncio.to_thread(self._init_storygraph_and_arcs, plan, novel_dir)
+                except Exception as e:
+                    log.warning(f"StoryGraph init skipped in stream: {e}")
                 
                 log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)"
                         f" — requirements: {self._requirements.get(plan['title'], {}).get('total_count', 0)} subtasks")
