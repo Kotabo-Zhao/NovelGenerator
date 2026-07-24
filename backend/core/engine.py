@@ -142,8 +142,76 @@ class NovelEngine:
         hooks_path = os.path.join(novel_dir, "foreshadowing.json")
         atomic_write_json(hooks_path, [])
         
+        # 初始化剧情图谱 + 弧规划
+        self._init_storygraph_and_arcs(plan, novel_dir)
+        
         log.info(f"Novel created: {plan['title']} ({total_chapters} chapters)")
         return plan
+
+    def _init_storygraph_and_arcs(self, plan: dict, novel_dir: str):
+        """初始化剧情图谱 + 弧规划"""
+        from .storygraph import StoryGraph
+        
+        sg_path = os.path.join(novel_dir, "storygraph.json")
+        sg = StoryGraph()
+        
+        # 从大纲初始化角色快照
+        volumes = plan.get("outline", {}).get("volumes", [])
+        all_chapters = []
+        for vol in volumes:
+            for ch in vol.get("chapters", []):
+                ch_chars = ch.get("characters", [])
+                for c_name in ch_chars:
+                    sg.ensure_char(c_name)
+                all_chapters.append(ch)
+        
+        # 根据核心冲突初始化主线
+        main_thread_desc = plan.get("worldbuilding", {}).get("core_conflict", "")
+        if main_thread_desc:
+            sg.add_thread("thread_main", "主线", "main_plot", 5, main_thread_desc[:100])
+        
+        # 运行弧规划器
+        try:
+            from .arcplanner import plan_arcs
+            arcs = plan_arcs(
+                all_chapters,
+                plan.get("outline", {}).get("total_chapters", 0),
+                main_thread_desc,
+                plan.get("_meta", {}).get("requirements", {}).get("arcs_hint"),
+            )
+            if arcs:
+                sg.data["arcs"] = arcs
+                sg.data["current_arc"] = arcs[0] if arcs else {}
+                log.info(f"ArcPlanner: {len(arcs)} arcs planned")
+        except Exception as e:
+            log.warning(f"ArcPlanner skipped: {e}")
+
+        # 方案B: 全局伏笔规划 — 用 foreshadowing_designer 设计伏笔分布
+        try:
+            total_chs = plan.get("outline", {}).get("total_chapters", 0)
+            if total_chs >= 10:  # 至少10章才值得做全局伏笔规划
+                fds_result = self.fd_designer.design(plan, target_count=5)
+                if fds_result:
+                    # 保存到 storygraph 的伏笔账本
+                    for fs in fds_result:
+                        plant_ch = fs.get("plant_chapter", 1)
+                        reveal_ch = fs.get("reveal_chapter", total_chs)
+                        fs_id = f"fs_plan_{plant_ch}_{reveal_ch}"
+                        importance = {"high": 5, "medium": 3, "low": 1}.get(
+                            fs.get("importance", "medium"), 3)
+                        sg.add_foreshadow(
+                            fs_id=fs_id,
+                            description=fs.get("description", ""),
+                            planted_chapter=plant_ch,
+                            planned_payoff=reveal_ch,
+                            importance=importance,
+                        )
+                    log.info(f"Foreshadowing plan: {len(fds_result)} foreshadows designed")
+        except Exception as e:
+            log.warning(f"Foreshadowing planner skipped: {e}")
+
+        atomic_write_json(sg_path, sg.to_dict())
+        log.info(f"StoryGraph initialized for {plan['title']}")
 
     async def create_novel_stream(self, creative_input: dict) -> AsyncIterator[dict]:
         """流式创建小说 — 前端可显示分阶段进度条
@@ -245,6 +313,9 @@ class NovelEngine:
                 
                 hooks_path = os.path.join(novel_dir, "foreshadowing.json")
                 atomic_write_json(hooks_path, [])
+                
+                # 初始化剧情图谱 + 弧规划
+                await asyncio.to_thread(self._init_storygraph_and_arcs, plan, novel_dir)
                 
                 log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)"
                         f" — requirements: {self._requirements.get(plan['title'], {}).get('total_count', 0)} subtasks")
@@ -486,6 +557,27 @@ class NovelEngine:
             # 组装上下文
             context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
 
+            # 方案C: 在弧高潮章自动注入反转设计
+            try:
+                sg_path = os.path.join(self.memory.get_novel_dir(novel_id), "storygraph.json")
+                if os.path.exists(sg_path):
+                    sg_data = safe_read_json(sg_path)
+                    if sg_data and sg_data.get("arcs"):
+                        from .arcplanner import is_arc_climax
+                        for arc in sg_data["arcs"]:
+                            if is_arc_climax(arc, chapter_num):
+                                twist = self.twist_designer.design_chapter_twist(
+                                    chapter_num=chapter_num,
+                                    plan=plan,
+                                    chapter_outline=chapter_outline,
+                                )
+                                if twist and twist.get("suggestion"):
+                                    context += f"\n\n【建议反转】{twist['suggestion']}\n"
+                                    log.info(f"Twist injected for arc climax Ch{chapter_num}")
+                                break
+            except Exception as e:
+                log.warning(f"Twist injection skipped: {e}")
+
             # 注入修改意见（重生成场景）
             if feedback and feedback.strip():
                 context = (
@@ -610,8 +702,135 @@ class NovelEngine:
                 log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
             except Exception as e:
                 log.warning(f"ContextUpdater skipped: {e}")
-            
-            # ── Phase 2: 自动触发渐进式摘要压缩（每10章）──
+
+            # ── 自动更新剧情图谱（storygraph）──
+            try:
+                novel_dir = self.memory.get_novel_dir(novel_id)
+                sg_path = os.path.join(novel_dir, "storygraph.json")
+                sg_data = safe_read_json(sg_path) or {}
+                
+                from .storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
+                sg = StoryGraph.from_dict(sg_data)
+                
+                # 用轻量模型提取
+                extract_result = extract_storygraph_from_chapter(
+                    chapter_text=full_text,
+                    current_graph=sg_data,
+                    chapter_num=chapter_num,
+                    chapter_outline=chapter_outline,
+                    client=self.client,
+                    model=self.model,  # 可换成更便宜的模型
+                )
+                
+                # 应用到图谱
+                apply_extraction(sg, extract_result, chapter_num)
+                
+                # 保存
+                atomic_write_json(sg_path, sg.to_dict())
+                self.memory.invalidate("storygraph", novel_id)
+                log.info(f"StoryGraph updated after chapter {chapter_num}")
+            except Exception as e:
+                log.warning(f"StoryGraph update skipped: {e}")
+
+            # ── 方案A: 逻辑监督自动校验（自动修复P0违规）──
+            try:
+                # 获取前文章节
+                prev_chapters = {}
+                for ch in completed:
+                    if ch < chapter_num:
+                        ch_content = self.get_chapter(novel_id, ch)
+                        if ch_content:
+                            prev_chapters[ch] = ch_content
+                
+                # 获取全局状态
+                novel_dir_gs = self.memory.get_novel_dir(novel_id)
+                gs_path = os.path.join(novel_dir_gs, "global_state.json")
+                global_state = safe_read_json(gs_path, {}) if os.path.exists(gs_path) else {}
+                
+                # 执行校验
+                validation = self.logic_supervisor.validate_chapter(
+                    chapter_text=full_text,
+                    chapter_num=chapter_num,
+                    plan=plan,
+                    prev_chapters=prev_chapters,
+                    global_state=global_state,
+                    run_deep=(chapter_num % 3 == 0),  # 每3章做一次深度校验
+                )
+                
+                violations = validation.get("violations", [])
+                if violations:
+                    p0_count = sum(1 for v in violations if v.get("severity") == "P0")
+                    score = validation.get("score", 100)
+                    
+                    log.warning(f"LogicSupervisor: {len(violations)} violations "
+                               f"(P0:{p0_count}) score={score}")
+                    
+                    yield {"type": "consistency_check",
+                           "violations": violations,
+                           "score": score}
+                    
+                    # P0违规 ≥1 → 自动修复
+                    if p0_count >= 1:
+                        fix_prompt = self.logic_supervisor.build_fix_prompt(violations)
+                        log.info(f"Auto-fix triggered: {p0_count} P0 violations")
+                        
+                        # 构造修复上下文
+                        fix_context = f"{context}\n\n{fix_prompt}"
+                        fixed_text = ""
+                        
+                        async for fix_chunk in self.writer.write_stream(
+                            context=fix_context,
+                            genre=genre,
+                            style=style,
+                            target_words=target_words,
+                            writing_mode=writing_mode,
+                            normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                        ):
+                            fixed_text += fix_chunk
+                        
+                        if fixed_text and len(fixed_text) > len(full_text) * 0.5:
+                            full_text = fixed_text
+                            # 重新保存
+                            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{fixed_text}"
+                            self.memory.save_chapter(novel_id, chapter_num, formatted)
+                            log.info(f"Auto-fix completed for chapter {chapter_num}")
+                            yield {"type": "auto_fix", "applied": True, "violations_fixed": p0_count}
+            except Exception as e:
+                log.warning(f"LogicSupervisor auto-validation skipped: {e}")
+
+            # ── 自动校准（每10章）──
+            try:
+                from .autocalibrator import should_calibrate, calibrate
+                if should_calibrate(chapter_num):
+                    plan = self.get_novel(novel_id)
+                    sg_data = safe_read_json(sg_path) or {}
+                    report = calibrate(chapter_num, plan, sg_data,
+                                       completed_chapters=completed)
+                    
+                    # 将校准报告注入 storygraph
+                    if not sg.is_healthy():
+                        calib_ctx = report.to_context_block()
+                        if calib_ctx and sg_data:
+                            sg_data["_last_calibration"] = {
+                                "chapter": chapter_num,
+                                "report": report.to_context_block(),
+                                "score": report.score,
+                            }
+                            atomic_write_json(sg_path, sg_data)
+                            self.memory.invalidate("storygraph", novel_id)
+                        
+                        if not report.is_healthy():
+                            log.warning(f"Calibration issues found: "
+                                       f"{len(report.plot_drift_items)} drifts, "
+                                       f"{len(report.overdue_foreshadows)} overdue "
+                                       f"foreshadows, score={report.score}")
+                            yield {"type": "calibration", "report": report.to_context_block(),
+                                   "score": report.score}
+                    log.info(f"AutoCalibration done at chapter {chapter_num}: score={report.score}")
+            except Exception as e:
+                log.warning(f"AutoCalibration skipped: {e}")
+
+            # ── 渐进式摘要压缩（每10章）──
             try:
                 compress_result = check_and_compress(
                     self.memory, novel_id, chapter_num, self.chapter_summarizer

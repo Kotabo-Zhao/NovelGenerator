@@ -39,6 +39,7 @@ MEMORY_FILES = {
     "global_state":   {"file": "global_state.json",      "type": "json", "versioned": True},
     "character_bible":{"file": "character_bible.json",   "type": "json", "versioned": False},
     "foreshadowing":  {"file": "foreshadowing.json",     "type": "json", "versioned": False},
+    "storygraph":     {"file": "storygraph.json",        "type": "json", "versioned": False},
     "chapter":        {"file": "chapters/chapter_{:04d}.md", "type": "text", "versioned": False},
 }
 
@@ -70,6 +71,7 @@ class SharedMemoryManager:
             "plan": 30.0,          # plan 很少变化
             "character_bible": 60.0,  # 人物宝典几乎不变
             "foreshadowing": 10.0,
+            "storygraph": 10.0,    # storygraph 中等频率更新
         }
         self._cache_lock = threading.Lock()
 
@@ -302,6 +304,11 @@ class SharedMemoryManager:
         if hooks_ctx:
             parts.append(hooks_ctx)
 
+        # L4b: 剧情图谱上下文（storygraph）
+        sg_ctx = self._build_storygraph_context(novel_id, chapter_num, chapter_outline)
+        if sg_ctx:
+            parts.append(sg_ctx)
+
         # L5: 本章大纲
         beats_text = ""
         beats = chapter_outline.get("scene_beats", [])
@@ -398,6 +405,54 @@ class SharedMemoryManager:
                 f"计划第{reveal}章回收] {h.get('description', '')}\n"
             )
         return "".join(lines)
+
+    def _build_storygraph_context(self, novel_id: str, chapter_num: int,
+                                   chapter_outline: dict) -> str:
+        """构建剧情图谱上下文（storygraph 注入）"""
+        try:
+            sg_data = self.read("storygraph", novel_id)
+        except Exception:
+            return ""
+
+        if not sg_data or not sg_data.get("plot_threads"):
+            return ""
+
+        from .storygraph import StoryGraph
+        sg = StoryGraph.from_dict(sg_data)
+
+        parts = []
+        chapter_chars = chapter_outline.get("characters", [])
+
+        # 1) 活跃剧情线摘要（按优先级取前5条）
+        thread_ctx = sg.get_thread_summaries()
+        if thread_ctx:
+            parts.append(thread_ctx)
+
+        # 2) 伏笔到期提醒（窗口3章内）
+        fs_ctx = sg.get_foreshadow_context(chapter_num)
+        if fs_ctx:
+            parts.append(fs_ctx)
+
+        # 3) 角色快照（只取本章出场角色）
+        char_ctx = sg.get_char_snapshots_text(chapter_chars)
+        if char_ctx:
+            parts.append(char_ctx)
+
+        # 4) 当前剧情弧信息（如果有 arcplanner 规划的弧数据）
+        arc_data = sg.data.get("current_arc", {})
+        if arc_data:
+            arc_phase = {0: "铺垫阶段", 1: "升级阶段", 2: "高潮阶段",
+                         3: "余波阶段"}.get(arc_data.get("phase", 0), "")
+            parts.append(
+                f"## 🎯 当前剧情弧\n"
+                f"- 弧名: {arc_data.get('label', '')}\n"
+                f"- 阶段: {arc_phase}\n"
+                f"- 弧总章节: Ch{arc_data.get('start_chapter', '?')} "
+                f"- Ch{arc_data.get('end_chapter', '?')}\n"
+                f"- 弧目标: {arc_data.get('goal', '')}\n"
+            )
+
+        return "\n\n---\n\n".join(parts)
 
     def _format_state_snapshot(self, state: dict, chapter_num: int) -> str:
         """格式化角色状态快照（子字段类型守卫，防 global_state.json 损坏）"""
