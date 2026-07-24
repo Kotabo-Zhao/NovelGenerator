@@ -147,13 +147,18 @@ class AtomicWriter:
             elif len(text) > beat.max_words * 4:
                 len_score = 0.3
             
-            # 句式多样性（短句占比）
+            # 句式多样性（短句占比）— 防止碎片化
             import re
             sentences = re.split(r'[。！？\n]', text)
-            has_short = any(len(s.strip()) <= 8 for s in sentences if s.strip())
-            short_bonus = 0.3 if has_short else 0
+            sentences = [s.strip() for s in sentences if s.strip()]
+            has_short = any(len(s) <= 8 for s in sentences)
+            has_long = any(len(s) >= 20 for s in sentences)
+            all_short = all(len(s) < 15 for s in sentences)
+            short_bonus = 0.2 if has_short else 0
+            frag_penalty = -0.6 if all_short else 0  # 全是短句 → 严重扣分
+            long_bonus = 0.2 if has_long else 0  # 有长句 → 加分
             
-            scored.append((len_score + short_bonus + self.rng.uniform(0, 0.2), c))
+            scored.append((len_score + short_bonus + long_bonus + frag_penalty + self.rng.uniform(0, 0.15), c))
         
         # 不是选最高分，而是在 top 2 中随机选（增加随机性）
         scored.sort(key=lambda x: -x[0])
