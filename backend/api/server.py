@@ -924,27 +924,94 @@ def _read_novel_file(novel_id: str, filename: str) -> dict:
 
 
 @app.get("/api/novels/{novel_id}/storygraph")
-async def get_storygraph(novel_id: str):
-    """获取剧情图谱数据（剧情线/伏笔账本/角色快照/因果链）"""
+async def get_storygraph(novel_id: str, chapter: int = 0):
+    """获取剧情图谱数据（剧情线/伏笔账本/角色快照/因果链）
+    
+    Query params:
+        chapter: 指定章节号，仅返回该章及之前的剧情数据（时间回溯）
+                 0或省略 = 返回全部
+    """
     data = _read_novel_file(novel_id, "storygraph.json")
+    last_updated = data.get("last_updated_chapter", 0)
+    version = data.get("version", 0)
+    
+    # 如果指定了章节号，过滤到该时间点
+    if chapter > 0 and chapter < last_updated:
+        data = _filter_storygraph_to_chapter(data, chapter)
+    
     return {
         "novel_id": novel_id,
         "plot_threads": data.get("plot_threads", {}),
         "foreshadow_ledger": data.get("foreshadow_ledger", {}),
         "char_snapshots": data.get("char_snapshots", {}),
         "causal_links": data.get("causal_links", []),
-        "version": data.get("version", 0),
-        "last_updated_chapter": data.get("last_updated_chapter", 0),
+        "version": version,
+        "last_updated_chapter": last_updated,
+        "filtered_to_chapter": chapter if chapter > 0 and chapter < last_updated else None,
         # 计算摘要统计
-        "stats": {
-            "total_threads": len(data.get("plot_threads", {})),
-            "active_threads": sum(1 for t in data.get("plot_threads", {}).values() if t.get("status") in ("active", "advancing", "climax")),
-            "total_foreshadows": len(data.get("foreshadow_ledger", {})),
-            "unresolved_foreshadows": sum(1 for f in data.get("foreshadow_ledger", {}).values() if f.get("status") in ("planted", "hinted")),
-            "resolved_foreshadows": sum(1 for f in data.get("foreshadow_ledger", {}).values() if f.get("status") == "resolved"),
-            "tracked_characters": len(data.get("char_snapshots", {})),
-            "causal_links": len(data.get("causal_links", [])),
-        }
+        "stats": _compute_storygraph_stats(data),
+    }
+
+
+def _filter_storygraph_to_chapter(data: dict, chapter: int) -> dict:
+    """将剧情图谱数据过滤到指定章节时间点"""
+    import copy
+    filtered = copy.deepcopy(data)
+    
+    # 过滤剧情线节点（只保留 chapter <= 指定章的）
+    for tid in filtered.get("plot_threads", {}):
+        t = filtered["plot_threads"][tid]
+        t["key_nodes"] = [n for n in t.get("key_nodes", []) if n["chapter"] <= chapter]
+        # 如果在指定章时该线程还没有节点，状态回退
+        if not t["key_nodes"] and t.get("status") in ("advancing", "climax", "resolved"):
+            t["status"] = "active"
+    
+    # 过滤伏笔（只保留 planted_chapter <= 指定章的）
+    filtered["foreshadow_ledger"] = {
+        fid: fs for fid, fs in filtered.get("foreshadow_ledger", {}).items()
+        if fs.get("planted_chapter", 0) <= chapter
+    }
+    # 回退伏笔状态：在指定章时尚未回收的，状态恢复为hinted/planted
+    for fs in filtered["foreshadow_ledger"].values():
+        if fs.get("actual_payoff_chapter") and fs["actual_payoff_chapter"] > chapter:
+            fs["actual_payoff_chapter"] = None
+            fs["status"] = "hinted" if fs.get("hint_count", 1) > 1 else "planted"
+        if fs.get("last_hint_chapter", 0) > chapter:
+            fs["last_hint_chapter"] = max(fs.get("planted_chapter", 0), 
+                                          min(n for n in [fs.get("planted_chapter",0)] if n <= chapter))
+    
+    # 过滤角色快照（回退到指定章时的状态）
+    for name in filtered.get("char_snapshots", {}):
+        snap = filtered["char_snapshots"][name]
+        if snap.get("last_chapter_appeared", 0) > chapter:
+            snap["last_chapter_appeared"] = 0
+        # 过滤关系变化
+        snap["relationship_changes"] = [
+            rc for rc in snap.get("relationship_changes", [])
+            if rc.get("chapter", 0) <= chapter
+        ]
+    
+    # 过滤因果链
+    filtered["causal_links"] = [
+        cl for cl in filtered.get("causal_links", [])
+        if cl.get("cause_chapter", 0) <= chapter
+    ]
+    
+    filtered["last_updated_chapter"] = chapter
+    filtered["filtered"] = True
+    return filtered
+
+
+def _compute_storygraph_stats(data: dict) -> dict:
+    """计算剧情图谱统计摘要"""
+    return {
+        "total_threads": len(data.get("plot_threads", {})),
+        "active_threads": sum(1 for t in data.get("plot_threads", {}).values() if t.get("status") in ("active", "advancing", "climax")),
+        "total_foreshadows": len(data.get("foreshadow_ledger", {})),
+        "unresolved_foreshadows": sum(1 for f in data.get("foreshadow_ledger", {}).values() if f.get("status") in ("planted", "hinted")),
+        "resolved_foreshadows": sum(1 for f in data.get("foreshadow_ledger", {}).values() if f.get("status") == "resolved"),
+        "tracked_characters": len(data.get("char_snapshots", {})),
+        "causal_links": len(data.get("causal_links", [])),
     }
 
 

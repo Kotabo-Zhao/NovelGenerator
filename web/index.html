@@ -826,12 +826,16 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <div v-else>
             <!-- 工具栏: 刷新 + 章节滑块 + 子tab -->
             <div class="sg-toolbar">
-              <button class="btn btn-ghost btn-xs" @click="loadStoryGraph" :disabled="sgLoading" style="font-size:12px">🔄 刷新</button>
+              <button class="btn btn-ghost btn-xs" @click="loadStoryGraph(0)" :disabled="sgLoading" style="font-size:12px">🔄 刷新</button>
+              <span class="text-xs color-text3" style="margin-left:6px" v-if="sgData?.last_updated_chapter">
+                最后更新: Ch{{ sgData.last_updated_chapter }}
+                <template v-if="sgData.filtered_to_chapter"><span style="color:var(--accent)"> (回溯至Ch{{ sgData.filtered_to_chapter }})</span></template>
+              </span>
               <div class="sg-chapter-slider" v-if="activeNovel?.state?.total_chapters">
                 <span class="text-xs color-text3">追踪至 Ch</span>
                 <input type="range" v-model.number="sgChapterFilter" :min="1" :max="activeNovel.state.total_chapters" style="width:120px;margin:0 6px">
                 <span class="text-xs font-semibold" style="color:var(--accent)">{{ sgChapterFilter }}</span>
-                <button class="btn btn-ghost btn-xs" @click="sgChapterFilter=(activeNovel.state.completed_chapters||[]).length+1" style="font-size:10px;margin-left:4px">最新</button>
+                <button class="btn btn-ghost btn-xs" @click="sgChapterFilter=(sgData?.last_updated_chapter||(activeNovel.state.completed_chapters||[]).length+1);loadStoryGraph(0)" style="font-size:10px;margin-left:4px">最新</button>
               </div>
             </div>
             
@@ -1710,6 +1714,8 @@ const app = createApp({
             if(!ch.completed_chapters.includes(evt.chapter_num)) ch.completed_chapters.push(evt.chapter_num);
             ch.completed_chapters.sort((a,b)=>a-b); ch.current_chapter=Math.max(...ch.completed_chapters);
             loadShelfDebounced();
+            // v2.3.1: 自动刷新剧情图谱
+            if (writing.activeTab === 'storygraph') loadStoryGraph(0);
           }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
@@ -1727,17 +1733,25 @@ const app = createApp({
       sgChapterFilter.value = (activeNovel.value.state.completed_chapters||[]).length + 1;
       await loadStoryGraph();
     }
-    async function loadStoryGraph() {
+    async function loadStoryGraph(chapterNum = 0) {
       if (!activeNovel.value) return;
       sgLoading.value = true;
       const id = encodeURIComponent(activeNovel.value.id);
+      const chParam = chapterNum > 0 ? `?chapter=${chapterNum}` : '';
       try {
         const [sgRes, arcRes, calRes] = await Promise.allSettled([
-          fetch(API+'/api/novels/'+id+'/storygraph'),
+          fetch(API+'/api/novels/'+id+'/storygraph'+chParam),
           fetch(API+'/api/novels/'+id+'/arcs'),
           fetch(API+'/api/novels/'+id+'/calibration'),
         ]);
-        if (sgRes.status==='fulfilled' && sgRes.value.ok) sgData.value = await sgRes.value.json();
+        if (sgRes.status==='fulfilled' && sgRes.value.ok) {
+          sgData.value = await sgRes.value.json();
+          // 同步章节滑块
+          if (!chapterNum && sgData.value.last_updated_chapter) {
+            sgChapterFilter.value = sgData.value.last_updated_chapter || 
+              (activeNovel.value.state.completed_chapters||[]).length + 1;
+          }
+        }
         if (arcRes.status==='fulfilled' && arcRes.value.ok) sgArcs.value = await arcRes.value.json();
         if (calRes.status==='fulfilled' && calRes.value.ok) sgCalibration.value = await calRes.value.json();
       } catch(e) {
@@ -1746,6 +1760,17 @@ const app = createApp({
         sgLoading.value = false;
       }
     }
+    
+    // 章节滑块变化时重新加载
+    let _sgSliderTimer = null;
+    watch(sgChapterFilter, (newVal) => {
+      if (_sgSliderTimer) clearTimeout(_sgSliderTimer);
+      _sgSliderTimer = setTimeout(() => {
+        if (writing.activeTab === 'storygraph' && activeNovel.value) {
+          loadStoryGraph(newVal);
+        }
+      }, 300); // 300ms 防抖
+    });
 
     function cancelBatch() {
       if(abortCtrl.value){ abortCtrl.value.abort(); abortCtrl.value=null; }
