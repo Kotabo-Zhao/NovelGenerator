@@ -826,14 +826,20 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 const API = window.location.origin;
 const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onErrorCaptured } = Vue;
 
-// ── Vue 错误边界（防止页面崩溃黑屏）──
+// ── 全局错误捕获（防止页面崩溃黑屏）──
+// 注意: 不能使用 innerHTML += 操作 #app，那会炸掉 Vue 的 DOM 树
+// 改用 document.body.appendChild 在 body 级别显示错误
 window.addEventListener('error', e => {
-  console.error('🛡️ [App Error]', e.message);
-  document.getElementById('app').innerHTML +=
-    `<div style="position:fixed;bottom:0;left:0;right:0;padding:12px;background:#c0392b;color:#fff;font-size:13px;z-index:99999">
-      ⚠️ 页面遇到错误: ${e.message?.substring(0, 100)}
-      <button onclick="this.parentElement.remove()" style="float:right;background:none;border:none;color:#fff;cursor:pointer">✕</button>
-    </div>`;
+  const msg = e.message || String(e.error || '');
+  console.error('🛡️ [App Error]', msg);
+  const banner = document.getElementById('crash-banner') || (() => {
+    const el = document.createElement('div');
+    el.id = 'crash-banner';
+    el.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#e33;color:#fff;padding:12px 16px;font-size:13px;z-index:99999;line-height:1.5;text-align:left';
+    document.body.appendChild(el);
+    return el;
+  })();
+  banner.textContent = '⚠️ 页面遇到错误: ' + msg.slice(0, 200);
 });
 
 // ── 全局错误捕获（防止 Vue 静默崩溃黑屏）──
