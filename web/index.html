@@ -340,10 +340,40 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sg-calib-section{margin-bottom:8px}
 .sg-calib-item{padding:6px 10px;margin-bottom:4px;border-left:3px solid var(--border);background:var(--bg2);border-radius:0 4px 4px 0;font-size:12px;color:var(--text2)}
 
+/* v2.3.1: 交互增强 */
+.sg-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.sg-chapter-slider{display:flex;align-items:center;gap:4px}
+.sg-subtabs{display:flex;gap:0;margin-bottom:12px;border-bottom:2px solid var(--border);overflow-x:auto}
+.sg-subtab{padding:8px 14px;border:none;background:none;font-size:13px;cursor:pointer;color:var(--text2);border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:all .15s;font-family:var(--font)}
+.sg-subtab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.sg-subtab:hover:not(.active){color:var(--text)}
+.sg-subtab-count{font-size:10px;color:var(--text3);margin-left:4px;font-weight:400}
+.sg-subtab-count.sg-count-warn{color:var(--red)}
+.sg-filter-bar{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+.sg-filter-btn{padding:3px 10px;border:1px solid var(--border);border-radius:12px;background:none;font-size:11px;cursor:pointer;color:var(--text2);transition:all .15s;font-family:var(--font)}
+.sg-filter-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.sg-filter-btn:hover:not(.active){border-color:var(--text2)}
+.sg-expandable{cursor:pointer;transition:all .2s}
+.sg-expandable.expanded{background:var(--card-hover);box-shadow:var(--shadow)}
+.sg-timeline{position:relative;padding-left:16px;border-left:2px solid var(--border)}
+.sg-timeline-item{position:relative;padding:4px 0 12px 12px;font-size:12px}
+.sg-timeline-dot{position:absolute;left:-21px;top:8px;width:8px;height:8px;border-radius:50%}
+.sg-timeline-ch{font-weight:600;color:var(--accent);margin-right:8px;font-size:11px}
+.sg-timeline-event{color:var(--text2)}
+.sg-fs-timeline-bar{margin-bottom:12px}
+.sg-fs-bar-track{position:relative;height:14px;background:var(--bg);border-radius:7px;overflow:hidden}
+.sg-fs-bar-item{position:absolute;top:0;height:100%;border-radius:3px;min-width:3px;transition:opacity .2s}
+.sg-severity-tag{display:inline-block;padding:0 4px;border-radius:3px;font-size:10px;font-weight:700;margin-right:6px;text-transform:uppercase}
+.sev-high{background:rgba(248,81,73,.15);color:#f85149}
+.sev-mid{background:rgba(240,136,62,.15);color:#f0883e}
+.sev-low{background:rgba(139,148,158,.15);color:#8b949e}
+
 @media(max-width:768px){
   .sg-dashboard{grid-template-columns:repeat(2,1fr)}
   .sg-grid-2{grid-template-columns:1fr}
   .sg-char-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+  .sg-subtabs{font-size:12px}
+  .sg-subtab{padding:6px 10px;font-size:12px}
 }
 </style>
 </head>
@@ -794,130 +824,278 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </div>
 
           <div v-else>
-            <!-- 概览仪表板 -->
-            <div class="sg-dashboard">
-              <div class="sg-stat-card"><div class="sg-stat-num">{{ sgStats.activeThreads }}/{{ sgStats.totalThreads }}</div><div class="sg-stat-label">活跃剧情线</div></div>
-              <div class="sg-stat-card"><div class="sg-stat-num" :style="{color:sgStats.overdueForeshadows>0?'#f85149':''}">{{ sgStats.unresolvedForeshadows }}</div><div class="sg-stat-label">未回收伏笔<template v-if="sgStats.overdueForeshadows>0"><span style="color:#f85149"> · {{sgStats.overdueForeshadows}}超期</span></template></div></div>
-              <div class="sg-stat-card"><div class="sg-stat-num">{{ sgStats.trackedChars }}</div><div class="sg-stat-label">追踪角色</div></div>
-              <div class="sg-stat-card"><div class="sg-stat-num" :style="{color:sgCalibration?.score<70?'#f85149':sgCalibration?.score>=90?'#3fb950':''}">{{ sgCalibration?.score??'--' }}</div><div class="sg-stat-label">剧情健康度</div></div>
-            </div>
-
-            <!-- 弧线进度条 -->
-            <div class="card" v-if="sgArcs?.arcs?.length" style="margin-top:12px">
-              <div class="card-title" style="font-size:14px;margin:0 0 10px">🎯 弧线规划</div>
-              <div class="sg-arcs-bar">
-                <div v-for="a in sgArcs.arcs" :key="a.arc_id" class="sg-arc-segment"
-                     :class="{
-                       'arc-past': a.end_chapter < (sgArcs.current_chapter||1),
-                       'arc-now': sgArcs.current_arc?.arc_id === a.arc_id,
-                       'arc-future': a.start_chapter > (sgArcs.current_chapter||1) && sgArcs.current_arc?.arc_id !== a.arc_id
-                     }"
-                     :style="{flex: a.chapters?.length||1}">
-                  <span class="sg-arc-label">{{ a.label || '弧'+a.arc_id }}</span>
-                  <span class="sg-arc-range">Ch{{ a.start_chapter }}-{{ a.end_chapter }}</span>
-                  <span class="sg-arc-type">{{ {'setup':'🥚','rising':'⚔️','climax':'🔥','resolution':'🌅'}[a.type]||'' }}</span>
-                </div>
-              </div>
-              <!-- 当前弧详情 -->
-              <div v-if="sgArcs.current_arc" class="sg-current-arc" style="margin-top:10px;padding:10px;background:var(--bg);border-radius:var(--radius-xs)">
-                <div style="font-size:13px;font-weight:600;margin-bottom:4px">
-                  🔍 当前弧: {{ sgArcs.current_arc.label }} (第{{ sgArcs.current_arc.current_position }}/{{ sgArcs.current_arc.total_in_arc }}章)
-                </div>
-                <div style="font-size:12px;color:var(--text2)">{{ sgArcs.current_arc.goal }}</div>
-                <div style="font-size:11px;color:var(--text3);margin-top:4px">情绪曲线: {{ sgArcs.current_arc.emotional_arc }}</div>
+            <!-- 工具栏: 刷新 + 章节滑块 + 子tab -->
+            <div class="sg-toolbar">
+              <button class="btn btn-ghost btn-xs" @click="loadStoryGraph" :disabled="sgLoading" style="font-size:12px">🔄 刷新</button>
+              <div class="sg-chapter-slider" v-if="activeNovel?.state?.total_chapters">
+                <span class="text-xs color-text3">追踪至 Ch</span>
+                <input type="range" v-model.number="sgChapterFilter" :min="1" :max="activeNovel.state.total_chapters" style="width:120px;margin:0 6px">
+                <span class="text-xs font-semibold" style="color:var(--accent)">{{ sgChapterFilter }}</span>
+                <button class="btn btn-ghost btn-xs" @click="sgChapterFilter=(activeNovel.state.completed_chapters||[]).length+1" style="font-size:10px;margin-left:4px">最新</button>
               </div>
             </div>
+            
+            <!-- 子tabs -->
+            <div class="sg-subtabs">
+              <button class="sg-subtab" :class="{active:sgSubTab==='overview'}" @click="sgSubTab='overview'">📊 概览</button>
+              <button class="sg-subtab" :class="{active:sgSubTab==='threads'}" @click="sgSubTab='threads'">
+                剧情线 <span class="sg-subtab-count">{{ sgStats.activeThreads }}/{{ sgStats.totalThreads }}</span>
+              </button>
+              <button class="sg-subtab" :class="{active:sgSubTab==='foreshadows'}" @click="sgSubTab='foreshadows'">
+                伏笔 <span class="sg-subtab-count" :class="{'sg-count-warn':sgStats.overdueForeshadows>0}">{{ sgStats.unresolvedForeshadows }}/{{ sgStats.totalForeshadows }}</span>
+              </button>
+              <button class="sg-subtab" :class="{active:sgSubTab==='characters'}" @click="sgSubTab='characters'">
+                角色 <span class="sg-subtab-count">{{ sgStats.trackedChars }}</span>
+              </button>
+              <button class="sg-subtab" :class="{active:sgSubTab==='calibration'}" @click="sgSubTab='calibration'">
+                校准 <span class="sg-subtab-count" :class="{'sg-count-warn':(sgCalibration?.score||100)<70}">{{ sgCalibration?.score??'--' }}</span>
+              </button>
+            </div>
 
-            <!-- 剧情线追踪 + 伏笔账本 双栏 -->
-            <div class="sg-grid-2" style="margin-top:12px;gap:12px">
-              <!-- 剧情线 -->
-              <div class="card">
-                <div class="card-title" style="font-size:14px;margin:0 0 8px">📊 剧情线追踪</div>
-                <div v-if="!sgThreads.length" class="text-xs color-text3">暂无数据，生成章节后将自动更新</div>
-                <div v-for="t in sgThreads" :key="t.id" class="sg-thread-item"
-                     :style="{borderLeftColor: statusColor(t.status)}">
-                  <div class="flex justify-between items-start">
-                    <div style="font-size:13px;font-weight:600">{{ t.name }}
-                      <span class="sg-tag">{{ {'main_plot':'主线','subplot':'支线','character_arc':'角色弧','mystery':'悬疑'}[t.type]||t.type }}</span>
-                    </div>
-                    <span class="sg-tag" :style="{background:statusBg(t.status)}">{{ statusLabel(t.status) }}</span>
-                  </div>
-                  <div class="sg-tension-bar" style="margin:6px 0">
-                    <div class="sg-tension-fill" :style="{width:(t.current_tension||5)*10+'%',background:tensionGradient(t.current_tension||5)}"></div>
-                  </div>
-                  <div class="text-xs color-text3">紧张度 {{ t.current_tension }}/10 · 优先级 P{{ t.priority }}</div>
-                  <div v-if="t.key_nodes?.length" class="text-xs color-text2 mt-4">
-                    {{ t.key_nodes.slice(-2).map(n=>'Ch'+n.chapter+':'+n.event).join(' → ') }}
-                  </div>
+            <!-- ====== 概览 Tab ====== -->
+            <div v-if="sgSubTab==='overview'">
+              <div class="sg-dashboard">
+                <div class="sg-stat-card" @click="sgSubTab='threads'" style="cursor:pointer">
+                  <div class="sg-stat-num">{{ sgStats.activeThreads }}/{{ sgStats.totalThreads }}</div>
+                  <div class="sg-stat-label">活跃剧情线</div>
+                </div>
+                <div class="sg-stat-card" @click="sgSubTab='foreshadows'" style="cursor:pointer">
+                  <div class="sg-stat-num" :style="{color:sgStats.overdueForeshadows>0?'#f85149':''}">{{ sgStats.unresolvedForeshadows }}</div>
+                  <div class="sg-stat-label">未回收伏笔<template v-if="sgStats.overdueForeshadows>0"><span style="color:#f85149"> · {{sgStats.overdueForeshadows}}超期</span></template></div>
+                </div>
+                <div class="sg-stat-card" @click="sgSubTab='characters'" style="cursor:pointer">
+                  <div class="sg-stat-num">{{ sgStats.trackedChars }}</div>
+                  <div class="sg-stat-label">追踪角色</div>
+                </div>
+                <div class="sg-stat-card" @click="sgSubTab='calibration'" style="cursor:pointer">
+                  <div class="sg-stat-num" :style="{color:sgCalibration?.score<70?'#f85149':sgCalibration?.score>=90?'#3fb950':''}">{{ sgCalibration?.score??'--' }}</div>
+                  <div class="sg-stat-label">剧情健康度</div>
                 </div>
               </div>
 
-              <!-- 伏笔账本 -->
-              <div class="card">
-                <div class="card-title" style="font-size:14px;margin:0 0 8px">📌 伏笔账本</div>
-                <div v-if="!sgForeshadows.length" class="text-xs color-text3">暂无伏笔记录</div>
-                <div v-for="f in sgForeshadows" :key="f.id" class="sg-fs-item"
-                     :style="{'--fs-color': fsStatusColor(f)}">
-                  <div class="flex justify-between items-start">
-                    <div style="font-size:12px;font-weight:500;flex:1">{{ f.description?.substring(0,40) }}</div>
+              <!-- 弧线进度条 -->
+              <div class="card" v-if="sgArcs?.arcs?.length" style="margin-top:12px">
+                <div class="card-title" style="font-size:14px;margin:0 0 10px;display:flex;justify-content:space-between;align-items:center">
+                  <span>🎯 弧线规划</span>
+                  <span class="text-xs color-text3">{{ sgArcs.stats?.completed_arcs||0 }}/{{ sgArcs.stats?.total_arcs||0 }} 弧已完成</span>
+                </div>
+                <div class="sg-arcs-bar">
+                  <div v-for="a in sgArcs.arcs" :key="a.arc_id" class="sg-arc-segment"
+                       :class="{
+                         'arc-past': a.end_chapter < (sgArcs.current_chapter||1),
+                         'arc-now': sgArcs.current_arc?.arc_id === a.arc_id,
+                         'arc-future': a.start_chapter > (sgArcs.current_chapter||1) && sgArcs.current_arc?.arc_id !== a.arc_id
+                       }"
+                       :style="{flex: a.chapters?.length||1}"
+                       @click="sgExpandedArc = sgExpandedArc===a.arc_id ? null : a.arc_id"
+                       style="cursor:pointer">
+                    <span class="sg-arc-label">{{ a.label || '弧'+a.arc_id }}</span>
+                    <span class="sg-arc-range">Ch{{ a.start_chapter }}-{{ a.end_chapter }}</span>
+                    <span class="sg-arc-type">{{ {'setup':'🥚','rising':'⚔️','climax':'🔥','resolution':'🌅'}[a.type]||'' }}</span>
+                  </div>
+                </div>
+                <div v-if="sgExpandedArc && sgArcs.current_arc" class="sg-current-arc" style="margin-top:10px;padding:10px;background:var(--bg);border-radius:var(--radius-xs)">
+                  <div style="font-size:13px;font-weight:600;margin-bottom:4px">
+                    🔍 {{ sgArcs.current_arc.label }} (第{{ sgArcs.current_arc.current_position }}/{{ sgArcs.current_arc.total_in_arc }}章)
+                    <span class="text-xs color-text3" style="margin-left:8px">Ch{{ sgArcs.current_arc.start_chapter }}-{{ sgArcs.current_arc.end_chapter }}</span>
+                  </div>
+                  <div style="font-size:12px;color:var(--text2)">{{ sgArcs.current_arc.goal }}</div>
+                  <div style="font-size:11px;color:var(--text3);margin-top:4px">情绪曲线: {{ sgArcs.current_arc.emotional_arc }}</div>
+                  <div v-if="sgArcs.current_arc.characters?.length" class="text-xs color-text2 mt-4">参与角色: {{ sgArcs.current_arc.characters.join('、') }}</div>
+                </div>
+              </div>
+              
+              <!-- 紧凑摘要 -->
+              <div class="sg-grid-2" style="margin-top:12px;gap:12px">
+                <div class="card" @click="sgSubTab='threads'" style="cursor:pointer">
+                  <div class="card-title" style="font-size:14px;margin:0 0 8px">📊 剧情线 · 最新进展</div>
+                  <div v-if="!sgThreads.length" class="text-xs color-text3">暂无数据</div>
+                  <div v-for="t in sgThreads.slice(0,3)" :key="t.id" class="sg-thread-item" :style="{borderLeftColor: statusColor(t.status)}">
+                    <span style="font-size:12px;font-weight:600">{{ t.name }}</span>
+                    <span class="sg-tag">{{ statusLabel(t.status) }}</span>
+                    <div v-if="t.key_nodes?.length" class="text-xs color-text3 mt-2">{{ t.key_nodes.slice(-1)[0]?.event?.substring(0,30) }}</div>
+                  </div>
+                </div>
+                <div class="card" @click="sgSubTab='foreshadows'" style="cursor:pointer">
+                  <div class="card-title" style="font-size:14px;margin:0 0 8px">📌 伏笔 · 最近埋设</div>
+                  <div v-if="!sgForeshadows.length" class="text-xs color-text3">暂无伏笔</div>
+                  <div v-for="f in sgForeshadows.slice(0,3)" :key="f.id" class="sg-fs-item" :style="{'--fs-color': fsStatusColor(f)}">
+                    <span style="font-size:12px">{{ f.description?.substring(0,35) }}</span>
                     <span class="sg-fs-badge" :style="{background:fsStatusBg(f),color:fsStatusColor(f)}">{{ fsStatusLabel(f) }}</span>
                   </div>
-                  <div class="flex gap-12 text-xs color-text3 mt-4">
-                    <span>埋: Ch{{ f.planted_chapter }}</span>
-                    <span v-if="f.planned_payoff_chapter">回收: Ch{{ f.planned_payoff_chapter }}</span>
-                    <span v-if="f.actual_payoff_chapter">实际: Ch{{ f.actual_payoff_chapter }}</span>
-                    <span>暗示{{ f.hint_count||1 }}次</span>
-                  </div>
                 </div>
               </div>
             </div>
 
-            <!-- 角色快照 -->
-            <div class="card" style="margin-top:12px" v-if="sgCharSnapshots && Object.keys(sgCharSnapshots).length">
-              <div class="card-title" style="font-size:14px;margin:0 0 8px">👤 角色状态</div>
+            <!-- ====== 剧情线 Tab ====== -->
+            <div v-if="sgSubTab==='threads'">
+              <div class="sg-filter-bar">
+                <button class="sg-filter-btn" :class="{active:sgThreadFilter==='all'}" @click="sgThreadFilter='all'">全部</button>
+                <button class="sg-filter-btn" :class="{active:sgThreadFilter==='active'}" @click="sgThreadFilter='active'">进行中</button>
+                <button class="sg-filter-btn" :class="{active:sgThreadFilter==='resolved'}" @click="sgThreadFilter='resolved'">已完结</button>
+                <button class="sg-filter-btn" :class="{active:sgThreadFilter==='dormant'}" @click="sgThreadFilter='dormant'">休眠</button>
+              </div>
+              <div v-if="!filteredThreads.length" class="text-xs color-text3" style="padding:20px;text-align:center">无匹配剧情线</div>
+              <div v-for="t in filteredThreads" :key="t.id" class="sg-thread-item sg-expandable"
+                   :class="{expanded:sgExpandedThread===t.id}"
+                   :style="{borderLeftColor: statusColor(t.status)}"
+                   @click="sgExpandedThread = sgExpandedThread===t.id ? null : t.id">
+                <div class="flex justify-between items-start">
+                  <div style="font-size:13px;font-weight:600">{{ t.name }}
+                    <span class="sg-tag">{{ {'main_plot':'主线','subplot':'支线','character_arc':'角色弧','mystery':'悬疑'}[t.type]||t.type }}</span>
+                    <span class="sg-tag" style="background:rgba(240,136,62,.1);color:#f0883e">P{{ t.priority }}</span>
+                  </div>
+                  <span class="sg-tag" :style="{background:statusBg(t.status)}">{{ statusLabel(t.status) }}</span>
+                </div>
+                <div class="sg-tension-bar" style="margin:6px 0">
+                  <div class="sg-tension-fill" :style="{width:(t.current_tension||5)*10+'%',background:tensionGradient(t.current_tension||5)}"></div>
+                </div>
+                <!-- 展开详情 -->
+                <div v-if="t.description && sgExpandedThread===t.id" class="text-xs color-text2 mt-6" style="line-height:1.6">{{ t.description }}</div>
+                <div v-if="sgExpandedThread===t.id && t.key_nodes?.length" class="sg-timeline mt-8">
+                  <div v-for="(n,i) in t.key_nodes" :key="i" class="sg-timeline-item">
+                    <div class="sg-timeline-dot" :style="{background:tensionGradient(n.tension||5)}"></div>
+                    <div class="sg-timeline-content">
+                      <span class="sg-timeline-ch">Ch{{ n.chapter }}</span>
+                      <span class="sg-timeline-event">{{ n.event }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="t.characters?.length" class="text-xs color-text3 mt-4">👥 {{ t.characters.join('、') }}</div>
+              </div>
+            </div>
+
+            <!-- ====== 伏笔 Tab ====== -->
+            <div v-if="sgSubTab==='foreshadows'">
+              <div class="sg-filter-bar">
+                <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='all'}" @click="sgForeshadowFilter='all'">全部</button>
+                <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='active'}" @click="sgForeshadowFilter='active'">未回收</button>
+                <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='overdue'}" @click="sgForeshadowFilter='overdue'">超期</button>
+                <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='resolved'}" @click="sgForeshadowFilter='resolved'">已回收</button>
+              </div>
+              
+              <!-- 伏笔时间线可视化 -->
+              <div class="sg-fs-timeline-bar mb-12" v-if="filteredForeshadows.length">
+                <div class="text-xs color-text3 mb-4">时间线 (埋设→暗示→揭示→回收)</div>
+                <div class="sg-fs-bar-track">
+                  <div v-for="f in filteredForeshadows.slice(0,12)" :key="f.id" class="sg-fs-bar-item"
+                       :style="{
+                         left: ((f.planted_chapter||1) / (activeNovel?.state?.total_chapters||50) * 100) + '%',
+                         width: Math.max(3, ((f.planned_payoff_chapter||f.planted_chapter+20) - (f.planted_chapter||1)) / (activeNovel?.state?.total_chapters||50) * 100) + '%',
+                         background: fsStatusColor(f),
+                         opacity: f.status==='resolved'?0.5:0.8
+                       }"
+                       :title="f.description?.substring(0,30)">
+                  </div>
+                </div>
+              </div>
+              
+              <div v-if="!filteredForeshadows.length" class="text-xs color-text3" style="padding:20px;text-align:center">无匹配伏笔</div>
+              <div v-for="f in filteredForeshadows" :key="f.id" class="sg-fs-item sg-expandable"
+                   :class="{expanded:sgExpandedForeshadow===f.id}"
+                   :style="{'--fs-color': fsStatusColor(f)}"
+                   @click="sgExpandedForeshadow = sgExpandedForeshadow===f.id ? null : f.id">
+                <div class="flex justify-between items-start">
+                  <div style="font-size:13px;font-weight:500;flex:1">{{ f.description?.substring(0,60) }}<template v-if="f.description?.length>60">…</template></div>
+                  <span class="sg-fs-badge" :style="{background:fsStatusBg(f),color:fsStatusColor(f)}">{{ fsStatusLabel(f) }}</span>
+                </div>
+                <div class="flex gap-12 text-xs color-text3 mt-4 flex-wrap">
+                  <span>🌱 Ch{{ f.planted_chapter }}</span>
+                  <span v-if="f.planned_payoff_chapter">📅 Ch{{ f.planned_payoff_chapter }}</span>
+                  <span v-if="f.actual_payoff_chapter">✅ Ch{{ f.actual_payoff_chapter }}</span>
+                  <span>💡 {{ f.hint_count||1 }}次暗示</span>
+                  <span v-if="f.importance">⭐ P{{ f.importance }}</span>
+                </div>
+                <!-- 展开后显示完整描述 -->
+                <div v-if="sgExpandedForeshadow===f.id && f.description" class="text-xs color-text2 mt-6" style="line-height:1.6">
+                  {{ f.description }}
+                </div>
+                <div v-if="sgExpandedForeshadow===f.id && f.thread_id" class="text-xs color-text3 mt-4">
+                  关联剧情线: {{ f.thread_id }}
+                </div>
+              </div>
+            </div>
+
+            <!-- ====== 角色 Tab ====== -->
+            <div v-if="sgSubTab==='characters'">
+              <div v-if="!sgCharSnapshots || !Object.keys(sgCharSnapshots).length" class="text-xs color-text3" style="padding:20px;text-align:center">暂无角色数据</div>
               <div class="sg-char-grid">
-                <div v-for="(snap,name) in sgCharSnapshots" :key="name" class="sg-char-card">
-                  <div style="font-size:13px;font-weight:600;margin-bottom:4px">{{ name }}
-                    <span class="text-xs color-text3">Ch{{ snap.last_chapter_appeared||0 }}</span>
+                <div v-for="(snap,name) in sgCharSnapshots" :key="name" class="sg-char-card sg-expandable"
+                     :class="{expanded:sgExpandedChar===name}"
+                     @click="sgExpandedChar = sgExpandedChar===name ? null : name">
+                  <div style="font-size:14px;font-weight:600;margin-bottom:6px">{{ name }}
+                    <span class="text-xs color-text3" style="font-weight:400">上次出场 Ch{{ snap.last_chapter_appeared||0 }}</span>
                   </div>
                   <div v-if="snap.current_location" class="text-xs color-text2">📍 {{ snap.current_location }}</div>
                   <div v-if="snap.current_emotion" class="text-xs color-text2">😶 {{ snap.current_emotion }}</div>
-                  <div v-if="snap.active_goals?.length" class="text-xs color-text2">🎯 {{ snap.active_goals.join('、') }}</div>
-                  <div v-if="snap.status_effects?.length" class="text-xs" style="color:var(--red)">⚠ {{ snap.status_effects.join('、') }}</div>
+                  <div v-if="snap.current_power_level" class="text-xs color-text2">⚡ {{ snap.current_power_level }}</div>
+                  <!-- 展开详情 -->
+                  <div v-if="sgExpandedChar===name">
+                    <div v-if="snap.active_goals?.length" class="text-xs color-text2 mt-6">🎯 目标: {{ snap.active_goals.join('、') }}</div>
+                    <div v-if="snap.known_secrets?.length" class="text-xs mt-4" style="color:var(--purple)">🔮 已知秘密: {{ snap.known_secrets.join('、') }}</div>
+                    <div v-if="snap.status_effects?.length" class="text-xs mt-4" style="color:var(--red)">⚠ 状态异常: {{ snap.status_effects.join('、') }}</div>
+                    <div v-if="snap.relationship_changes?.length" class="text-xs color-text2 mt-6">
+                      <div class="font-semibold mb-2">关系变化:</div>
+                      <div v-for="(rc,i) in snap.relationship_changes.slice(-5)" :key="i" class="ml-8" style="line-height:1.8">
+                        ↔ {{ rc.with }}: {{ rc.change }} <span class="color-text3">(Ch{{ rc.chapter }})</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <!-- 校准报告 -->
-            <div class="card" style="margin-top:12px" v-if="sgCalibration">
-              <div class="card-title" style="font-size:14px;margin:0 0 8px">
-                🔍 校准报告
-                <span style="font-size:12px;font-weight:400;margin-left:8px" :style="{color:sgCalibration.score>=70?'#3fb950':'#f85149'}">
-                  健康度 {{ sgCalibration.score }}/100
-                </span>
-                <span class="text-xs color-text3" style="margin-left:8px">上次校准: Ch{{ sgCalibration.calibrated_at_chapter||'--' }}</span>
-              </div>
-              <div v-if="sgCalibration.plot_drift_items?.length" class="sg-calib-section">
-                <div class="text-xs font-semibold mb-4" style="color:#f0883e">⚠ 剧情偏移</div>
-                <div v-for="(item,i) in sgCalibration.plot_drift_items" :key="'drift'+i" class="sg-calib-item"
-                     :style="{borderLeftColor: item.severity==='high'?'#f85149':item.severity==='mid'?'#f0883e':'#8b949e'}">
-                  {{ item.description }}
+            <!-- ====== 校准 Tab ====== -->
+            <div v-if="sgSubTab==='calibration'">
+              <div class="card" v-if="sgCalibration">
+                <div class="card-title" style="font-size:14px;margin:0 0 10px;display:flex;justify-content:space-between">
+                  <span>🔍 校准报告</span>
+                  <span :style="{color:sgCalibration.score>=70?'#3fb950':'#f85149',fontSize:'18px',fontWeight:700}">{{ sgCalibration.score }}/100</span>
+                </div>
+                <div class="text-xs color-text3 mb-8">上次校准: Ch{{ sgCalibration.calibrated_at_chapter||'--' }}</div>
+                
+                <div v-if="sgCalibration.plot_drift_items?.length" class="sg-calib-section">
+                  <div class="text-xs font-semibold mb-4" style="color:#f0883e">⚠ 剧情偏移 ({{ sgCalibration.plot_drift_items.length }})</div>
+                  <div v-for="(item,i) in sgCalibration.plot_drift_items" :key="'drift'+i" class="sg-calib-item"
+                       :style="{borderLeftColor: item.severity==='high'?'#f85149':item.severity==='mid'?'#f0883e':'#8b949e'}">
+                    <span class="sg-severity-tag" :class="'sev-'+item.severity">{{ item.severity }}</span>
+                    {{ item.description }}
+                  </div>
+                </div>
+                
+                <div v-if="sgCalibration.overdue_foreshadows?.length" class="sg-calib-section">
+                  <div class="text-xs font-semibold mb-4" style="color:#f85149">⏰ 超期伏笔 ({{ sgCalibration.overdue_foreshadows.length }})</div>
+                  <div v-for="(f,i) in sgCalibration.overdue_foreshadows.slice(0,8)" :key="'odfs'+i" class="sg-calib-item" style="border-left-color:#f85149">
+                    [Ch{{ f.planted_chapter }} → 计划Ch{{ f.planned_payoff_chapter }}] {{ f.description?.substring(0,60) }}
+                  </div>
+                </div>
+                
+                <div v-if="sgCalibration.character_issues?.length" class="sg-calib-section">
+                  <div class="text-xs font-semibold mb-4" style="color:var(--purple)">👤 角色问题</div>
+                  <div v-for="(ci,i) in sgCalibration.character_issues" :key="'ci'+i" class="sg-calib-item" style="border-left-color:#7c3aed">
+                    {{ ci.char }}: {{ ci.issue }}
+                  </div>
+                </div>
+                
+                <div v-if="sgCalibration.recommendations?.length" style="margin-top:10px">
+                  <div class="text-xs font-semibold mb-4" style="color:#58a6ff">💡 建议 ({{ sgCalibration.recommendations.length }})</div>
+                  <div v-for="(r,i) in sgCalibration.recommendations" :key="'rec'+i" class="text-xs color-text2" style="padding:2px 0;line-height:1.6">
+                    <span style="color:var(--accent);font-weight:600">{{ i+1 }}.</span> {{ r }}
+                  </div>
+                </div>
+                
+                <div v-if="!sgCalibration.plot_drift_items?.length && !sgCalibration.overdue_foreshadows?.length && !sgCalibration.character_issues?.length" class="text-center" style="padding:20px;color:var(--green)">
+                  ✅ 剧情状态良好，无明显问题
                 </div>
               </div>
-              <div v-if="sgCalibration.overdue_foreshadows?.length" class="sg-calib-section">
-                <div class="text-xs font-semibold mb-4" style="color:#f85149">⏰ 超期伏笔 ({{ sgCalibration.overdue_foreshadows.length }})</div>
-                <div v-for="(f,i) in sgCalibration.overdue_foreshadows.slice(0,5)" :key="'odfs'+i" class="sg-calib-item" style="border-left-color:#f85149">
-                  [Ch{{ f.planted_chapter }}→计划Ch{{ f.planned_payoff_chapter }}] {{ f.description?.substring(0,50) }}
-                </div>
+              <div v-else class="text-center" style="padding:40px;color:var(--text3)">
+                <div style="font-size:36px;margin-bottom:8px">🔍</div>
+                <p class="text-sm">尚未执行校准，每10章自动触发</p>
               </div>
-              <div v-if="sgCalibration.recommendations?.length" style="margin-top:8px">
-                <div class="text-xs font-semibold mb-4" style="color:#58a6ff">💡 建议</div>
-                <div v-for="(r,i) in sgCalibration.recommendations.slice(0,5)" :key="'rec'+i" class="text-xs color-text2" style="padding:2px 0">{{ i+1 }}. {{ r }}</div>
-              </div>
-              <div v-if="!sgCalibration.plot_drift_items?.length && !sgCalibration.overdue_foreshadows?.length && !sgCalibration.character_issues?.length" class="text-xs color-text3">✅ 剧情状态良好，无明显问题</div>
             </div>
 
-            <div v-if="!sgCalibration && !sgThreads.length" class="text-center" style="padding:40px;color:var(--text3)">
+            <!-- 空状态 -->
+            <div v-if="!sgCalibration && !sgThreads.length && sgSubTab==='overview'" class="text-center" style="padding:40px;color:var(--text3)">
               <div style="font-size:36px;margin-bottom:12px">🔍</div>
               <p>尚未生成章节，剧情图谱数据将在写作过程中自动构建</p>
             </div>
@@ -1152,6 +1330,15 @@ const app = createApp({
     const sgData = ref(null);
     const sgArcs = ref(null);
     const sgCalibration = ref(null);
+    // v2.3.1: 交互状态
+    const sgSubTab = ref('overview');
+    const sgChapterFilter = ref(1);
+    const sgThreadFilter = ref('all');
+    const sgForeshadowFilter = ref('all');
+    const sgExpandedThread = ref(null);
+    const sgExpandedForeshadow = ref(null);
+    const sgExpandedChar = ref(null);
+    const sgExpandedArc = ref(null);
 
     const batchStart = ref(1); const batchEnd = ref(1);
     // 批量上限自动裁剪：batchStart 变化时 clamp batchEnd
@@ -1203,6 +1390,21 @@ const app = createApp({
       });
     });
     const sgCharSnapshots = computed(() => sgData.value?.char_snapshots||{});
+    const filteredThreads = computed(() => {
+      if (!sgThreads.value) return [];
+      if (sgThreadFilter.value === 'all') return sgThreads.value;
+      if (sgThreadFilter.value === 'active') return sgThreads.value.filter(t => ['active','advancing','climax'].includes(t.status));
+      return sgThreads.value.filter(t => t.status === sgThreadFilter.value);
+    });
+    const filteredForeshadows = computed(() => {
+      if (!sgForeshadows.value) return [];
+      const currentCh = (activeNovel.value?.state?.completed_chapters||[]).length + 1;
+      if (sgForeshadowFilter.value === 'all') return sgForeshadows.value;
+      if (sgForeshadowFilter.value === 'active') return sgForeshadows.value.filter(f => ['planted','hinted'].includes(f.status));
+      if (sgForeshadowFilter.value === 'overdue') return sgForeshadows.value.filter(f => ['planted','hinted'].includes(f.status) && (f.planned_payoff_chapter||999) < currentCh);
+      if (sgForeshadowFilter.value === 'resolved') return sgForeshadows.value.filter(f => f.status === 'resolved');
+      return sgForeshadows.value;
+    });
 
     // StoryGraph 辅助函数
     function statusColor(s) { return {dormant:'#8b949e',active:'#58a6ff',advancing:'#f0883e',climax:'#f85149',resolved:'#3fb950'}[s]||'#8b949e'; }
@@ -1521,6 +1723,8 @@ const app = createApp({
     async function switchToStoryGraph() {
       if (!activeNovel.value || isBusy.value) return;
       writing.activeTab = 'storygraph';
+      sgSubTab.value = 'overview';
+      sgChapterFilter.value = (activeNovel.value.state.completed_chapters||[]).length + 1;
       await loadStoryGraph();
     }
     async function loadStoryGraph() {
@@ -1806,7 +2010,10 @@ const app = createApp({
       sgLoading,sgData,sgArcs,sgCalibration,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
-      switchToStoryGraph,loadStoryGraph };
+      switchToStoryGraph,loadStoryGraph,
+      sgSubTab,sgChapterFilter,sgThreadFilter,sgForeshadowFilter,
+      sgExpandedThread,sgExpandedForeshadow,sgExpandedChar,sgExpandedArc,
+      filteredThreads,filteredForeshadows };
     } catch(e) {
       console.error('SETUP ERROR:', e.message, e.stack);
       document.body.innerHTML = '<div style=\"padding:40px;color:red;font-size:16px;font-family:monospace\"><h2>❌ Setup 错误</h2><pre>' + (e.stack || e.message) + '</pre></div>';
