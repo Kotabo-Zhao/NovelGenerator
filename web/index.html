@@ -9,7 +9,28 @@
     <title>NovelGenerator</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
-<script src="/vue.global.prod.js"></script>
+<script src="/vue.global.prod.js?v=4"></script>
+<script>
+// 诊断: Vue 是否正确加载
+if (typeof Vue === 'undefined') {
+  document.body.innerHTML = '<div style=\"padding:40px;color:red;font-size:20px\">❌ Vue.js 加载失败 — 请 Ctrl+Shift+R 强制刷新清除缓存</div>';
+} else {
+  console.log('✅ Vue loaded:', Vue.version);
+}
+// 全局错误捕获 — 在 Vue 初始化之前
+window._errors = [];
+window.addEventListener('error', function(e) {
+  window._errors.push(e.message || String(e));
+  var el = document.getElementById('js-error-log');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'js-error-log';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#e33;color:#fff;padding:8px 12px;font-size:12px;z-index:99999;font-family:monospace;max-height:200px;overflow:auto';
+    document.body.prepend(el);
+  }
+  el.textContent += '\\n' + (e.message || e);
+});
+</script>
 <style>
 :root {
   --bg: #0d1117; --bg2: #161b22; --card: #1c2129; --card-hover: #212830;
