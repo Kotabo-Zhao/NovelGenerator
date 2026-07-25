@@ -1906,16 +1906,26 @@ const app = createApp({
       canvasDragging.value = null;
     }
     
+    function startDragCanvasNode(e, laneIdx, evtIdx) {
+      e.preventDefault();
+      const lane = plotTimeline.value.lanes[laneIdx];
+      const ev = lane.events[evtIdx];
+      canvasDragging.value = lane.id + ':' + evtIdx;
+      canvasSelected.value = lane.id + ':' + evtIdx;
+      canvasDragStart.x = e.clientX; canvasDragStart.y = e.clientY;
+      canvasDragStart.nx = chToCanvasX(ev.chapter);
+      canvasMenu.show = false;
+    }
+
     async function saveCanvasEvent(li, ei) {
       if (!activeNovel.value) return;
       const lane = plotTimeline.value.lanes[li];
-      const ev = lane.events[ei];
       try {
         await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/threads/'+encodeURIComponent(lane.id), {
           method:'PUT', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({key_nodes: lane.events}),
         });
-        engine.memory?.invalidate_all?.(activeNovel.value.id);
+        log.info('Canvas event saved');
       } catch(e) { console.warn('Canvas save failed:', e); }
     }
     
