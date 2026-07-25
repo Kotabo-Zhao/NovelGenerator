@@ -390,6 +390,22 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sg-event-tooltip{position:absolute;bottom:16px;right:16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xs);padding:14px 18px;min-width:200px;box-shadow:0 8px 32px rgba(0,0,0,.25);z-index:10;pointer-events:none;backdrop-filter:blur(8px);font-size:12px}
 .sg-event-tooltip .tt-tension-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:3px}
 
+/* ── v2.8: 阶段指示器 & 方向盘 ── */
+.sg-phase-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin-bottom:10px;border-radius:var(--radius-xs);gap:12px}
+.sg-phase-bar:has(.phase-outline){background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.2)}
+.sg-phase-bar:has(.phase-writing){background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2)}
+.sg-phase-indicator{font-size:13px;font-weight:600}
+.phase-outline{color:#8b5cf6}
+.phase-writing{color:#3b82f6}
+.sg-wheel-panel{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:var(--radius-xs);padding:10px 14px;margin-bottom:10px}
+.sg-wheel-input-row{display:flex;align-items:center;gap:10px}
+.sg-wheel-input{flex:1;padding:6px 12px;border:1px solid var(--border);border-radius:20px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--font);outline:none}
+.sg-wheel-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(99,102,241,.15)}
+.sg-wheel-input::placeholder{color:var(--text3);font-size:12px}
+.sg-wheel-result{padding:6px 10px;margin-top:6px;border-radius:4px;font-size:12px;font-weight:600}
+.sg-wheel-result.ok{background:rgba(63,185,80,.1);color:#3fb950}
+.sg-wheel-result.err{background:rgba(248,81,73,.1);color:#f85149}
+
 /* 拖拽调整大小手柄 */
 .sg-resize-handle{height:8px;cursor:ns-resize;background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 45%,transparent 45%,transparent 55%,var(--accent) 55%,var(--accent) 60%,transparent 60%);margin-top:2px;border-radius:2px;transition:background .15s}
 .sg-resize-handle:hover{background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 60%,transparent 60%)}
@@ -978,6 +994,27 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </div>
 
           <div v-else>
+            <!-- v2.8: 阶段指示器 + 方向盘 -->
+            <div class="sg-phase-bar">
+              <div class="sg-phase-indicator" :class="'phase-'+editingPhase">
+                <span v-if="editingPhase==='outline'">✏️ 大纲阶段 — 自由编辑故事结构</span>
+                <span v-else>🔒 写作阶段 — 结构已锁定，方向盘微调</span>
+              </div>
+              <button v-if="editingPhase==='outline'" class="btn btn-primary btn-xs" @click="lockOutline">✅ 确认大纲，锁定结构</button>
+            </div>
+            
+            <!-- 方向盘面板 -->
+            <div v-if="editingPhase==='writing'" class="sg-wheel-panel">
+              <div class="sg-wheel-input-row">
+                <span style="font-size:13px;font-weight:600;white-space:nowrap">🎛️ 方向盘</span>
+                <input v-model="wheelCommand" class="sg-wheel-input" placeholder="我想...（例如：让复仇主线升温 / 回收玉佩秘密 / 沈清许现在在暗影殿地牢）" @keyup.enter="executeWheelCommand">
+                <button class="btn btn-primary btn-xs" @click="executeWheelCommand" :disabled="!wheelCommand.trim()">执行</button>
+              </div>
+              <div v-if="wheelResult" class="sg-wheel-result" :class="wheelResult.ok?'ok':'err'">
+                {{ wheelResult.msg }}
+              </div>
+            </div>
+            
             <!-- 工具栏: 刷新 + 章节滑块 + 子tab -->
             <div class="sg-toolbar">
               <button class="btn btn-ghost btn-xs" @click="loadStoryGraph(0)" :disabled="sgLoading" style="font-size:12px">🔄 刷新</button>
@@ -1101,7 +1138,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='active'}" @click="sgThreadFilter='active'">进行中</button>
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='resolved'}" @click="sgThreadFilter='resolved'">已完结</button>
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='dormant'}" @click="sgThreadFilter='dormant'">休眠</button>
-                <button class="btn btn-ghost btn-xs" @click="createThread" style="margin-left:auto;font-size:11px">+ 新增</button>
+                <button class="btn btn-ghost btn-xs" @click="createThread" style="margin-left:auto;font-size:11px" v-if="editingPhase==='outline'">+ 新增</button>
               </div>
               <div v-if="!filteredThreads.length" class="text-xs color-text3" style="padding:20px;text-align:center">无匹配剧情线</div>
               <div v-for="t in filteredThreads" :key="t.id" class="sg-thread-item sg-expandable"
@@ -1184,7 +1221,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                     <div class="flex gap-6 mt-8 justify-end">
                       <button class="btn btn-ghost btn-xs" @click="cancelEdit">取消</button>
                       <button class="btn btn-primary btn-xs" @click="saveEdit">💾 保存</button>
-                      <button class="btn btn-ghost btn-xs" @click="deleteThread(t.id)" style="color:var(--red)">🗑️ 删除</button>
+                      <button class="btn btn-ghost btn-xs" @click="deleteThread(t.id)" style="color:var(--red)" v-if="editingPhase==='outline'">🗑️ 删除</button>
                     </div>
                   </div>
                 </template>
@@ -1886,7 +1923,52 @@ const app = createApp({
     // v2.5: 编辑器状态
     const editState = reactive({ type:null, id:null, data:{} });
     const editShowForm = reactive({ thread:false, foreshadow:false });
-    const quickDoing = ref(null);  // which quick action is in progress
+    const quickDoing = ref(null);
+
+    // v2.8: 编辑阶段
+    const editingPhase = ref('outline');  // outline | writing
+    const wheelCommand = ref('');
+    const wheelResult = ref(null);
+    
+    async function loadPhase() {
+      if (!activeNovel.value) return;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/phase');
+        if (r.ok) { const d = await r.json(); editingPhase.value = d.phase; }
+      } catch(e) { console.warn('Phase load failed:', e); }
+    }
+    async function lockOutline() {
+      if (!confirm('确认锁定大纲？此后不能修改剧情线和伏笔结构，只能通过方向盘微调。')) return;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/phase', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phase:'writing'}),
+        });
+        if (r.ok) { editingPhase.value = 'writing'; showToast('大纲已锁定', '进入写作阶段，通过方向盘微调', '🔒'); }
+      } catch(e) { console.warn('Phase lock failed:', e); }
+    }
+    async function executeWheelCommand() {
+      const cmd = wheelCommand.value.trim();
+      if (!cmd || !activeNovel.value) return;
+      wheelResult.value = { loading: true };
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/parse-command', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:cmd}),
+        });
+        const d = await r.json();
+        if (d.parsed) {
+          // Execute the parsed action
+          await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/quick-action', {
+            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d.parsed),
+          });
+          wheelResult.value = { ok: true, msg: '✅ 已执行: ' + cmd };
+          wheelCommand.value = '';
+          await loadStoryGraph(0);
+        } else {
+          wheelResult.value = { ok: false, msg: '❌ ' + (d.error || '无法理解') };
+        }
+      } catch(e) { wheelResult.value = { ok: false, msg: '❌ 网络错误' }; }
+      setTimeout(() => wheelResult.value = null, 3000);
+    }  // which quick action is in progress
 
     // ── v2.6: 画布编辑器 ──
     const canvasZoom = ref(1);
@@ -2951,6 +3033,7 @@ const app = createApp({
       sgSubTab.value = 'overview';
       sgChapterFilter.value = (activeNovel.value.state.completed_chapters||[]).length + 1;
       await loadStoryGraph();
+      await loadPhase();
     }
     async function loadStoryGraph(chapterNum = 0) {
       if (!activeNovel.value) return;
@@ -3271,6 +3354,8 @@ const app = createApp({
       // v2.5: 编辑器
       editState,quickDoing,startEdit,cancelEdit,saveEdit,hasEdit,
       quickAction,deleteThread,createThread,createForeshadow,
+      // v2.8: 阶段 + 方向盘
+      editingPhase,loadPhase,lockOutline,wheelCommand,wheelResult,executeWheelCommand,
       // v2.6: 画布
       canvasZoom,canvasPan,canvasWrap,canvasInner,
       canvasWidth,canvasHeight,canvasLaneH,canvasTickChapters,

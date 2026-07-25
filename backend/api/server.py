@@ -1315,6 +1315,96 @@ async def quick_action(novel_id: str, body: dict):
     return result
 
 
+# ── v2.8: 编辑阶段管理 ──
+
+@app.get("/api/novels/{novel_id}/storygraph/phase")
+async def get_phase(novel_id: str):
+    """获取当前编辑阶段"""
+    data = _read_novel_file(novel_id, "storygraph.json")
+    phase = data.get("editing_phase", "outline")
+    return {"phase": phase, "novel_id": novel_id}
+
+
+@app.post("/api/novels/{novel_id}/storygraph/phase")
+async def set_phase(novel_id: str, body: dict):
+    """设置编辑阶段（outline → writing 为单向锁定，不可逆）"""
+    new_phase = body.get("phase", "")
+    if new_phase not in ("outline", "writing"):
+        raise HTTPException(400, "phase 必须是 outline 或 writing")
+    
+    data = _read_novel_file(novel_id, "storygraph.json")
+    current = data.get("editing_phase", "outline")
+    
+    if current == "writing" and new_phase == "outline":
+        raise HTTPException(400, "大纲已锁定，不可回到编辑阶段")
+    
+    data["editing_phase"] = new_phase
+    _write_novel_file(novel_id, "storygraph.json", data)
+    engine.memory.invalidate_all(novel_id)
+    return {"ok": True, "phase": new_phase}
+
+
+# ── 自然语言指令解析 ──
+
+@app.post("/api/novels/{novel_id}/storygraph/parse-command")
+async def parse_command(novel_id: str, body: dict):
+    """解析自然语言指令为结构化操作"""
+    cmd = body.get("command", "").strip()
+    if not cmd:
+        raise HTTPException(400, "command 为必填字段")
+    
+    data = _read_novel_file(novel_id, "storygraph.json")
+    threads = data.get("plot_threads", {})
+    foreshadows = data.get("foreshadow_ledger", {})
+    chars = data.get("char_snapshots", {})
+    
+    result = {"command": cmd, "parsed": None, "error": None}
+    
+    # ── 正则匹配规则库 ──
+    rules = []
+    
+    # 升温
+    for tid, t in threads.items():
+        rules.append((re.compile(rf"让?{re.escape(t['name'])}.*?升温"), 
+                      {"type": "thread", "id": tid, "action": "heat_up"}))
+        rules.append((re.compile(rf"暂停{re.escape(t['name'])}"), 
+                      {"type": "thread", "id": tid, "action": "pause"}))
+        rules.append((re.compile(rf"恢复{re.escape(t['name'])}"), 
+                      {"type": "thread", "id": tid, "action": "resume"}))
+        rules.append((re.compile(rf"{re.escape(t['name'])}.*?优先级.*?(最高|5|四|五)"), 
+                      {"type": "thread", "id": tid, "action": "raise_priority"}))
+    
+    # 伏笔
+    for fid, f in foreshadows.items():
+        desc_short = f["description"][:6]
+        rules.append((re.compile(rf"回收.*?{re.escape(desc_short)}"), 
+                      {"type": "foreshadow", "id": fid, "action": "resolve"}))
+        rules.append((re.compile(rf".*?{re.escape(desc_short)}.*?推迟.*?(\d+).*?章"), 
+                      {"type": "foreshadow", "id": fid, "action": "delay"}))
+    
+    # 角色
+    for name, snap in chars.items():
+        rules.append((re.compile(rf"{re.escape(name)}.*?在(.+)"), 
+                      {"type": "character", "id": name, "action": "set_location"}))
+        rules.append((re.compile(rf"{re.escape(name)}.*?(愤怒|悲伤|恐惧|绝望|兴奋|喜悦|冷静|坚定|担忧)"), 
+                      {"type": "character", "id": name, "action": "set_emotion"}))
+    
+    for pattern, parsed in rules:
+        m = pattern.search(cmd)
+        if m:
+            result["parsed"] = parsed
+            if parsed["action"] in ("set_location", "set_emotion"):
+                result["parsed"]["value"] = m.group(1)
+            elif parsed["action"] == "delay":
+                result["parsed"]["offset"] = int(m.group(1))
+            break
+    
+    if not result["parsed"]:
+        result["error"] = "未能理解指令，请尝试更具体的表述。例如：让复仇主线升温、回收玉佩秘密、沈清许现在在暗影殿地牢"
+    
+    return result
+
+
 def _build_character_relation_graph(data: dict) -> dict:
     """构建人物关系图数据
     
