@@ -1,7 +1,7 @@
 package com.novelgen.app
 
 import android.annotation.SuppressLint
-import android.content.*
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -14,14 +14,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.novelgen.app.databinding.ActivityMainBinding
-import kotlinx.coroutines.*
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val handler = Handler(Looper.getMainLooper())
     private var retryCount = 0
-    private var statusReceiver: BroadcastReceiver? = null
+    private var pollRunnable: Runnable? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -32,122 +32,101 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
         setupSwipeRefresh()
-        registerStatusReceiver()
-
-        // Start embedded Python server
         startLocalServer()
     }
 
     private fun startLocalServer() {
-        binding.connectionStatus.text = "启动服务器..."
-        binding.connectionStatus.setTextColor(getColor(R.color.warning))
-
         val prefs = getSharedPreferences("novelgen", MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
 
         if (apiKey.isBlank()) {
-            // No API key — show config
-            binding.connectionStatus.text = "请设置 API Key"
-            binding.connectionStatus.setTextColor(getColor(R.color.error))
+            setStatus("请设置 API Key", R.color.error, R.drawable.dot_red)
             startActivity(Intent(this, ApiKeyActivity::class.java))
             return
         }
 
+        setStatus("启动服务器...", R.color.warning, R.drawable.dot_yellow)
+
+        // Start the service
         val intent = Intent(this, ServerService::class.java).apply {
             putExtra("api_key", apiKey)
-            putExtra("host", "127.0.0.1")
-            putExtra("port", 8899)
         }
-
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
             startService(intent)
         }
-    }
 
-    private fun registerStatusReceiver() {
-        statusReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                val ready = intent?.getBooleanExtra("ready", false) ?: false
-                val error = intent?.getStringExtra("error")
-
-                if (ready) {
-                    binding.connectionStatus.text = getString(R.string.connection_success)
-                    binding.connectionStatus.setTextColor(getColor(R.color.success))
-                    binding.connectionDot.setBackgroundResource(R.drawable.dot_green)
-                    binding.offlineBanner.visibility = View.GONE
-                    // Load frontend
-                    handler.postDelayed({ loadLocalFrontend() }, 500)
-                } else if (error != null) {
-                    binding.connectionStatus.text = "错误: ${error.take(40)}"
-                    binding.connectionStatus.setTextColor(getColor(R.color.error))
-                    binding.connectionDot.setBackgroundResource(R.drawable.dot_red)
-                }
+        // Poll status file directly — no broadcast dependency
+        val statusFile = File(filesDir, "novelgen_status.txt")
+        pollRunnable = object : Runnable {
+            override fun run() {
+                try {
+                    val text = if (statusFile.exists()) statusFile.readText().trim() else ""
+                    when {
+                        text.startsWith("server_ready") -> {
+                            setStatus("已连接", R.color.success, R.drawable.dot_green)
+                            loadLocalFrontend()
+                            return  // stop polling
+                        }
+                        text.startsWith("error_") -> {
+                            val err = text.removePrefix("error_").take(80)
+                            setStatus("错误: $err", R.color.error, R.drawable.dot_red)
+                            binding.offlineBanner.text = err
+                            binding.offlineBanner.visibility = View.VISIBLE
+                            return
+                        }
+                        text.isNotBlank() -> {
+                            // Show progress step
+                            val label = text.replace("import_", "加载").replace("_", " ")
+                                    .replace("init", "初始化").replace("engine ok", "引擎就绪")
+                                    .replace("app ok", "服务就绪")
+                            setStatus(label, R.color.warning, R.drawable.dot_yellow)
+                        }
+                    }
+                } catch (_: Exception) {}
+                handler.postDelayed(this, 500)
             }
         }
-        registerReceiver(statusReceiver, IntentFilter(ServerService.BROADCAST_STATUS),
-            RECEIVER_NOT_EXPORTED)
+        handler.post(pollRunnable!!)
+    }
+
+    private fun setStatus(text: String, colorRes: Int, dotRes: Int) {
+        binding.connectionStatus.text = text
+        binding.connectionStatus.setTextColor(getColor(colorRes))
+        binding.connectionDot.setBackgroundResource(dotRes)
     }
 
     private fun loadLocalFrontend() {
+        handler.removeCallbacks(pollRunnable ?: return)
+        binding.offlineBanner.visibility = View.GONE
         binding.webView.loadUrl("http://127.0.0.1:8899/")
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         val webView = binding.webView
-
         webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            allowFileAccess = false
-            allowContentAccess = false
-            cacheMode = WebSettings.LOAD_DEFAULT
+            javaScriptEnabled = true; domStorageEnabled = true
+            allowFileAccess = false; allowContentAccess = false
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            useWideViewPort = true
-            loadWithOverviewMode = true
-            setSupportZoom(true)
-            builtInZoomControls = true
-            displayZoomControls = false
+            useWideViewPort = true; loadWithOverviewMode = true
         }
-
         webView.addJavascriptInterface(WebAppInterface(this), "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 binding.progressBar.visibility = View.GONE
-                binding.swipeRefresh.isRefreshing = false
             }
-
-            override fun onReceivedError(
-                view: WebView?, request: WebResourceRequest?,
-                error: WebResourceError?
-            ) {
-                if (request?.isForMainFrame == true && retryCount < 5) {
+            override fun onReceivedError(view: WebView?, req: WebResourceRequest?, err: WebResourceError?) {
+                if (req?.isForMainFrame == true && retryCount < 20) {
                     retryCount++
-                    handler.postDelayed({ binding.webView.reload() }, 1000)
+                    handler.postDelayed({ binding.webView.reload() }, 500)
                 }
-            }
-
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val url = request?.url?.toString() ?: return false
-                if (!url.startsWith("http://127.0.0.1")) {
-                    val intent = Intent(Intent.ACTION_VIEW, request?.url)
-                    startActivity(intent)
-                    return true
-                }
-                return false
             }
         }
-
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                binding.progressBar.progress = newProgress
-            }
-            override fun onReceivedTitle(view: WebView?, title: String?) {
-                supportActionBar?.title = title ?: getString(R.string.app_name)
-            }
+            override fun onProgressChanged(view: WebView?, p: Int) { binding.progressBar.progress = p }
         }
     }
 
@@ -163,28 +142,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main_menu, menu)
-        return true
+        menuInflater.inflate(R.menu.main_menu, menu); return true
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.menu_refresh -> { binding.webView.reload(); true }
-            R.id.menu_config -> {
-                startActivity(Intent(this, ApiKeyActivity::class.java)); true
-            }
-            R.id.menu_about -> {
-                AlertDialog.Builder(this).setTitle("关于")
-                    .setMessage("小说工坊 v1.1\n前后端一体化运行\nPython + Kotlin + Chaquopy")
-                    .setPositiveButton("确定", null).show()
-                true
-            }
-            else -> super.onOptionsItemSelected(item)
+    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.menu_refresh -> { binding.webView.reload(); true }
+        R.id.menu_config -> { startActivity(Intent(this, ApiKeyActivity::class.java)); true }
+        R.id.menu_about -> {
+            AlertDialog.Builder(this).setTitle("关于")
+                .setMessage("小说工坊 v1.1\n前后端一体化 · Chaquopy + FastAPI")
+                .setPositiveButton("确定", null).show(); true
         }
+        else -> super.onOptionsItemSelected(item)
     }
 
     override fun onDestroy() {
-        unregisterReceiver(statusReceiver)
+        handler.removeCallbacks(pollRunnable ?: return)
         super.onDestroy()
     }
 }
