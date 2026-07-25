@@ -50,10 +50,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun pollStatus() {
         if (frontendLoaded) return
-        val text = try {
+        val raw = try {
             val f = File(filesDir, "novelgen_status.txt")
             if (f.exists()) f.readText().trim() else ""
         } catch (_: Exception) { "" }
+        // Strip timestamp: "1784984622|server_ready" → "server_ready"
+        val text = raw.substringAfter("|", raw)
 
         when {
             text.startsWith("server_ready") -> {
