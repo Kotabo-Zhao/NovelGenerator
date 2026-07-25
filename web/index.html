@@ -1893,16 +1893,6 @@ const app = createApp({
     const currentView = ref('shelf');
     const novels = ref([]); const activeNovel = ref(null);
     const planResult = ref(null); const error = ref(''); const preview = ref(null);
-    const outlinePreview = ref(null); const sgMiniExpanded = ref(false);
-    function buildOutlinePreview(plan) {
-      if (!plan?.outline?.volumes) return null;
-      let totalCh = 0; const lines = [];
-      for (const v of (plan.outline.volumes||[])) {
-        const chs = v.chapters||[]; totalCh += chs.length;
-        lines.push({vol:v.title||'?', act:v.act||'', count:chs.length, first:(chs[0]?.summary||'').substring(0,30)});
-      }
-      return {volumes:lines, total:totalCh};
-    }
     const toast = reactive({ visible:false, title:'', message:'', icon:'⚠️' });
     const abortCtrl = ref(null);
     const styleCategories = ref({}); const exportSelected = reactive({});
@@ -2042,6 +2032,16 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
     const sgExpandedChar = ref(null);
     const sgExpandedArc = ref(null);
     const sgMiniExpanded = ref(false);
+    const outlinePreview = ref(null);
+    function buildOutlinePreview(plan) {
+      if (!plan?.outline?.volumes) return null;
+      let totalCh = 0; const lines = [];
+      for (const v of (plan.outline.volumes||[])) {
+        const chs = v.chapters||[]; totalCh += chs.length;
+        lines.push({vol:v.title||'?', act:v.act||'', count:chs.length, first:(chs[0]?.summary||'').substring(0,30)});
+      }
+      return {volumes:lines, total:totalCh};
+    }
 
     // v2.5: 编辑器状态
     const editState = reactive({ type:null, id:null, data:{} });
