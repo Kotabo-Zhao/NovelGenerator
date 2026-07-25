@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base theme -->
     <style name="Theme.NovelGenerator" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryVariant">@color/primary_dark</item>
@@ -14,22 +13,7 @@
         <item name="android:windowLightStatusBar">false</item>
     </style>
 
-    <!-- Splash theme -->
     <style name="Theme.NovelGenerator.Splash" parent="Theme.NovelGenerator">
         <item name="android:windowBackground">@color/background</item>
-    </style>
-
-    <!-- Connection status bar -->
-    <style name="Widget.NovelGenerator.StatusBar">
-        <item name="android:background">@color/surface_variant</item>
-        <item name="android:padding">8dp</item>
-    </style>
-
-    <!-- Server config input -->
-    <style name="Widget.NovelGenerator.ConfigInput" parent="Widget.Material3.TextInputEditText.OutlinedBox">
-        <item name="android:textColor">@color/on_background</item>
-        <item name="android:textColorHint">@color/text_secondary</item>
-        <item name="boxStrokeColor">@color/primary</item>
-        <item name="hintTextColor">@color/text_secondary</item>
     </style>
 </resources>

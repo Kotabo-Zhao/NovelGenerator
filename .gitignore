@@ -3,3 +3,11 @@ __pycache__/
 .env
 novels/*
 !novels/.gitkeep
+
+# Android build artifacts
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/gradle-8.9/
+android/gradle-8.9-bin.zip

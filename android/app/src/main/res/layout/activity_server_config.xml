@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/background"
@@ -28,8 +29,7 @@
         android:layout_height="wrap_content"
         android:hint="@string/server_address_hint"
         app:boxStrokeColor="@color/primary"
-        app:hintTextColor="@color/text_secondary"
-        style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
+        app:hintTextColor="@color/text_secondary">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/server_input"
