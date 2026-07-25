@@ -11,3 +11,4 @@ android/app/build/
 android/local.properties
 android/gradle-8.9/
 android/gradle-8.9-bin.zip
+dist/\nbuild/\nandroid/.gradle/\nandroid/app/build/\nandroid/build/\nandroid/gradle-8.9/\nandroid/gradle-8.9-bin.zip\n

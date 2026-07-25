@@ -13,16 +13,7 @@ class SplashActivity : AppCompatActivity() {
         setContentView(R.layout.activity_splash)
 
         Handler(Looper.getMainLooper()).postDelayed({
-            val prefs = getSharedPreferences("novelgen", MODE_PRIVATE)
-            val serverUrl = prefs.getString("server_url", "")
-
-            if (serverUrl.isNullOrBlank()) {
-                startActivity(Intent(this, ServerConfigActivity::class.java))
-            } else {
-                val intent = Intent(this, MainActivity::class.java)
-                intent.putExtra("server_url", serverUrl)
-                startActivity(intent)
-            }
+            startActivity(Intent(this, MainActivity::class.java))
             finish()
         }, 1500)
     }

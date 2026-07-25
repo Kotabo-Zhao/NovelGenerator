@@ -1,10 +1,10 @@
 package com.novelgen.app
 
 import android.annotation.SuppressLint
-import android.graphics.Bitmap
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
+import android.content.*
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
@@ -13,15 +13,15 @@ import android.webkit.*
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.novelgen.app.databinding.ActivityMainBinding
 import kotlinx.coroutines.*
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private var serverUrl: String = ""
-    private var isConnected: Boolean = false
+    private val handler = Handler(Looper.getMainLooper())
+    private var retryCount = 0
+    private var statusReceiver: BroadcastReceiver? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,19 +30,68 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
 
-        serverUrl = intent.getStringExtra("server_url") ?: run {
-            val saved = getSharedPreferences("novelgen", MODE_PRIVATE).getString("server_url", "")
-            saved ?: "192.168.1.100:8899"
-        }
-
         setupWebView()
         setupSwipeRefresh()
+        registerStatusReceiver()
 
-        if (isNetworkAvailable()) {
-            loadNovelGenerator()
-        } else {
-            showOfflineBanner()
+        // Start embedded Python server
+        startLocalServer()
+    }
+
+    private fun startLocalServer() {
+        binding.connectionStatus.text = "启动服务器..."
+        binding.connectionStatus.setTextColor(getColor(R.color.warning))
+
+        val prefs = getSharedPreferences("novelgen", MODE_PRIVATE)
+        val apiKey = prefs.getString("api_key", "") ?: ""
+
+        if (apiKey.isBlank()) {
+            // No API key — show config
+            binding.connectionStatus.text = "请设置 API Key"
+            binding.connectionStatus.setTextColor(getColor(R.color.error))
+            startActivity(Intent(this, ApiKeyActivity::class.java))
+            return
         }
+
+        val intent = Intent(this, ServerService::class.java).apply {
+            putExtra("api_key", apiKey)
+            putExtra("host", "127.0.0.1")
+            putExtra("port", 8899)
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun registerStatusReceiver() {
+        statusReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val ready = intent?.getBooleanExtra("ready", false) ?: false
+                val error = intent?.getStringExtra("error")
+
+                if (ready) {
+                    binding.connectionStatus.text = getString(R.string.connection_success)
+                    binding.connectionStatus.setTextColor(getColor(R.color.success))
+                    binding.connectionDot.setBackgroundResource(R.drawable.dot_green)
+                    binding.offlineBanner.visibility = View.GONE
+                    // Load frontend
+                    handler.postDelayed({ loadLocalFrontend() }, 500)
+                } else if (error != null) {
+                    binding.connectionStatus.text = "错误: ${error.take(40)}"
+                    binding.connectionStatus.setTextColor(getColor(R.color.error))
+                    binding.connectionDot.setBackgroundResource(R.drawable.dot_red)
+                }
+            }
+        }
+        registerReceiver(statusReceiver, IntentFilter(ServerService.BROADCAST_STATUS),
+            RECEIVER_NOT_EXPORTED)
+    }
+
+    private fun loadLocalFrontend() {
+        binding.webView.loadUrl("http://127.0.0.1:8899/")
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -61,51 +110,30 @@ class MainActivity : AppCompatActivity() {
             setSupportZoom(true)
             builtInZoomControls = true
             displayZoomControls = false
-            // Performance
-            setRenderPriority(WebSettings.RenderPriority.HIGH)
-        }
-
-        // Enable WebView debugging in debug builds
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
-            WebView.setWebContentsDebuggingEnabled(false)
         }
 
         webView.addJavascriptInterface(WebAppInterface(this), "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                binding.progressBar.visibility = View.VISIBLE
-            }
-
             override fun onPageFinished(view: WebView?, url: String?) {
                 binding.progressBar.visibility = View.GONE
                 binding.swipeRefresh.isRefreshing = false
-                if (!isConnected && url?.contains("/api/health") != true) {
-                    isConnected = true
-                    updateConnectionStatus(true)
-                }
             }
 
             override fun onReceivedError(
                 view: WebView?, request: WebResourceRequest?,
                 error: WebResourceError?
             ) {
-                if (request?.isForMainFrame == true) {
-                    isConnected = false
-                    updateConnectionStatus(false)
+                if (request?.isForMainFrame == true && retryCount < 5) {
+                    retryCount++
+                    handler.postDelayed({ binding.webView.reload() }, 1000)
                 }
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
-                // Handle download links
-                if (url.contains("/api/novels/") && (url.contains("/export") || url.contains("/pdf"))) {
-                    WebAppInterface(this@MainActivity).downloadFile(url, "novel_export")
-                    return true
-                }
-                // Open external links in browser
-                if (!url.startsWith("http://$serverUrl") && !url.startsWith("https://")) {
-                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, request?.url)
+                if (!url.startsWith("http://127.0.0.1")) {
+                    val intent = Intent(Intent.ACTION_VIEW, request?.url)
                     startActivity(intent)
                     return true
                 }
@@ -117,7 +145,6 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 binding.progressBar.progress = newProgress
             }
-
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 supportActionBar?.title = title ?: getString(R.string.app_name)
             }
@@ -125,75 +152,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupSwipeRefresh() {
-        binding.swipeRefresh.setColorSchemeResources(
-            android.R.color.holo_blue_bright,
-            android.R.color.holo_purple,
-            android.R.color.holo_orange_light
-        )
-        binding.swipeRefresh.setOnRefreshListener {
-            binding.webView.reload()
-        }
-    }
-
-    private fun loadNovelGenerator() {
-        binding.connectionStatus.text = getString(R.string.connecting)
-        binding.connectionStatus.setTextColor(getColor(R.color.warning))
-
-        CoroutineScope(Dispatchers.IO).launch {
-            // Quick health check
-            val available = try {
-                val conn = java.net.URL("http://$serverUrl/api/health").openConnection() as java.net.HttpURLConnection
-                conn.connectTimeout = 3000
-                conn.readTimeout = 3000
-                conn.responseCode == 200
-            } catch (e: Exception) { false }
-
-            withContext(Dispatchers.Main) {
-                if (available) {
-                    isConnected = true
-                    updateConnectionStatus(true)
-                    binding.webView.loadUrl("http://$serverUrl/")
-                } else {
-                    isConnected = false
-                    updateConnectionStatus(false)
-                    showOfflineBanner()
-                }
-            }
-        }
-    }
-
-    private fun updateConnectionStatus(connected: Boolean) {
-        if (connected) {
-            binding.connectionStatus.text = getString(R.string.connection_success)
-            binding.connectionStatus.setTextColor(getColor(R.color.success))
-            binding.connectionDot.setBackgroundResource(R.drawable.dot_green)
-            binding.offlineBanner.visibility = View.GONE
-        } else {
-            binding.connectionStatus.text = getString(R.string.no_connection)
-            binding.connectionStatus.setTextColor(getColor(R.color.error))
-            binding.connectionDot.setBackgroundResource(R.drawable.dot_red)
-        }
-    }
-
-    private fun showOfflineBanner() {
-        binding.offlineBanner.visibility = View.VISIBLE
-        binding.offlineBanner.setOnClickListener {
-            binding.offlineBanner.visibility = View.GONE
-            loadNovelGenerator()
-        }
-    }
-
-    private fun isNetworkAvailable(): Boolean {
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        binding.swipeRefresh.setOnRefreshListener { binding.webView.reload() }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && binding.webView.canGoBack()) {
-            binding.webView.goBack()
-            return true
+            binding.webView.goBack(); return true
         }
         return super.onKeyDown(keyCode, event)
     }
@@ -207,18 +171,20 @@ class MainActivity : AppCompatActivity() {
         return when (item.itemId) {
             R.id.menu_refresh -> { binding.webView.reload(); true }
             R.id.menu_config -> {
-                startActivity(android.content.Intent(this, ServerConfigActivity::class.java))
-                true
+                startActivity(Intent(this, ApiKeyActivity::class.java)); true
             }
             R.id.menu_about -> {
-                AlertDialog.Builder(this)
-                    .setTitle("关于")
-                    .setMessage(R.string.about_text)
-                    .setPositiveButton("确定", null)
-                    .show()
+                AlertDialog.Builder(this).setTitle("关于")
+                    .setMessage("小说工坊 v1.1\n前后端一体化运行\nPython + Kotlin + Chaquopy")
+                    .setPositiveButton("确定", null).show()
                 true
             }
             else -> super.onOptionsItemSelected(item)
         }
+    }
+
+    override fun onDestroy() {
+        unregisterReceiver(statusReceiver)
+        super.onDestroy()
     }
 }
