@@ -691,6 +691,53 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"Paragraph normalize skipped: {e}")
 
+            # ── v2.6: 质量门 — 对话占比/爽点密度/碎片化自动检测 ──
+            quality_report = None
+            try:
+                checker = PacingChecker(self.client, self.model)
+                qr = checker.quick_quality_check(full_text)
+                quality_report = qr
+                log.info(f"Quality gate: score={qr['score']}, pass={qr['pass']}, issues={len(qr['issues'])}")
+                
+                if not qr["pass"] and qr["issues"]:
+                    issues_text = "; ".join(qr["issues"])
+                    log.warning(f"Quality gate FAILED (score={qr['score']}): {issues_text}")
+                    
+                    # 构建重生成反馈
+                    regenerate_feedback = f"【质量门自动反馈】以下问题需要修正：{issues_text}。请减少无意义对话，增加动作描写和冲突推进，确保每段都有实质性剧情推进。"
+                    
+                    # 重试一次
+                    yield {"type": "quality_warning", "score": qr["score"], "issues": qr["issues"],
+                           "message": f"质量评分 {qr['score']}，自动重生成..."}
+                    
+                    retry_text = ""
+                    async for text in self.writer.write_stream(
+                        context=context + f"\n\n⚠️ 上一版质量不合格（评分{qr['score']}）。{regenerate_feedback}",
+                        genre=genre, style=style,
+                        target_words=target_words,
+                        writing_mode=writing_mode,
+                        normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                    ):
+                        retry_text += text
+                    
+                    if retry_text and len(retry_text) > len(full_text) * 0.5:
+                        # 再检查一次
+                        qr2 = checker.quick_quality_check(retry_text)
+                        if qr2["score"] > qr["score"]:
+                            full_text = retry_text
+                            quality_report = qr2
+                            log.info(f"Quality gate retry PASSED: score {qr['score']} → {qr2['score']}")
+                            yield {"type": "quality_retry", "score_before": qr["score"], "score_after": qr2["score"]}
+                        else:
+                            log.warning(f"Quality gate retry still low: {qr2['score']}, keeping better version")
+                            if qr2["score"] >= qr["score"]:
+                                full_text = retry_text
+                                quality_report = qr2
+                    else:
+                        log.warning("Quality gate retry text too short, keeping original")
+            except Exception as e:
+                log.warning(f"Quality gate skipped: {e}")
+
             # 最终保存章节（覆盖增量保存的临时文件）
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)

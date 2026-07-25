@@ -96,7 +96,7 @@ class PacingChecker:
             return {"overall_score": 0, "error": str(e), "_stats": stats}
 
     def _local_stats(self, text: str) -> dict:
-        """本地统计：句长、段落、对话比、标点密度"""
+        """本地统计：句长、段落、对话比、标点密度 + v2.6 对话深度检测"""
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         para_count = len(paragraphs)
         
@@ -115,6 +115,45 @@ class PacingChecker:
         dialogue_chars = len(re.findall(r"[「「""''][^」」""'']*[」」""'']", text))
         dialogue_ratio = round(dialogue_chars / max(len(text), 1) * 100)
         
+        # ── v2.6: 对话深度分析 ──
+        # 对话轮次计数（每次引号对=1轮）
+        dialogue_pairs = re.findall(r'[「「""]([^」」""'']*)[」」""'']', text)
+        dialogue_turn_count = len(dialogue_pairs)
+        
+        # 水对话检测：对话内容 ≤4字 = 灌水（"嗯""哦""知道了"等）
+        water_turns = sum(1 for d in dialogue_pairs if len(d.strip()) <= 4)
+        water_dialogue_ratio = round(water_turns / max(dialogue_turn_count, 1) * 100)
+        
+        # 最长连续对话段（连续的对话段落数）
+        max_consecutive = 0
+        current_streak = 0
+        for p in paragraphs:
+            has_dialogue = bool(re.search(r'[「「""]', p))
+            has_action = bool(re.search(r'[。！？](?![""」」])', p))  # 句号后不紧跟引号
+            if has_dialogue and not (has_action and len(p) > 30):
+                current_streak += 1
+                max_consecutive = max(max_consecutive, current_streak)
+            else:
+                current_streak = 0
+        
+        # 动作句比例（不以引号开头/结尾的句子）
+        action_sentences = sum(1 for s in sentences if not re.match(r'^[「「""]', s) and not re.search(r'[」」""'']$', s))
+        action_ratio = round(action_sentences / max(len(sentences), 1) * 100)
+        
+        # ── 爽点密度估算 ──
+        # 爽点信号词：反转/揭露/碾压/冲突关键词
+        shuangdian_signals = [
+            r'突然|忽然|竟然|居然|怎么可能|没想到|原来',
+            r'冷笑|不屑|碾压|秒杀|一招|瞬间',
+            r'震惊|愣住|瞪大|呆住|说不出话',
+            r'跪下|求饶|饶命|不敢|怕了',
+            r'杀|死|血|剑|刀|掌',
+        ]
+        shuangdian_hits = sum(
+            len(re.findall(pattern, text)) for pattern in shuangdian_signals
+        )
+        shuangdian_per_1000 = round(shuangdian_hits / max(len(text), 1) * 1000, 1)
+        
         # 标点密度
         word_count = len(text)
         excl = text.count("！")
@@ -132,6 +171,12 @@ class PacingChecker:
             "dialogue_ratio": dialogue_ratio,
             "exclamation_density": round(excl / max(word_count, 1) * 1000, 1),
             "dash_density": round(dash / max(word_count, 1) * 1000, 1),
+            # v2.6
+            "dialogue_turn_count": dialogue_turn_count,
+            "water_dialogue_ratio": water_dialogue_ratio,
+            "max_consecutive_dialogue": max_consecutive,
+            "action_ratio": action_ratio,
+            "shuangdian_per_1000": shuangdian_per_1000,
         }
 
     def build_pacing_prompt(self, result: dict) -> str:
@@ -154,3 +199,49 @@ class PacingChecker:
             parts.extend(f"- {s}" for s in suggestions)
         
         return "\n".join(parts)
+
+    def quick_quality_check(self, text: str) -> dict:
+        """快速质量检查（纯本地，不调 LLM）。
+        
+        Returns:
+            {"pass": bool, "issues": [str], "score": int, "stats": dict}
+        """
+        stats = self._local_stats(text)
+        issues = []
+        score = 100
+        
+        # 对话占比过高
+        if stats["dialogue_ratio"] > 50:
+            issues.append(f"对话占比过高 ({stats['dialogue_ratio']}%)")
+            score -= 30
+        elif stats["dialogue_ratio"] > 40:
+            issues.append(f"对话偏多 ({stats['dialogue_ratio']}%)")
+            score -= 15
+        
+        # 水对话太多
+        if stats["water_dialogue_ratio"] > 20:
+            issues.append(f"水对话过多 ({stats['water_dialogue_ratio']}% 对话内容≤4字)")
+            score -= 20
+        
+        # 连续对话太长
+        if stats["max_consecutive_dialogue"] > 6:
+            issues.append(f"最长连续对话 {stats['max_consecutive_dialogue']} 段，缺乏动作打断")
+            score -= 15
+        
+        # 动作太少
+        if stats["action_ratio"] < 25:
+            issues.append(f"动作描写不足 ({stats['action_ratio']}%)")
+            score -= 15
+        
+        # 爽点密度太低
+        if stats["shuangdian_per_1000"] < 5:
+            issues.append(f"爽点密度低 ({stats['shuangdian_per_1000']}/千字)")
+            score -= 15
+        
+        # 平均句长偏短（碎片化）
+        if stats["avg_sentence_len"] < 10 and stats["sentence_count"] > 30:
+            issues.append(f"碎片化严重 (平均句长 {stats['avg_sentence_len']}字)")
+            score -= 10
+        
+        passed = score >= 60
+        return {"pass": passed, "issues": issues, "score": score, "stats": stats}

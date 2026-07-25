@@ -330,6 +330,33 @@ class SharedMemoryManager:
 {beats_text}"""
         parts.append(outline_text)
 
+        # ── v2.6: 对话密度告警 — 检测前几章是否对话过多 ──
+        try:
+            import re
+            recent_chapters = range(max(1, chapter_num - 3), chapter_num)
+            high_dialogue_count = 0
+            for ch in recent_chapters:
+                ch_text = self.read_chapter(novel_id, ch)
+                if ch_text:
+                    dialogue_chars = len(re.findall(r'[「「""][^」」""'']*[」」""'']', ch_text))
+                    ratio = dialogue_chars / max(len(ch_text), 1) * 100
+                    if ratio > 40:
+                        high_dialogue_count += 1
+            
+            if high_dialogue_count >= 2:
+                parts.append(
+                    "## ⚠️ 对话密度告警\n\n"
+                    f"最近 {high_dialogue_count} 章对话占比过高(>40%)。"
+                    "本章必须严格控制对话量：\n"
+                    "- 对话占比 ≤ 35%\n"
+                    "- 连续对话不超过 4 轮就必须用动作或环境打断\n"
+                    "- 每段对话必须有实质性推进（揭示信息/升级冲突/改变关系）\n"
+                    "- 禁止角色之间来回确认已经知道的信息\n"
+                    "- 优先用动作展示冲突，而非用对话说明冲突\n"
+                )
+        except Exception:
+            pass
+        
         return "\n\n---\n\n".join(parts)
 
     def _build_validator_context(self, novel_id: str, kwargs: dict) -> str:
