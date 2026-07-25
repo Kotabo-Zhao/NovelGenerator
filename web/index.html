@@ -1061,13 +1061,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <!-- 子tabs -->
             <div class="sg-subtabs">
               <button class="sg-subtab" :class="{active:sgSubTab==='overview'}" @click="sgSubTab='overview'">📊 概览</button>
-              <button class="sg-subtab" :class="{active:sgSubTab==='threads'}" @click="sgSubTab='threads'">
+              <button class="sg-subtab" :class="{active:sgSubTab==='threads'}" @click="sgSubTab='threads'" v-if="editingPhase==='outline'">
                 剧情线 <span class="sg-subtab-count">{{ sgStats.activeThreads }}/{{ sgStats.totalThreads }}</span>
               </button>
-              <button class="sg-subtab" :class="{active:sgSubTab==='foreshadows'}" @click="sgSubTab='foreshadows'">
+              <button class="sg-subtab" :class="{active:sgSubTab==='foreshadows'}" @click="sgSubTab='foreshadows'" v-if="editingPhase==='outline'">
                 伏笔 <span class="sg-subtab-count" :class="{'sg-count-warn':sgStats.overdueForeshadows>0}">{{ sgStats.unresolvedForeshadows }}/{{ sgStats.totalForeshadows }}</span>
               </button>
-              <button class="sg-subtab" :class="{active:sgSubTab==='characters'}" @click="sgSubTab='characters'">
+              <button class="sg-subtab" :class="{active:sgSubTab==='characters'}" @click="sgSubTab='characters'" v-if="editingPhase==='outline'">
                 角色 <span class="sg-subtab-count">{{ sgStats.trackedChars }}</span>
               </button>
               <button class="sg-subtab" :class="{active:sgSubTab==='calibration'}" @click="sgSubTab='calibration'">
@@ -1079,7 +1079,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <button class="sg-subtab" :class="{active:sgSubTab==='timeline'}" @click="sgSubTab='timeline'">
                 📈 剧情线图
               </button>
-              <button class="sg-subtab" :class="{active:sgSubTab==='canvas'}" @click="sgSubTab='canvas'">
+              <button class="sg-subtab" :class="{active:sgSubTab==='canvas'}" @click="sgSubTab='canvas'" v-if="editingPhase==='outline'">
                 🎨 画布
               </button>
             </div>
@@ -1160,7 +1160,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
 
             <!-- ====== 剧情线 Tab ====== -->
-            <div v-if="sgSubTab==='threads'">
+            <div v-if="sgSubTab==='threads' && editingPhase==='outline'">
               <div class="sg-filter-bar">
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='all'}" @click="sgThreadFilter='all'">全部</button>
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='active'}" @click="sgThreadFilter='active'">进行中</button>
@@ -1257,7 +1257,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
 
             <!-- ====== 伏笔 Tab ====== -->
-            <div v-if="sgSubTab==='foreshadows'">
+            <div v-if="sgSubTab==='foreshadows' && editingPhase==='outline'">
               <div class="sg-filter-bar">
                 <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='all'}" @click="sgForeshadowFilter='all'">全部</button>
                 <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='active'}" @click="sgForeshadowFilter='active'">未回收</button>
@@ -1315,7 +1315,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
 
             <!-- ====== 角色 Tab ====== -->
-            <div v-if="sgSubTab==='characters'">
+            <div v-if="sgSubTab==='characters' && editingPhase==='outline'">
               <div v-if="!sgCharSnapshots || !Object.keys(sgCharSnapshots).length" class="text-xs color-text3" style="padding:20px;text-align:center">暂无角色数据</div>
               <div class="sg-char-grid">
                 <div v-for="(snap,name) in sgCharSnapshots" :key="name" class="sg-char-card sg-expandable"
@@ -3077,6 +3077,10 @@ const app = createApp({
       sgChapterFilter.value = (activeNovel.value.state.completed_chapters||[]).length + 1;
       await loadStoryGraph();
       await loadPhase();
+      // 写作阶段不允许进入编辑tab
+      if (editingPhase.value === 'writing' && ['threads','foreshadows','characters'].includes(sgSubTab.value)) {
+        sgSubTab.value = 'overview';
+      }
     }
     async function loadStoryGraph(chapterNum = 0) {
       if (!activeNovel.value) return;
