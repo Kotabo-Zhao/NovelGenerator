@@ -47,8 +47,9 @@ chaquopy {
         pip {
             install("fastapi")
             install("uvicorn")
-            install("openai")
+            install("openai>=1.0.0,<2.0")
             install("pydantic")
+            install("httpx>=0.25.0,<0.28.0")
         }
     }
 }
