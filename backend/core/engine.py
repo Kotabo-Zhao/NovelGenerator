@@ -679,6 +679,18 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"AI Humanizer skipped: {e}")
 
+            # ── v2.4.1: 段落规范化安全网 ──
+            # 在所有后处理后，强制合并短行碎片，确保输出是正常段落格式
+            try:
+                from core.shared_memory import normalize_chapter_paragraphs
+                before_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
+                full_text = normalize_chapter_paragraphs(full_text)
+                after_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
+                if before_lines != after_lines:
+                    log.info(f"Paragraph normalize: ≤10char lines reduced {before_lines}→{after_lines}")
+            except Exception as e:
+                log.warning(f"Paragraph normalize skipped: {e}")
+
             # 最终保存章节（覆盖增量保存的临时文件）
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
@@ -1031,6 +1043,18 @@ class NovelEngine:
             
             full_text = assembly["raw_text"]
             formatted = assembly["full_text"]
+            
+            # ── v2.4.1: 段落规范化安全网 ──
+            try:
+                from core.shared_memory import normalize_chapter_paragraphs
+                before_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
+                full_text = normalize_chapter_paragraphs(full_text)
+                formatted = f"# 第{chapter_num}章 {chapter_outline.get('title', f'第{chapter_num}章')}\n\n{full_text}"
+                after_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
+                if before_lines != after_lines:
+                    log.info(f"Atomic paragraph normalize: ≤10char lines reduced {before_lines}→{after_lines}")
+            except Exception as e:
+                log.warning(f"Atomic paragraph normalize skipped: {e}")
             
             # ── Phase 4: 保存 ──
             self.memory.save_chapter(novel_id, chapter_num, formatted)

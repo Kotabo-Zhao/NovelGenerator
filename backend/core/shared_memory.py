@@ -265,6 +265,8 @@ class SharedMemoryManager:
                 # 取上一章最后 2000 字作为连续性上下文（原来只取 500，太少了）
                 take_chars = min(2000, len(prev_content))
                 prev_ending = prev_content[-take_chars:]
+                # v2.4.1: 清洗上下文 —— 合并短行成正常段落，切断短行风格自我强化循环
+                prev_ending = _normalize_context_paragraphs(prev_ending)
                 parts.append(f"## ⬆️ 上一章结尾（必须从这里接着写！开头要无缝衔接）\n\n{prev_ending}")
                 
                 # 上一章钩子
@@ -783,3 +785,162 @@ class SharedMemoryManager:
             for c in supporting[:5]:
                 ctx += f"- {c.get('name', '?')}: {c.get('identity', '')}, {c.get('relation', '')}\n"
         return ctx
+
+
+# ═══════════════════════════════════════════
+# v2.4.1: 上下文清洗 — 合并短行成正常段落
+# ═══════════════════════════════════════════
+
+def _normalize_context_paragraphs(text: str) -> str:
+    """轻量清洗：合并相邻短行，防止短行风格自我毒化循环。
+    
+    规则：
+    - 保留所有空行和标题
+    - 连续 ≤15字 的行合并为一句（≥40字时输出为段落）
+    - 对话行（「」「」或引号）特殊保留结构
+    """
+    lines = text.split('\n')
+    result = []
+    i = 0
+    last_was_blank = False
+    
+    def append_line(s):
+        nonlocal last_was_blank
+        if not s.strip():
+            if not last_was_blank:
+                result.append("")
+                last_was_blank = True
+        else:
+            result.append(s)
+            last_was_blank = False
+    
+    while i < len(lines):
+        stripped = lines[i].strip()
+        
+        # 空行/标题 → 保留
+        if not stripped or stripped.startswith('#'):
+            append_line(lines[i])
+            i += 1
+            continue
+        
+        # 短行 → 收集并合并
+        if len(stripped) <= 15:
+            merged = stripped
+            i += 1
+            # 跳过空行，收集后续短行
+            skipped_blanks = False
+            while i < len(lines):
+                next_line = lines[i].strip()
+                if not next_line:
+                    skipped_blanks = True
+                    i += 1
+                    continue
+                if len(next_line) <= 15:
+                    merged += next_line
+                    skipped_blanks = False
+                    i += 1
+                else:
+                    # 遇到长行，如果前面跳了空行 → 合并长行
+                    if skipped_blanks and i < len(lines):
+                        merged += next_line
+                        i += 1
+                    break
+            
+            # 输出合并后的文本
+            if len(merged) >= 40:
+                # 拆为多个句号段
+                if len(merged) > 120:
+                    chunks = []
+                    pos = 0
+                    while pos < len(merged):
+                        end = min(pos + 100, len(merged))
+                        if end < len(merged):
+                            last_period = merged.rfind('。', pos, end)
+                            if last_period > pos + 30:
+                                end = last_period + 1
+                        chunks.append(merged[pos:end])
+                        pos = end
+                    for c in chunks:
+                        append_line(c)
+                else:
+                    append_line(merged)
+            else:
+                append_line(merged)
+        else:
+            # 正常长的行 → 保留
+            append_line(lines[i])
+            i += 1
+    
+    return '\n'.join(result)
+
+
+def normalize_chapter_paragraphs(text: str) -> str:
+    """安全网：把每句一行的碎片文本合并成正常段落。
+    
+    两步：
+    1. 去除标题后的所有单句间空行 → 形成连续文本
+    2. 按 ~80-120 字重新切分段落
+    """
+    import re
+    lines = text.split('\n')
+    result = []
+    
+    # Step 1: 收集所有内容行，去除空行（保留标题行后的结构）
+    content_lines = []
+    has_title = False
+    for line in lines:
+        stripped = line.strip()
+        # 保留标题行
+        if stripped.startswith('#'):
+            if content_lines:
+                # 处理之前积累的内容
+                result.append(_rechunk_text(content_lines))
+                content_lines = []
+            result.append(line)
+            has_title = True
+            continue
+        # 保留分隔线
+        if stripped.startswith('---') or stripped.startswith('===') or stripped.startswith('***'):
+            if content_lines:
+                result.append(_rechunk_text(content_lines))
+                content_lines = []
+            result.append(line)
+            continue
+        # 跳过空行
+        if not stripped:
+            continue
+        content_lines.append(stripped)
+    
+    # 处理剩余内容
+    if content_lines:
+        result.append(_rechunk_text(content_lines))
+    
+    return '\n\n'.join([r for r in result if r])
+
+
+def _rechunk_text(lines: list) -> str:
+    """将句子列表重新切分为段落（~80-120字/段）"""
+    if not lines:
+        return ""
+    
+    # 先合并所有句子为连续文本
+    full_text = ''.join(lines)
+    
+    # 如果总文本短，直接返回
+    if len(full_text) <= 120:
+        return full_text
+    
+    # 按 ~100 字切分，但尽量在句号处断开
+    paragraphs = []
+    i = 0
+    while i < len(full_text):
+        end = min(i + 100, len(full_text))
+        # 在目标范围内找最后一个句号作为断点
+        if end < len(full_text):
+            last_period = full_text.rfind('。', i, end)
+            if last_period > i + 30:  # 至少30字
+                end = last_period + 1
+        paragraphs.append(full_text[i:end])
+        i = end
+    
+    return '\n\n'.join(paragraphs)
