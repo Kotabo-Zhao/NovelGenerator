@@ -125,8 +125,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
 /* ── Shelf Grid ── */
 .shelf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
-.book-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:all .2s}
+.book-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:all .2s;position:relative}
 .book-card:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--text3)}
+.btn-delete-novel{position:absolute;top:6px;right:6px;z-index:5;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,.4);color:#fff;font-size:11px;line-height:22px;text-align:center;cursor:pointer;opacity:0;transition:opacity .15s}
+.book-card:hover .btn-delete-novel{opacity:1}
+.btn-delete-novel:hover{background:#f85149;transform:scale(1.15)}
 .book-cover{height:100px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:rgba(255,255,255,.1);letter-spacing:3px;position:relative}
 .book-cover::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 40%,var(--card) 100%)}
 .book-info{padding:14px 16px}
@@ -661,7 +664,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       </div>
 
       <div v-else class="shelf-grid">
-        <div v-for="n in novels" :key="n.id" class="book-card" @click="openNovel(n)">
+        <div v-for="n in novels" :key="n.id" class="book-card" @click="openNovel(n)" style="position:relative">
+          <button class="btn-delete-novel" @click.stop="deleteNovel(n)" title="删除">✕</button>
           <div class="book-cover" :style="{background:coverGradient(n.id)}">{{ n.title.slice(0,6) }}</div>
           <div class="book-info">
             <h3>{{ n.title }}</h3>
@@ -2995,6 +2999,16 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
       if (_shelfDebounce) return;
       _shelfDebounce = setTimeout(() => { _shelfDebounce=null; loadShelf(); }, 500);
     }
+    async function deleteNovel(novel) {
+      if (!confirm(`确定删除「${novel.title}」吗？此操作不可撤销！`)) return;
+      try {
+        await fetch(API+'/api/novels/'+encodeURIComponent(novel.id), {method:'DELETE'});
+      } catch(e) { console.warn('Delete failed:', e); }
+      if (activeNovel.value && activeNovel.value.id === novel.id) {
+        activeNovel.value = null; writing.content = '';
+      }
+      await loadShelf();
+    }
     function loadNovelPlan() {
       // 从服务端强制重拉最新 plan（主角修改后确保前端同步）
       if (!activeNovel.value) return;
@@ -3466,7 +3480,7 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
       pct,fmtWords,coverGradient,
       openCreate,openWrite,openOutline,doCreate,openNovel,startWriting,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
-      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
+      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,deleteNovel,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,

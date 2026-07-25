@@ -282,6 +282,24 @@ async def update_novel_plan(novel_id: str, plan_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.delete("/api/novels/{novel_id}")
+async def delete_novel(novel_id: str):
+    """删除小说及其所有数据"""
+    import shutil
+    try:
+        novel_dir = engine.memory.get_novel_dir(novel_id)
+        if not os.path.exists(novel_dir):
+            raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在")
+        shutil.rmtree(novel_dir)
+        engine.memory.invalidate_all(novel_id)
+        return {"success": True, "message": f"已删除 '{novel_id}'"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to delete novel")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/novels")
 async def create_novel(req: CreateNovelRequest):
     """创建新小说 — 灵感 → 世界观+角色+大纲（内部走流式避免 Render 超时）"""
