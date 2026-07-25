@@ -966,6 +966,10 @@ class NovelEngine:
 
         except Exception as e:
             log.exception(f"Chapter generation failed: {e}")
+            if full_text and len(full_text) > 100:
+                formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}\n\n<!-- 生成异常中断 -->"
+                self.memory.save_chapter(novel_id, chapter_num, formatted)
+                yield {"type": "warning", "message": f"生成中断，已保存{len(full_text)}字部分内容"}
             yield {"type": "error", "message": str(e)}
         finally:
             # 清理并发锁
