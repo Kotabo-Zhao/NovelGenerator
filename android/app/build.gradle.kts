@@ -16,7 +16,7 @@ android {
         versionName = "1.1.0"
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
@@ -49,8 +49,6 @@ chaquopy {
             install("uvicorn")
             install("openai")
             install("pydantic")
-            install("python-dotenv")
-            install("aiofiles")
         }
     }
 }
