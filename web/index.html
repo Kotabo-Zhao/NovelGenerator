@@ -394,6 +394,15 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sg-resize-handle{height:8px;cursor:ns-resize;background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 45%,transparent 45%,transparent 55%,var(--accent) 55%,var(--accent) 60%,transparent 60%);margin-top:2px;border-radius:2px;transition:background .15s}
 .sg-resize-handle:hover{background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 60%,transparent 60%)}
 .sg-resizing *{user-select:none!important;pointer-events:none!important}
+
+/* ── v2.5: 编辑表单 ── */
+.sg-edit-form{margin-top:8px}
+.sg-edit-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.sg-edit-label{font-size:11px;color:var(--text3);min-width:56px;text-align:right;flex-shrink:0}
+.sg-edit-input{flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--font)}
+.sg-edit-input:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px rgba(99,102,241,.15)}
+.sg-edit-range{flex:1;height:4px;-webkit-appearance:none;appearance:none;background:var(--bg2);border-radius:2px;outline:none}
+.sg-edit-range::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer}
 .sg-glow-node{transition:all .25s cubic-bezier(.4,0,.2,1)}
 .sg-glow-node:hover{filter:url(#glowStrong)}
 .sg-edge-line{transition:all .25s cubic-bezier(.4,0,.2,1)}
@@ -984,34 +993,93 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='active'}" @click="sgThreadFilter='active'">进行中</button>
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='resolved'}" @click="sgThreadFilter='resolved'">已完结</button>
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='dormant'}" @click="sgThreadFilter='dormant'">休眠</button>
+                <button class="btn btn-ghost btn-xs" @click="createThread" style="margin-left:auto;font-size:11px">+ 新增</button>
               </div>
               <div v-if="!filteredThreads.length" class="text-xs color-text3" style="padding:20px;text-align:center">无匹配剧情线</div>
               <div v-for="t in filteredThreads" :key="t.id" class="sg-thread-item sg-expandable"
-                   :class="{expanded:sgExpandedThread===t.id}"
-                   :style="{borderLeftColor: statusColor(t.status)}"
-                   @click="sgExpandedThread = sgExpandedThread===t.id ? null : t.id">
-                <div class="flex justify-between items-start">
-                  <div style="font-size:13px;font-weight:600">{{ t.name }}
-                    <span class="sg-tag">{{ {'main_plot':'主线','subplot':'支线','character_arc':'角色弧','mystery':'悬疑'}[t.type]||t.type }}</span>
-                    <span class="sg-tag" style="background:rgba(240,136,62,.1);color:#f0883e">P{{ t.priority }}</span>
+                   :class="{expanded:sgExpandedThread===t.id || editState.type==='thread'&&editState.id===t.id}"
+                   :style="{borderLeftColor: statusColor(t.status)}">
+                <!-- 展示模式 -->
+                <template v-if="editState.type!=='thread' || editState.id!==t.id">
+                  <div class="flex justify-between items-start" @click="sgExpandedThread = sgExpandedThread===t.id ? null : t.id">
+                    <div style="font-size:13px;font-weight:600">{{ t.name }}
+                      <span class="sg-tag">{{ {'main_plot':'主线','subplot':'支线','character_arc':'角色弧','mystery':'悬疑'}[t.type]||t.type }}</span>
+                      <span class="sg-tag" style="background:rgba(240,136,62,.1);color:#f0883e">P{{ t.priority }}</span>
+                    </div>
+                    <span class="sg-tag" :style="{background:statusBg(t.status)}">{{ statusLabel(t.status) }}</span>
                   </div>
-                  <span class="sg-tag" :style="{background:statusBg(t.status)}">{{ statusLabel(t.status) }}</span>
-                </div>
-                <div class="sg-tension-bar" style="margin:6px 0">
-                  <div class="sg-tension-fill" :style="{width:(t.current_tension||5)*10+'%',background:tensionGradient(t.current_tension||5)}"></div>
-                </div>
-                <!-- 展开详情 -->
-                <div v-if="t.description && sgExpandedThread===t.id" class="text-xs color-text2 mt-6" style="line-height:1.6">{{ t.description }}</div>
-                <div v-if="sgExpandedThread===t.id && t.key_nodes?.length" class="sg-timeline mt-8">
-                  <div v-for="(n,i) in t.key_nodes" :key="i" class="sg-timeline-item">
-                    <div class="sg-timeline-dot" :style="{background:tensionGradient(n.tension||5)}"></div>
-                    <div class="sg-timeline-content">
-                      <span class="sg-timeline-ch">Ch{{ n.chapter }}</span>
-                      <span class="sg-timeline-event">{{ n.event }}</span>
+                  <div class="sg-tension-bar" style="margin:6px 0" @click="sgExpandedThread = sgExpandedThread===t.id ? null : t.id">
+                    <div class="sg-tension-fill" :style="{width:(t.current_tension||5)*10+'%',background:tensionGradient(t.current_tension||5)}"></div>
+                  </div>
+                  <!-- 快捷操作 -->
+                  <div class="flex gap-4 mt-6 flex-wrap">
+                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'heat_up')" :disabled="(t.current_tension||0)>=10" title="升温" style="font-size:10px">🔥 升温</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'pause')" v-if="t.status!=='dormant'" title="暂停" style="font-size:10px">⏸️ 暂停</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'resume')" v-if="t.status==='dormant'" title="恢复" style="font-size:10px">▶️ 恢复</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'resolve')" v-if="t.status!=='resolved'" title="完结" style="font-size:10px">✅ 完结</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'raise_priority')" :disabled="(t.priority||0)>=5" title="提优" style="font-size:10px">⬆️</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'lower_priority')" :disabled="(t.priority||0)<=1" title="降优" style="font-size:10px">⬇️</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="startEdit('thread',t.id)" style="font-size:10px;margin-left:auto" title="详细编辑">✏️ 编辑</button>
+                  </div>
+                  <!-- 展开详情 -->
+                  <div v-if="t.description && sgExpandedThread===t.id" @click="sgExpandedThread=null" class="text-xs color-text2 mt-6" style="line-height:1.6">{{ t.description }}</div>
+                  <div v-if="sgExpandedThread===t.id && t.key_nodes?.length" class="sg-timeline mt-8" @click="sgExpandedThread=null">
+                    <div v-for="(n,i) in t.key_nodes" :key="i" class="sg-timeline-item">
+                      <div class="sg-timeline-dot" :style="{background:tensionGradient(n.tension||5)}"></div>
+                      <div class="sg-timeline-content">
+                        <span class="sg-timeline-ch">Ch{{ n.chapter }}</span>
+                        <span class="sg-timeline-event">{{ n.event }}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div v-if="t.characters?.length" class="text-xs color-text3 mt-4">👥 {{ t.characters.join('、') }}</div>
+                  <div v-if="t.characters?.length" class="text-xs color-text3 mt-4" @click="sgExpandedThread=null">👥 {{ t.characters.join('、') }}</div>
+                </template>
+                <!-- 编辑模式 -->
+                <template v-else>
+                  <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">✏️ 编辑: {{ t.name }}</div>
+                  <div class="sg-edit-form">
+                    <div class="sg-edit-row">
+                      <label class="sg-edit-label">名称</label>
+                      <input v-model="editState.data.name" class="sg-edit-input" maxlength="30">
+                    </div>
+                    <div class="sg-edit-row">
+                      <label class="sg-edit-label">类型</label>
+                      <select v-model="editState.data.type" class="sg-edit-input">
+                        <option value="main_plot">主线</option><option value="subplot">支线</option>
+                        <option value="character_arc">角色弧</option><option value="mystery">悬疑</option>
+                      </select>
+                    </div>
+                    <div class="sg-edit-row">
+                      <label class="sg-edit-label">状态</label>
+                      <select v-model="editState.data.status" class="sg-edit-input">
+                        <option value="dormant">休眠</option><option value="active">进行中</option>
+                        <option value="advancing">推进中</option><option value="climax">高潮</option><option value="resolved">已完结</option>
+                      </select>
+                    </div>
+                    <div class="sg-edit-row">
+                      <label class="sg-edit-label">优先级</label>
+                      <input v-model.number="editState.data.priority" type="range" min="1" max="5" class="sg-edit-range">
+                      <span class="text-xs font-semibold" style="color:var(--accent);min-width:20px">P{{ editState.data.priority }}</span>
+                    </div>
+                    <div class="sg-edit-row">
+                      <label class="sg-edit-label">紧张度 ({{ editState.data.current_tension }}/10)</label>
+                      <input v-model.number="editState.data.current_tension" type="range" min="1" max="10" class="sg-edit-range">
+                    </div>
+                    <div class="sg-edit-row">
+                      <label class="sg-edit-label">描述</label>
+                      <textarea v-model="editState.data.description" class="sg-edit-input" rows="2" maxlength="200" style="resize:vertical"></textarea>
+                    </div>
+                    <div class="sg-edit-row">
+                      <label class="sg-edit-label">下一步</label>
+                      <input v-model="editState.data.next_planned" class="sg-edit-input" maxlength="60" placeholder="下一章计划...">
+                    </div>
+                    <div class="flex gap-6 mt-8 justify-end">
+                      <button class="btn btn-ghost btn-xs" @click="cancelEdit">取消</button>
+                      <button class="btn btn-primary btn-xs" @click="saveEdit">💾 保存</button>
+                      <button class="btn btn-ghost btn-xs" @click="deleteThread(t.id)" style="color:var(--red)">🗑️ 删除</button>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
 
@@ -1022,6 +1090,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='active'}" @click="sgForeshadowFilter='active'">未回收</button>
                 <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='overdue'}" @click="sgForeshadowFilter='overdue'">超期</button>
                 <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='resolved'}" @click="sgForeshadowFilter='resolved'">已回收</button>
+                <button class="btn btn-ghost btn-xs" @click="createForeshadow" style="margin-left:auto;font-size:11px">+ 新增</button>
               </div>
               
               <!-- 伏笔时间线可视化 -->
@@ -1056,6 +1125,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <span>💡 {{ f.hint_count||1 }}次暗示</span>
                   <span v-if="f.importance">⭐ P{{ f.importance }}</span>
                 </div>
+                <!-- 快捷操作 -->
+                <div class="flex gap-4 mt-6 flex-wrap" v-if="f.status!=='resolved'">
+                  <button class="btn btn-ghost btn-xs" @click.stop="quickAction('foreshadow',f.id,'resolve')" title="现在回收" style="font-size:10px">✅ 回收</button>
+                  <button class="btn btn-ghost btn-xs" @click.stop="quickAction('foreshadow',f.id,'delay',{offset:5})" title="推迟5章" style="font-size:10px">⏪ 推迟5章</button>
+                  <button class="btn btn-ghost btn-xs" @click.stop="startEdit('foreshadow',f.id)" style="font-size:10px;margin-left:auto" title="编辑">✏️</button>
+                </div>
                 <!-- 展开后显示完整描述 -->
                 <div v-if="sgExpandedForeshadow===f.id && f.description" class="text-xs color-text2 mt-6" style="line-height:1.6">
                   {{ f.description }}
@@ -1075,6 +1150,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                      @click="sgExpandedChar = sgExpandedChar===name ? null : name">
                   <div style="font-size:14px;font-weight:600;margin-bottom:6px">{{ name }}
                     <span class="text-xs color-text3" style="font-weight:400">上次出场 Ch{{ snap.last_chapter_appeared||0 }}</span>
+                    <button class="btn btn-ghost btn-xs" @click.stop="startEdit('character',name)" style="float:right;font-size:10px" title="编辑角色">✏️</button>
                   </div>
                   <div v-if="snap.current_location" class="text-xs color-text2">📍 {{ snap.current_location }}</div>
                   <div v-if="snap.current_emotion" class="text-xs color-text2">😶 {{ snap.current_emotion }}</div>
@@ -1604,6 +1680,149 @@ const app = createApp({
     const sgExpandedForeshadow = ref(null);
     const sgExpandedChar = ref(null);
     const sgExpandedArc = ref(null);
+
+    // v2.5: 编辑器状态
+    const editState = reactive({ type:null, id:null, data:{} });
+    const editShowForm = reactive({ thread:false, foreshadow:false });
+    const quickDoing = ref(null);  // which quick action is in progress
+
+    function startEdit(type, id) {
+      const d = sgData.value;
+      if (!d) return;
+      editState.type = type;
+      editState.id = id;
+      if (type === 'thread') {
+        const t = (d.plot_threads||{})[id];
+        editState.data = t ? {
+          name: t.name, type: t.type, status: t.status,
+          priority: t.priority, description: t.description||'',
+          current_tension: t.current_tension||5,
+          next_planned: t.next_planned||'',
+          characters: [...(t.characters||[])],
+        } : {};
+      } else if (type === 'foreshadow') {
+        const f = (d.foreshadow_ledger||{})[id];
+        editState.data = f ? {
+          description: f.description||'',
+          planned_payoff_chapter: f.planned_payoff_chapter||1,
+          status: f.status, importance: f.importance||3,
+          thread_id: f.thread_id||'',
+        } : {};
+      } else if (type === 'character') {
+        const s = (d.char_snapshots||{})[id];
+        editState.data = s ? {
+          current_location: s.current_location||'',
+          current_emotion: s.current_emotion||'',
+          current_power_level: s.current_power_level||'',
+          status_effects: [...(s.status_effects||[])],
+          active_goals: [...(s.active_goals||[])],
+          known_secrets: [...(s.known_secrets||[])],
+        } : {};
+      }
+    }
+    function cancelEdit() { editState.type = null; editState.id = null; editState.data = {}; }
+    function hasEdit() { return editState.type !== null; }
+    
+    async function saveEdit() {
+      if (!activeNovel.value || !editState.type) return;
+      const id = encodeURIComponent(activeNovel.value.id);
+      const API_BASE = API + '/api/novels/' + id + '/storygraph';
+      let url, body;
+      
+      if (editState.type === 'thread') {
+        url = API_BASE + '/threads/' + encodeURIComponent(editState.id);
+        body = editState.data;
+      } else if (editState.type === 'foreshadow') {
+        url = API_BASE + '/foreshadows/' + encodeURIComponent(editState.id);
+        body = editState.data;
+      } else if (editState.type === 'character') {
+        url = API_BASE + '/characters/' + encodeURIComponent(editState.id);
+        body = editState.data;
+      }
+      
+      try {
+        const r = await fetch(url, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+        if (r.ok) {
+          showToast('已保存', '', '✅');
+          cancelEdit();
+          await loadStoryGraph(0);
+        } else {
+          const e = await r.json();
+          showToast('保存失败', e.detail||'未知错误', '❌');
+        }
+      } catch(e) {
+        showToast('保存失败', '网络错误，请重试', '❌');
+        console.warn('Edit save failed:', e);
+      }
+    }
+    
+    async function quickAction(type, id, action, extra={}) {
+      if (!activeNovel.value) return;
+      quickDoing.value = type+':'+id;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/quick-action', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({type, id, action, ...extra}),
+        });
+        if (r.ok) {
+          const result = await r.json();
+          const msgs = {
+            heat_up: '已升温至 '+result.new_tension,
+            pause: '已暂停',
+            resume: '已恢复',
+            resolve: '已标记完成',
+            raise_priority: '优先级已提升',
+            lower_priority: '优先级已降低',
+            delay: '已推迟',
+            advance: '已提前',
+          };
+          showToast(msgs[action]||'操作完成', '', '✅');
+          await loadStoryGraph(0);
+        }
+      } catch(e) { console.warn('Quick action failed:', e); }
+      quickDoing.value = null;
+    }
+    
+    async function deleteThread(id) {
+      if (!confirm('确定删除此剧情线？这将标记为"已完结"。')) return;
+      if (!activeNovel.value) return;
+      try {
+        await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/threads/'+encodeURIComponent(id), { method:'DELETE' });
+        showToast('已删除', '', '🗑️');
+        await loadStoryGraph(0);
+      } catch(e) { console.warn('Delete failed:', e); }
+    }
+
+    async function createThread() {
+      if (!activeNovel.value) return;
+      const name = prompt('新剧情线名称:');
+      if (!name) return;
+      const id = 'custom_' + Date.now();
+      try {
+        await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/threads/'+encodeURIComponent(id), {
+          method:'PUT', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({name, type:'subplot', priority:3, status:'active', current_tension:5}),
+        });
+        showToast('剧情线已创建', name, '✅');
+        await loadStoryGraph(0);
+      } catch(e) { console.warn('Create thread failed:', e); }
+    }
+    
+    async function createForeshadow() {
+      if (!activeNovel.value) return;
+      const desc = prompt('伏笔描述:');
+      if (!desc) return;
+      const payoff = parseInt(prompt('计划回收章节:', '20')) || 20;
+      const id = 'custom_fs_' + Date.now();
+      try {
+        await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/foreshadows', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({id, description:desc, planted_chapter:sgData.value?.last_updated_chapter||1, planned_payoff_chapter:payoff, importance:3}),
+        });
+        showToast('伏笔已创建', '', '✅');
+        await loadStoryGraph(0);
+      } catch(e) { console.warn('Create foreshadow failed:', e); }
+    }
 
     // v2.4: 可视化交互状态
     const sgHoveredChar = ref(null);
@@ -2643,7 +2862,10 @@ const app = createApp({
       edgeCurve,edgeCurveMid,lastActiveChapter,
       plotTimeline,timelineViewBox,timelineChapters,timelineChapterLabels,plotEndY,
       laneY,chToX,causalArrowPath,hoveredEventDetail,
-      timelineSvgWrap,zoomTimeline,startPanTimeline,doPanTimeline,endPanTimeline };
+      timelineSvgWrap,zoomTimeline,startPanTimeline,doPanTimeline,endPanTimeline,
+      // v2.5: 编辑器
+      editState,quickDoing,startEdit,cancelEdit,saveEdit,hasEdit,
+      quickAction,deleteThread,createThread,createForeshadow };
     } catch(e) {
       console.error('SETUP ERROR:', e.message, e.stack);
       document.body.innerHTML = '<div style=\"padding:40px;color:red;font-size:16px;font-family:monospace\"><h2>❌ Setup 错误</h2><pre>' + (e.stack || e.message) + '</pre></div>';
