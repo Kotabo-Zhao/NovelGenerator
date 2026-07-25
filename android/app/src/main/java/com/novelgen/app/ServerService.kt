@@ -13,130 +13,84 @@ class ServerService : Service() {
     companion object {
         const val CHANNEL_ID = "novelgen_server"
         const val NOTIFICATION_ID = 1001
-        const val ACTION_START = "com.novelgen.app.START_SERVER"
         const val BROADCAST_STATUS = "com.novelgen.app.SERVER_STATUS"
-
-        var isServerRunning = false
         var isServerReady = false
         var serverError: String? = null
     }
 
+    override fun onBind(intent: Intent?): IBinder? = null
+
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(NotificationChannel(
+                    CHANNEL_ID, "小说工坊服务", NotificationManager.IMPORTANCE_LOW))
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val apiKey = intent?.getStringExtra("api_key") ?: ""
-        val host = intent?.getStringExtra("host") ?: "127.0.0.1"
-        val port = intent?.getIntExtra("port", 8899) ?: 8899
-
-        startForeground(NOTIFICATION_ID, buildNotification("正在启动服务器..."))
+        startForeground(NOTIFICATION_ID, buildNotification("初始化..."))
 
         Thread {
             try {
-                // Initialize Python
-                if (!Python.isStarted()) {
-                    Python.start(AndroidPlatform(this))
-                }
-
+                if (!Python.isStarted()) Python.start(AndroidPlatform(this))
                 val py = Python.getInstance()
                 val module = py.getModule("server_runner")
 
-                // Start the server
-                module.callAttr("start_server", apiKey, host, port)
-                isServerRunning = true
+                // Synchronous import test
+                updateNotification("加载模块...")
+                val result = module.callAttr("quick_test", apiKey)
+                val ok = result.get("ok")?.toString() ?: "False"
+                val step = result.get("step")?.toString() ?: "?"
 
-                // Poll for readiness
-                var waited = 0
-                while (waited < 60) {
-                    Thread.sleep(500)
-                    waited++
-                    try {
-                        val pyObj = module.callAttr("get_server_status")
-                        val errObj = pyObj.get("error")
-                        val readyObj = pyObj.get("ready")
-
-                        // Check error first
-                        if (errObj != null) {
-                            val err = errObj.toString()
-                            if (err != "None" && err.isNotBlank()) {
-                                serverError = err
-                                broadcastStatus(false, err)
-                                updateNotification("服务错误: ${err.take(80)}")
-                                return@Thread
-                            }
-                        }
-
-                        // Check ready
-                        if (readyObj != null && readyObj.toString() == "True") {
-                            isServerReady = true
-                            broadcastStatus(true, null)
-                            updateNotification("运行中 — http://$host:$port")
-                            return@Thread
-                        }
-                    } catch (e: Exception) {
-                        // Python still starting, continue polling
-                    }
+                if (ok != "True") {
+                    val err = result.get("error")?.toString() ?: "unknown"
+                    serverError = err
+                    broadcastStatus(false, "Step: $step\n$err")
+                    updateNotification("失败: $step")
+                    return@Thread
                 }
 
-                // Timeout
-                serverError = "服务器启动超时"
-                broadcastStatus(false, "timeout")
-                updateNotification("启动超时")
+                // Start uvicorn
+                updateNotification("启动服务...")
+                val ret = module.callAttr("start_uvicorn", "127.0.0.1", 8899)
+                val started = ret.get("status")?.toString() ?: "error"
+
+                if (started == "ok") {
+                    isServerReady = true
+                    broadcastStatus(true, null)
+                    updateNotification("运行中 — 127.0.0.1:8899")
+                } else {
+                    serverError = started
+                    broadcastStatus(false, started)
+                    updateNotification("启动失败")
+                }
 
             } catch (e: Exception) {
                 serverError = e.message ?: "未知错误"
-                broadcastStatus(false, serverError!!)
-                updateNotification("启动失败: ${serverError!!.take(60)}")
+                broadcastStatus(false, e.message ?: "error")
+                updateNotification("异常: ${e.message?.take(80)}")
             }
         }.start()
 
         return START_STICKY
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        isServerRunning = false
-        isServerReady = false
-        super.onDestroy()
-    }
-
     private fun broadcastStatus(ready: Boolean, error: String?) {
-        val intent = Intent(BROADCAST_STATUS).apply {
-            putExtra("ready", ready)
-            putExtra("error", error)
-        }
-        sendBroadcast(intent)
+        sendBroadcast(Intent(BROADCAST_STATUS).apply {
+            putExtra("ready", ready); putExtra("error", error)
+        })
     }
 
-    private fun buildNotification(text: String): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("小说工坊")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-    }
+    private fun buildNotification(text: String) = NotificationCompat.Builder(this, CHANNEL_ID)
+        .setContentTitle("小说工坊").setContentText(text)
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setOngoing(true).setPriority(NotificationCompat.PRIORITY_LOW).build()
 
     private fun updateNotification(text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification(text))
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "小说工坊服务",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "后台运行小说生成服务器"
-            }
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
-        }
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(NOTIFICATION_ID, buildNotification(text))
     }
 }
