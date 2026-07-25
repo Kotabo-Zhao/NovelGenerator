@@ -466,6 +466,36 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sg-connect-line{position:absolute;z-index:25;pointer-events:none;border-top:2px dashed var(--accent);
   transform-origin:0 0;opacity:.8;animation:dashMove .5s linear infinite}
 @keyframes dashMove{to{stroke-dashoffset:-12}}
+
+/* ── v2.6: 卡片式画布 ── */
+.sg-card{position:absolute;width:148px;background:var(--card);border-radius:8px;
+  box-shadow:0 2px 8px rgba(0,0,0,.12),0 1px 3px rgba(0,0,0,.08);
+  cursor:grab;z-index:10;transition:box-shadow .2s,transform .2s;overflow:hidden;
+  border:1px solid var(--border)}
+.sg-card:hover{z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.2),0 0 0 2px var(--accent)}
+.sg-card.dragging{cursor:grabbing;z-index:30;box-shadow:0 12px 32px rgba(0,0,0,.3);transform:rotate(1deg)}
+.sg-card.selected{box-shadow:0 0 0 2px var(--accent),0 4px 16px rgba(0,0,0,.15)}
+.sg-card-header{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 2px;font-size:11px}
+.sg-card-ch{font-weight:700;color:var(--accent);font-size:12px}
+.sg-card-priority{font-size:10px;padding:1px 5px;border-radius:3px;font-weight:700}
+.sg-card-body{padding:2px 8px 6px;font-size:12px;color:var(--text);line-height:1.4;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sg-card-tension{height:3px;margin:0 8px;border-radius:1.5px;transition:width .3s}
+.sg-card-chars{display:flex;gap:2px;padding:4px 8px;flex-wrap:wrap}
+.sg-card-char{font-size:10px;opacity:.7}
+.sg-card-handle{position:absolute;right:-6px;top:50%;transform:translateY(-50%);width:12px;height:12px;
+  border-radius:50%;background:var(--accent);border:2px solid var(--bg);cursor:crosshair;z-index:5;
+  opacity:0;transition:opacity .15s}
+.sg-card:hover .sg-card-handle{opacity:1}
+.sg-card-handle:hover{transform:translateY(-50%) scale(1.3);box-shadow:0 0 8px var(--accent)}
+
+/* 间隙警告 */
+.sg-gap-warn{position:absolute;display:flex;align-items:center;gap:4px;padding:4px 10px;
+  background:rgba(248,81,73,.1);border:1px dashed #f85149;border-radius:6px;
+  font-size:11px;color:#f85149;cursor:pointer;z-index:5;white-space:nowrap;
+  transition:all .15s;animation:warnPulse 2s ease-in-out infinite}
+.sg-gap-warn:hover{background:rgba(248,81,73,.2);transform:scale(1.05)}
+@keyframes warnPulse{0%,100%{opacity:.7}50%{opacity:1}}
 .sg-glow-node{transition:all .25s cubic-bezier(.4,0,.2,1)}
 .sg-glow-node:hover{filter:url(#glowStrong)}
 .sg-edge-line{transition:all .25s cubic-bezier(.4,0,.2,1)}
@@ -1526,36 +1556,56 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                          :style="{left:chToCanvasX(ch)+'px'}">Ch{{ ch }}</div>
                   </div>
                   
-                  <!-- 泳道 -->
+                  <!-- 泳道 + 卡片 -->
                   <div v-for="(lane, li) in plotTimeline.lanes" :key="'clane'+li"
                        class="sg-canvas-lane"
-                       :style="{top:(40+li*canvasLaneH)+'px',width:canvasWidth+'px',background:lane.color+'08'}">
+                       :style="{top:(40+li*canvasLaneH)+'px',width:canvasWidth+'px'}">
                     <div class="sg-canvas-lane-label" :style="{color:lane.color}">
                       {{ {'main_plot':'🔴','subplot':'🟡','character_arc':'🟣','mystery':'🔵'}[lane.type]||'⚪' }}
-                      {{ lane.name?.substring(0,12) }}
-                      <span style="font-size:10px;opacity:.6">P{{ lane.priority }}</span>
+                      {{ lane.name?.substring(0,14) }}
+                      <span style="font-size:10px;opacity:.6">P{{ lane.priority }} · {{ lane.events.length }}事件</span>
                     </div>
                     <div class="sg-canvas-lane-line" :style="{borderColor:lane.color}"></div>
-                    <!-- 事件节点 -->
-                    <div v-for="(ev, ei) in lane.events" :key="'cnev'+ei"
-                         class="sg-event-node"
+                    
+                    <!-- 间隙警告 -->
+                    <div v-for="gap in getLaneGaps(li)" :key="'gap'+li+'-'+gap.from"
+                         class="sg-gap-warn"
+                         :style="{left:chToCanvasX(gap.mid)+'px',top:'28px'}"
+                         @click.stop="addEventAtGap(li, gap.mid)">
+                      ⚠️ {{ gap.chapters }}章无进展
+                    </div>
+                    
+                    <!-- 事件卡片 -->
+                    <div v-for="(ev, ei) in lane.events" :key="'ccard'+ei"
+                         class="sg-card"
                          :class="{selected:canvasSelected===lane.id+':'+ei, dragging:canvasDragging===lane.id+':'+ei}"
-                         :style="{left:chToCanvasX(ev.chapter)+'px',top:'32px',color:tensionColor(ev.tension)}"
+                         :style="{left:(chToCanvasX(ev.chapter)-74)+'px',top:'22px',borderLeftColor:lane.color,borderLeftWidth:'3px'}"
                          @mousedown.stop="startDragCanvasNode($event, li, ei)"
-                         @dblclick.stop="editCanvasNode(li, ei)"
+                         @click.stop="canvasSelected=lane.id+':'+ei"
                          @contextmenu.prevent.stop="showCanvasMenu($event, li, ei)">
-                      <svg width="32" height="32" viewBox="0 0 32 32">
-                        <circle class="node-ring" cx="16" cy="16" r="12" fill="none" :stroke="lane.color" stroke-width="2" opacity=".3"/>
-                        <circle cx="16" cy="16" :r="6+ev.tension*0.5" :fill="tensionColor(ev.tension)" :stroke="lane.color" stroke-width="2"/>
-                      </svg>
-                      <div style="position:absolute;bottom:-16px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:600;
-                        color:var(--text2);white-space:nowrap;text-shadow:0 1px 2px var(--bg)">{{ ev.event?.substring(0,6) }}</div>
-                      <div class="node-tension-bar" :style="{width:(ev.tension||5)*3+'px',background:tensionColor(ev.tension)}"></div>
+                      <!-- 连线手柄 -->
+                      <div class="sg-card-handle" title="拖拽创建关联"
+                           @mousedown.stop="startCanvasConnect($event, li, ei)"></div>
+                      <!-- 头部 -->
+                      <div class="sg-card-header">
+                        <span class="sg-card-ch">Ch{{ ev.chapter }}</span>
+                        <span class="sg-card-priority" :style="{background:lane.color+'20',color:lane.color}">
+                          P{{ lane.priority }}
+                        </span>
+                      </div>
+                      <!-- 事件名 -->
+                      <div class="sg-card-body" :title="ev.event">{{ ev.event?.substring(0,20) }}</div>
+                      <!-- 紧张度条 -->
+                      <div class="sg-card-tension" :style="{width:(ev.tension||5)*10+'%',background:tensionColor(ev.tension)}"></div>
+                      <!-- 角色图标 -->
+                      <div class="sg-card-chars" v-if="lane.characters?.length">
+                        <span v-for="c in lane.characters.slice(0,4)" :key="c" class="sg-card-char">👤{{ c.substring(0,2) }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <!-- 拖拽预览标签 -->
+                <!-- 拖拽预览 -->
                 <div v-if="canvasDragging" class="sg-drag-preview" :style="{left:canvasDragX+'px',top:canvasDragY-30+'px'}">
                   Ch{{ canvasDragCh }} · 紧张度 {{ canvasDragTension }}
                 </div>
@@ -1566,8 +1616,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <!-- 右键菜单 -->
                 <div v-if="canvasMenu.show" class="sg-context-menu" :style="{left:canvasMenu.x+'px',top:canvasMenu.y+'px'}" @click.stop>
                   <div class="menu-item" @click="canvasMenuAction('edit')">✏️ 编辑事件</div>
-                  <div class="menu-item" @click="canvasMenuAction('heat')">🔥 升温</div>
-                  <div class="menu-item" @click="canvasMenuAction('cool')">❄️ 降温</div>
+                  <div class="menu-item" @click="canvasMenuAction('heat')">🔥 升温 +2</div>
+                  <div class="menu-item" @click="canvasMenuAction('cool')">❄️ 降温 -2</div>
+                  <div class="menu-item" @click="canvasMenuAction('addAfter')">➕ 在后面新增</div>
                   <div class="menu-divider"></div>
                   <div class="menu-item danger" @click="canvasMenuAction('delete')">🗑️ 删除</div>
                 </div>
@@ -1908,6 +1959,7 @@ const app = createApp({
     
     function startDragCanvasNode(e, laneIdx, evtIdx) {
       e.preventDefault();
+      if (e.target.closest('.sg-card-handle')) return; // 手柄单独处理
       const lane = plotTimeline.value.lanes[laneIdx];
       const ev = lane.events[evtIdx];
       canvasDragging.value = lane.id + ':' + evtIdx;
@@ -1915,6 +1967,78 @@ const app = createApp({
       canvasDragStart.x = e.clientX; canvasDragStart.y = e.clientY;
       canvasDragStart.nx = chToCanvasX(ev.chapter);
       canvasMenu.show = false;
+    }
+
+    // ── 连线手柄 ──
+    let connectLine = null;
+    function startCanvasConnect(e, li, ei) {
+      e.stopPropagation(); e.preventDefault();
+      const lane = plotTimeline.value.lanes[li];
+      const ev = lane.events[ei];
+      const startX = chToCanvasX(ev.chapter);
+      const startY = 40 + li * canvasLaneH + 32;
+      
+      connectLine = document.createElement('div');
+      connectLine.className = 'sg-connect-line';
+      connectLine.style.left = startX + 'px';
+      connectLine.style.top = startY + 'px';
+      document.querySelector('.sg-canvas-inner')?.appendChild(connectLine);
+      
+      function onMove(me) {
+        if (!connectLine) return;
+        const rect = document.querySelector('.sg-canvas-inner').getBoundingClientRect();
+        const ex = (me.clientX - rect.left) / canvasZoom.value - canvasPan.x / canvasZoom.value;
+        const ey = (me.clientY - rect.top) / canvasZoom.value - canvasPan.y / canvasZoom.value;
+        const dx = ex - startX, dy = ey - startY;
+        const len = Math.sqrt(dx*dx + dy*dy);
+        const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        connectLine.style.width = len + 'px';
+        connectLine.style.transform = `rotate(${angle}deg)`;
+      }
+      function onUp(me) {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        if (connectLine) { connectLine.remove(); connectLine = null; }
+        // 检测目标
+        const target = document.elementFromPoint(me.clientX, me.clientY);
+        const card = target?.closest('.sg-card');
+        if (card) {
+          canvasToast.value = '🔗 关联已创建';
+          setTimeout(() => canvasToast.value = '', 1800);
+        }
+      }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    }
+
+    // ── 间隙检测 ──
+    function getLaneGaps(li) {
+      const lane = plotTimeline.value.lanes[li];
+      const events = [...lane.events].sort((a,b) => (a.chapter||0)-(b.chapter||0));
+      if (events.length < 2) return [];
+      const gaps = [];
+      for (let i = 1; i < events.length; i++) {
+        const gap = events[i].chapter - events[i-1].chapter;
+        if (gap > 5) {
+          gaps.push({
+            from: events[i-1].chapter,
+            to: events[i].chapter,
+            chapters: gap,
+            mid: Math.round((events[i-1].chapter + events[i].chapter) / 2),
+          });
+        }
+      }
+      return gaps.slice(0, 2);
+    }
+    function addEventAtGap(li, midCh) {
+      const lane = plotTimeline.value.lanes[li];
+      const name = prompt(`在 Ch${midCh} 添加什么事件？`);
+      if (!name) return;
+      lane.events.push({ chapter: midCh, event: name, tension: 5 });
+      lane.events.sort((a,b) => (a.chapter||0)-(b.chapter||0));
+      saveCanvasEvent(li, -1);
+      canvasToast.value = `✅ 已在 Ch${midCh} 添加事件`;
+      setTimeout(() => { canvasToast.value = ''; loadStoryGraph(0); }, 1500);
     }
 
     async function saveCanvasEvent(li, ei) {
@@ -1942,8 +2066,9 @@ const app = createApp({
       const ev = lane.events[ei];
       if (action === 'heat') { ev.tension = Math.min(10, (ev.tension||5)+2); saveCanvasEvent(li,ei); canvasToast.value='🔥 已升温'; }
       else if (action === 'cool') { ev.tension = Math.max(1, (ev.tension||5)-2); saveCanvasEvent(li,ei); canvasToast.value='❄️ 已降温'; }
+      else if (action === 'addAfter') { const n=prompt('新事件描述:'); if(n){lane.events.push({chapter:(ev.chapter||1)+1,event:n,tension:5});lane.events.sort((a,b)=>(a.chapter||0)-(b.chapter||0));saveCanvasEvent(li,-1);canvasToast.value='✅ 已新增';}}
       else if (action === 'delete') { lane.events.splice(ei,1); saveCanvasEvent(li,ei); canvasToast.value='🗑️ 已删除'; }
-      else if (action === 'edit') { /* use existing edit for the thread */ }
+      else if (action === 'edit') { startEdit('thread', lane.id); sgSubTab.value = 'threads'; }
       canvasMenu.show = false;
       setTimeout(() => canvasToast.value = '', 1800);
       setTimeout(() => loadStoryGraph(0), 500);
@@ -3140,8 +3265,8 @@ const app = createApp({
       chToCanvasX,tensionColor,
       zoomCanvas,startCanvasPan,doCanvasPan,endCanvasPan,
       canvasSelected,canvasDragging,canvasDragX,canvasDragY,canvasDragCh,canvasDragTension,
-      startDragCanvasNode,showCanvasMenu,hideCanvasMenu,canvasMenuAction,editCanvasNode,
-      canvasToast,canvasMenu };
+      startDragCanvasNode,startCanvasConnect,showCanvasMenu,hideCanvasMenu,canvasMenuAction,editCanvasNode,
+      getLaneGaps,addEventAtGap,canvasToast,canvasMenu };
     } catch(e) {
       console.error('SETUP ERROR:', e.message, e.stack);
       document.body.innerHTML = '<div style=\"padding:40px;color:red;font-size:16px;font-family:monospace\"><h2>❌ Setup 错误</h2><pre>' + (e.stack || e.message) + '</pre></div>';
