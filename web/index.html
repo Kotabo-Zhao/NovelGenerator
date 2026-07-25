@@ -406,6 +406,16 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sg-wheel-result.ok{background:rgba(63,185,80,.1);color:#3fb950}
 .sg-wheel-result.err{background:rgba(248,81,73,.1);color:#f85149}
 
+/* 拆解预览卡片 */
+.sg-wheel-preview{margin-top:10px;background:var(--bg);border-radius:8px;padding:12px;border:1px solid var(--border)}
+.sg-wheel-summary{font-size:12px;font-weight:600;color:var(--accent);margin-bottom:8px;line-height:1.5}
+.sg-wheel-changes{display:flex;flex-direction:column;gap:4px}
+.sg-wheel-change-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background .1s;font-size:12px}
+.sg-wheel-change-item:hover{background:var(--bg2)}
+.sg-wheel-change-item input[type=checkbox]{accent-color:var(--accent)}
+.sg-wheel-change-label{flex:1;color:var(--text)}
+.sg-wheel-change-hint{font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 6px;border-radius:3px}
+
 /* 拖拽调整大小手柄 */
 .sg-resize-handle{height:8px;cursor:ns-resize;background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 45%,transparent 45%,transparent 55%,var(--accent) 55%,var(--accent) 60%,transparent 60%);margin-top:2px;border-radius:2px;transition:background .15s}
 .sg-resize-handle:hover{background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 60%,transparent 60%)}
@@ -1007,12 +1017,30 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <div v-if="editingPhase==='writing'" class="sg-wheel-panel">
               <div class="sg-wheel-input-row">
                 <span style="font-size:13px;font-weight:600;white-space:nowrap">🎛️ 方向盘</span>
-                <input v-model="wheelCommand" class="sg-wheel-input" placeholder="我想...（例如：让复仇主线升温 / 回收玉佩秘密 / 沈清许现在在暗影殿地牢）" @keyup.enter="executeWheelCommand">
-                <button class="btn btn-primary btn-xs" @click="executeWheelCommand" :disabled="!wheelCommand.trim()">执行</button>
+                <input v-model="wheelCommand" class="sg-wheel-input" placeholder="我想...（例如：让复仇主线升温到高潮，同时暂停感情线，沈清许现在在暗影殿地牢）" @keyup.enter="executeWheelCommand">
+                <button class="btn btn-primary btn-xs" @click="executeWheelCommand" :disabled="!wheelCommand.trim()">分析</button>
               </div>
-              <div v-if="wheelResult" class="sg-wheel-result" :class="wheelResult.ok?'ok':'err'">
-                {{ wheelResult.msg }}
+              
+              <!-- 拆解预览 -->
+              <div v-if="wheelResult && wheelResult.changes" class="sg-wheel-preview">
+                <div class="sg-wheel-summary">{{ wheelResult.summary?.split('\n')[0] }}</div>
+                <div class="sg-wheel-changes">
+                  <label v-for="(c, i) in wheelResult.changes" :key="i" class="sg-wheel-change-item">
+                    <input type="checkbox" v-model="wheelApplied[i]">
+                    <span class="sg-wheel-change-label">{{ c.label }}</span>
+                    <span v-if="c.suggested" class="sg-wheel-change-hint">{{ c.suggested.note }}</span>
+                  </label>
+                </div>
+                <div class="flex gap-6 mt-8 justify-end">
+                  <button class="btn btn-ghost btn-xs" @click="wheelResult=null;wheelCommand=''">取消</button>
+                  <button class="btn btn-primary btn-xs" @click="applyWheelChanges">✅ 应用选中变更</button>
+                </div>
               </div>
+              
+              <!-- 错误 -->
+              <div v-if="wheelResult && wheelResult.error" class="sg-wheel-result err">{{ wheelResult.error }}</div>
+              <!-- 加载 -->
+              <div v-if="wheelResult && wheelResult.loading" class="sg-wheel-result" style="color:var(--accent)">分析中...</div>
             </div>
             
             <!-- 工具栏: 刷新 + 章节滑块 + 子tab -->
@@ -1926,9 +1954,10 @@ const app = createApp({
     const quickDoing = ref(null);
 
     // v2.8: 编辑阶段
-    const editingPhase = ref('outline');  // outline | writing
+    const editingPhase = ref('outline');
     const wheelCommand = ref('');
-    const wheelResult = ref(null);
+    const wheelResult = ref(null);  // {changes:[], summary:''}
+    const wheelApplied = ref([]);   // 已勾选的变更
     
     async function loadPhase() {
       if (!activeNovel.value) return;
@@ -1943,9 +1972,10 @@ const app = createApp({
         const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/phase', {
           method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phase:'writing'}),
         });
-        if (r.ok) { editingPhase.value = 'writing'; showToast('大纲已锁定', '进入写作阶段，通过方向盘微调', '🔒'); }
+        if (r.ok) { editingPhase.value = 'writing'; showToast('大纲已锁定', '进入写作阶段', '🔒'); }
       } catch(e) { console.warn('Phase lock failed:', e); }
     }
+    
     async function executeWheelCommand() {
       const cmd = wheelCommand.value.trim();
       if (!cmd || !activeNovel.value) return;
@@ -1955,19 +1985,32 @@ const app = createApp({
           method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:cmd}),
         });
         const d = await r.json();
-        if (d.parsed) {
-          // Execute the parsed action
-          await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/quick-action', {
-            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d.parsed),
-          });
-          wheelResult.value = { ok: true, msg: '✅ 已执行: ' + cmd };
-          wheelCommand.value = '';
-          await loadStoryGraph(0);
+        if (d.changes?.length) {
+          wheelResult.value = { changes: d.changes, summary: d.summary };
+          wheelApplied.value = d.changes.map(() => true); // 默认全选
         } else {
-          wheelResult.value = { ok: false, msg: '❌ ' + (d.error || '无法理解') };
+          wheelResult.value = { error: '未能识别任何变更，请尝试更具体的描述' };
         }
-      } catch(e) { wheelResult.value = { ok: false, msg: '❌ 网络错误' }; }
-      setTimeout(() => wheelResult.value = null, 3000);
+      } catch(e) { wheelResult.value = { error: '网络错误' }; }
+    }
+
+    async function applyWheelChanges() {
+      if (!wheelResult.value?.changes) return;
+      const id = encodeURIComponent(activeNovel.value.id);
+      const toApply = wheelResult.value.changes.filter((_, i) => wheelApplied.value[i]);
+      
+      for (const c of toApply) {
+        try {
+          await fetch(API+'/api/novels/'+id+'/storygraph/quick-action', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({type:c.type, id:c.id, action:c.action, ...c}),
+          });
+        } catch(e) { console.warn('Wheel apply failed for', c.label, e); }
+      }
+      showToast('方向盘已应用', `执行了 ${toApply.length}/${wheelResult.value.changes.length} 项变更`, '✅');
+      wheelResult.value = null;
+      wheelCommand.value = '';
+      await loadStoryGraph(0);
     }  // which quick action is in progress
 
     // ── v2.6: 画布编辑器 ──
@@ -3355,7 +3398,7 @@ const app = createApp({
       editState,quickDoing,startEdit,cancelEdit,saveEdit,hasEdit,
       quickAction,deleteThread,createThread,createForeshadow,
       // v2.8: 阶段 + 方向盘
-      editingPhase,loadPhase,lockOutline,wheelCommand,wheelResult,executeWheelCommand,
+      editingPhase,loadPhase,lockOutline,wheelCommand,wheelResult,wheelApplied,executeWheelCommand,applyWheelChanges,
       // v2.6: 画布
       canvasZoom,canvasPan,canvasWrap,canvasInner,
       canvasWidth,canvasHeight,canvasLaneH,canvasTickChapters,
