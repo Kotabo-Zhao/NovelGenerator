@@ -370,7 +370,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
 /* ── v2.4: 人物关系图 & 剧情线图 ── */
 .sg-relation-container{position:relative;background:var(--bg2);border-radius:var(--radius);padding:12px}
-.sg-relation-svg-wrap{width:100%;height:520px;overflow:hidden;border-radius:var(--radius-xs);position:relative;
+.sg-relation-svg-wrap{width:100%;overflow:hidden;border-radius:var(--radius-xs);position:relative;
   background:radial-gradient(ellipse at center, var(--bg2) 0%, var(--bg) 70%)}
 .sg-relation-svg{width:100%;height:100%;display:block}
 .sg-relation-svg text{pointer-events:none;user-select:none}
@@ -383,12 +383,17 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sg-char-tooltip .tt-name{font-size:14px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px}
 .sg-char-tooltip .tt-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .sg-timeline-container{position:relative;background:var(--bg2);border-radius:var(--radius);padding:12px}
-.sg-timeline-svg-wrap{width:100%;height:460px;overflow:hidden;border-radius:var(--radius-xs);background:
+.sg-timeline-svg-wrap{width:100%;overflow:hidden;border-radius:var(--radius-xs);background:
   linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);position:relative}
 .sg-timeline-svg{width:100%;height:100%;display:block}
 .sg-timeline-svg text{font-family:var(--font)}
 .sg-event-tooltip{position:absolute;bottom:16px;right:16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xs);padding:14px 18px;min-width:200px;box-shadow:0 8px 32px rgba(0,0,0,.25);z-index:10;pointer-events:none;backdrop-filter:blur(8px);font-size:12px}
 .sg-event-tooltip .tt-tension-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:3px}
+
+/* 拖拽调整大小手柄 */
+.sg-resize-handle{height:8px;cursor:ns-resize;background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 45%,transparent 45%,transparent 55%,var(--accent) 55%,var(--accent) 60%,transparent 60%);margin-top:2px;border-radius:2px;transition:background .15s}
+.sg-resize-handle:hover{background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 60%,transparent 60%)}
+.sg-resizing *{user-select:none!important;pointer-events:none!important}
 .sg-glow-node{transition:all .25s cubic-bezier(.4,0,.2,1)}
 .sg-glow-node:hover{filter:url(#glowStrong)}
 .sg-edge-line{transition:all .25s cubic-bezier(.4,0,.2,1)}
@@ -1152,7 +1157,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <span class="sg-legend-item"><span style="display:inline-block;width:12px;border-top:1.5px dashed var(--accent);opacity:.6;vertical-align:middle;margin-right:4px"></span> 剧情共线</span>
                   <span class="text-xs color-text3" style="margin-left:auto">拖拽节点 · 滚轮缩放</span>
                 </div>
-                <div class="sg-relation-svg-wrap" ref="relationSvgWrap">
+                <div class="sg-relation-svg-wrap" ref="relationSvgWrap" :style="{height:relationHeight+'px'}">
                   <svg :viewBox="`0 0 ${relationViewBox.w} ${relationViewBox.h}`" 
                        class="sg-relation-svg"
                        @wheel.prevent="zoomRelation"
@@ -1259,6 +1264,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <div v-if="hoveredCharDetail.goals?.length" class="text-xs color-text2 mt-2" style="line-height:1.6">🎯 {{ hoveredCharDetail.goals.join(' · ') }}</div>
                   <div v-if="hoveredCharDetail.last_chapter" class="text-xs color-text3 mt-2">最近出场: Ch{{ hoveredCharDetail.last_chapter }}</div>
                 </div>
+                <!-- 调整大小手柄 -->
+                <div class="sg-resize-handle" @mousedown="startResize('relation', $event)" title="拖拽调整高度"></div>
               </div>
             </div>
 
@@ -1282,7 +1289,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <span class="text-xs color-text3">紧张度</span>
                   <span class="text-xs color-text3" style="margin-left:auto">滚轮缩放 · 拖拽平移</span>
                 </div>
-                <div class="sg-timeline-svg-wrap" ref="timelineSvgWrap">
+                <div class="sg-timeline-svg-wrap" ref="timelineSvgWrap" :style="{height:timelineHeight+'px'}">
                   <svg :viewBox="`0 0 ${timelineViewBox.w} ${timelineViewBox.h}`"
                        class="sg-timeline-svg"
                        @wheel.prevent="zoomTimeline"
@@ -1388,6 +1395,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                     </span>
                   </div>
                 </div>
+                <!-- 调整大小手柄 -->
+                <div class="sg-resize-handle" @mousedown="startResize('timeline', $event)" title="拖拽调整高度"></div>
               </div>
             </div>
 
@@ -1641,6 +1650,9 @@ const app = createApp({
     const sgHoveredChar = ref(null);
     const sgHoveredEdge = ref(null);
     const sgHoveredEvent = ref(null);
+    // 窗口大小（可变）
+    const relationHeight = ref(520);
+    const timelineHeight = ref(460);
     // 关系图缩放/平移
     const relationZoom = ref(1);
     const relationPan = reactive({x:0, y:0});
@@ -2017,6 +2029,31 @@ const app = createApp({
       timelinePan.y = timelineDragStart.py + (e.clientY - timelineDragStart.y) / timelineZoom.value;
     }
     function endPanTimeline() { timelineDragging.value = false; }
+
+    // ── 拖拽调整窗口大小 ──
+    const resizeState = reactive({ active: null, startY: 0, startH: 0 });
+    function startResize(type, e) {
+      e.preventDefault();
+      resizeState.active = type;
+      resizeState.startY = e.clientY;
+      resizeState.startH = type === 'relation' ? relationHeight.value : timelineHeight.value;
+      document.body.classList.add('sg-resizing');
+      window.addEventListener('mousemove', onResizeMove);
+      window.addEventListener('mouseup', stopResize);
+    }
+    function onResizeMove(e) {
+      if (!resizeState.active) return;
+      const delta = e.clientY - resizeState.startY;
+      const newH = Math.max(200, Math.min(1200, resizeState.startH + delta));
+      if (resizeState.active === 'relation') relationHeight.value = newH;
+      else timelineHeight.value = newH;
+    }
+    function stopResize() {
+      resizeState.active = null;
+      document.body.classList.remove('sg-resizing');
+      window.removeEventListener('mousemove', onResizeMove);
+      window.removeEventListener('mouseup', stopResize);
+    }
 
     function pct(n) { const t=n.state.total_chapters||1,c=(n.state.completed_chapters||[]).length; return Math.round(c/t*100)+'%'; }
     function fmtWords(w) { return w>=10000?(w/10000).toFixed(0)+'万字':w+'字'; }
@@ -2642,6 +2679,7 @@ const app = createApp({
       sgHoveredChar,sgHoveredEdge,sgHoveredEvent,
       relationViewBox,relationNodes,relationEdges,relationGraph,
       relationDragging,relationSvgWrap,relationNodeLayout, hoveredCharDetail,
+      relationHeight,timelineHeight,startResize,
       zoomRelation,startPanRelation,doPanRelation,endPanRelation,startDragRelationNode,
       edgeCurve,edgeCurveMid,lastActiveChapter,
       plotTimeline,timelineViewBox,timelineChapters,timelineChapterLabels,plotEndY,
