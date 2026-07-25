@@ -47,9 +47,10 @@ app.add_middleware(
 
 engine = NovelEngine()
 
-# 前端文件目录 — 使用 abspath 防止 __file__ 为相对路径时解析错误
-_WEB_BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-WEB_DIR = os.path.join(_WEB_BASE, "web")
+# 前端文件目录 — Android优先读环境变量(Chaquopy只有2层),PC走3层
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_env_web = os.environ.get("NOVELGEN_WEB_DIR", "")
+WEB_DIR = _env_web if _env_web else os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(_HERE))), "web")
 
 
 # ── Frontend Route (仅/，子路径走 StaticFiles) ──
