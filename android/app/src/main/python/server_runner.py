@@ -1,79 +1,77 @@
-"""NovelGenerator Android — Chaquopy entry.
-Two-phase startup: synchronous import test → async server start."""
-import os, sys, threading, traceback
+"""NovelGenerator Android — file-based progress logging."""
+import os, sys, threading, traceback, time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
-STATUS = {"step": "", "ready": False, "error": None}
+# Will be set by start_server
+_STATUS_FILE = None
 
 
-def quick_test(api_key):
-    """Synchronous import chain test. Called from main thread."""
-    try:
-        STATUS["step"] = "env"
-        os.environ["DEEPSEEK_API_KEY"] = api_key
-        os.environ["NOVELGEN_WEB_DIR"] = os.path.join(_HERE, "web")
-        os.environ["NOVELGEN_NOVELS_DIR"] = os.path.join(_HERE, "novels")
-        os.makedirs(os.environ["NOVELGEN_NOVELS_DIR"], exist_ok=True)
+def _log(msg):
+    """Write to status file so Kotlin can read it."""
+    global _STATUS_FILE
+    if _STATUS_FILE:
+        try:
+            with open(_STATUS_FILE, "w") as f:
+                f.write(f"{time.time():.0f}|{msg}")
+        except:
+            pass
 
-        STATUS["step"] = "config"
-        import config
 
-        STATUS["step"] = "fastapi"
-        import fastapi
+def start_server(api_key, host, port, log_dir):
+    """Entry point. Sets up env, starts import chain in a thread."""
+    global _STATUS_FILE
+    _STATUS_FILE = os.path.join(log_dir, "novelgen_status.txt")
+    _log("init")
 
-        STATUS["step"] = "uvicorn"
-        import uvicorn
+    os.environ["DEEPSEEK_API_KEY"] = api_key
+    os.environ["NOVELGEN_WEB_DIR"] = os.path.join(_HERE, "web")
+    novels_dir = os.path.join(log_dir, "novels")
+    os.environ["NOVELGEN_NOVELS_DIR"] = novels_dir
+    os.makedirs(novels_dir, exist_ok=True)
 
-        STATUS["step"] = "openai"
-        import openai
+    def run():
+        try:
+            _log("import_config")
+            import config
+            _log(f"import_fastapi")
+            import fastapi
+            _log("import_uvicorn")
+            import uvicorn
+            _log("import_openai")
+            import openai
+            _log("import_core")
+            from core.engine import NovelEngine
+            engine = NovelEngine()
+            _log(f"engine_ok_{engine.model}")
+            from api.server import app
+            _log(f"app_ok_{len(app.routes)}")
 
-        STATUS["step"] = "core_atomic"
-        from core.atomic_io import atomic_write_json, safe_read_json
+            # Start uvicorn
+            cfg = uvicorn.Config(app, host=host, port=port, log_level="info")
+            srv = uvicorn.Server(cfg)
+            _log("server_ready")
 
-        STATUS["step"] = "core_shared_memory"
-        from core.shared_memory import SharedMemoryManager
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(srv.serve())
+        except Exception:
+            _log(f"error_{traceback.format_exc()}")
 
-        STATUS["step"] = "core_engine"
-        from core.engine import NovelEngine
-        engine = NovelEngine()
-
-        STATUS["step"] = "api_server"
-        from api.server import app
-        STATUS["step"] = f"OK routes={len(app.routes)}"
-        STATUS["ready"] = True
-
-        return {"ok": True, "step": STATUS["step"]}
-
-    except Exception:
-        STATUS["error"] = traceback.format_exc()
-        return {"ok": False, "error": STATUS["error"], "step": STATUS["step"]}
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return {"status": "started"}
 
 
 def get_status():
-    return STATUS
-
-
-def start_uvicorn(host="127.0.0.1", port=8899):
-    """Start uvicorn in a daemon thread. Call after quick_test passes."""
-    try:
-        import uvicorn
-        from api.server import app
-
-        def serve():
-            try:
-                config = uvicorn.Config(app, host=host, port=port, log_level="info")
-                server = uvicorn.Server(config)
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(server.serve())
-            except Exception:
-                STATUS["error"] = traceback.format_exc()
-
-        t = threading.Thread(target=serve, daemon=True)
-        t.start()
-        return {"status": "ok"}
-    except Exception:
-        return {"status": "error", "error": traceback.format_exc()}
+    """Read status file."""
+    global _STATUS_FILE
+    if _STATUS_FILE and os.path.exists(_STATUS_FILE):
+        try:
+            with open(_STATUS_FILE) as f:
+                return f.read().strip()
+        except:
+            pass
+    return "waiting"

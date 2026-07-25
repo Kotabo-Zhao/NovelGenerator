@@ -7,6 +7,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import java.io.File
 
 class ServerService : Service() {
 
@@ -15,7 +16,7 @@ class ServerService : Service() {
         const val NOTIFICATION_ID = 1001
         const val BROADCAST_STATUS = "com.novelgen.app.SERVER_STATUS"
         var isServerReady = false
-        var serverError: String? = null
+        var lastStatus = ""
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -31,45 +32,50 @@ class ServerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val apiKey = intent?.getStringExtra("api_key") ?: ""
-        startForeground(NOTIFICATION_ID, buildNotification("初始化..."))
+        val logDir = filesDir.absolutePath  // app-private, no permission needed
+        startForeground(NOTIFICATION_ID, buildNotification("初始化 Python..."))
 
         Thread {
             try {
                 if (!Python.isStarted()) Python.start(AndroidPlatform(this))
-                val py = Python.getInstance()
-                val module = py.getModule("server_runner")
+                val module = Python.getInstance().getModule("server_runner")
 
-                // Synchronous import test
+                // Start async — returns immediately
                 updateNotification("加载模块...")
-                val result = module.callAttr("quick_test", apiKey)
-                val ok = result.get("ok")?.toString() ?: "False"
-                val step = result.get("step")?.toString() ?: "?"
+                module.callAttr("start_server", apiKey, "127.0.0.1", 8899, logDir)
+                lastStatus = "started"
 
-                if (ok != "True") {
-                    val err = result.get("error")?.toString() ?: "unknown"
-                    serverError = err
-                    broadcastStatus(false, "Step: $step\n$err")
-                    updateNotification("失败: $step")
-                    return@Thread
+                // Poll status file
+                val statusFile = File(logDir, "novelgen_status.txt")
+                var waited = 0
+                while (waited < 180) {  // 90 seconds
+                    Thread.sleep(500)
+                    waited++
+                    try {
+                        val text = if (statusFile.exists()) statusFile.readText().trim() else "waiting"
+                        if (text != lastStatus) {
+                            lastStatus = text
+                            updateNotification(text.take(50))
+                        }
+                        if (text.startsWith("server_ready")) {
+                            isServerReady = true
+                            broadcastStatus(true, null)
+                            updateNotification("运行中 — 127.0.0.1:8899")
+                            return@Thread
+                        }
+                        if (text.startsWith("error_")) {
+                            val err = text.removePrefix("error_")
+                            broadcastStatus(false, err)
+                            updateNotification("失败: ${err.take(80)}") 
+                            return@Thread
+                        }
+                    } catch (_: Exception) {}
                 }
 
-                // Start uvicorn
-                updateNotification("启动服务...")
-                val ret = module.callAttr("start_uvicorn", "127.0.0.1", 8899)
-                val started = ret.get("status")?.toString() ?: "error"
-
-                if (started == "ok") {
-                    isServerReady = true
-                    broadcastStatus(true, null)
-                    updateNotification("运行中 — 127.0.0.1:8899")
-                } else {
-                    serverError = started
-                    broadcastStatus(false, started)
-                    updateNotification("启动失败")
-                }
+                broadcastStatus(false, "超时 — 最后状态: $lastStatus")
+                updateNotification("超时: $lastStatus")
 
             } catch (e: Exception) {
-                serverError = e.message ?: "未知错误"
                 broadcastStatus(false, e.message ?: "error")
                 updateNotification("异常: ${e.message?.take(80)}")
             }
