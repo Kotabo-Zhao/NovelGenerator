@@ -200,48 +200,34 @@ class PacingChecker:
         
         return "\n".join(parts)
 
-    def quick_quality_check(self, text: str) -> dict:
-        """快速质量检查（纯本地，不调 LLM）。
+    def quick_quality_check(self, text: str, fast_food: bool = False) -> dict:
+        """快速质量检查（纯本地）。
         
-        Returns:
-            {"pass": bool, "issues": [str], "score": int, "stats": dict}
-        """
+        Args:
+            text: 章节文本
+            fast_food: 是否快餐模式（更严格的标准）"""
         stats = self._local_stats(text)
         issues = []
         score = 100
         
-        # 对话占比过高
-        if stats["dialogue_ratio"] > 50:
-            issues.append(f"对话占比过高 ({stats['dialogue_ratio']}%)")
-            score -= 30
-        elif stats["dialogue_ratio"] > 40:
-            issues.append(f"对话偏多 ({stats['dialogue_ratio']}%)")
-            score -= 15
-        
-        # 水对话太多
-        if stats["water_dialogue_ratio"] > 20:
-            issues.append(f"水对话过多 ({stats['water_dialogue_ratio']}% 对话内容≤4字)")
-            score -= 20
-        
-        # 连续对话太长
-        if stats["max_consecutive_dialogue"] > 6:
-            issues.append(f"最长连续对话 {stats['max_consecutive_dialogue']} 段，缺乏动作打断")
-            score -= 15
-        
-        # 动作太少
-        if stats["action_ratio"] < 25:
-            issues.append(f"动作描写不足 ({stats['action_ratio']}%)")
-            score -= 15
-        
-        # 爽点密度太低
-        if stats["shuangdian_per_1000"] < 5:
-            issues.append(f"爽点密度低 ({stats['shuangdian_per_1000']}/千字)")
-            score -= 15
-        
-        # 平均句长偏短（碎片化）
-        if stats["avg_sentence_len"] < 10 and stats["sentence_count"] > 30:
-            issues.append(f"碎片化严重 (平均句长 {stats['avg_sentence_len']}字)")
-            score -= 10
+        # 快餐模式：更严格的阈值
+        if fast_food:
+            if stats["dialogue_ratio"] > 45: issues.append(f"快餐模式: 对话占比过高({stats['dialogue_ratio']}%)"); score -= 35
+            elif stats["dialogue_ratio"] > 35: issues.append(f"快餐模式: 对话偏多({stats['dialogue_ratio']}%)"); score -= 20
+            if stats["water_dialogue_ratio"] > 15: issues.append(f"快餐模式: 水对话过多({stats['water_dialogue_ratio']}%)"); score -= 25
+            if stats["max_consecutive_dialogue"] > 4: issues.append(f"快餐模式: 连续对话{stats['max_consecutive_dialogue']}段"); score -= 20
+            if stats["action_ratio"] < 35: issues.append(f"快餐模式: 动作不足({stats['action_ratio']}%)"); score -= 20
+            if stats["shuangdian_per_1000"] < 8: issues.append(f"快餐模式: 爽点不足({stats['shuangdian_per_1000']}/千字)"); score -= 25
+            if stats["avg_sentence_len"] < 8 and stats["sentence_count"] > 30: issues.append(f"快餐模式: 碎片化(均{stats['avg_sentence_len']}字)"); score -= 10
+            if len(text) < 2500: issues.append(f"快餐模式: 字数不足({len(text)}字,需≥2500)"); score -= 15
+        else:
+            if stats["dialogue_ratio"] > 50: issues.append(f"对话占比过高({stats['dialogue_ratio']}%)"); score -= 30
+            elif stats["dialogue_ratio"] > 40: issues.append(f"对话偏多({stats['dialogue_ratio']}%)"); score -= 15
+            if stats["water_dialogue_ratio"] > 20: issues.append(f"水对话过多({stats['water_dialogue_ratio']}%)"); score -= 20
+            if stats["max_consecutive_dialogue"] > 6: issues.append(f"连续对话{stats['max_consecutive_dialogue']}段"); score -= 15
+            if stats["action_ratio"] < 25: issues.append(f"动作不足({stats['action_ratio']}%)"); score -= 15
+            if stats["shuangdian_per_1000"] < 5: issues.append(f"爽点不足({stats['shuangdian_per_1000']}/千字)"); score -= 15
+            if stats["avg_sentence_len"] < 10 and stats["sentence_count"] > 30: issues.append(f"碎片化(均{stats['avg_sentence_len']}字)"); score -= 10
         
         passed = score >= 60
         return {"pass": passed, "issues": issues, "score": score, "stats": stats}

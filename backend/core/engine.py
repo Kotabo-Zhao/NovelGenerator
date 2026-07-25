@@ -641,7 +641,7 @@ class NovelEngine:
                 style=style,
                 target_words=target_words,
                 writing_mode=writing_mode,
-                normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
             ):
                 full_text += text
                 # 每500字增量保存一次
@@ -694,8 +694,9 @@ class NovelEngine:
             # ── v2.6: 质量门 — 对话占比/爽点密度/碎片化自动检测 ──
             quality_report = None
             try:
+                is_fast_food = plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False)
                 checker = PacingChecker(self.client, self.model)
-                qr = checker.quick_quality_check(full_text)
+                qr = checker.quick_quality_check(full_text, fast_food=is_fast_food)
                 quality_report = qr
                 log.info(f"Quality gate: score={qr['score']}, pass={qr['pass']}, issues={len(qr['issues'])}")
                 
@@ -716,13 +717,13 @@ class NovelEngine:
                         genre=genre, style=style,
                         target_words=target_words,
                         writing_mode=writing_mode,
-                        normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                        normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
                     ):
                         retry_text += text
                     
                     if retry_text and len(retry_text) > len(full_text) * 0.5:
                         # 再检查一次
-                        qr2 = checker.quick_quality_check(retry_text)
+                        qr2 = checker.quick_quality_check(retry_text, fast_food=is_fast_food)
                         if qr2["score"] > qr["score"]:
                             full_text = retry_text
                             quality_report = qr2
@@ -881,7 +882,7 @@ class NovelEngine:
                             style=style,
                             target_words=target_words,
                             writing_mode=writing_mode,
-                            normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                            normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
                         ):
                             fixed_text += fix_chunk
                         

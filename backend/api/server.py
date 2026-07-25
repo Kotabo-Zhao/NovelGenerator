@@ -98,6 +98,7 @@ class CreateNovelRequest(BaseModel):
     title: str = ""
     natural_names: bool = True  # 自然命名，去AI味
     normal_pacing: bool = False  # v2.2: 默认快节奏
+    fast_food: bool = False  # v2.7: 快餐模式
 
 
 class GenerateChapterRequest(BaseModel):
@@ -290,6 +291,7 @@ async def create_novel(req: CreateNovelRequest):
         "target_words": req.target_words, "title": req.title,
         "natural_names": req.natural_names,
         "normal_pacing": req.normal_pacing,
+        "fast_food": req.fast_food,
     }
     try:
         plan = engine.create_novel(creative_input)
@@ -321,6 +323,7 @@ async def create_novel_stream(req: CreateNovelRequest):
                 "title": req.title,
                 "natural_names": req.natural_names,
                 "normal_pacing": req.normal_pacing,
+                "fast_food": req.fast_food,
             })
         ):
             yield data

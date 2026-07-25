@@ -624,6 +624,18 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <span v-else>📖 正常节奏 <span style="opacity:.5">— 铺陈充分，张弛有度，细节丰富</span></span>
           </span>
         </div>
+        
+        <!-- 快餐模式 -->
+        <div class="flex items-center gap-8 mt-6" v-if="!form.normalPacing">
+          <label class="toggle">
+            <input type="checkbox" v-model="form.fastFood">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>
+            <span v-if="form.fastFood">🍔 快餐模式 <span style="opacity:.5">— 对标爆款网文：300字炸开、每章4爽点、虐不过2章、0铺垫</span></span>
+            <span v-else style="opacity:.5">→ 勾选开启爆款节奏</span>
+          </span>
+        </div>
       </div>
 
       <!-- Style -->
@@ -1850,7 +1862,7 @@ const app = createApp({
       }
     }
 
-    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false });
+    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.3: 默认启用原子化生成
@@ -2796,7 +2808,7 @@ const app = createApp({
       createProgress.value=0; createPhase.value='start'; createPhaseLabel.value='准备中…';
       decomposeSummary.value=null;
       try {
-        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames, normal_pacing:form.normalPacing})});
+        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames, normal_pacing:form.normalPacing, fast_food:form.fastFood})});
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
           // v2.2: 需求拆解完成
