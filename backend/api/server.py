@@ -428,15 +428,25 @@ async def generate_chapter_atomic(req: GenerateChapterRequest):
 
 @app.post("/api/novels/{novel_id}/generate/batch")
 async def generate_batch(novel_id: str, req: dict):
-    """批量生成章节 (SSE 流式进度)"""
+    """批量生成章节 (SSE 流式进度 + v2.8 断点续传)"""
     start = req.get("start_chapter", 1)
     end = req.get("end_chapter", 1)
     writing_mode = req.get("writing_mode", "webnovel")
     
     async def event_stream():
         try:
+            # ── v2.8: 断点续传 — 检查已完成的章节 ──
+            state = engine.memory.get_novel_state(novel_id)
+            completed = state.get("completed_chapters", [])
+            already_done = [c for c in range(start, end + 1) if c in completed]
+            if already_done:
+                yield f"data: {json.dumps({'type':'resume','completed':len(already_done),'chapters':already_done[:10],'message':f'已跳过{len(already_done)}章已完成，从断点继续'}, ensure_ascii=False)}\n\n"
+            
             failed = []
             for ch_num in range(start, end + 1):
+                if ch_num in completed:
+                    continue  # 跳过已完成的
+                
                 yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
                 chapter_error = None
                 try:
@@ -448,6 +458,8 @@ async def generate_batch(novel_id: str, req: dict):
                             chapter_error = event.get("message", "未知错误")
                     if not chapter_error:
                         yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
+                        # v2.8: 每章完成立即更新断点
+                        completed.append(ch_num)
                 except Exception as ch_err:
                     chapter_error = str(ch_err)
                     log.warning(f"Batch chapter {ch_num} exception: {ch_err}")
@@ -455,7 +467,14 @@ async def generate_batch(novel_id: str, req: dict):
                 if chapter_error:
                     failed.append(ch_num)
                     yield f"data: {json.dumps({'type':'chapter_failed','chapter':ch_num,'error':chapter_error}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end,'failed':failed}, ensure_ascii=False)}\n\n"
+                    # v2.8: 失败后停止（避免连续失败浪费token）
+                    if len(failed) >= 2:
+                        yield f"data: {json.dumps({'type':'warning','message':'连续失败2章，已停止批量生成'}, ensure_ascii=False)}\n\n"
+                        break
+            
+            # v2.8: 返回续传信息
+            next_start = max(failed[0] if failed else end + 1, start)
+            yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end,'failed':failed,'resume_from':next_start}, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("batch generate crashed")
             yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"

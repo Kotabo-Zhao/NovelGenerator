@@ -257,15 +257,15 @@ class SharedMemoryManager:
                 core += f"- {c.get('name', '?')}: {c.get('identity', '')}, {c.get('relation', '')}\n"
         parts.append(core)
 
-        # L2: 上一章完整上下文（结尾+摘要）
+        # L2: 上一章完整上下文（结尾+摘要）— v2.8 智能裁剪
         prev_chapter = chapter_num - 1
         if prev_chapter >= 1:
             prev_content = self.read_chapter(novel_id, prev_chapter)
             if prev_content:
-                # 取上一章最后 2000 字作为连续性上下文（原来只取 500，太少了）
-                take_chars = min(2000, len(prev_content))
+                # v2.8: 后期章节只取最后 800 字（早期取 2000）
+                take_chars = 800 if chapter_num > 10 else 2000
+                take_chars = min(take_chars, len(prev_content))
                 prev_ending = prev_content[-take_chars:]
-                # v2.4.1: 清洗上下文 —— 合并短行成正常段落，切断短行风格自我强化循环
                 prev_ending = _normalize_context_paragraphs(prev_ending)
                 parts.append(f"## ⬆️ 上一章结尾（必须从这里接着写！开头要无缝衔接）\n\n{prev_ending}")
                 
@@ -276,16 +276,16 @@ class SharedMemoryManager:
                             hook = ch.get("hook", "")
                             if hook:
                                 parts.append(f"## 🔗 上一章留下的钩子（本章必须在某个节点回应）\n{hook}")
-                            # 也加入上一章的摘要作为背景
                             prev_summary = ch.get("summary", "")
                             if prev_summary and prev_summary != hook:
                                 parts.append(f"## 📝 上一章大纲摘要\n{prev_summary}")
                             break
         
-        # L2b: 更早章节的摘要（最近3章，帮助理解多章弧线）
+        # L2b: 更早章节的摘要 — v2.8: 后期只保留最近2章
         if chapter_num > 2:
+            summary_count = 2 if chapter_num > 10 else 3
             summaries = []
-            for ch_num in range(max(1, chapter_num - 3), chapter_num):
+            for ch_num in range(max(1, chapter_num - summary_count), chapter_num):
                 for vol in plan.get("outline", {}).get("volumes", []):
                     for ch in vol.get("chapters", []):
                         if int(ch.get("number", 0)) == ch_num:
@@ -373,9 +373,24 @@ class SharedMemoryManager:
                     "- 对话不超过3轮就必须用动作打断\n"
                 )
         except Exception:
-            pass
+                pass
         
-        return "\n\n---\n\n".join(parts)
+        # ── v2.8: Token预算硬限制，后期章节自动裁剪低优先级内容 ──
+        MAX_CONTEXT_CHARS = 5000 if chapter_num > 15 else 8000
+        context = "\n\n---\n\n".join(parts)
+        if len(context) > MAX_CONTEXT_CHARS:
+            # 优先级: L1核心设定(必须) > L5本章大纲(必须) > L2上一章 > L4剧情图谱 > L3状态 > 告警
+            high_priority = parts[:1]  # L1 核心设定
+            outline_part = parts[-1] if parts[-1].startswith("## 本章大纲") else ""
+            must_keep = [p for p in parts if "上一章" in p[:10] or "本章大纲" in p[:10]]
+            can_trim = [p for p in parts if "剧情图谱" not in p[:10] and "全局状态" not in p[:10] and "告警" not in p[:10]]
+            context = "\n\n---\n\n".join(high_priority + must_keep + can_trim[:2])
+            # 硬截断
+            if len(context) > MAX_CONTEXT_CHARS:
+                context = context[:MAX_CONTEXT_CHARS] + "\n\n[上下文已裁剪，聚焦本章核心]"
+            log.info(f"Context trimmed: {len(context)} chars (limit {MAX_CONTEXT_CHARS})")
+        
+        return context
 
     def _build_validator_context(self, novel_id: str, kwargs: dict) -> str:
         """为 Validator 构建校验上下文"""
