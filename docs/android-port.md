@@ -1,70 +1,107 @@
-# NovelGenerator Android 移植
+# NovelGenerator Android 原生移植
 
-> 基于 PWA + 响应式 | android-port 分支
+> `android-port` 分支 — 不影响 `main` 分支
 
-## 快速部署到 Android
+## 架构
 
-### 方式一：PWA（推荐，零代码）
-
-1. 确保 NovelGenerator 服务在 PC 上运行：`python -m uvicorn api.server:app --host 0.0.0.0 --port 8899`
-2. 在 Android 手机 Chrome 浏览器打开 `http://<PC_IP>:8899`
-3. Chrome 会自动弹出 "添加到主屏幕" 横幅 → 点击添加
-4. 桌面出现 ✍️ 图标，点击即用（全屏独立窗口，像原生 App）
-
-### 方式二：Android WebView 原生壳
-
-1. 创建 Android 项目
-2. 添加 WebView：
-```kotlin
-// MainActivity.kt
-class MainActivity : AppCompatActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val webView = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.allowFileAccess = true
-            loadUrl("http://<PC_IP>:8899")
-        }
-        setContentView(webView)
-    }
-}
 ```
-3. 添加网络权限 `AndroidManifest.xml`：
-```xml
-<uses-permission android:name="android.permission.INTERNET" />
+┌─────────────────────────────────┐
+│        Android APK              │
+│  ┌───────────────────────────┐  │
+│  │  SplashActivity           │  │
+│  │   → ServerConfigActivity  │  │  (首次配置 IP:端口)
+│  │   → MainActivity          │  │
+│  │      ┌────────────────┐   │  │
+│  │      │   WebView       │   │  │  ← 加载前端
+│  │      │   + JS Bridge   │   │  │  ← 原生能力桥接
+│  │      └────────────────┘   │  │
+│  └───────────────────────────┘  │
+│              │ HTTP             │
+└──────────────┼──────────────────┘
+               │
+┌──────────────┼──────────────────┐
+│         PC / 服务器              │
+│  ┌───────────────────────────┐  │
+│  │  uvicorn api.server:app   │  │
+│  │  :8899                    │  │
+│  └───────────────────────────┘  │
+└─────────────────────────────────┘
 ```
-4. 构建 APK → 安装
 
-### 方式三：本地后端 + 内网穿透
+## 原生能力
 
-如果不想 PC 一直开机：
-1. 部署后端到 Render/Railway 等云平台
-2. Android PWA 直接访问云端 URL
+| 能力 | 实现 |
+|:-----|:-----|
+| APK 安装 | 标准 Android 包 |
+| 桌面图标 | 自适应图标 (Adaptive Icon) |
+| 启动画面 | SplashActivity (1.5s) |
+| 服务器配置 | ServerConfigActivity，保存到 SharedPreferences |
+| 连接状态 | 顶部状态栏，实时绿/黄/红指示 |
+| 文件下载 | Android DownloadManager |
+| 内容分享 | Intent.ACTION_SEND |
+| 本地存储 | SharedPreferences (JS 可通过 AndroidBridge 读写) |
+| 下拉刷新 | SwipeRefreshLayout |
+| 返回键 | WebView 导航栈 |
+| 离线提示 | 断网横幅 + 点击重试 |
+| 原生通知 | 预留 NotificationHelper |
 
-## 技术栈
+## JS Bridge API
 
-| 层 | 技术 | 原因 |
-|:---|:-----|:-----|
-| 前端 | PWA (HTML+CSS+JS) | 零安装，离线缓存，全屏体验 |
-| 后端 | Python FastAPI | 保持不变，LLM API 调用 |
-| 移动适配 | CSS @media + viewport | 768px/480px 断点 |
-| Service Worker | Cache API | 静态资源缓存 + API 离线降级 |
+前端通过 `window.AndroidBridge` 调用：
 
-## 已完成的适配
+```javascript
+// 下载文件
+AndroidBridge.downloadFile("http://...", "novel.txt");
 
-- ✅ PWA Manifest (图标/主题色/全屏模式)
-- ✅ Service Worker v5 (离线缓存 + API fallback)
-- ✅ 响应式 CSS (手机/平板断点)
-- ✅ PWA 安装提示横幅
-- ✅ iOS safe-area 适配
-- ✅ 表单 16px 字体（防 iOS 缩放）
-- ✅ 触屏友好按钮尺寸
+// 分享内容
+AndroidBridge.shareContent("标题", "内容");
 
-## 待完成
+// 显示 Toast
+AndroidBridge.toast("操作成功");
 
-- [ ] Android 原生壳项目 (Kotlin WebView)
-- [ ] 推送通知（章节完成提醒）
-- [ ] 本地 SQLite 缓存已生成章节
-- [ ] 后台生成（WorkManager）
-- [ ] 分享/导出到其他 App
+// 持久化存储
+AndroidBridge.savePreference("key", "value");
+const val = AndroidBridge.loadPreference("key");
+```
+
+## 构建
+
+```bash
+# 前置条件
+# - Android SDK (api 34/35) 在 ../android-sdk/
+# - JDK 17+
+# - Gradle 8.9
+
+cd android
+./build.sh
+# APK → app/build/outputs/apk/debug/app-debug.apk
+```
+
+或手动：
+```bash
+export ANDROID_HOME=../android-sdk
+cd android && ./gradlew assembleDebug
+```
+
+## 使用流程
+
+1. PC 启动后端：
+   ```bash
+   cd NovelGenerator/backend
+   python -m uvicorn api.server:app --host 0.0.0.0 --port 8899
+   ```
+
+2. Android 安装 APK → 打开 App
+
+3. 首次输入 PC 的局域网 IP（如 `192.168.1.100:8899`）
+
+4. 测试连接 → 成功后自动进入主界面
+
+5. 后续打开直接连接，无需重新配置
+
+## 分支管理
+
+- `main` — 主线，不受影响
+- `android-port` — Android 移植分支
+
+Android 移植改动不触及 `backend/` 核心代码。

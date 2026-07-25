@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">小说工坊</string>
+    <string name="splash_subtitle">AI 驱动的小说生成器</string>
+    <string name="server_config_title">连接服务器</string>
+    <string name="server_address_hint">服务器地址 (IP:端口)</string>
+    <string name="connect_button">连接</string>
+    <string name="connecting">连接中…</string>
+    <string name="connection_failed">连接失败</string>
+    <string name="connection_success">已连接</string>
+    <string name="no_connection">未连接服务器</string>
+    <string name="menu_refresh">刷新</string>
+    <string name="menu_config">服务器设置</string>
+    <string name="menu_about">关于</string>
+    <string name="about_text">小说工坊 v1.0\nAI 驱动的小说创作工具\n支持大纲规划、批量生成、剧情图谱编辑</string>
+</resources>
