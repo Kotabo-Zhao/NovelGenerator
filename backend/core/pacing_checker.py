@@ -212,14 +212,19 @@ class PacingChecker:
         
         # 快餐模式：更严格的阈值
         if fast_food:
-            if stats["dialogue_ratio"] > 45: issues.append(f"快餐模式: 对话占比过高({stats['dialogue_ratio']}%)"); score -= 35
-            elif stats["dialogue_ratio"] > 35: issues.append(f"快餐模式: 对话偏多({stats['dialogue_ratio']}%)"); score -= 20
-            if stats["water_dialogue_ratio"] > 15: issues.append(f"快餐模式: 水对话过多({stats['water_dialogue_ratio']}%)"); score -= 25
-            if stats["max_consecutive_dialogue"] > 4: issues.append(f"快餐模式: 连续对话{stats['max_consecutive_dialogue']}段"); score -= 20
-            if stats["action_ratio"] < 35: issues.append(f"快餐模式: 动作不足({stats['action_ratio']}%)"); score -= 20
-            if stats["shuangdian_per_1000"] < 8: issues.append(f"快餐模式: 爽点不足({stats['shuangdian_per_1000']}/千字)"); score -= 25
-            if stats["avg_sentence_len"] < 8 and stats["sentence_count"] > 30: issues.append(f"快餐模式: 碎片化(均{stats['avg_sentence_len']}字)"); score -= 10
-            if len(text) < 2500: issues.append(f"快餐模式: 字数不足({len(text)}字,需≥2500)"); score -= 15
+            if stats["dialogue_ratio"] > 40: issues.append(f"快餐: 对话占比过高({stats['dialogue_ratio']}%)"); score -= 35
+            elif stats["dialogue_ratio"] > 30: issues.append(f"快餐: 对话偏多({stats['dialogue_ratio']}%)"); score -= 20
+            if stats["water_dialogue_ratio"] > 10: issues.append(f"快餐: 水对话({stats['water_dialogue_ratio']}%)"); score -= 25
+            if stats["max_consecutive_dialogue"] > 3: issues.append(f"快餐: 连续对话{stats['max_consecutive_dialogue']}段"); score -= 20
+            if stats["action_ratio"] < 40: issues.append(f"快餐: 动作不足({stats['action_ratio']}%)"); score -= 20
+            if stats["shuangdian_per_1000"] < 12: issues.append(f"快餐: 爽点不足({stats['shuangdian_per_1000']}/千字,需≥12)"); score -= 30
+            if stats["avg_sentence_len"] < 8 and stats["sentence_count"] > 30: issues.append(f"快餐: 碎片化"); score -= 10
+            if len(text) < 2500: issues.append(f"快餐: 字数不足({len(text)}字)"); score -= 15
+            # 新增：打脸闭环检查 — 必须同时有冲突信号和逆转信号
+            has_conflict = any(kw in text[:1000] for kw in ['杀','死','血','辱','逼','退婚','背叛','陷害'])
+            has_reversal = any(kw in text for kw in ['反转','震惊','怎么可能','竟然是','原来','冷笑','不屑','跪下','饶命'])
+            if not has_conflict: issues.append("快餐: 前1000字无冲突信号"); score -= 20
+            if not has_reversal: issues.append("快餐: 全章无反转信号"); score -= 20
         else:
             if stats["dialogue_ratio"] > 50: issues.append(f"对话占比过高({stats['dialogue_ratio']}%)"); score -= 30
             elif stats["dialogue_ratio"] > 40: issues.append(f"对话偏多({stats['dialogue_ratio']}%)"); score -= 15
