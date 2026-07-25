@@ -935,6 +935,12 @@ async def get_storygraph(novel_id: str, chapter: int = 0):
                  0或省略 = 返回全部
     """
     data = _read_novel_file(novel_id, "storygraph.json")
+    
+    # v2.8: 如果 storygraph 为空，从 plan 的大纲中初始化
+    if not data.get("plot_threads") and not data.get("foreshadow_ledger"):
+        log.info(f"Storygraph empty for {novel_id}, initializing from plan outline")
+        data = _init_storygraph_from_plan(novel_id, data)
+    
     last_updated = data.get("last_updated_chapter", 0)
     version = data.get("version", 0)
     
@@ -1016,6 +1022,104 @@ def _compute_storygraph_stats(data: dict) -> dict:
         "tracked_characters": len(data.get("char_snapshots", {})),
         "causal_links": len(data.get("causal_links", [])),
     }
+
+
+def _init_storygraph_from_plan(novel_id: str, existing: dict) -> dict:
+    """从 plan.json 的大纲初始化 storygraph 数据结构"""
+    plan_path = os.path.join(engine.memory.get_novel_dir(novel_id), "plan.json")
+    if not os.path.exists(plan_path):
+        return existing
+    
+    try:
+        with open(plan_path, "r", encoding="utf-8") as f:
+            plan = json.load(f)
+    except Exception:
+        return existing
+    
+    outline = plan.get("outline", {})
+    volumes = outline.get("volumes", [])
+    characters = plan.get("characters", {})
+    
+    # 初始化剧情线：从大纲提取主题/线索
+    threads = existing.get("plot_threads", {})
+    thread_idx = 0
+    
+    # 主线
+    main_plot_name = plan.get("title", "主线") + "·主线"
+    line_types = ["main_plot", "subplot", "character_arc", "mystery"]
+    line_names = [main_plot_name, "暗线·伏笔", "角色弧·成长", "悬疑·揭秘"]
+    
+    for vol in volumes:
+        vol_title = vol.get("title", "")
+        act = vol.get("act", "")
+        chapters = vol.get("chapters", [])
+        
+        for ch in chapters:
+            ch_num = ch.get("number", 0)
+            summary = ch.get("summary", "")
+            chars = ch.get("characters", [])
+            hook = ch.get("hook", "")
+            
+            # 确保至少有主线
+            for i in range(min(2, len(line_names))):
+                tid = f"thread_{['main','sub','arc','myst'][i]:02d}"
+                if tid not in threads:
+                    threads[tid] = {
+                        "id": tid, "name": line_names[i],
+                        "type": line_types[i], "status": "active",
+                        "priority": 5 - i, "description": "",
+                        "key_nodes": [], "next_planned": "",
+                        "current_tension": 5, "characters": [],
+                    }
+                
+                # 添加关键事件节点
+                threads[tid]["key_nodes"].append({
+                    "chapter": ch_num,
+                    "event": summary[:30] + ("…" if len(summary) > 30 else ""),
+                    "tension": 5 + (i % 3),
+                })
+    
+    # 初始化角色快照
+    snaps = existing.get("char_snapshots", {})
+    protagonist = characters.get("protagonist", {})
+    if protagonist.get("name"):
+        snaps[protagonist["name"]] = {
+            "name": protagonist["name"],
+            "last_chapter_appeared": 0,
+            "current_location": "",
+            "current_power_level": "",
+            "status_effects": [],
+            "known_secrets": [],
+            "relationship_changes": [],
+            "current_emotion": "",
+            "active_goals": [protagonist.get("motivation", "")],
+        }
+    
+    supporting = characters.get("supporting", [])
+    for c in supporting[:8]:
+        name = c.get("name", "")
+        if name and name not in snaps:
+            snaps[name] = {
+                "name": name,
+                "last_chapter_appeared": 0,
+                "current_location": "",
+                "current_power_level": "",
+                "status_effects": [],
+                "known_secrets": [],
+                "relationship_changes": [],
+                "current_emotion": "",
+                "active_goals": [],
+            }
+    
+    existing["plot_threads"] = threads
+    existing["char_snapshots"] = snaps
+    existing["version"] = existing.get("version", 0) + 1
+    existing["editing_phase"] = "outline"
+    
+    # 保存到磁盘
+    _write_novel_file(novel_id, "storygraph.json", existing)
+    
+    return existing
 
 
 @app.get("/api/novels/{novel_id}/arcs")
