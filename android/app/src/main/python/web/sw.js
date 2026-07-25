@@ -1,16 +1,15 @@
-/* NovelGenerator — Service Worker v5 (Android PWA) */
-const CACHE = 'novel-v5';
-const API_CACHE = 'novel-api-v5';
+/* NovelGenerator — Service Worker v4 */
+const CACHE = 'novel-v4';
+const VERSION = 4;
 
-// Core assets to cache on install
-const PRE_CACHE = [
+const CACHE_ASSETS = [
   '/vue.global.prod.js',
   '/manifest.json',
 ];
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE).then(cache => cache.addAll(PRE_CACHE))
+    caches.open(CACHE).then(cache => cache.addAll(CACHE_ASSETS))
   );
   self.skipWaiting();
 });
@@ -18,40 +17,34 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE && k !== API_CACHE).map(k => caches.delete(k)))
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
     )
   );
+  // 只在 service worker 首次激活或版本变更时通知，避免死循环
   self.clients.claim();
 });
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // API calls — network-first with offline fallback
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
-      fetch(event.request).then(response => {
-        const clone = response.clone();
-        caches.open(API_CACHE).then(cache => cache.put(event.request, clone));
-        return response;
-      }).catch(() => caches.match(event.request))
+      fetch(event.request).catch(() => caches.match(event.request))
     );
     return;
   }
 
-  // HTML pages — network-first (latest version)
+  // HTML 页面 — 不缓存
   if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.html')) {
-    event.respondWith(
-      fetch(event.request).catch(() => caches.match('/'))
-    );
+    event.respondWith(fetch(event.request));
     return;
   }
 
-  // Static assets — cache-first
+  // 静态资源 — cache-first
   event.respondWith(
     caches.match(event.request).then(cached =>
       cached || fetch(event.request).then(response => {
-        if (response.ok) {
+        if (response.ok && response.status === 200) {
           const clone = response.clone();
           caches.open(CACHE).then(cache => cache.put(event.request, clone));
         }
@@ -59,11 +52,4 @@ self.addEventListener('fetch', event => {
       })
     )
   );
-});
-
-// Handle PWA install prompt
-self.addEventListener('message', event => {
-  if (event.data === 'skipWaiting') {
-    self.skipWaiting();
-  }
 });
