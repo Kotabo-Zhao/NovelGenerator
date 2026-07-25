@@ -804,6 +804,26 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"ContextUpdater skipped: {e}")
 
+            # ── v2.8: 自动一致性校验 (L1, 无 LLM) ──
+            try:
+                ck_result = self.consistency_validator.validate_chapter(novel_id, chapter_num, full_text)
+                if ck_result.get('violations'):
+                    log.warning(f'Consistency L1: {len(ck_result["violations"])} issues in Ch{chapter_num}')
+                    for v in ck_result['violations'][:3]:
+                        log.warning(f'  - {v.get("type","?")}: {v.get("desc","")[:60]}')
+            except Exception as e:
+                log.warning(f'Consistency check skipped: {e}')
+
+            # ── v2.8: 每10章自动校准 ──
+            if chapter_num % 10 == 0:
+                try:
+                    from .autocalibrator import calibrate
+                    cal_result = calibrate(chapter_num, plan, sg_data)
+                    if cal_result:
+                        log.info(f'Auto-calibrate Ch{chapter_num}: {len(cal_result.get("issues",[]))} issues')
+                except Exception as e:
+                    log.warning(f'Auto-calibrate skipped: {e}')
+
             # ── 自动更新剧情图谱（storygraph）──
             try:
                 novel_dir = self.memory.get_novel_dir(novel_id)
