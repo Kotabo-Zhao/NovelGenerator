@@ -49,25 +49,34 @@ class ServerService : Service() {
 
                 // Poll for readiness
                 var waited = 0
-                while (waited < 30) {
+                while (waited < 60) {
                     Thread.sleep(500)
                     waited++
-                    val pyObj = module.callAttr("get_server_status")
-                    val ready = pyObj.get("ready")?.toBoolean() ?: false
-                    val err = pyObj.get("error")?.toString()
+                    try {
+                        val pyObj = module.callAttr("get_server_status")
+                        val errObj = pyObj.get("error")
+                        val readyObj = pyObj.get("ready")
 
-                    if (err != null) {
-                        serverError = err
-                        broadcastStatus(false, err)
-                        updateNotification("服务器错误: ${err.take(60)}")
-                        return@Thread
-                    }
+                        // Check error first
+                        if (errObj != null) {
+                            val err = errObj.toString()
+                            if (err != "None" && err.isNotBlank()) {
+                                serverError = err
+                                broadcastStatus(false, err)
+                                updateNotification("服务错误: ${err.take(80)}")
+                                return@Thread
+                            }
+                        }
 
-                    if (ready) {
-                        isServerReady = true
-                        broadcastStatus(true, null)
-                        updateNotification("服务器运行中 — http://$host:$port")
-                        return@Thread
+                        // Check ready
+                        if (readyObj != null && readyObj.toString() == "True") {
+                            isServerReady = true
+                            broadcastStatus(true, null)
+                            updateNotification("运行中 — http://$host:$port")
+                            return@Thread
+                        }
+                    } catch (e: Exception) {
+                        // Python still starting, continue polling
                     }
                 }
 
