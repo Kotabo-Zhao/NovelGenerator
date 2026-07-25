@@ -1348,7 +1348,7 @@ async def set_phase(novel_id: str, body: dict):
 
 @app.post("/api/novels/{novel_id}/storygraph/parse-command")
 async def parse_command(novel_id: str, body: dict):
-    """解析自然语言指令为结构化操作"""
+    """解析自然语言指令为结构化操作列表"""
     cmd = body.get("command", "").strip()
     if not cmd:
         raise HTTPException(400, "command 为必填字段")
@@ -1358,52 +1358,118 @@ async def parse_command(novel_id: str, body: dict):
     foreshadows = data.get("foreshadow_ledger", {})
     chars = data.get("char_snapshots", {})
     
-    result = {"command": cmd, "parsed": None, "error": None}
+    changes = []
     
-    # ── 正则匹配规则库 ──
-    rules = []
+    # ── 关键词分解：把长指令按逗号/句号/换行拆分 ──
+    segments = re.split(r'[，,。；;、\n]', cmd)
+    segments = [s.strip() for s in segments if s.strip()]
     
-    # 升温
-    for tid, t in threads.items():
-        rules.append((re.compile(rf"让?{re.escape(t['name'])}.*?升温"), 
-                      {"type": "thread", "id": tid, "action": "heat_up"}))
-        rules.append((re.compile(rf"暂停{re.escape(t['name'])}"), 
-                      {"type": "thread", "id": tid, "action": "pause"}))
-        rules.append((re.compile(rf"恢复{re.escape(t['name'])}"), 
-                      {"type": "thread", "id": tid, "action": "resume"}))
-        rules.append((re.compile(rf"{re.escape(t['name'])}.*?优先级.*?(最高|5|四|五)"), 
-                      {"type": "thread", "id": tid, "action": "raise_priority"}))
+    for seg in segments:
+        _match_thread_actions(seg, threads, changes)
+        _match_foreshadow_actions(seg, foreshadows, changes)
+        _match_character_actions(seg, chars, changes)
     
-    # 伏笔
-    for fid, f in foreshadows.items():
-        desc_short = f["description"][:6]
-        rules.append((re.compile(rf"回收.*?{re.escape(desc_short)}"), 
-                      {"type": "foreshadow", "id": fid, "action": "resolve"}))
-        rules.append((re.compile(rf".*?{re.escape(desc_short)}.*?推迟.*?(\d+).*?章"), 
-                      {"type": "foreshadow", "id": fid, "action": "delay"}))
+    # 去重（同一目标+动作只保留优先级最高的）
+    seen = set()
+    unique = []
+    for c in sorted(changes, key=lambda x: -x.get('priority', 0)):
+        key = (c.get('type',''), c.get('id',''), c.get('action',''))
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
     
-    # 角色
-    for name, snap in chars.items():
-        rules.append((re.compile(rf"{re.escape(name)}.*?在(.+)"), 
-                      {"type": "character", "id": name, "action": "set_location"}))
-        rules.append((re.compile(rf"{re.escape(name)}.*?(愤怒|悲伤|恐惧|绝望|兴奋|喜悦|冷静|坚定|担忧)"), 
-                      {"type": "character", "id": name, "action": "set_emotion"}))
+    # 补充推论（升温→建议调状态）
+    for c in unique:
+        if c.get('type') == 'thread' and c.get('action') == 'heat_up':
+            tid = c['id']
+            t = threads.get(tid, {})
+            if t.get('status') in ('active', 'dormant'):
+                c['suggested'] = {'status': 'advancing', 'note': '建议状态改为"推进中"'}
+        elif c.get('type') == 'thread' and c.get('action') == 'pause':
+            c['suggested'] = {'priority': max(1, threads.get(c['id'],{}).get('priority',3)-1), 'note': '暂停时可适当降优'}
     
-    for pattern, parsed in rules:
-        m = pattern.search(cmd)
-        if m:
-            result["parsed"] = parsed
-            if parsed["action"] in ("set_location", "set_emotion"):
-                result["parsed"]["value"] = m.group(1)
-            elif parsed["action"] == "delay":
-                result["parsed"]["offset"] = int(m.group(1))
-            break
-    
-    if not result["parsed"]:
-        result["error"] = "未能理解指令，请尝试更具体的表述。例如：让复仇主线升温、回收玉佩秘密、沈清许现在在暗影殿地牢"
-    
-    return result
+    return {
+        "command": cmd,
+        "changes": unique,
+        "summary": _summarize_changes(unique, threads, foreshadows, chars),
+        "count": len(unique),
+    }
 
+
+def _match_thread_actions(seg: str, threads: dict, changes: list):
+    """匹配线程操作"""
+    for tid, t in threads.items():
+        name = t['name']
+        if name not in seg:
+            continue
+        base = {"type": "thread", "id": tid, "name": name, "priority": 5}
+        
+        if re.search(r'升温|加热|更猛|更激烈|爆发|高潮', seg):
+            new_t = min(10, t.get('current_tension', 5) + 2)
+            changes.append({**base, "action": "heat_up", "label": f"🔥 {name} 升温 {t.get('current_tension',5)}→{new_t}", "new_tension": new_t})
+        elif re.search(r'降温|冷静|缓和|舒缓|放慢', seg):
+            new_t = max(1, t.get('current_tension', 5) - 2)
+            changes.append({**base, "action": "cool_down", "label": f"❄️ {name} 降温 {t.get('current_tension',5)}→{new_t}", "new_tension": new_t, "priority": 3})
+        elif re.search(r'暂停|搁置|放一放|先不管|按住', seg):
+            changes.append({**base, "action": "pause", "label": f"⏸️ {name} 暂停", "priority": 4})
+        elif re.search(r'恢复|继续|激活|重启', seg):
+            changes.append({**base, "action": "resume", "label": f"▶️ {name} 恢复", "priority": 4})
+        elif re.search(r'完结|完成|结束|回收', seg):
+            changes.append({**base, "action": "resolve", "label": f"✅ {name} 完结", "priority": 3})
+        elif re.search(r'提优|升优先|优先级.*?[四五5最高]|更重要|重点推进', seg):
+            new_p = min(5, t.get('priority', 3) + 1)
+            changes.append({**base, "action": "raise_priority", "label": f"⬆️ {name} 优先级 {t.get('priority',3)}→{new_p}", "new_priority": new_p, "priority": 4})
+        elif re.search(r'降优|降优先|优先级.*?[一二1最低]|不重要|边缘', seg):
+            new_p = max(1, t.get('priority', 3) - 1)
+            changes.append({**base, "action": "lower_priority", "label": f"⬇️ {name} 优先级 {t.get('priority',3)}→{new_p}", "new_priority": new_p, "priority": 3})
+
+
+def _match_foreshadow_actions(seg: str, foreshadows: dict, changes: list):
+    """匹配伏笔操作"""
+    for fid, f in foreshadows.items():
+        desc = f.get('description', '')
+        if len(desc) < 3: continue
+        key = desc[:4]
+        if key not in seg: continue
+        
+        if re.search(r'回收|揭示|揭露|现在回收|立刻回收', seg):
+            changes.append({"type": "foreshadow", "id": fid, "name": desc[:20], 
+                          "action": "resolve", "label": f"✅ 回收伏笔: {desc[:15]}", "priority": 5})
+        elif m := re.search(r'推迟\s*(\d+)\s*章', seg):
+            offset = int(m.group(1))
+            changes.append({"type": "foreshadow", "id": fid, "name": desc[:20],
+                          "action": "delay", "offset": offset, 
+                          "label": f"⏪ 推迟{offset}章: {desc[:15]}", "priority": 4})
+        elif m := re.search(r'提前.*?[到至]?\s*[Cc]h?\s*(\d+)', seg):
+            target = int(m.group(1))
+            changes.append({"type": "foreshadow", "id": fid, "name": desc[:20],
+                          "action": "advance", "target_chapter": target,
+                          "label": f"⏩ 提前到Ch{target}: {desc[:15]}", "priority": 4})
+
+
+def _match_character_actions(seg: str, chars: dict, changes: list):
+    """匹配角色操作"""
+    for name, snap in chars.items():
+        if name not in seg: continue
+        base = {"type": "character", "id": name, "name": name, "priority": 3}
+        
+        if m := re.search(rf'{re.escape(name)}.*?在(.+?)(?:[，,。；;、\n]|$)', seg):
+            loc = m.group(1).strip()
+            changes.append({**base, "action": "set_location", "value": loc,
+                          "label": f"📍 {name} → {loc}"})
+        for emo in ['愤怒','悲伤','恐惧','绝望','兴奋','喜悦','冷静','坚定','担忧','紧张']:
+            if emo in seg:
+                changes.append({**base, "action": "set_emotion", "value": emo,
+                              "label": f"😶 {name} → {emo}", "priority": 2})
+                break
+
+
+def _summarize_changes(changes: list, threads: dict, foreshadows: dict, chars: dict) -> str:
+    """生成变更摘要"""
+    if not changes:
+        return "未识别到任何变更。请尝试更具体的描述。"
+    labels = [c['label'] for c in changes if c.get('label')]
+    return f"识别到 {len(changes)} 项变更：\n" + "\n".join(f"  {l}" for l in labels)
 
 def _build_character_relation_graph(data: dict) -> dict:
     """构建人物关系图数据
