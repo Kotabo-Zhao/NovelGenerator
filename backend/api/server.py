@@ -1053,6 +1053,149 @@ async def get_calibration(novel_id: str):
     return data
 
 
+# ── v2.4: 剧情图谱可视化数据 ──
+
+@app.get("/api/novels/{novel_id}/storygraph/visualization")
+async def get_storygraph_visualization(novel_id: str, chapter: int = 0):
+    """获取剧情图谱可视化数据：人物关系图 + 剧情线图
+    
+    Query params:
+        chapter: 指定章节号过滤（0=全部）
+    """
+    data = _read_novel_file(novel_id, "storygraph.json")
+    if chapter > 0 and chapter < data.get("last_updated_chapter", 0):
+        data = _filter_storygraph_to_chapter(data, chapter)
+    
+    return {
+        "novel_id": novel_id,
+        "character_relations": _build_character_relation_graph(data),
+        "plot_timeline": _build_plot_timeline(data),
+    }
+
+
+def _build_character_relation_graph(data: dict) -> dict:
+    """构建人物关系图数据
+    
+    Returns:
+        {
+            "nodes": [{"id": "name", "label": "name", "emotion": "...", "location": "...", 
+                        "last_chapter": N, "goals": [...]}],
+            "edges": [{"source": "charA", "target": "charB", "label": "关系描述", "chapter": N}]
+        }
+    """
+    snaps = data.get("char_snapshots", {})
+    nodes = []
+    edges = []
+    edge_set = set()  # 去重
+    
+    for name, snap in snaps.items():
+        # 节点
+        nodes.append({
+            "id": name,
+            "label": name,
+            "emotion": snap.get("current_emotion", ""),
+            "location": snap.get("current_location", ""),
+            "last_chapter": snap.get("last_chapter_appeared", 0),
+            "goals": snap.get("active_goals", []),
+            "secrets": snap.get("known_secrets", []),
+            "power_level": snap.get("current_power_level", ""),
+        })
+        
+        # 边（从关系变化中提取）
+        for rc in snap.get("relationship_changes", []):
+            target = rc.get("with", "")
+            if not target or target not in snaps:
+                continue
+            edge_key = tuple(sorted([name, target]))
+            if edge_key in edge_set:
+                continue
+            edge_set.add(edge_key)
+            edges.append({
+                "source": name,
+                "target": target,
+                "label": rc.get("change", "关联"),
+                "chapter": rc.get("chapter", 0),
+            })
+    
+    # 补充：从剧情线的角色列表中推断关系
+    threads = data.get("plot_threads", {})
+    for t in threads.values():
+        chars = t.get("characters", [])
+        for i in range(len(chars)):
+            for j in range(i + 1, len(chars)):
+                edge_key = tuple(sorted([chars[i], chars[j]]))
+                if edge_key not in edge_set and chars[i] in snaps and chars[j] in snaps:
+                    edge_set.add(edge_key)
+                    edges.append({
+                        "source": chars[i],
+                        "target": chars[j],
+                        "label": f"共同参与: {t.get('name', '')[:12]}",
+                        "chapter": 0,
+                    })
+    
+    return {"nodes": nodes, "edges": edges}
+
+
+def _build_plot_timeline(data: dict) -> dict:
+    """构建剧情线时间线图数据
+    
+    Returns:
+        {
+            "lanes": [{"id": "thread_id", "name": "...", "type": "...", "status": "...",
+                        "events": [{"chapter": N, "event": "...", "tension": N}],
+                        "color": "#..."}],
+            "causal_links": [{"from": {"thread_id": "..", "chapter": N}, "to": {...}}],
+            "chapter_range": {"min": 1, "max": N}
+        }
+    """
+    threads = data.get("plot_threads", {})
+    links = data.get("causal_links", [])
+    
+    thread_colors = {
+        "main_plot": "#f85149",
+        "subplot": "#f0883e", 
+        "character_arc": "#7c3aed",
+        "mystery": "#58a6ff",
+    }
+    
+    lanes = []
+    for tid, t in threads.items():
+        nodes = t.get("key_nodes", [])
+        events = [{"chapter": n["chapter"], "event": n["event"], "tension": n.get("tension", 5)}
+                  for n in sorted(nodes, key=lambda x: x["chapter"])]
+        lanes.append({
+            "id": tid,
+            "name": t.get("name", ""),
+            "type": t.get("type", "subplot"),
+            "status": t.get("status", "active"),
+            "priority": t.get("priority", 3),
+            "events": events,
+            "color": thread_colors.get(t.get("type", ""), "#8b949e"),
+            "characters": t.get("characters", []),
+        })
+    
+    # 排序：按优先级降序
+    lanes.sort(key=lambda x: -x["priority"])
+    
+    # 计算章节范围
+    all_chapters = []
+    for lane in lanes:
+        for e in lane["events"]:
+            all_chapters.append(e["chapter"])
+    for cl in links:
+        all_chapters.append(cl.get("cause_chapter", 0))
+        all_chapters.append(cl.get("effect_chapter", 0))
+    
+    ch_min = min(all_chapters) if all_chapters else 1
+    ch_max = max(all_chapters) if all_chapters else 1
+    
+    return {
+        "lanes": lanes,
+        "causal_links": links,
+        "chapter_range": {"min": ch_min, "max": ch_max},
+    }
+
+
 # ── v2.2.1: State 修复与容灾 ──
 
 @app.post("/api/repair-states")

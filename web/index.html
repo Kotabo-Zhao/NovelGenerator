@@ -368,12 +368,30 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sev-mid{background:rgba(240,136,62,.15);color:#f0883e}
 .sev-low{background:rgba(139,148,158,.15);color:#8b949e}
 
+/* ── v2.4: 人物关系图 & 剧情线图 ── */
+.sg-relation-container{position:relative;background:var(--bg2);border-radius:var(--radius);padding:12px}
+.sg-relation-svg-wrap{width:100%;height:500px;overflow:hidden;border-radius:var(--radius-xs);background:var(--bg);position:relative}
+.sg-relation-svg{width:100%;height:100%;display:block}
+.sg-relation-svg circle{transition:opacity .15s, r .15s}
+.sg-relation-svg line{transition:opacity .15s}
+.sg-relation-svg text{pointer-events:none;user-select:none}
+.sg-legend{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sg-legend-item{font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px}
+.sg-legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.sg-char-tooltip{position:absolute;bottom:20px;left:20px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xs);padding:12px 16px;min-width:160px;box-shadow:var(--shadow);z-index:10;pointer-events:none}
+.sg-timeline-container{position:relative;background:var(--bg2);border-radius:var(--radius);padding:12px}
+.sg-timeline-svg-wrap{width:100%;height:420px;overflow:hidden;border-radius:var(--radius-xs);background:var(--bg);position:relative}
+.sg-timeline-svg{width:100%;height:100%;display:block}
+.sg-event-tooltip{position:absolute;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xs);padding:12px 16px;min-width:180px;box-shadow:var(--shadow);z-index:10;pointer-events:none}
+
 @media(max-width:768px){
   .sg-dashboard{grid-template-columns:repeat(2,1fr)}
   .sg-grid-2{grid-template-columns:1fr}
   .sg-char-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
   .sg-subtabs{font-size:12px}
   .sg-subtab{padding:6px 10px;font-size:12px}
+  .sg-relation-svg-wrap{height:350px}
+  .sg-timeline-svg-wrap{height:320px}
 }
 </style>
 </head>
@@ -854,6 +872,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <button class="sg-subtab" :class="{active:sgSubTab==='calibration'}" @click="sgSubTab='calibration'">
                 校准 <span class="sg-subtab-count" :class="{'sg-count-warn':(sgCalibration?.score||100)<70}">{{ sgCalibration?.score??'--' }}</span>
               </button>
+              <button class="sg-subtab" :class="{active:sgSubTab==='relations'}" @click="sgSubTab='relations'">
+                🕸️ 人物关系图
+              </button>
+              <button class="sg-subtab" :class="{active:sgSubTab==='timeline'}" @click="sgSubTab='timeline'">
+                📈 剧情线图
+              </button>
             </div>
 
             <!-- ====== 概览 Tab ====== -->
@@ -1095,6 +1119,165 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <div v-else class="text-center" style="padding:40px;color:var(--text3)">
                 <div style="font-size:36px;margin-bottom:8px">🔍</div>
                 <p class="text-sm">尚未执行校准，每10章自动触发</p>
+              </div>
+            </div>
+
+            <!-- ====== v2.4: 人物关系图 Tab ====== -->
+            <div v-if="sgSubTab==='relations'">
+              <div v-if="!relationGraph.nodes.length" class="text-center" style="padding:40px;color:var(--text3)">
+                <div style="font-size:36px;margin-bottom:8px">🕸️</div>
+                <p class="text-sm">暂无角色关系数据，请先生成章节</p>
+              </div>
+              <div v-else class="sg-relation-container">
+                <!-- 图例 -->
+                <div class="sg-legend" style="margin-bottom:12px">
+                  <span class="text-xs color-text3">图例:</span>
+                  <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#58a6ff"></span> 关系线</span>
+                  <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#f0883e"></span> 剧情共线</span>
+                  <span class="text-xs color-text3 ml-8">可拖拽节点 · 滚轮缩放</span>
+                </div>
+                <div class="sg-relation-svg-wrap" ref="relationSvgWrap">
+                  <svg :viewBox="`0 0 ${relationViewBox.w} ${relationViewBox.h}`" 
+                       class="sg-relation-svg"
+                       @wheel.prevent="zoomRelation"
+                       @mousedown="startPanRelation"
+                       @mousemove="doPanRelation"
+                       @mouseup="endPanRelation"
+                       @mouseleave="endPanRelation">
+                    <defs>
+                      <marker id="arrowRel" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                        <path d="M0,1 L5,3 L0,5 Z" fill="#8b949e"/>
+                      </marker>
+                    </defs>
+                    <!-- 连线 -->
+                    <line v-for="(edge, i) in relationEdges" :key="'e'+i"
+                          :x1="edge.x1" :y1="edge.y1" :x2="edge.x2" :y2="edge.y2"
+                          :stroke="edge.color" stroke-width="1.5" :stroke-dasharray="edge.dashed?'5,3':'none'"
+                          :opacity="sgHoveredEdge===i || !sgHoveredChar ? 0.8 : 0.15"
+                          marker-end="url(#arrowRel)"
+                          @mouseenter="sgHoveredEdge=i" @mouseleave="sgHoveredEdge=null"/>
+                    <!-- 边标签 -->
+                    <text v-for="(edge, i) in relationEdges" :key="'el'+i"
+                          :x="(edge.x1+edge.x2)/2" :y="(edge.y1+edge.y2)/2 - 8"
+                          text-anchor="middle" font-size="10" fill="#8b949e"
+                          :opacity="sgHoveredEdge===i ? 1 : 0.6"
+                          style="pointer-events:none">{{ edge.label?.substring(0, 8) }}</text>
+                    <!-- 节点 -->
+                    <g v-for="(node, i) in relationNodes" :key="'n'+i"
+                       :transform="`translate(${node.x},${node.y})`"
+                       :style="`cursor:${relationDragging === i ? 'grabbing' : 'grab'}`"
+                       @mousedown.stop="startDragRelationNode(i, $event)"
+                       @mouseenter="sgHoveredChar=node.id"
+                       @mouseleave="sgHoveredChar=null">
+                      <!-- 外圈光晕 -->
+                      <circle r="28" fill="none" :stroke="node.color" stroke-width="1.5" 
+                              :opacity="sgHoveredChar===node.id ? 1 : 0.3"/>
+                      <!-- 主圆 -->
+                      <circle r="24" :fill="node.bgColor"/>
+                      <!-- 文字 -->
+                      <text text-anchor="middle" dy="-3" font-size="12" font-weight="600" 
+                            :fill="node.textColor">{{ node.label?.substring(0,4) }}</text>
+                      <!-- 情绪图标 -->
+                      <text v-if="node.emotionIcon" text-anchor="middle" dy="14" font-size="11" 
+                            :opacity="sgHoveredChar===node.id ? 1 : 0.7">{{ node.emotionIcon }}</text>
+                    </g>
+                  </svg>
+                </div>
+                <!-- 悬浮角色详情 -->
+                <div v-if="sgHoveredChar && hoveredCharDetail" class="sg-char-tooltip"
+                     :style="{position:'absolute' /* handled via CSS */}">
+                  <div class="font-semibold text-sm mb-4">{{ hoveredCharDetail.label }}</div>
+                  <div v-if="hoveredCharDetail.location" class="text-xs color-text2">📍 {{ hoveredCharDetail.location }}</div>
+                  <div v-if="hoveredCharDetail.emotion" class="text-xs color-text2">😶 {{ hoveredCharDetail.emotion }}</div>
+                  <div v-if="hoveredCharDetail.power_level" class="text-xs color-text2">⚡ {{ hoveredCharDetail.power_level }}</div>
+                  <div v-if="hoveredCharDetail.goals?.length" class="text-xs color-text2 mt-4">🎯 {{ hoveredCharDetail.goals.join('、') }}</div>
+                  <div v-if="hoveredCharDetail.last_chapter" class="text-xs color-text3 mt-4">最近出场: Ch{{ hoveredCharDetail.last_chapter }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ====== v2.4: 剧情线图 Tab ====== -->
+            <div v-if="sgSubTab==='timeline'">
+              <div v-if="!plotTimeline.lanes?.length" class="text-center" style="padding:40px;color:var(--text3)">
+                <div style="font-size:36px;margin-bottom:8px">📈</div>
+                <p class="text-sm">暂无剧情线数据，请先生成章节</p>
+              </div>
+              <div v-else class="sg-timeline-container">
+                <!-- 图例 -->
+                <div class="sg-legend" style="margin-bottom:12px">
+                  <span class="text-xs color-text3">图例:</span>
+                  <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#f85149"></span> 主线</span>
+                  <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#f0883e"></span> 支线</span>
+                  <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#7c3aed"></span> 角色弧</span>
+                  <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#58a6ff"></span> 悬疑</span>
+                  <span class="text-xs color-text3 ml-8">滚轮缩放 · 拖拽平移 · 点击节点看详情</span>
+                </div>
+                <div class="sg-timeline-svg-wrap" ref="timelineSvgWrap">
+                  <svg :viewBox="`0 0 ${timelineViewBox.w} ${timelineViewBox.h}`"
+                       class="sg-timeline-svg"
+                       @wheel.prevent="zoomTimeline"
+                       @mousedown="startPanTimeline"
+                       @mousemove="doPanTimeline"
+                       @mouseup="endPanTimeline"
+                       @mouseleave="endPanTimeline">
+                    <!-- 网格线 -->
+                    <line v-for="ch in timelineChapters" :key="'grid'+ch"
+                          :x1="chToX(ch)" y1="0" :x2="chToX(ch)" y2="plotEndY"
+                          stroke="var(--bg2)" stroke-width="1" opacity="0.5"/>
+                    <!-- 章节标签 -->
+                    <text v-for="ch in timelineChapterLabels" :key="'chl'+ch"
+                          :x="chToX(ch)" y="14" text-anchor="middle" font-size="10" fill="var(--text3)">
+                      Ch{{ ch }}
+                    </text>
+                    <!-- 泳道标签 -->
+                    <text v-for="(lane, i) in plotTimeline.lanes" :key="'ll'+i"
+                          x="10" :y="laneY(i) + 20" font-size="12" font-weight="600"
+                          :fill="lane.color" style="dominant-baseline:middle">
+                      {{ lane.name?.substring(0, 12) }}
+                      <tspan font-size="9" :fill="statusColor(lane.status)" dx="4">{{ statusLabel(lane.status) }}</tspan>
+                    </text>
+                    <!-- 泳道背景 -->
+                    <rect v-for="(lane, i) in plotTimeline.lanes" :key="'lbg'+i"
+                          x="0" :y="laneY(i) + 26" :width="timelineViewBox.w" height="50"
+                          :fill="lane.color" opacity="0.04" rx="4"/>
+                    <!-- 事件节点 -->
+                    <g v-for="(lane, li) in plotTimeline.lanes" :key="'lg'+li">
+                      <circle v-for="(ev, ei) in lane.events" :key="'ev'+ei"
+                              :cx="chToX(ev.chapter)" :cy="laneY(li) + 51"
+                              :r="4 + ev.tension * 0.5"
+                              :fill="tensionGradient(ev.tension)"
+                              :stroke="lane.color" stroke-width="1.5"
+                              :opacity="sgHoveredEvent && sgHoveredEvent.lane===li && sgHoveredEvent.idx===ei ? 1 : 0.85"
+                              style="cursor:pointer"
+                              @mouseenter="sgHoveredEvent={lane:li, idx:ei}"
+                              @mouseleave="sgHoveredEvent=null"/>
+                      <!-- 连接线 -->
+                      <polyline v-if="lane.events.length > 1"
+                                :points="lane.events.map((e,i) => `${chToX(e.chapter)},${laneY(li)+51}`).join(' ')"
+                                :stroke="lane.color" stroke-width="1.5" fill="none" opacity="0.3"/>
+                    </g>
+                    <!-- 因果链箭头 -->
+                    <path v-for="(cl, i) in plotTimeline.causal_links" :key="'cl'+i"
+                          :d="causalArrowPath(cl)"
+                          stroke="#f85149" stroke-width="1" fill="none"
+                          stroke-dasharray="4,3" opacity="0.5"
+                          marker-end="url(#arrowCausal)"/>
+                    <defs>
+                      <marker id="arrowCausal" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+                        <path d="M0,0 L5,2.5 L0,5 Z" fill="#f85149" opacity="0.5"/>
+                      </marker>
+                    </defs>
+                  </svg>
+                </div>
+                <!-- 悬浮事件详情 -->
+                <div v-if="sgHoveredEvent && hoveredEventDetail" class="sg-event-tooltip">
+                  <div class="font-semibold text-sm mb-4">{{ plotTimeline.lanes[sgHoveredEvent.lane]?.name }}</div>
+                  <div class="text-xs color-text3">Ch{{ hoveredEventDetail.chapter }}</div>
+                  <div class="text-xs color-text2 mt-2">{{ hoveredEventDetail.event }}</div>
+                  <div class="text-xs mt-2" :style="{color: tensionGradient(hoveredEventDetail.tension)}">
+                    紧张度: {{ '●'.repeat(Math.ceil(hoveredEventDetail.tension/2)) }}{{ '○'.repeat(5-Math.ceil(hoveredEventDetail.tension/2)) }}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1344,6 +1527,23 @@ const app = createApp({
     const sgExpandedChar = ref(null);
     const sgExpandedArc = ref(null);
 
+    // v2.4: 可视化交互状态
+    const sgHoveredChar = ref(null);
+    const sgHoveredEdge = ref(null);
+    const sgHoveredEvent = ref(null);
+    // 关系图缩放/平移
+    const relationZoom = ref(1);
+    const relationPan = reactive({x:0, y:0});
+    const relationDragging = ref(null);
+    const relationDragStart = reactive({x:0, y:0, nx:0, ny:0});
+    const relationSvgWrap = ref(null);
+    // 时间线图缩放/平移
+    const timelineZoom = ref(1);
+    const timelinePan = reactive({x:0, y:0});
+    const timelineDragging = ref(false);
+    const timelineDragStart = reactive({x:0, y:0, px:0, py:0});
+    const timelineSvgWrap = ref(null);
+
     const batchStart = ref(1); const batchEnd = ref(1);
     // 批量上限自动裁剪：batchStart 变化时 clamp batchEnd
     watch(batchStart, (v) => {
@@ -1418,6 +1618,250 @@ const app = createApp({
     function fsStatusColor(f) { return {resolved:'#3fb950',revealed:'#58a6ff',hinted:'#f0883e',planted:'#8b949e'}[f.status]||'#8b949e'; }
     function fsStatusBg(f) { return {resolved:'rgba(63,185,80,.1)',revealed:'rgba(88,166,255,.1)',hinted:'rgba(240,136,62,.1)',planted:'rgba(139,148,158,.1)'}[f.status]||''; }
     function fsStatusLabel(f) { return {resolved:'✅已回收',revealed:'👁已揭示',hinted:'💡再暗示',planted:'🌱已种'}[f.status]||f.status; }
+
+    // ── v2.4: 人物关系图 ──
+    const relationGraph = computed(() => {
+      if (!sgData.value) return { nodes: [], edges: [] };
+      const snaps = sgData.value.char_snapshots || {};
+      const threads = sgData.value.plot_threads || {};
+      const nodes = [];
+      const edges = [];
+      const edgeSet = new Set();
+      const charNames = Object.keys(snaps);
+      
+      // 情绪→emoji映射
+      const emotionIcons = {
+        '愤怒':'😡','悲伤':'😢','喜悦':'😄','恐惧':'😨','担忧':'😟',
+        '冷静':'😐','坚定':'💪','疑惑':'🤔','绝望':'😱','兴奋':'🤩',
+        '嫉妒':'😒','爱慕':'😍','愧疚':'😳','紧张':'😰','厌恶':'😖',
+      };
+      const charColors = ['#58a6ff','#f0883e','#7c3aed','#3fb950','#f85149',
+        '#e85d75','#4dd2c0','#f5a623','#a78bfa','#34d399'];
+      
+      // 构建节点
+      charNames.forEach((name, i) => {
+        const snap = snaps[name] || {};
+        const emo = snap.current_emotion || '';
+        let emoji = '';
+        for (const [k, v] of Object.entries(emotionIcons)) {
+          if (emo.includes(k)) { emoji = v; break; }
+        }
+        nodes.push({
+          id: name, label: name,
+          emotion: emo, emotionIcon: emoji,
+          location: snap.current_location || '',
+          last_chapter: snap.last_chapter_appeared || 0,
+          goals: snap.active_goals || [],
+          power_level: snap.current_power_level || '',
+          color: charColors[i % charColors.length],
+          bgColor: charColors[i % charColors.length] + '20',
+          textColor: charColors[i % charColors.length],
+        });
+      });
+      
+      // 构建边（从关系变化中）
+      for (const [name, snap] of Object.entries(snaps)) {
+        for (const rc of (snap.relationship_changes || [])) {
+          const target = rc.with || '';
+          if (!target || !snaps[target]) continue;
+          const ek = [name, target].sort().join('||');
+          if (edgeSet.has(ek)) continue;
+          edgeSet.add(ek);
+          edges.push({ source: name, target, label: rc.change || '关联', chapter: rc.chapter || 0, color: '#58a6ff', dashed: false });
+        }
+      }
+      
+      // 补充：剧情线中共现的角色
+      for (const t of Object.values(threads)) {
+        const chars = t.characters || [];
+        for (let i = 0; i < chars.length; i++) {
+          for (let j = i + 1; j < chars.length; j++) {
+            const ek = [chars[i], chars[j]].sort().join('||');
+            if (!edgeSet.has(ek) && snaps[chars[i]] && snaps[chars[j]]) {
+              edgeSet.add(ek);
+              edges.push({ source: chars[i], target: chars[j], 
+                label: t.name?.substring(0,8) || '共线', chapter: 0, color: '#f0883e', dashed: true });
+            }
+          }
+        }
+      }
+      return { nodes, edges };
+    });
+
+    // 关系图：计算圆形布局（使用reactive支持拖拽）
+    const relationNodeLayout = reactive([]);
+    // 当relationGraph变化时重新计算布局
+    watch(() => relationGraph.value.nodes, (nodes) => {
+      relationNodeLayout.length = 0;
+      const n = nodes.length;
+      if (!n) return;
+      const cx = 400, cy = 300, r = Math.min(280, n * 35);
+      nodes.forEach((node, i) => {
+        const angle = (2 * Math.PI * i / n) - Math.PI / 2;
+        relationNodeLayout.push({
+          ...node,
+          x: cx + r * Math.cos(angle),
+          y: cy + r * Math.sin(angle),
+        });
+      });
+    }, { immediate: true });
+    const relationViewBox = computed(() => {
+      const pad = 100; const w = 800; const h = 600;
+      return { w: Math.round(w / relationZoom.value), h: Math.round(h / relationZoom.value) };
+    });
+    const relationNodes = computed(() => {
+      return relationNodeLayout.map(n => ({
+        ...n,
+        x: n.x + relationPan.x,
+        y: n.y + relationPan.y,
+      }));
+    });
+    const relationEdges = computed(() => {
+      const nodeMap = {};
+      relationNodes.value.forEach(n => { nodeMap[n.id] = n; });
+      return relationGraph.value.edges.map(e => ({
+        ...e,
+        x1: nodeMap[e.source]?.x || 0,
+        y1: nodeMap[e.source]?.y || 0,
+        x2: nodeMap[e.target]?.x || 0,
+        y2: nodeMap[e.target]?.y || 0,
+      }));
+    });
+    const hoveredCharDetail = computed(() => {
+      if (!sgHoveredChar.value) return null;
+      return relationGraph.value.nodes.find(n => n.id === sgHoveredChar.value) || null;
+    });
+
+    // ── v2.4: 剧情线图 ──
+    const plotTimeline = computed(() => {
+      if (!sgData.value) return { lanes: [], causal_links: [], chapter_range: {min:1, max:1} };
+      const threads = sgData.value.plot_threads || {};
+      const links = sgData.value.causal_links || [];
+      const typeColors = { main_plot:'#f85149', subplot:'#f0883e', character_arc:'#7c3aed', mystery:'#58a6ff' };
+      
+      const lanes = Object.values(threads).map(t => ({
+        id: t.id, name: t.name, type: t.type || 'subplot',
+        status: t.status || 'active', priority: t.priority || 3,
+        events: (t.key_nodes || []).slice().sort((a,b) => (a.chapter||0) - (b.chapter||0)),
+        color: typeColors[t.type] || '#8b949e', characters: t.characters || [],
+      })).sort((a,b) => b.priority - a.priority);
+      
+      // 章节范围
+      let chMin = 1, chMax = 1;
+      for (const l of lanes) {
+        for (const e of l.events) {
+          if (e.chapter < chMin || chMin === 1) chMin = Math.min(chMin, e.chapter);
+          chMax = Math.max(chMax, e.chapter);
+        }
+      }
+      for (const cl of links) {
+        chMin = Math.min(chMin, cl.cause_chapter || chMin);
+        chMax = Math.max(chMax, cl.effect_chapter || chMax);
+      }
+      chMax = Math.max(chMax, chMin + 5); // 至少5章宽度
+      
+      return { lanes, causal_links: links, chapter_range: {min: chMin, max: chMax} };
+    });
+
+    // 时间线布局参数
+    const timelineChapters = computed(() => {
+      const r = plotTimeline.value.chapter_range;
+      const arr = [];
+      for (let c = r.min; c <= r.max; c++) arr.push(c);
+      return arr;
+    });
+    const timelineChapterLabels = computed(() => {
+      const all = timelineChapters.value;
+      const step = Math.max(1, Math.floor(all.length / 12)); // 最多显示~12个标签
+      return all.filter((_, i) => i % step === 0);
+    });
+    const plotEndY = computed(() => plotTimeline.value.lanes.length * 76 + 30);
+    const timelineViewBox = computed(() => {
+      const w = Math.max(800, plotTimeline.value.chapter_range.max * 50 + 100);
+      const h = Math.max(420, plotEndY.value + 10);
+      return { w: Math.round(w / timelineZoom.value), h: Math.round(h / timelineZoom.value) };
+    });
+    function laneY(i) { return i * 76 + 30; }
+    function chToX(ch) {
+      const r = plotTimeline.value.chapter_range;
+      const range = r.max - r.min || 1;
+      const margin = 60;
+      const contentW = timelineViewBox.value.w - margin * 2;
+      return margin + ((ch - r.min) / range) * contentW + timelinePan.x;
+    }
+    function causalArrowPath(cl) {
+      const clFromCh = cl.cause_chapter, clToCh = cl.effect_chapter;
+      if (!clFromCh || !clToCh) return '';
+      const x1 = chToX(clFromCh), x2 = chToX(clToCh);
+      const srcLane = plotTimeline.value.lanes.findIndex(l => l.events.some(e => e.chapter === clFromCh));
+      const tgtLane = plotTimeline.value.lanes.findIndex(l => l.events.some(e => e.chapter === clToCh));
+      const y1 = laneY(srcLane >= 0 ? srcLane : 0) + 51;
+      const y2 = laneY(tgtLane >= 0 ? tgtLane : 0) + 51;
+      const midX = (x1 + x2) / 2;
+      return `M${x1},${y1} C${midX},${y1} ${midX},${y2} ${x2},${y2}`;
+    }
+    const hoveredEventDetail = computed(() => {
+      if (!sgHoveredEvent.value) return null;
+      const {lane, idx} = sgHoveredEvent.value;
+      const events = plotTimeline.value.lanes[lane]?.events;
+      return events ? events[idx] : null;
+    });
+
+    // 缩放 & 平移
+    function zoomRelation(e) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      relationZoom.value = Math.max(0.4, Math.min(3, relationZoom.value * delta));
+    }
+    function startPanRelation(e) {
+      if (e.target.tagName === 'circle' || e.target.closest('g')) return; // 让节点拖拽优先
+      relationDragging.value = -1; // -1 = 画布拖拽
+      relationDragStart.x = e.clientX;
+      relationDragStart.y = e.clientY;
+      relationDragStart.nx = relationPan.x;
+      relationDragStart.ny = relationPan.y;
+    }
+    function doPanRelation(e) {
+      if (relationDragging.value === null) return;
+      if (relationDragging.value === -1) { // 画布拖拽
+        relationPan.x = relationDragStart.nx + (e.clientX - relationDragStart.x) / relationZoom.value;
+        relationPan.y = relationDragStart.ny + (e.clientY - relationDragStart.y) / relationZoom.value;
+      } else { // 节点拖拽
+        const node = relationNodeLayout[relationDragging.value];
+        if (node) {
+          node.x = relationDragStart.nx + (e.clientX - relationDragStart.x) / relationZoom.value;
+          node.y = relationDragStart.ny + (e.clientY - relationDragStart.y) / relationZoom.value;
+        }
+      }
+    }
+    function endPanRelation() { relationDragging.value = null; }
+    function startDragRelationNode(i, e) {
+      e.preventDefault();
+      relationDragging.value = i;
+      relationDragStart.x = e.clientX;
+      relationDragStart.y = e.clientY;
+      relationDragStart.nx = relationNodeLayout[i].x;
+      relationDragStart.ny = relationNodeLayout[i].y;
+    }
+
+    function zoomTimeline(e) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      timelineZoom.value = Math.max(0.4, Math.min(3, timelineZoom.value * delta));
+    }
+    function startPanTimeline(e) {
+      timelineDragging.value = true;
+      timelineDragStart.x = e.clientX;
+      timelineDragStart.y = e.clientY;
+      timelineDragStart.px = timelinePan.x;
+      timelineDragStart.py = timelinePan.y;
+    }
+    function doPanTimeline(e) {
+      if (!timelineDragging.value) return;
+      timelinePan.x = timelineDragStart.px + (e.clientX - timelineDragStart.x) / timelineZoom.value;
+      timelinePan.y = timelineDragStart.py + (e.clientY - timelineDragStart.y) / timelineZoom.value;
+    }
+    function endPanTimeline() { timelineDragging.value = false; }
 
     function pct(n) { const t=n.state.total_chapters||1,c=(n.state.completed_chapters||[]).length; return Math.round(c/t*100)+'%'; }
     function fmtWords(w) { return w>=10000?(w/10000).toFixed(0)+'万字':w+'字'; }
@@ -2038,7 +2482,15 @@ const app = createApp({
       switchToStoryGraph,loadStoryGraph,
       sgSubTab,sgChapterFilter,sgThreadFilter,sgForeshadowFilter,
       sgExpandedThread,sgExpandedForeshadow,sgExpandedChar,sgExpandedArc,
-      filteredThreads,filteredForeshadows };
+      filteredThreads,filteredForeshadows,
+      // v2.4: 可视化
+      sgHoveredChar,sgHoveredEdge,sgHoveredEvent,
+      relationViewBox,relationNodes,relationEdges,relationGraph,
+      relationDragging,relationSvgWrap,relationNodeLayout, hoveredCharDetail,
+      zoomRelation,startPanRelation,doPanRelation,endPanRelation,startDragRelationNode,
+      plotTimeline,timelineViewBox,timelineChapters,timelineChapterLabels,plotEndY,
+      laneY,chToX,causalArrowPath,hoveredEventDetail,
+      timelineSvgWrap,zoomTimeline,startPanTimeline,doPanTimeline,endPanTimeline };
     } catch(e) {
       console.error('SETUP ERROR:', e.message, e.stack);
       document.body.innerHTML = '<div style=\"padding:40px;color:red;font-size:16px;font-family:monospace\"><h2>❌ Setup 错误</h2><pre>' + (e.stack || e.message) + '</pre></div>';
