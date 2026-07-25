@@ -41,11 +41,6 @@ def start_server(api_key, host, port, log_dir):
         _log("import_openai")
         import openai
 
-        _log("import_core")
-        from core.engine import NovelEngine
-        engine = NovelEngine()
-        _log("engine_ok")
-
         _log("import_server")
         from api.server import app
         _log("app_ok")
