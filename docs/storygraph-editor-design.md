@@ -408,6 +408,62 @@ async def update_thread(novel_id: str, thread_id: str, body: dict):
 - storygraph.json 文件格式向后兼容（新增字段不影响 LLM 提取）
 - atomic_write_json 原子性保证（并发安全）
 
+### 8.5 UX 专项测试 — 自然语言指令解析
+
+| # | 输入 | 预期解析结果 | 验证方式 |
+|:--|:-----|:-----------|:--------|
+| 1 | "让复仇主线升温" | `{type:'thread', target:'复仇主线', action:'heat_up'}` | 单元测试 `command_parser.parse()` |
+| 2 | "暂停感情线" | `{type:'thread', target:'感情线', action:'pause'}` | 同上 |
+| 3 | "复仇主线优先级提到最高" | `{type:'thread', target:'复仇主线', action:'set_priority', value:5}` | 同上 |
+| 4 | "复仇线优先级提到3" | `{type:'thread', target:'复仇主线', action:'set_priority', value:3}` | 模糊匹配测试 |
+| 5 | "把玉佩秘密推迟到25章回收" | `{type:'foreshadow', target:'玉佩秘密', action:'delay', ch:25}` | 同上 |
+| 6 | "回收大师兄身份" | `{type:'foreshadow', target:'大师兄身份', action:'resolve'}` | 同上 |
+| 7 | "沈清许现在在暗影殿地牢" | `{type:'character', target:'沈清许', action:'set_location', value:'暗影殿地牢'}` | 同上 |
+| 8 | "abc123xyz" | `{error:'unparseable'}` | 错误处理 |
+| 9 | "" (空输入) | `{error:'empty'}` | 边界 |
+| 10 | "升温" (缺目标) | `{error:'no_target'}` | 边界 |
+
+### 8.6 UX 专项测试 — 快捷操作
+
+| # | 操作 | 数据变化 | UI 反馈 |
+|:--|:-----|:--------|:-------|
+| 1 | 点复仇主线的 🔥升温 | tension 上升 2, status→advancing | toast "复仇主线已升温至 10" |
+| 2 | 连续点 🔥升温 直到 tension=10 | 不再上涨，toast "已达最高" | 按钮变为禁用态 |
+| 3 | 点感情线的 ⏸️暂停 | status→dormant | toast "感情线已暂停" |
+| 4 | 点伏笔的 ✅现在回收 | status→resolved, actual_payoff=当前章 | 从活跃列表消失 |
+| 5 | 点伏笔的 ⏪推迟5章 | planned_payoff += 5 | toast "已推迟到 Ch17" |
+| 6 | 点 ⬆️提优 (priority=3) | priority→4 | 按钮和徽章同步更新 |
+| 7 | 点 ⬇️降优 (priority=1) | 不再下降，toast "已是最低" | 按钮禁用 |
+
+### 8.7 UX 专项测试 — 视觉图编辑
+
+| # | 操作 | 预期 | 验证方式 |
+|:--|:-----|:-----|:--------|
+| 1 | 在时间线图上拖拽事件节点向右 50px | 对应章节号更新，500ms 后触发 API 保存 | 浏览器 DevTools 看 network |
+| 2 | 拖拽事件节点同时按 Shift | 锁定 Y 轴（只改章节不改紧张度） | 视觉验证 |
+| 3 | 在关系图上双击角色节点 | 弹出编辑浮窗，字段回填当前值 | 视觉验证 |
+| 4 | 右键泳道空白处 → "新增事件" | 弹出新建表单，自动填入当前章节号 | 视觉验证 |
+| 5 | 拖拽过程中鼠标移出 SVG 区域 | 拖拽取消，数据不变 | 无 API 调用 |
+
+### 8.8 UX 专项测试 — 智能建议
+
+| # | 场景 | 预期建议 | 验证方式 |
+|:--|:-----|:--------|:--------|
+| 1 | 复仇主线已 6 章无进展 | "建议升温" 卡片出现 | 手动改 storygraph 后刷新面板 |
+| 2 | 伏笔2章后到期 | "即将到期 [推迟] [回收]" 卡片 | 同上 |
+| 3 | 所有线程 tension 平均 ≤3 | "建议制造冲突" 卡片 | 同上 |
+| 4 | 点建议的 [执行] | 等同于快捷操作，数据更新 | 检查 storygraph.json |
+
+### 8.9 UX 专项测试 — 撤销
+
+| # | 操作序列 | 撤销后状态 |
+|:--|:--------|:---------|
+| 1 | 升温 → 撤销 | tension 恢复原值 |
+| 2 | 回收伏笔 → 撤销 | status 恢复为 planted/hinted |
+| 3 | 新增剧情线 → 撤销 | 线程从列表消失 |
+| 4 | 删除剧情线 → 撤销 | 线程恢复 |
+| 5 | 执行两条操作 → 撤销 → 撤销 | 数据回到最初状态 |
+
 ---
 
 ## 九、风险与缓解
@@ -417,6 +473,9 @@ async def update_thread(novel_id: str, thread_id: str, body: dict):
 | 字段类型校验不严导致 JSON 损坏 | 中 | API 层做严格字段验证（type/status enum + priority range + string length） |
 | 编辑后的数据与 LLM 自动提取冲突 | 低 | LLM 提取走 `apply_extraction()`，只做增量更新不覆盖用户手动设置的值（后续可加 merge 策略） |
 | 前端表单状态泄漏（切换 tab 丢失编辑） | 低 | 切换 tab 前检测是否有未保存编辑 → 弹确认框 |
+| 自然语言解析误匹配 | 中 | 显示解析结果供用户确认再执行，不自动执行；模糊匹配用 Levenshtein 距离阈值 |
+| 拖拽编辑误触发（用户只想平移画布） | 低 | 区分：单击+拖拽=编辑，按住 Alt+拖拽=移画布；事件节点拖拽需 >10px 才触发 |
+| 撤销链过长导致内存问题 | 低 | 只保留最近 10 个操作，超出则丢弃最早的 |
 
 ---
 
