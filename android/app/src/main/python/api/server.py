@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 import os
+import re
 import urllib.parse
 
 # 提高递归深度限制，防止大型 JSON 解析时触发 RecursionError
@@ -47,7 +48,7 @@ app.add_middleware(
 
 engine = NovelEngine()
 
-# 前端文件目录 — Android优先读环境变量(Chaquopy只有2层),PC走3层
+# 前端文件目录 — 使用 abspath 防止 __file__ 为相对路径时解析错误
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _env_web = os.environ.get("NOVELGEN_WEB_DIR", "")
 WEB_DIR = _env_web if _env_web else os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(_HERE))), "web")
