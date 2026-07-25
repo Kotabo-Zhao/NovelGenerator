@@ -534,19 +534,82 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 }
 .sg-pulse{animation: sgPulse 2s ease-in-out infinite}
 
+/* ── v3.0: Android PWA 响应式 ── */
 @media(max-width:768px){
-  .sg-dashboard{grid-template-columns:repeat(2,1fr)}
+  /* Layout */
+  .main-layout{flex-direction:column!important}
+  .sidebar{width:100%!important;max-height:200px;overflow-y:auto;border-right:none!important;border-bottom:1px solid var(--border)}
+  .nav-list{display:flex;flex-wrap:wrap;gap:4px;padding:4px}
+  .nav-item{flex:0 0 auto;font-size:12px;padding:4px 8px}
+  
+  /* Forms */
+  .form-row{flex-direction:column;gap:8px}
+  .form-group{width:100%}
+  select,input,textarea{font-size:16px!important;padding:10px 12px} /* prevent iOS zoom */
+  
+  /* StoryGraph */
+  .sg-dashboard{grid-template-columns:repeat(2,1fr);gap:6px}
   .sg-grid-2{grid-template-columns:1fr}
-  .sg-char-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
-  .sg-subtabs{font-size:12px}
-  .sg-subtab{padding:6px 10px;font-size:12px}
-  .sg-relation-svg-wrap{height:380px}
-  .sg-timeline-svg-wrap{height:340px}
+  .sg-char-grid{grid-template-columns:repeat(2,1fr)}
+  .sg-subtabs{flex-wrap:wrap;gap:2px}
+  .sg-subtab{padding:6px 8px;font-size:11px}
+  .sg-relation-svg-wrap{height:320px}
+  .sg-timeline-svg-wrap{height:280px}
+  .sg-toolbar{flex-wrap:wrap;gap:4px}
+  
+  /* Canvas */
+  .sg-canvas-wrap{height:350px}
+  
+  /* Cards */
+  .card{padding:12px}
+  .btn{padding:8px 14px;font-size:13px}
+  
+  /* Reading */
+  .reading-container{flex-direction:column}
+  .preview-area{max-height:50vh}
+  
+  /* Toast */
+  .toast-overlay{align-items:flex-end}
+  .toast-box{width:90%;margin-bottom:20px}
+  
+  /* Wheel */
+  .sg-wheel-input-row{flex-direction:column;align-items:stretch}
+  .sg-wheel-input{font-size:16px}
+  
+  /* Chapter controls */
+  .sg-chapter-slider{width:100%;justify-content:center}
 }
+
+/* Phone-specific */
+@media(max-width:480px){
+  .sg-dashboard{grid-template-columns:1fr}
+  .sg-char-grid{grid-template-columns:1fr}
+  .sg-stat-num{font-size:22px}
+  .sg-tab{padding:4px 10px;font-size:11px}
+  h1{font-size:20px}
+  .card-title{font-size:14px}
+  .btn-ghost{padding:4px 6px;font-size:10px}
+  .sg-edit-row{flex-direction:column;align-items:stretch}
+  .sg-edit-label{text-align:left}
+}
+
+/* PWA standalone mode */
+@media(display-mode: standalone){
+  body{padding-top:env(safe-area-inset-top)}
+  .sidebar{padding-top:env(safe-area-inset-top)}
+}
+
+/* PWA install banner */
+.pwa-install-banner{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--accent);color:#fff;padding:12px 16px;z-index:999;font-size:14px;text-align:center;cursor:pointer}
+.pwa-install-banner.show{display:block}
 </style>
 </head>
 <body>
 <div id="app">
+  <!-- PWA Install Banner -->
+  <div id="pwa-install-banner" class="pwa-install-banner" onclick="installPWA()">
+    📱 添加到主屏幕 — 像原生App一样使用
+  </div>
   <!-- Toast -->
   <div v-if="toast.visible" class="toast-overlay" @click.self="toast.visible=false">
     <div class="toast-box">
@@ -1830,6 +1893,16 @@ const app = createApp({
     const currentView = ref('shelf');
     const novels = ref([]); const activeNovel = ref(null);
     const planResult = ref(null); const error = ref(''); const preview = ref(null);
+    const outlinePreview = ref(null); const sgMiniExpanded = ref(false);
+    function buildOutlinePreview(plan) {
+      if (!plan?.outline?.volumes) return null;
+      let totalCh = 0; const lines = [];
+      for (const v of (plan.outline.volumes||[])) {
+        const chs = v.chapters||[]; totalCh += chs.length;
+        lines.push({vol:v.title||'?', act:v.act||'', count:chs.length, first:(chs[0]?.summary||'').substring(0,30)});
+      }
+      return {volumes:lines, total:totalCh};
+    }
     const toast = reactive({ visible:false, title:'', message:'', icon:'⚠️' });
     const abortCtrl = ref(null);
     const styleCategories = ref({}); const exportSelected = reactive({});
@@ -3477,6 +3550,22 @@ if ('serviceWorker' in navigator) {
       }
     });
   }).catch(e => console.log('SW failed:', e));
+}
+
+// ── PWA Install ──
+let pwaDeferredPrompt;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  pwaDeferredPrompt = e;
+  document.getElementById('pwa-install-banner').classList.add('show');
+});
+function installPWA() {
+  if (!pwaDeferredPrompt) return;
+  pwaDeferredPrompt.prompt();
+  pwaDeferredPrompt.userChoice.then(() => {
+    document.getElementById('pwa-install-banner').classList.remove('show');
+    pwaDeferredPrompt = null;
+  });
 }
 </script>
 </body>
