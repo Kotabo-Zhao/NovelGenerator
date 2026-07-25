@@ -403,6 +403,69 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sg-edit-input:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px rgba(99,102,241,.15)}
 .sg-edit-range{flex:1;height:4px;-webkit-appearance:none;appearance:none;background:var(--bg2);border-radius:2px;outline:none}
 .sg-edit-range::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer}
+
+/* ── v2.6: 剧情画布 ── */
+.sg-canvas-wrap{position:relative;width:100%;height:520px;overflow:hidden;border-radius:var(--radius-xs);
+  background:radial-gradient(ellipse at center, var(--bg2) 0%, var(--bg) 100%);cursor:grab;user-select:none}
+.sg-canvas-wrap:active{cursor:grabbing}
+.sg-canvas-wrap.panning{cursor:grabbing}
+.sg-canvas-inner{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}
+.sg-canvas-grid{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;
+  background-image:
+    linear-gradient(var(--border) 1px,transparent 1px),
+    linear-gradient(90deg,var(--border) 1px,transparent 1px);
+  background-size:40px 40px;opacity:.08}
+.sg-canvas-axis{position:sticky;top:0;z-index:5;height:32px;background:var(--bg);border-bottom:2px solid var(--border);
+  display:flex;align-items:flex-end;padding-bottom:4px}
+.sg-canvas-axis .axis-tick{position:absolute;bottom:0;font-size:10px;font-weight:700;color:var(--text3);transform:translateX(-50%);
+  padding-bottom:6px;border-left:1px solid var(--border);height:12px}
+.sg-canvas-axis .axis-tick.major{color:var(--accent);font-size:11px;border-left-color:var(--accent)}
+
+/* 泳道 */
+.sg-canvas-lane{position:absolute;left:0;right:0;height:64px;border-bottom:1px solid var(--border)}
+.sg-canvas-lane-label{position:absolute;left:8px;top:4px;font-size:12px;font-weight:700;z-index:2;
+  background:var(--bg);padding:2px 8px;border-radius:4px;white-space:nowrap}
+.sg-canvas-lane-line{position:absolute;left:0;right:0;top:32px;border-top:1px dashed var(--border);opacity:.3;pointer-events:none}
+
+/* 事件节点 */
+.sg-event-node{position:absolute;transform:translate(-50%,-50%);cursor:grab;z-index:10;
+  transition:filter .2s,transform .15s;will-change:transform}
+.sg-event-node:hover{z-index:20;filter:drop-shadow(0 0 12px currentColor)}
+.sg-event-node.dragging{cursor:grabbing;z-index:30;filter:drop-shadow(0 4px 16px rgba(0,0,0,.4));
+  transform:translate(-50%,-50%) scale(1.15)}
+.sg-event-node.selected .node-ring{stroke:var(--accent);stroke-width:3;stroke-dasharray:6,3;
+  animation: ringRotate 4s linear infinite}
+@keyframes ringRotate{to{stroke-dashoffset:-18}}
+.sg-event-node .node-tension-bar{position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);
+  height:4px;border-radius:2px;transition:width .3s;min-width:20px}
+
+/* 右键菜单 */
+.sg-context-menu{position:fixed;z-index:100;background:var(--card);border:1px solid var(--border);
+  border-radius:var(--radius-xs);padding:4px 0;min-width:140px;box-shadow:0 8px 32px rgba(0,0,0,.3);
+  backdrop-filter:blur(12px);animation:menuIn .15s ease}
+@keyframes menuIn{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
+.sg-context-menu .menu-item{padding:8px 16px;font-size:12px;cursor:pointer;color:var(--text2);display:flex;align-items:center;gap:8px;transition:all .1s}
+.sg-context-menu .menu-item:hover{background:var(--accent);color:#fff}
+.sg-context-menu .menu-item.danger:hover{background:var(--red)}
+.sg-context-menu .menu-divider{height:1px;background:var(--border);margin:4px 0}
+
+/* 拖拽预览 */
+.sg-drag-preview{position:fixed;z-index:200;pointer-events:none;font-size:11px;color:var(--accent);
+  background:var(--bg);border:1px solid var(--accent);border-radius:4px;padding:4px 10px;
+  box-shadow:0 4px 16px rgba(0,0,0,.3);white-space:nowrap}
+
+/* 画布 toast */
+.sg-canvas-toast{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:50;
+  background:var(--accent);color:#fff;padding:6px 18px;border-radius:20px;font-size:12px;font-weight:600;
+  box-shadow:0 4px 16px rgba(0,0,0,.3);animation:toastIn .3s ease, toastOut .3s ease 1.5s forwards;
+  pointer-events:none}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0}}
+
+/* 连线预览 */
+.sg-connect-line{position:absolute;z-index:25;pointer-events:none;border-top:2px dashed var(--accent);
+  transform-origin:0 0;opacity:.8;animation:dashMove .5s linear infinite}
+@keyframes dashMove{to{stroke-dashoffset:-12}}
 .sg-glow-node{transition:all .25s cubic-bezier(.4,0,.2,1)}
 .sg-glow-node:hover{filter:url(#glowStrong)}
 .sg-edge-line{transition:all .25s cubic-bezier(.4,0,.2,1)}
@@ -908,6 +971,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </button>
               <button class="sg-subtab" :class="{active:sgSubTab==='timeline'}" @click="sgSubTab='timeline'">
                 📈 剧情线图
+              </button>
+              <button class="sg-subtab" :class="{active:sgSubTab==='canvas'}" @click="sgSubTab='canvas'">
+                🎨 画布
               </button>
             </div>
 
@@ -1435,6 +1501,79 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </div>
             </div>
 
+            <!-- ====== v2.6: 剧情画布 ====== -->
+            <div v-if="sgSubTab==='canvas'">
+              <div v-if="!plotTimeline.lanes?.length" class="text-center" style="padding:40px;color:var(--text3)">
+                <div style="font-size:36px;margin-bottom:8px">🎨</div>
+                <p class="text-sm">暂无剧情线数据，请先生成章节</p>
+              </div>
+              <div v-else class="sg-canvas-wrap" ref="canvasWrap"
+                   @click="hideCanvasMenu"
+                   @wheel.prevent="zoomCanvas"
+                   @mousedown="startCanvasPan"
+                   @mousemove="doCanvasPan"
+                   @mouseup="endCanvasPan"
+                   @mouseleave="endCanvasPan"
+                   @contextmenu.prevent>
+                <div class="sg-canvas-inner" ref="canvasInner" :style="{transform:`translate(${canvasPan.x}px,${canvasPan.y}px) scale(${canvasZoom})`}">
+                  <!-- 网格 -->
+                  <div class="sg-canvas-grid" :style="{width:canvasWidth+'px',height:canvasHeight+'px'}"></div>
+                  
+                  <!-- 时间轴 -->
+                  <div class="sg-canvas-axis" :style="{width:canvasWidth+'px'}">
+                    <div v-for="ch in canvasTickChapters" :key="'tick'+ch" class="axis-tick"
+                         :class="{major: ch % 5 === 0}"
+                         :style="{left:chToCanvasX(ch)+'px'}">Ch{{ ch }}</div>
+                  </div>
+                  
+                  <!-- 泳道 -->
+                  <div v-for="(lane, li) in plotTimeline.lanes" :key="'clane'+li"
+                       class="sg-canvas-lane"
+                       :style="{top:(40+li*canvasLaneH)+'px',width:canvasWidth+'px',background:lane.color+'08'}">
+                    <div class="sg-canvas-lane-label" :style="{color:lane.color}">
+                      {{ {'main_plot':'🔴','subplot':'🟡','character_arc':'🟣','mystery':'🔵'}[lane.type]||'⚪' }}
+                      {{ lane.name?.substring(0,12) }}
+                      <span style="font-size:10px;opacity:.6">P{{ lane.priority }}</span>
+                    </div>
+                    <div class="sg-canvas-lane-line" :style="{borderColor:lane.color}"></div>
+                    <!-- 事件节点 -->
+                    <div v-for="(ev, ei) in lane.events" :key="'cnev'+ei"
+                         class="sg-event-node"
+                         :class="{selected:canvasSelected===lane.id+':'+ei, dragging:canvasDragging===lane.id+':'+ei}"
+                         :style="{left:chToCanvasX(ev.chapter)+'px',top:'32px',color:tensionColor(ev.tension)}"
+                         @mousedown.stop="startDragCanvasNode($event, li, ei)"
+                         @dblclick.stop="editCanvasNode(li, ei)"
+                         @contextmenu.prevent.stop="showCanvasMenu($event, li, ei)">
+                      <svg width="32" height="32" viewBox="0 0 32 32">
+                        <circle class="node-ring" cx="16" cy="16" r="12" fill="none" :stroke="lane.color" stroke-width="2" opacity=".3"/>
+                        <circle cx="16" cy="16" :r="6+ev.tension*0.5" :fill="tensionColor(ev.tension)" :stroke="lane.color" stroke-width="2"/>
+                      </svg>
+                      <div style="position:absolute;bottom:-16px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:600;
+                        color:var(--text2);white-space:nowrap;text-shadow:0 1px 2px var(--bg)">{{ ev.event?.substring(0,6) }}</div>
+                      <div class="node-tension-bar" :style="{width:(ev.tension||5)*3+'px',background:tensionColor(ev.tension)}"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 拖拽预览标签 -->
+                <div v-if="canvasDragging" class="sg-drag-preview" :style="{left:canvasDragX+'px',top:canvasDragY-30+'px'}">
+                  Ch{{ canvasDragCh }} · 紧张度 {{ canvasDragTension }}
+                </div>
+
+                <!-- 画布 toast -->
+                <div v-if="canvasToast" class="sg-canvas-toast">{{ canvasToast }}</div>
+
+                <!-- 右键菜单 -->
+                <div v-if="canvasMenu.show" class="sg-context-menu" :style="{left:canvasMenu.x+'px',top:canvasMenu.y+'px'}" @click.stop>
+                  <div class="menu-item" @click="canvasMenuAction('edit')">✏️ 编辑事件</div>
+                  <div class="menu-item" @click="canvasMenuAction('heat')">🔥 升温</div>
+                  <div class="menu-item" @click="canvasMenuAction('cool')">❄️ 降温</div>
+                  <div class="menu-divider"></div>
+                  <div class="menu-item danger" @click="canvasMenuAction('delete')">🗑️ 删除</div>
+                </div>
+              </div>
+            </div>
+
             <!-- 空状态 -->
             <div v-if="!sgCalibration && !sgThreads.length && sgSubTab==='overview'" class="text-center" style="padding:40px;color:var(--text3)">
               <div style="font-size:36px;margin-bottom:12px">🔍</div>
@@ -1685,6 +1824,125 @@ const app = createApp({
     const editState = reactive({ type:null, id:null, data:{} });
     const editShowForm = reactive({ thread:false, foreshadow:false });
     const quickDoing = ref(null);  // which quick action is in progress
+
+    // ── v2.6: 画布编辑器 ──
+    const canvasZoom = ref(1);
+    const canvasPan = reactive({x:0, y:0});
+    const canvasPanning = ref(false);
+    const canvasPanStart = reactive({x:0,y:0,px:0,py:0});
+    const canvasWrap = ref(null); const canvasInner = ref(null);
+    const canvasSelected = ref(null);
+    const canvasDragging = ref(null);
+    const canvasDragStart = reactive({x:0, y:0, nx:0, ny:0});
+    const canvasDragX = ref(0); const canvasDragY = ref(0);
+    const canvasDragCh = ref(0); const canvasDragTension = ref(0);
+    const canvasToast = ref('');
+    const canvasMenu = reactive({show:false, x:0, y:0, lane:0, idx:0});
+    
+    const canvasLaneH = 70;
+    const canvasWidth = computed(() => Math.max(1200, plotTimeline.value.chapter_range.max * 60 + 200));
+    const canvasHeight = computed(() => 40 + plotTimeline.value.lanes.length * canvasLaneH + 60);
+    const canvasTickChapters = computed(() => {
+      const r = plotTimeline.value.chapter_range;
+      const arr = [];
+      for (let c = r.min; c <= r.max; c++) arr.push(c);
+      return arr;
+    });
+    function chToCanvasX(ch) {
+      const r = plotTimeline.value.chapter_range;
+      const range = r.max - r.min || 1;
+      return 120 + ((ch - r.min) / range) * (canvasWidth.value - 200);
+    }
+    function tensionColor(v) {
+      return v<=3?'#3fb950':v<=5?'#58a6ff':v<=7?'#f0883e':'#f85149';
+    }
+    
+    function zoomCanvas(e) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.92 : 1.08;
+      canvasZoom.value = Math.max(0.3, Math.min(2.5, canvasZoom.value * delta));
+    }
+    function startCanvasPan(e) {
+      if (e.target.closest('.sg-event-node')) return;
+      canvasPanning.value = true;
+      canvasPanStart.x = e.clientX; canvasPanStart.y = e.clientY;
+      canvasPanStart.px = canvasPan.x; canvasPanStart.py = canvasPan.y;
+      canvasWrap.value?.classList.add('panning');
+    }
+    function doCanvasPan(e) {
+      if (canvasPanning.value) {
+        canvasPan.x = canvasPanStart.px + (e.clientX - canvasPanStart.x);
+        canvasPan.y = canvasPanStart.py + (e.clientY - canvasPanStart.y);
+        return;
+      }
+      if (!canvasDragging.value) return;
+      const dx = (e.clientX - canvasDragStart.x) / canvasZoom.value;
+      const r = plotTimeline.value.chapter_range;
+      const range = r.max - r.min || 1;
+      const rawCh = r.min + ((canvasDragStart.nx + dx - 120) / (canvasWidth.value - 200)) * range;
+      const snapCh = Math.max(r.min, Math.min(r.max, Math.round(rawCh)));
+      canvasDragX.value = e.clientX; canvasDragY.value = e.clientY;
+      canvasDragCh.value = snapCh;
+      canvasDragTension.value = Math.max(1, Math.min(10, Math.round(5 - (e.clientY - canvasDragStart.y) / 25)));
+    }
+    function endCanvasPan() {
+      if (canvasPanning.value) { canvasPanning.value = false; canvasWrap.value?.classList.remove('panning'); return; }
+      if (!canvasDragging.value) return;
+      const [lid, eidStr] = canvasDragging.value.split(':');
+      const ei = parseInt(eidStr);
+      const li = plotTimeline.value.lanes.findIndex(l => l.id === lid);
+      if (li >= 0 && ei >= 0) {
+        const lane = plotTimeline.value.lanes[li];
+        const ev = lane.events[ei];
+        const oldCh = ev.chapter;
+        ev.chapter = canvasDragCh.value;
+        ev.tension = canvasDragTension.value;
+        if (oldCh !== canvasDragCh.value) {
+          canvasToast.value = `Ch${oldCh} → Ch${canvasDragCh.value}`;
+          setTimeout(() => canvasToast.value = '', 2000);
+        }
+        saveCanvasEvent(li, ei);
+      }
+      canvasDragging.value = null;
+    }
+    
+    async function saveCanvasEvent(li, ei) {
+      if (!activeNovel.value) return;
+      const lane = plotTimeline.value.lanes[li];
+      const ev = lane.events[ei];
+      try {
+        await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/threads/'+encodeURIComponent(lane.id), {
+          method:'PUT', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({key_nodes: lane.events}),
+        });
+        engine.memory?.invalidate_all?.(activeNovel.value.id);
+      } catch(e) { console.warn('Canvas save failed:', e); }
+    }
+    
+    function showCanvasMenu(e, li, ei) {
+      canvasMenu.show = true;
+      canvasMenu.x = e.clientX; canvasMenu.y = e.clientY;
+      canvasMenu.lane = li; canvasMenu.idx = ei;
+      canvasSelected.value = plotTimeline.value.lanes[li].id + ':' + ei;
+    }
+    function hideCanvasMenu() { canvasMenu.show = false; }
+    function canvasMenuAction(action) {
+      const li = canvasMenu.lane, ei = canvasMenu.idx;
+      const lane = plotTimeline.value.lanes[li];
+      const ev = lane.events[ei];
+      if (action === 'heat') { ev.tension = Math.min(10, (ev.tension||5)+2); saveCanvasEvent(li,ei); canvasToast.value='🔥 已升温'; }
+      else if (action === 'cool') { ev.tension = Math.max(1, (ev.tension||5)-2); saveCanvasEvent(li,ei); canvasToast.value='❄️ 已降温'; }
+      else if (action === 'delete') { lane.events.splice(ei,1); saveCanvasEvent(li,ei); canvasToast.value='🗑️ 已删除'; }
+      else if (action === 'edit') { /* use existing edit for the thread */ }
+      canvasMenu.show = false;
+      setTimeout(() => canvasToast.value = '', 1800);
+      setTimeout(() => loadStoryGraph(0), 500);
+    }
+    function editCanvasNode(li, ei) {
+      const lane = plotTimeline.value.lanes[li];
+      startEdit('thread', lane.id);
+      sgSubTab.value = 'threads';
+    }
 
     function startEdit(type, id) {
       const d = sgData.value;
@@ -2865,7 +3123,15 @@ const app = createApp({
       timelineSvgWrap,zoomTimeline,startPanTimeline,doPanTimeline,endPanTimeline,
       // v2.5: 编辑器
       editState,quickDoing,startEdit,cancelEdit,saveEdit,hasEdit,
-      quickAction,deleteThread,createThread,createForeshadow };
+      quickAction,deleteThread,createThread,createForeshadow,
+      // v2.6: 画布
+      canvasZoom,canvasPan,canvasWrap,canvasInner,
+      canvasWidth,canvasHeight,canvasLaneH,canvasTickChapters,
+      chToCanvasX,tensionColor,
+      zoomCanvas,startCanvasPan,doCanvasPan,endCanvasPan,
+      canvasSelected,canvasDragging,canvasDragX,canvasDragY,canvasDragCh,canvasDragTension,
+      startDragCanvasNode,showCanvasMenu,hideCanvasMenu,canvasMenuAction,editCanvasNode,
+      canvasToast,canvasMenu };
     } catch(e) {
       console.error('SETUP ERROR:', e.message, e.stack);
       document.body.innerHTML = '<div style=\"padding:40px;color:red;font-size:16px;font-family:monospace\"><h2>❌ Setup 错误</h2><pre>' + (e.stack || e.message) + '</pre></div>';
