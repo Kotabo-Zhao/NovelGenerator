@@ -630,6 +630,9 @@ class NovelEngine:
             genre = plan.get("genre", "玄幻")
             style = plan.get("style", "热血爽文")
             target_words = chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS)
+            # v2.7: 快餐模式字数自适应 — 2500字/章(短剧化节奏)
+            if plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False):
+                target_words = 2500
 
             # 流式生成 + 增量保存（每500字写盘，防断线丢内容）
             full_text = ""

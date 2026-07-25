@@ -356,6 +356,24 @@ class SharedMemoryManager:
                 )
         except Exception:
             pass
+
+        # ── v2.7: 快餐模式上下文告警 ──
+        try:
+            plan_data = self.read("plan", novel_id)
+            is_fast_food = plan_data.get("_meta", {}).get("creative_input", {}).get("fast_food", False) if isinstance(plan_data, dict) else False
+            if is_fast_food:
+                parts.append(
+                    "## ⚡ 快餐模式告警\n\n"
+                    "本小说处于快餐模式。每章必须遵循爆款网文标准：\n"
+                    "- 前300字必须有冲突（被欺负/身份暴露/生死危机）\n"
+                    "- 300-1000字反转觉醒，1000-2200字打脸碾压，2200-3000字新危机\n"
+                    "- 每300字一个看点，一章内完成\"被欺负→反击→打脸\"闭环\n"
+                    "- 章末必须是金句钩子（能截图传播的短句）\n"
+                    "- 零心理描写，零环境描写（冲突场景除外），零铺垫\n"
+                    "- 对话不超过3轮就必须用动作打断\n"
+                )
+        except Exception:
+            pass
         
         return "\n\n---\n\n".join(parts)
 

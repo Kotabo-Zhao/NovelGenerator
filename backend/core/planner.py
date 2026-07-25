@@ -105,6 +105,7 @@ class Planner:
         target_words = creative_input.get("target_words", 500000)
         title = creative_input.get("title", "")
         normal_pacing = creative_input.get("normal_pacing", False)
+        fast_food = creative_input.get("fast_food", False)
 
         # 获取风格模板（支持自定义风格）
         if style_name.startswith("自定义") or style_name == "自定义风格":
@@ -118,7 +119,9 @@ class Planner:
 
         # v2.2: 节奏指令
         pacing_block = ""
-        if normal_pacing:
+        if fast_food:
+            pacing_block = "\n【节奏】🍔快餐模式 — 对标番茄爆款！每章2500字，每300字一个看点，每章至少3个冲突节点。章节结构必须：冲突开局(300字)→反转觉醒(700字)→打脸碾压(1200字)→更大危机(800字)。每章结尾必须是金句钩子。每3章一组：Ch1逆袭→Ch2升级→Ch3打脸大高潮。总章节数比正常模式多30%（节奏快，每章字数少，需要更多章节）。\n"
+        elif normal_pacing:
             pacing_block = "\n【节奏】正常节奏 — 铺陈充分，张弛有度，允许慢热铺垫和细节展开\n"
         else:
             pacing_block = "\n【节奏】快节奏 — 短平快！开篇即冲突，章章有事件推进，章末有强钩子，拒绝纯铺垫。每3章一小高潮，每5章一中高潮。对话简洁，描写精炼，世界观通过行动展现。\n"
@@ -343,6 +346,7 @@ class Planner:
         
         # v2.2: 节奏模式 — 默认快节奏(False)
         normal_pacing = creative_input.get("normal_pacing", False)
+        fast_food = creative_input.get("fast_food", False)
         
         # 构建节奏指令
         if normal_pacing:

@@ -225,6 +225,11 @@ class PacingChecker:
             has_reversal = any(kw in text for kw in ['反转','震惊','怎么可能','竟然是','原来','冷笑','不屑','跪下','饶命'])
             if not has_conflict: issues.append("快餐: 前1000字无冲突信号"); score -= 20
             if not has_reversal: issues.append("快餐: 全章无反转信号"); score -= 20
+            # 章末钩子检测：最后200字必须有钩子关键词
+            last200 = text[-200:] if len(text) > 200 else text
+            hook_keywords = ['突然','忽然','竟然','怎么可能','但是','然而','却','这时','那一刻','明天', '不知道','没想到','意味着','原来','正要','刚','谁知','不料','却发现','下一瞬']
+            has_hook = any(kw in last200 for kw in hook_keywords)
+            if not has_hook: issues.append("快餐: 章末无钩子(最后200字缺少悬念词)"); score -= 25
         else:
             if stats["dialogue_ratio"] > 50: issues.append(f"对话占比过高({stats['dialogue_ratio']}%)"); score -= 30
             elif stats["dialogue_ratio"] > 40: issues.append(f"对话偏多({stats['dialogue_ratio']}%)"); score -= 15
