@@ -25,24 +25,29 @@ class ServerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val apiKey = intent?.getStringExtra("api_key") ?: ""
         val logDir = filesDir.absolutePath
+        val statusFile = File(logDir, "novelgen_status.txt")
+        statusFile.delete()
+
         startForeground(1, NotificationCompat.Builder(this, "novelgen")
             .setContentTitle("小说工坊").setContentText("服务运行中")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true).setPriority(NotificationCompat.PRIORITY_LOW).build())
 
-        // Clear old status file
-        File(logDir, "novelgen_status.txt").delete()
-
         Thread {
             try {
                 if (!Python.isStarted()) Python.start(AndroidPlatform(this))
-                Python.getInstance().getModule("server_runner")
+                val result = Python.getInstance().getModule("server_runner")
                     .callAttr("start_server", apiKey, "127.0.0.1", 8899, logDir)
+
+                val status = result.get("status")?.toString() ?: "unknown"
+                if (status == "error") {
+                    // Error already written by Python
+                }
+                // If status is "done", uvicorn thread is starting — 
+                // the Python code writes "server_ready" when it's actually serving
             } catch (e: Exception) {
-                // Write error to status file
                 try {
-                    File(logDir, "novelgen_status.txt")
-                        .writeText("error_${e.message ?: "unknown"}")
+                    statusFile.writeText("error_${e.message ?: "unknown"}")
                 } catch (_: Exception) {}
             }
         }.start()
