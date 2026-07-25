@@ -1438,6 +1438,59 @@ async def quick_action(novel_id: str, body: dict):
     return result
 
 
+
+@app.get("/api/novels/{novel_id}/storygraph/export-html")
+async def export_storygraph_html(novel_id: str):
+    """Export storygraph as standalone HTML report"""
+    data = _read_novel_file(novel_id, "storygraph.json")
+    plan_path = os.path.join(engine.memory.get_novel_dir(novel_id), "plan.json")
+    plan = {}
+    if os.path.exists(plan_path):
+        with open(plan_path, "r", encoding="utf-8") as f: plan = json.load(f)
+    
+    threads = data.get("plot_threads", {})
+    foreshadows = data.get("foreshadow_ledger", {})
+    chars = data.get("char_snapshots", {})
+    title = plan.get("title", novel_id)
+    genre = plan.get("genre", "")
+    
+    html = f"""<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><title>剧情图谱 - {title}</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#1a1a2e;color:#e0e0e0}}
+h1{{color:#6366f1}}h2{{border-bottom:1px solid #333;padding-bottom:8px;margin-top:24px}}
+.thread{{background:#16213e;border-radius:8px;padding:12px;margin:8px 0;border-left:4px solid #6366f1}}
+.thread.main{{border-left-color:#f85149}}.thread.sub{{border-left-color:#f59e0b}}.thread.arc{{border-left-color:#8b5cf6}}
+.thread.mystery{{border-left-color:#06b6d4}}
+.tag{{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;margin:2px}}
+.node{{font-size:12px;color:#8b949e;margin:4px 0}}
+.fs{{background:#16213e;border-radius:6px;padding:8px;margin:4px 0;font-size:13px}}
+.char{{display:inline-block;background:#16213e;border-radius:6px;padding:8px 12px;margin:4px}}
+</style></head><body>
+<h1>{title}</h1><p>{genre} | {len(threads)} threads | {len(chars)} characters</p>
+<h2>Plot Threads</h2>
+"""
+    for tid, t in sorted(threads.items(), key=lambda x: -x[1].get("priority", 0)):
+        ttype = t.get("type", "subplot")
+        html += f"""<div class="thread {ttype}">
+<strong>{t.get('name','?')}</strong>
+<span class="tag">P{t.get('priority',1)}</span>
+<span class="tag">{t.get('status','?')}</span>
+<div style="margin:6px 0;height:3px;background:#333;border-radius:2px"><div style="height:100%;width:{t.get('current_tension',5)*10}%;background:{'#3fb950' if t.get('current_tension',5)<=3 else '#58a6ff' if t.get('current_tension',5)<=6 else '#f0883e' if t.get('current_tension',5)<=8 else '#f85149'};border-radius:2px"></div></div>
+"""
+        for n in t.get("key_nodes", []):
+            html += f'<div class="node">Ch{n.get("chapter","?")}: {n.get("event","")[:60]}</div>'
+        html += '</div>'
+    
+    html += '<h2>Characters</h2>'
+    for name, snap in chars.items():
+        html += f'<div class="char"><strong>{name}</strong> | {snap.get("current_location","?")} | {snap.get("current_emotion","?")}</div>'
+    
+    html += '<h2>Foreshadows</h2>'
+    for fid, f in foreshadows.items():
+        html += f'<div class="fs">{f.get("description","?")} | Ch{f.get("planted_chapter","?")}→Ch{f.get("planned_payoff_chapter","?")} | {f.get("status","?")}</div>'
+    
+    html += '</body></html>'
+    return HTMLResponse(content=html)
+
 # ── v2.8: 编辑阶段管理 ──
 
 @app.get("/api/novels/{novel_id}/storygraph/phase")

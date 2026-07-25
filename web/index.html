@@ -741,6 +741,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <button v-else class="btn btn-primary w-full" style="padding:12px;font-size:15px" @click="doCreate">
         生成大纲
       </button>
+      <!-- v2.8: 大纲预览 -->
+      <div v-if="outlinePreview" class="card mt-12" style="background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15)">
+        <div class="card-title" style="font-size:14px">📋 大纲预览 — {{ outlinePreview.total }}章</div>
+        <div v-for="v in outlinePreview.volumes" :key="v.vol" style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between">
+          <span style="color:var(--accent);font-weight:600">{{ v.vol }} <span style="font-size:10px;opacity:.6">{{ v.act }}</span></span>
+          <span style="color:var(--text2)">{{ v.count }}章 · {{ v.first }}</span>
+        </div>
+      </div>
 
       <!-- v2.3: 需求分析结果——简化版，避免复杂模板导致渲染崩溃 -->
       <div v-if="decomposeSummary" class="card" style="margin-top:12px;background:var(--bg2);border-color:var(--accent)">
@@ -844,7 +852,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <button class="btn btn-ghost btn-xs" @click="openOutline" style="font-size:12px">📋 编辑大纲</button>
         </div>
 
-        <!-- v2.3: 写作 / 剧情图谱 切换 -->
+        <!-- v2.8: chapter score -->
+        <div v-if="writing.qualityScore!==null" style="padding:4px 10px;margin-bottom:8px;border-radius:4px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px"
+             :style="{background:writing.qualityScore>=70?'rgba(63,185,80,.1)':writing.qualityScore>=50?'rgba(240,136,62,.1)':'rgba(248,81,73,.1)',color:writing.qualityScore>=70?'#3fb950':writing.qualityScore>=50?'#f0883e':'#f85149'}">
+          📊 Score: {{ writing.qualityScore }}/100
+          <span v-if="writing.qualityIssues?.length" style="font-weight:400;font-size:11px">{{ writing.qualityIssues[0] }}</span>
+        </div>
+        <!-- v2.3: writing / storygraph switch -->
         <div class="sg-tabs">
           <button class="sg-tab" :class="{active:writing.activeTab==='write'}" @click="writing.activeTab='write'">✍️ 写作</button>
           <button class="sg-tab" :class="{active:writing.activeTab==='storygraph'}" @click="switchToStoryGraph">🔍 剧情图谱</button>
@@ -1932,10 +1946,13 @@ const app = createApp({
     }
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false });
+// v2.8: preference persistence
+try { const saved = JSON.parse(localStorage.getItem('ng_prefs')||'{}'); Object.assign(form, saved); } catch(e) {}
+function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:form.genre,style:form.style,normalPacing:form.normalPacing,fastFood:form.fastFood})); }
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.3: 默认启用原子化生成
-    const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
+    const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write', qualityScore:null, qualityIssues:[] });
 
     // v2.3: 剧情图谱
     const sgLoading = ref(false);
@@ -1951,6 +1968,7 @@ const app = createApp({
     const sgExpandedForeshadow = ref(null);
     const sgExpandedChar = ref(null);
     const sgExpandedArc = ref(null);
+    const sgMiniExpanded = ref(false);
 
     // v2.5: 编辑器状态
     const editState = reactive({ type:null, id:null, data:{} });
@@ -2951,7 +2969,7 @@ const app = createApp({
             if (!decomposeSummary.value) decomposeSummary.value = {};
             decomposeSummary.value = { ...decomposeSummary.value, name_warning: evt.mismatches, name_suggestion: evt.suggestion };
           }
-          else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); }
+          else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); outlinePreview.value=buildOutlinePreview(evt.plan); }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
@@ -2966,6 +2984,7 @@ const app = createApp({
       planResult.value=null;
       let next=1; while(next<=total && done.includes(next)) next++;
       writing.chapter=Math.min(next, total); writing.content=''; writing.done=false;
+      sgMiniExpanded.value=false; loadStoryGraph(0);
       currentView.value='write';
       batchStart.value=Math.min(next, total); batchEnd.value=Math.min(total, next+9);
       // 异步加载plan和章节内容
@@ -3051,7 +3070,7 @@ const app = createApp({
             chapterProgress.value = 85;
             chapterProgressLabel.value = `${evt.verdict||''} · ${evt.overall_score||0}分`;
           }
-          else if(evt.type==='text'){
+          else if(evt.type==='quality_warning'){ writing.qualityScore=evt.score; writing.qualityIssues=evt.issues||[]; } else if(evt.type==='quality_retry'){ writing.qualityScore=evt.score_after; } else if(evt.type==='text'){
             writing.content+=evt.content; chapterProgress.value=Math.min(95, Math.round(writing.content.length/targetChars*100));
             chapterProgressLabel.value=`${writing.content.length}字`;
             nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
@@ -3391,7 +3410,7 @@ const app = createApp({
       switchToStoryGraph,loadStoryGraph,
       sgSubTab,sgChapterFilter,sgThreadFilter,sgForeshadowFilter,
       sgExpandedThread,sgExpandedForeshadow,sgExpandedChar,sgExpandedArc,
-      filteredThreads,filteredForeshadows,
+      filteredThreads,filteredForeshadows,sgMiniExpanded,outlinePreview,buildOutlinePreview,
       // v2.4: 可视化
       sgHoveredChar,sgHoveredEdge,sgHoveredEvent,
       relationViewBox,relationNodes,relationEdges,relationGraph,
