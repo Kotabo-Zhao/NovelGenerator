@@ -62,7 +62,7 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。你拥有完全的�
 ### 三态情感弧线（每章必须走完）
 17. **开篇·压抑态（积蓄期待）**: 不要一上来就高潮。前 1/3 用来堆障碍、制造信息差、让读者心里冒出"然后呢"——但不要直接写出来，让场景本身制造这种悬念。
 18. **中段·爆发态（情感释放）**: 本章核心冲突在此引爆。冲突对撞（正面对决/价值观碰撞）、反转揭示（预期违背/身份揭露）、节奏加速（句式缩短、场景切换加快）。
-19. **结尾·余韵态（意犹未尽）**: 不给大团圆结尾。要么用意象留白（一个具体的视觉残像），要么余波刚显现就掐断，要么用新信息制造深层不安。
+19. **结尾·收束钩（必须写完再抛钩）**: 本章的核心事件必须先完成收束（冲突有阶段性结果），再在结尾处植入下一章的钩子。绝不能在写到一半时突然停止——读者会以为页面出bug了。正确做法：事件收束 → 留一个「但……」级的悬念 → 自然结束。错误做法：战斗打到一半、对话说到关键处就断章。
 
 ### 场景导演（选一种在本章主导，可混合）
 20. **动作场景**: 快节奏。短句为主（≤12字占比>40%）。动作链: 感知→反应→动作→结果。视觉描写 > 心理描写。电影化写作: 选择场景中一个具体的、不寻常的视觉细节来承载情绪——不是写"他害怕了"，是写他看到了什么。
@@ -349,6 +349,34 @@ class Writer:
 
         log.info(f"Writing chapter: {genre}/{style}/{writing_mode}, pass 1/2 (draft)")
         
+        # v2.11: 提取桥接指令，放在 user prompt 最前面（LLM 对 user 消息开头最敏感）
+        bridge_section = ""
+        main_context = context
+        bridge_marker = "## 🔗 第"
+        opening_marker = "- 🎬 开场场景:"
+        
+        if bridge_marker in context:
+            # 桥接区独立提取
+            bridge_start = context.find(bridge_marker)
+            # 找到桥接区结束（下一个 ## 或 L2c 或 L5 或 本章大纲）
+            next_section = context.find("\n## ", bridge_start + len(bridge_marker))
+            if next_section > bridge_start:
+                bridge_section = context[bridge_start:next_section].strip() + "\n\n"
+                main_context = context[:bridge_start] + context[next_section:]
+        
+        # 开场场景也提取到最前面
+        if opening_marker in main_context:
+            os_idx = main_context.find(opening_marker)
+            os_end = main_context.find("\n", os_idx)
+            if os_end > os_idx:
+                opening_line = main_context[os_idx:os_end].strip()
+                if "开场场景" in opening_line:
+                    bridge_section = opening_line + "\n\n" + bridge_section
+                    main_context = main_context[:os_idx] + main_context[os_end+1:]
+        
+        # 构建 user prompt：桥接指令在最前面
+        user_prompt = bridge_section + f"请根据以下上下文和本章大纲，开始写正文：\n\n{main_context}"
+        
         draft = ""
         finish_reason = "unknown"
         # max_tokens 根据目标字数动态计算，长章节不受 6000 硬限制
@@ -357,7 +385,7 @@ class Writer:
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"请根据以下上下文和本章大纲，开始写正文：\n\n{context}"},
+                {"role": "user", "content": user_prompt},
             ],
             temperature=0.85,
             max_tokens=safe_max_tokens,
