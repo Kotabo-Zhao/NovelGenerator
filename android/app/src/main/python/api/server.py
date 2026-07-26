@@ -4,7 +4,6 @@ import asyncio
 import logging
 import sys
 import os
-import re
 import urllib.parse
 
 # 提高递归深度限制，防止大型 JSON 解析时触发 RecursionError
@@ -49,9 +48,8 @@ app.add_middleware(
 engine = NovelEngine()
 
 # 前端文件目录 — 使用 abspath 防止 __file__ 为相对路径时解析错误
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_env_web = os.environ.get("NOVELGEN_WEB_DIR", "")
-WEB_DIR = _env_web if _env_web else os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(_HERE))), "web")
+_WEB_BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+WEB_DIR = os.path.join(_WEB_BASE, "web")
 
 
 # ── Frontend Route (仅/，子路径走 StaticFiles) ──
@@ -348,8 +346,13 @@ async def _sse_with_heartbeat(event_generator):
                     event = {"type": "warning", "message": f"内部数据格式异常: {type(event).__name__}"}
                 await q.put(("event", event))
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             log.exception("SSE producer crashed")
-            await q.put(("error", str(e)))
+            # v2.10: 返回异常类型以便快速定位
+            err_msg = f"生成过程出错 [{type(e).__name__}]: {str(e)[:300]}"
+            log.error(f"SSE crash details:\n{tb}")
+            await q.put(("error", err_msg))
         await q.put(("done", None))
     
     async def heartbeater():
@@ -430,25 +433,15 @@ async def generate_chapter_atomic(req: GenerateChapterRequest):
 
 @app.post("/api/novels/{novel_id}/generate/batch")
 async def generate_batch(novel_id: str, req: dict):
-    """批量生成章节 (SSE 流式进度 + v2.8 断点续传)"""
+    """批量生成章节 (SSE 流式进度)"""
     start = req.get("start_chapter", 1)
     end = req.get("end_chapter", 1)
     writing_mode = req.get("writing_mode", "webnovel")
     
     async def event_stream():
         try:
-            # ── v2.8: 断点续传 — 检查已完成的章节 ──
-            state = engine.memory.get_novel_state(novel_id)
-            completed = state.get("completed_chapters", [])
-            already_done = [c for c in range(start, end + 1) if c in completed]
-            if already_done:
-                yield f"data: {json.dumps({'type':'resume','completed':len(already_done),'chapters':already_done[:10],'message':f'已跳过{len(already_done)}章已完成，从断点继续'}, ensure_ascii=False)}\n\n"
-            
             failed = []
             for ch_num in range(start, end + 1):
-                if ch_num in completed:
-                    continue  # 跳过已完成的
-                
                 yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
                 chapter_error = None
                 try:
@@ -460,8 +453,6 @@ async def generate_batch(novel_id: str, req: dict):
                             chapter_error = event.get("message", "未知错误")
                     if not chapter_error:
                         yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
-                        # v2.8: 每章完成立即更新断点
-                        completed.append(ch_num)
                 except Exception as ch_err:
                     chapter_error = str(ch_err)
                     log.warning(f"Batch chapter {ch_num} exception: {ch_err}")
@@ -469,14 +460,7 @@ async def generate_batch(novel_id: str, req: dict):
                 if chapter_error:
                     failed.append(ch_num)
                     yield f"data: {json.dumps({'type':'chapter_failed','chapter':ch_num,'error':chapter_error}, ensure_ascii=False)}\n\n"
-                    # v2.8: 失败后停止（避免连续失败浪费token）
-                    if len(failed) >= 2:
-                        yield f"data: {json.dumps({'type':'warning','message':'连续失败2章，已停止批量生成'}, ensure_ascii=False)}\n\n"
-                        break
-            
-            # v2.8: 返回续传信息
-            next_start = max(failed[0] if failed else end + 1, start)
-            yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end,'failed':failed,'resume_from':next_start}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end,'failed':failed}, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("batch generate crashed")
             yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
@@ -956,12 +940,6 @@ async def get_storygraph(novel_id: str, chapter: int = 0):
                  0或省略 = 返回全部
     """
     data = _read_novel_file(novel_id, "storygraph.json")
-    
-    # v2.8: 如果 storygraph 为空，从 plan 的大纲中初始化
-    if not data.get("plot_threads") and not data.get("foreshadow_ledger"):
-        log.info(f"Storygraph empty for {novel_id}, initializing from plan outline")
-        data = _init_storygraph_from_plan(novel_id, data)
-    
     last_updated = data.get("last_updated_chapter", 0)
     version = data.get("version", 0)
     
@@ -1043,104 +1021,6 @@ def _compute_storygraph_stats(data: dict) -> dict:
         "tracked_characters": len(data.get("char_snapshots", {})),
         "causal_links": len(data.get("causal_links", [])),
     }
-
-
-def _init_storygraph_from_plan(novel_id: str, existing: dict) -> dict:
-    """从 plan.json 的大纲初始化 storygraph 数据结构"""
-    plan_path = os.path.join(engine.memory.get_novel_dir(novel_id), "plan.json")
-    if not os.path.exists(plan_path):
-        return existing
-    
-    try:
-        with open(plan_path, "r", encoding="utf-8") as f:
-            plan = json.load(f)
-    except Exception:
-        return existing
-    
-    outline = plan.get("outline", {})
-    volumes = outline.get("volumes", [])
-    characters = plan.get("characters", {})
-    
-    # 初始化剧情线：从大纲提取主题/线索
-    threads = existing.get("plot_threads", {})
-    thread_idx = 0
-    
-    # 主线
-    main_plot_name = plan.get("title", "主线") + "·主线"
-    line_types = ["main_plot", "subplot", "character_arc", "mystery"]
-    line_names = [main_plot_name, "暗线·伏笔", "角色弧·成长", "悬疑·揭秘"]
-    
-    for vol in volumes:
-        vol_title = vol.get("title", "")
-        act = vol.get("act", "")
-        chapters = vol.get("chapters", [])
-        
-        for ch in chapters:
-            ch_num = ch.get("number", 0)
-            summary = ch.get("summary", "")
-            chars = ch.get("characters", [])
-            hook = ch.get("hook", "")
-            
-            # 确保至少有主线
-            for i in range(min(2, len(line_names))):
-                tid = f"thread_{['main','sub','arc','myst'][i]:02d}"
-                if tid not in threads:
-                    threads[tid] = {
-                        "id": tid, "name": line_names[i],
-                        "type": line_types[i], "status": "active",
-                        "priority": 5 - i, "description": "",
-                        "key_nodes": [], "next_planned": "",
-                        "current_tension": 5, "characters": [],
-                    }
-                
-                # 添加关键事件节点
-                threads[tid]["key_nodes"].append({
-                    "chapter": ch_num,
-                    "event": summary[:30] + ("…" if len(summary) > 30 else ""),
-                    "tension": 5 + (i % 3),
-                })
-    
-    # 初始化角色快照
-    snaps = existing.get("char_snapshots", {})
-    protagonist = characters.get("protagonist", {})
-    if protagonist.get("name"):
-        snaps[protagonist["name"]] = {
-            "name": protagonist["name"],
-            "last_chapter_appeared": 0,
-            "current_location": "",
-            "current_power_level": "",
-            "status_effects": [],
-            "known_secrets": [],
-            "relationship_changes": [],
-            "current_emotion": "",
-            "active_goals": [protagonist.get("motivation", "")],
-        }
-    
-    supporting = characters.get("supporting", [])
-    for c in supporting[:8]:
-        name = c.get("name", "")
-        if name and name not in snaps:
-            snaps[name] = {
-                "name": name,
-                "last_chapter_appeared": 0,
-                "current_location": "",
-                "current_power_level": "",
-                "status_effects": [],
-                "known_secrets": [],
-                "relationship_changes": [],
-                "current_emotion": "",
-                "active_goals": [],
-            }
-    
-    existing["plot_threads"] = threads
-    existing["char_snapshots"] = snaps
-    existing["version"] = existing.get("version", 0) + 1
-    existing["editing_phase"] = "outline"
-    
-    # 保存到磁盘
-    _write_novel_file(novel_id, "storygraph.json", existing)
-    
-    return existing
 
 
 @app.get("/api/novels/{novel_id}/arcs")
@@ -1439,215 +1319,6 @@ async def quick_action(novel_id: str, body: dict):
     engine.memory.invalidate_all(novel_id)
     return result
 
-
-
-@app.get("/api/novels/{novel_id}/storygraph/export-html")
-async def export_storygraph_html(novel_id: str):
-    """Export storygraph as standalone HTML report"""
-    data = _read_novel_file(novel_id, "storygraph.json")
-    plan_path = os.path.join(engine.memory.get_novel_dir(novel_id), "plan.json")
-    plan = {}
-    if os.path.exists(plan_path):
-        with open(plan_path, "r", encoding="utf-8") as f: plan = json.load(f)
-    
-    threads = data.get("plot_threads", {})
-    foreshadows = data.get("foreshadow_ledger", {})
-    chars = data.get("char_snapshots", {})
-    title = plan.get("title", novel_id)
-    genre = plan.get("genre", "")
-    
-    html = f"""<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><title>剧情图谱 - {title}</title>
-<style>body{{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#1a1a2e;color:#e0e0e0}}
-h1{{color:#6366f1}}h2{{border-bottom:1px solid #333;padding-bottom:8px;margin-top:24px}}
-.thread{{background:#16213e;border-radius:8px;padding:12px;margin:8px 0;border-left:4px solid #6366f1}}
-.thread.main{{border-left-color:#f85149}}.thread.sub{{border-left-color:#f59e0b}}.thread.arc{{border-left-color:#8b5cf6}}
-.thread.mystery{{border-left-color:#06b6d4}}
-.tag{{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;margin:2px}}
-.node{{font-size:12px;color:#8b949e;margin:4px 0}}
-.fs{{background:#16213e;border-radius:6px;padding:8px;margin:4px 0;font-size:13px}}
-.char{{display:inline-block;background:#16213e;border-radius:6px;padding:8px 12px;margin:4px}}
-</style></head><body>
-<h1>{title}</h1><p>{genre} | {len(threads)} threads | {len(chars)} characters</p>
-<h2>Plot Threads</h2>
-"""
-    for tid, t in sorted(threads.items(), key=lambda x: -x[1].get("priority", 0)):
-        ttype = t.get("type", "subplot")
-        html += f"""<div class="thread {ttype}">
-<strong>{t.get('name','?')}</strong>
-<span class="tag">P{t.get('priority',1)}</span>
-<span class="tag">{t.get('status','?')}</span>
-<div style="margin:6px 0;height:3px;background:#333;border-radius:2px"><div style="height:100%;width:{t.get('current_tension',5)*10}%;background:{'#3fb950' if t.get('current_tension',5)<=3 else '#58a6ff' if t.get('current_tension',5)<=6 else '#f0883e' if t.get('current_tension',5)<=8 else '#f85149'};border-radius:2px"></div></div>
-"""
-        for n in t.get("key_nodes", []):
-            html += f'<div class="node">Ch{n.get("chapter","?")}: {n.get("event","")[:60]}</div>'
-        html += '</div>'
-    
-    html += '<h2>Characters</h2>'
-    for name, snap in chars.items():
-        html += f'<div class="char"><strong>{name}</strong> | {snap.get("current_location","?")} | {snap.get("current_emotion","?")}</div>'
-    
-    html += '<h2>Foreshadows</h2>'
-    for fid, f in foreshadows.items():
-        html += f'<div class="fs">{f.get("description","?")} | Ch{f.get("planted_chapter","?")}→Ch{f.get("planned_payoff_chapter","?")} | {f.get("status","?")}</div>'
-    
-    html += '</body></html>'
-    return HTMLResponse(content=html)
-
-# ── v2.8: 编辑阶段管理 ──
-
-@app.get("/api/novels/{novel_id}/storygraph/phase")
-async def get_phase(novel_id: str):
-    """获取当前编辑阶段"""
-    data = _read_novel_file(novel_id, "storygraph.json")
-    phase = data.get("editing_phase", "outline")
-    return {"phase": phase, "novel_id": novel_id}
-
-
-@app.post("/api/novels/{novel_id}/storygraph/phase")
-async def set_phase(novel_id: str, body: dict):
-    """设置编辑阶段（outline → writing 为单向锁定，不可逆）"""
-    new_phase = body.get("phase", "")
-    if new_phase not in ("outline", "writing"):
-        raise HTTPException(400, "phase 必须是 outline 或 writing")
-    
-    data = _read_novel_file(novel_id, "storygraph.json")
-    current = data.get("editing_phase", "outline")
-    
-    if current == "writing" and new_phase == "outline":
-        raise HTTPException(400, "大纲已锁定，不可回到编辑阶段")
-    
-    data["editing_phase"] = new_phase
-    _write_novel_file(novel_id, "storygraph.json", data)
-    engine.memory.invalidate_all(novel_id)
-    return {"ok": True, "phase": new_phase}
-
-
-# ── 自然语言指令解析 ──
-
-@app.post("/api/novels/{novel_id}/storygraph/parse-command")
-async def parse_command(novel_id: str, body: dict):
-    """解析自然语言指令为结构化操作列表"""
-    cmd = body.get("command", "").strip()
-    if not cmd:
-        raise HTTPException(400, "command 为必填字段")
-    
-    data = _read_novel_file(novel_id, "storygraph.json")
-    threads = data.get("plot_threads", {})
-    foreshadows = data.get("foreshadow_ledger", {})
-    chars = data.get("char_snapshots", {})
-    
-    changes = []
-    
-    # ── 关键词分解：把长指令按逗号/句号/换行拆分 ──
-    segments = re.split(r'[，,。；;、\n]', cmd)
-    segments = [s.strip() for s in segments if s.strip()]
-    
-    for seg in segments:
-        _match_thread_actions(seg, threads, changes)
-        _match_foreshadow_actions(seg, foreshadows, changes)
-        _match_character_actions(seg, chars, changes)
-    
-    # 去重（同一目标+动作只保留优先级最高的）
-    seen = set()
-    unique = []
-    for c in sorted(changes, key=lambda x: -x.get('priority', 0)):
-        key = (c.get('type',''), c.get('id',''), c.get('action',''))
-        if key not in seen:
-            seen.add(key)
-            unique.append(c)
-    
-    # 补充推论（升温→建议调状态）
-    for c in unique:
-        if c.get('type') == 'thread' and c.get('action') == 'heat_up':
-            tid = c['id']
-            t = threads.get(tid, {})
-            if t.get('status') in ('active', 'dormant'):
-                c['suggested'] = {'status': 'advancing', 'note': '建议状态改为"推进中"'}
-        elif c.get('type') == 'thread' and c.get('action') == 'pause':
-            c['suggested'] = {'priority': max(1, threads.get(c['id'],{}).get('priority',3)-1), 'note': '暂停时可适当降优'}
-    
-    return {
-        "command": cmd,
-        "changes": unique,
-        "summary": _summarize_changes(unique, threads, foreshadows, chars),
-        "count": len(unique),
-    }
-
-
-def _match_thread_actions(seg: str, threads: dict, changes: list):
-    """匹配线程操作"""
-    for tid, t in threads.items():
-        name = t['name']
-        if name not in seg:
-            continue
-        base = {"type": "thread", "id": tid, "name": name, "priority": 5}
-        
-        if re.search(r'升温|加热|更猛|更激烈|爆发|高潮', seg):
-            new_t = min(10, t.get('current_tension', 5) + 2)
-            changes.append({**base, "action": "heat_up", "label": f"🔥 {name} 升温 {t.get('current_tension',5)}→{new_t}", "new_tension": new_t})
-        elif re.search(r'降温|冷静|缓和|舒缓|放慢', seg):
-            new_t = max(1, t.get('current_tension', 5) - 2)
-            changes.append({**base, "action": "cool_down", "label": f"❄️ {name} 降温 {t.get('current_tension',5)}→{new_t}", "new_tension": new_t, "priority": 3})
-        elif re.search(r'暂停|搁置|放一放|先不管|按住', seg):
-            changes.append({**base, "action": "pause", "label": f"⏸️ {name} 暂停", "priority": 4})
-        elif re.search(r'恢复|继续|激活|重启', seg):
-            changes.append({**base, "action": "resume", "label": f"▶️ {name} 恢复", "priority": 4})
-        elif re.search(r'完结|完成|结束|回收', seg):
-            changes.append({**base, "action": "resolve", "label": f"✅ {name} 完结", "priority": 3})
-        elif re.search(r'提优|升优先|优先级.*?[四五5最高]|更重要|重点推进', seg):
-            new_p = min(5, t.get('priority', 3) + 1)
-            changes.append({**base, "action": "raise_priority", "label": f"⬆️ {name} 优先级 {t.get('priority',3)}→{new_p}", "new_priority": new_p, "priority": 4})
-        elif re.search(r'降优|降优先|优先级.*?[一二1最低]|不重要|边缘', seg):
-            new_p = max(1, t.get('priority', 3) - 1)
-            changes.append({**base, "action": "lower_priority", "label": f"⬇️ {name} 优先级 {t.get('priority',3)}→{new_p}", "new_priority": new_p, "priority": 3})
-
-
-def _match_foreshadow_actions(seg: str, foreshadows: dict, changes: list):
-    """匹配伏笔操作"""
-    for fid, f in foreshadows.items():
-        desc = f.get('description', '')
-        if len(desc) < 3: continue
-        key = desc[:4]
-        if key not in seg: continue
-        
-        if re.search(r'回收|揭示|揭露|现在回收|立刻回收', seg):
-            changes.append({"type": "foreshadow", "id": fid, "name": desc[:20], 
-                          "action": "resolve", "label": f"✅ 回收伏笔: {desc[:15]}", "priority": 5})
-        elif m := re.search(r'推迟\s*(\d+)\s*章', seg):
-            offset = int(m.group(1))
-            changes.append({"type": "foreshadow", "id": fid, "name": desc[:20],
-                          "action": "delay", "offset": offset, 
-                          "label": f"⏪ 推迟{offset}章: {desc[:15]}", "priority": 4})
-        elif m := re.search(r'提前.*?[到至]?\s*[Cc]h?\s*(\d+)', seg):
-            target = int(m.group(1))
-            changes.append({"type": "foreshadow", "id": fid, "name": desc[:20],
-                          "action": "advance", "target_chapter": target,
-                          "label": f"⏩ 提前到Ch{target}: {desc[:15]}", "priority": 4})
-
-
-def _match_character_actions(seg: str, chars: dict, changes: list):
-    """匹配角色操作"""
-    for name, snap in chars.items():
-        if name not in seg: continue
-        base = {"type": "character", "id": name, "name": name, "priority": 3}
-        
-        if m := re.search(rf'{re.escape(name)}.*?在(.+?)(?:[，,。；;、\n]|$)', seg):
-            loc = m.group(1).strip()
-            changes.append({**base, "action": "set_location", "value": loc,
-                          "label": f"📍 {name} → {loc}"})
-        for emo in ['愤怒','悲伤','恐惧','绝望','兴奋','喜悦','冷静','坚定','担忧','紧张']:
-            if emo in seg:
-                changes.append({**base, "action": "set_emotion", "value": emo,
-                              "label": f"😶 {name} → {emo}", "priority": 2})
-                break
-
-
-def _summarize_changes(changes: list, threads: dict, foreshadows: dict, chars: dict) -> str:
-    """生成变更摘要"""
-    if not changes:
-        return "未识别到任何变更。请尝试更具体的描述。"
-    labels = [c['label'] for c in changes if c.get('label')]
-    return f"识别到 {len(changes)} 项变更：\n" + "\n".join(f"  {l}" for l in labels)
 
 def _build_character_relation_graph(data: dict) -> dict:
     """构建人物关系图数据

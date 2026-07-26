@@ -37,6 +37,7 @@ from .beat_decomposer import BeatDecomposer, Beat
 from .atomic_writer import AtomicWriter
 from .beat_assembler import BeatAssembler
 from .storygraph_interventions import analyze_and_inject
+from .coherence_validator import validate_and_repair_outline
 
 log = logging.getLogger(__name__)
 
@@ -342,6 +343,26 @@ class NovelEngine:
                     await asyncio.to_thread(self._init_storygraph_and_arcs, plan, novel_dir)
                 except Exception as e:
                     log.warning(f"StoryGraph init skipped in stream: {e}")
+                
+                # ── v2.10: 大纲因果链验证 ──
+                try:
+                    result = await asyncio.to_thread(
+                        validate_and_repair_outline,
+                        plan.get("outline", {}), auto_fix=True
+                    )
+                    report = result["report"]
+                    plan["outline"] = result["outline"]
+                    # 如果有修复，重新保存 plan.json
+                    if report.get("fixes_applied"):
+                        atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
+                        log.info(f"CoherenceValidator: {len(report['fixes_applied'])} fixes applied, "
+                                f"score={report['score']}")
+                    if not report.get("passed"):
+                        yield {"type": "warning", "message": 
+                              f"大纲逻辑检查发现 {sum(1 for i in report.get('issues',[]) if i['severity']=='P0')} 个断裂点，"
+                              f"已自动修补 {len(report.get('fixes_applied',[]))} 处"}
+                except Exception as e:
+                    log.warning(f"CoherenceValidator skipped (non-fatal): {e}")
                 
                 log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)"
                         f" — requirements: {self._requirements.get(plan['title'], {}).get('total_count', 0)} subtasks")
@@ -746,6 +767,22 @@ class NovelEngine:
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
 
+            # ── v2.10: 提取章节桥接数据 → 保证下章接续 ──
+            try:
+                bridge = await asyncio.to_thread(
+                    self.memory.extract_bridge_from_chapter,
+                    full_text, chapter_num, chapter_outline,
+                    client=self.client, model=self.model,
+                )
+                if bridge:
+                    self.memory.save_bridge(novel_id, chapter_num, bridge)
+                    log.info(f"ChapterBridge saved for chapter {chapter_num}: "
+                            f"next_beat={bridge.get('next_beat','')[:60]}...")
+                else:
+                    log.warning(f"ChapterBridge extraction returned None for chapter {chapter_num}")
+            except Exception as e:
+                log.warning(f"ChapterBridge extraction failed (non-fatal): {e}")
+
             # 更新状态（v2.2.1: 加重试+验证）
             state = self.memory.get_novel_state(novel_id)
             completed = state.get("completed_chapters", [])
@@ -787,8 +824,37 @@ class NovelEngine:
             from .writer import _check_truncation
             is_trunc, reason = _check_truncation(full_text, target_words)
             if is_trunc:
-                log.warning(f"Chapter {chapter_num} may be incomplete: {reason}")
-                yield {"type": "warning", "message": f"本章可能不完整（{reason}），建议查看后重生成"}
+                log.warning(f"Chapter {chapter_num} incomplete after Writer retries: {reason}. "
+                           f"Engine fallback: retrying generation...")
+                yield {"type": "warning", "message": f"本章不完整（{reason}），自动重新生成..."}
+                
+                # Engine-level retry: 用更大的 max_tokens 重新调用 Writer
+                try:
+                    retry_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+                    retry_text = ""
+                    async for text in self.writer.write_stream(
+                        context=retry_context,
+                        genre=genre,
+                        style=style,
+                        target_words=max(target_words, int(len(full_text) * 1.5 / 2)),  # 调高目标
+                        writing_mode=writing_mode,
+                        normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                        fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                    ):
+                        retry_text += text
+                        yield {"type": "text", "content": text}
+                    
+                    is_trunc2, reason2 = _check_truncation(retry_text, target_words)
+                    if not is_trunc2 and len(retry_text) > len(full_text):
+                        full_text = retry_text
+                        log.info(f"Engine retry OK: {len(full_text)} chars")
+                        yield {"type": "status", "message": "重新生成完成，内容已补全"}
+                    else:
+                        log.warning(f"Engine retry also short ({len(retry_text)} chars), using best")
+                        if len(retry_text) > len(full_text):
+                            full_text = retry_text
+                except Exception as re:
+                    log.warning(f"Engine retry failed: {re}, keeping original")
 
             # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
             try:
@@ -803,26 +869,6 @@ class NovelEngine:
                 log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
             except Exception as e:
                 log.warning(f"ContextUpdater skipped: {e}")
-
-            # ── v2.8: 自动一致性校验 (L1, 无 LLM) ──
-            try:
-                ck_result = self.consistency_validator.validate_chapter(novel_id, chapter_num, full_text)
-                if ck_result.get('violations'):
-                    log.warning(f'Consistency L1: {len(ck_result["violations"])} issues in Ch{chapter_num}')
-                    for v in ck_result['violations'][:3]:
-                        log.warning(f'  - {v.get("type","?")}: {v.get("desc","")[:60]}')
-            except Exception as e:
-                log.warning(f'Consistency check skipped: {e}')
-
-            # ── v2.8: 每10章自动校准 ──
-            if chapter_num % 10 == 0:
-                try:
-                    from .autocalibrator import calibrate
-                    cal_result = calibrate(chapter_num, plan, sg_data)
-                    if cal_result:
-                        log.info(f'Auto-calibrate Ch{chapter_num}: {len(cal_result.get("issues",[]))} issues')
-                except Exception as e:
-                    log.warning(f'Auto-calibrate skipped: {e}')
 
             # ── 自动更新剧情图谱（storygraph）──
             try:
@@ -966,10 +1012,6 @@ class NovelEngine:
 
         except Exception as e:
             log.exception(f"Chapter generation failed: {e}")
-            if full_text and len(full_text) > 100:
-                formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}\n\n<!-- 生成异常中断 -->"
-                self.memory.save_chapter(novel_id, chapter_num, formatted)
-                yield {"type": "warning", "message": f"生成中断，已保存{len(full_text)}字部分内容"}
             yield {"type": "error", "message": str(e)}
         finally:
             # 清理并发锁
@@ -1025,6 +1067,38 @@ class NovelEngine:
                     "characters": ["主角"], "hook": "留下悬念",
                     "target_words": config.DEFAULT_CHAPTER_WORDS,
                 }
+            
+            # ── v2.9 Phase 0: 生成章节蓝图 ──
+            yield {"type": "status", "message": "生成章节蓝图..."}
+            
+            # 构建完整写作上下文（常规Writer用的五层上下文）
+            chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+            
+            # 用LLM生成300字叙事蓝图
+            blueprint = ""
+            try:
+                blueprint_prompt = f"""根据以下大纲和设定，写出本章的叙事蓝图。蓝图是一段200-300字的连贯叙事概要，描述本章从头到尾具体发生了什么。不是大纲条目，是用叙述语言把本章过一遍。
+
+{chapter_context[:2000]}
+
+只输出蓝图正文，不要标题。"""
+                
+                bp_resp = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "你是一位小说策划。把大纲转化为叙事蓝图。"},
+                        {"role": "user", "content": blueprint_prompt},
+                    ],
+                    temperature=0.7,
+                    max_tokens=600,
+                )
+                blueprint = bp_resp.choices[0].message.content.strip()
+                log.info(f"Blueprint generated for Ch{chapter_num}: {len(blueprint)} chars")
+            except Exception as e:
+                log.warning(f"Blueprint generation failed, using summary: {e}")
+                blueprint = chapter_outline.get("summary", "继续推进主线剧情")
+            
+            yield {"type": "blueprint", "text": blueprint[:100] + "..."}
             
             # ── Phase 1: 拆解为 beat ──
             yield {"type": "status", "message": f"拆解第{chapter_num}章为节拍..."}
@@ -1091,7 +1165,8 @@ class NovelEngine:
             
             beats_text = []
             async for beat_result in self.atomic_writer.write_beats_stream(
-                beats, char_context, style_guide, chapter_num
+                beats, char_context, style_guide, chapter_num,
+                blueprint=blueprint, chapter_context=chapter_context[:1200]
             ):
                 beats_text.append({
                     "index": beat_result["beat_index"],
@@ -1133,6 +1208,26 @@ class NovelEngine:
             
             # ── Phase 4: 保存 ──
             self.memory.save_chapter(novel_id, chapter_num, formatted)
+            
+            # ── 完整度验证 ──
+            from .writer import _check_truncation
+            is_trunc, reason = _check_truncation(full_text, chapter_outline.get("target_words", 2000))
+            if is_trunc:
+                log.warning(f"Atomic chapter {chapter_num} may be incomplete: {reason}")
+                yield {"type": "warning", "message": f"本章可能不完整（{reason}），建议用常规模式重生成"}
+            
+            # ── v2.10: 提取章节桥接数据 ──
+            try:
+                bridge = await asyncio.to_thread(
+                    self.memory.extract_bridge_from_chapter,
+                    full_text, chapter_num, chapter_outline,
+                    client=self.client, model=self.model,
+                )
+                if bridge:
+                    self.memory.save_bridge(novel_id, chapter_num, bridge)
+                    log.info(f"ChapterBridge (atomic) saved for chapter {chapter_num}")
+            except Exception as e:
+                log.warning(f"ChapterBridge extraction failed in atomic (non-fatal): {e}")
             
             # 更新状态
             state = self.memory.get_novel_state(novel_id)
@@ -1416,6 +1511,18 @@ class NovelEngine:
                 new_plan = event["plan"]
                 # 验证并修复
                 new_plan["outline"] = self.planner.repair_outline(new_plan.get("outline", {}))
+                
+                # ── v2.10: 大纲因果链验证 ──
+                try:
+                    cv_result = await asyncio.to_thread(
+                        validate_and_repair_outline,
+                        new_plan.get("outline", {}), auto_fix=True
+                    )
+                    new_plan["outline"] = cv_result["outline"]
+                    if cv_result["report"].get("fixes_applied"):
+                        log.info(f"CoherenceValidator (interactive): {len(cv_result['report']['fixes_applied'])} fixes")
+                except Exception as e:
+                    log.warning(f"CoherenceValidator skipped in interactive path: {e}")
                 
                 # 保存
                 novel_dir = self.memory.get_novel_dir(novel_id)

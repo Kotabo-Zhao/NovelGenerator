@@ -21,12 +21,14 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。你拥有完全的�
 
 {style_guide}
 
-## 章节连续性（最高优先级）
+## 章节连续性（最高优先级——违反直接不合格）
 
+0. **桥接指令是铁律**: 如果上下文中提供了「🔗 桥接指令（最高优先级·必须遵守）」，你必须逐条执行。特别是「强制叙事节拍」「待回应钩子」「未完成事件」——这些不是建议，是强制指令。
 31. **紧接上文开头**: 本章开头必须承接上一章的结尾。如果上一章停在某个场景/对话/动作中，本章必须从那个精确时刻继续——不能跳时间、不能换场景、不能忽略上一章最后的动作。
 32. **回应钩子**: 如果上一章结尾留下了钩子（悬念/期待），本章必须在合适的位置回应它——可以是揭晓、延续悬念、或用更大的悬念替代。
 33. **角色状态一致**: 上一章结尾角色的位置、情绪、伤势、关系状态，必须是本章的起始状态。不能出现"上一章还在山洞里，这章开头就在集市上"的断层。
 34. **时间线连续**: 如果上一章是白天，本章不能突然变成深夜，除非有明确的过渡（"三个时辰后..."）。
+34a. **优先执行桥接**: 当桥接指令中的「强制叙事节拍」与大纲的「summary」冲突时，以桥接指令为准。桥接反映的是实际写出来的内容，大纲只是计划。
 
 ## 核心写作要求
 
@@ -49,8 +51,8 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。你拥有完全的�
 11. **禁用抽象压力句**: 不写「差距会拉开」「成为分水岭」「时代变了」这类无具体内容的威胁描述。
 
 ### 写作质感
-12. **具象优先**: 每个抽象描述必须接地——不用「他感到无比痛苦」写「胸口像被攥住，喘不上气」。不用「实力大幅提升」写「一拳轰出，石壁凹进去半尺」。
-13. **对话标注克制**: 不是每句对话都要「XX说」「XX道」。用动作、神态、沉默穿插——推门/拔剑/冷笑/沉默三秒——比「冷冷地说」强十倍。
+12. **具象优先**: 每个抽象描述必须用具体的感官细节呈现。不写"他痛苦"，写痛苦如何改变了这个角色的行为。不写"实力提升"，写提升后的具体后果。
+13. **对话标注克制**: 不是每句对话都要「XX说」「XX道」。用角色此刻正在做的具体动作来穿插——动作本身就在传达情绪，比任何副词都准确。
 14. **破折号限用**: 每 500 字最多一个破折号。多用句号切割，少用破折号连接。
 15. **少用模糊词**: 不用「似乎」「仿佛」「或许」「大概」堆砌。要么确定，要么用动作表达不确定（「他顿了顿」而非「他似乎犹豫了」）。
 16. **去掉 AI 过渡词**: 禁用「与此同时」「在这个过程中」「此外」「值得一提的是」「总的来看」「随着……的发展」。
@@ -58,13 +60,13 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。你拥有完全的�
 ## 叙事技巧与情绪控制（违反 = 读着没劲）
 
 ### 三态情感弧线（每章必须走完）
-17. **开篇·压抑态（积蓄期待）**: 不要一上来就高潮。前 1/3 用来堆障碍、制造信息差、让读者揪心——「为什么」「然后呢」「千万别」。
+17. **开篇·压抑态（积蓄期待）**: 不要一上来就高潮。前 1/3 用来堆障碍、制造信息差、让读者心里冒出"然后呢"——但不要直接写出来，让场景本身制造这种悬念。
 18. **中段·爆发态（情感释放）**: 本章核心冲突在此引爆。冲突对撞（正面对决/价值观碰撞）、反转揭示（预期违背/身份揭露）、节奏加速（句式缩短、场景切换加快）。
-19. **结尾·余韵态（意犹未尽）**: 不给大团圆结尾。要么留白（意象留白「剑还在地上转」），要么余波（后果刚显现），要么新悬念植入（「但他不知道的是……」）。
+19. **结尾·余韵态（意犹未尽）**: 不给大团圆结尾。要么用意象留白（一个具体的视觉残像），要么余波刚显现就掐断，要么用新信息制造深层不安。
 
 ### 场景导演（选一种在本章主导，可混合）
-20. **动作场景**: 快节奏。短句为主（≤12字占比>40%）。动作链: 感知→反应→动作→结果。视觉描写 > 心理描写。电影化: 把镜头语言转成文字——「剑尖离喉三寸」「墙上的影子先碎了」。
-21. **情感场景**: 中速。内心独白 + 身体微反应（不是胸口发紧/手心出汗/心跳加速这些AI套路，而是「他张了张嘴，没出声」「指甲掐进掌心，不觉得疼」）。对话中留沉默，留未说出口的话。
+20. **动作场景**: 快节奏。短句为主（≤12字占比>40%）。动作链: 感知→反应→动作→结果。视觉描写 > 心理描写。电影化写作: 选择场景中一个具体的、不寻常的视觉细节来承载情绪——不是写"他害怕了"，是写他看到了什么。
+21. **情感场景**: 中速。内心独白 + 身体微反应。🚫 禁止万能生理反应（任何你能在别的小说里读到十遍以上的身体描写都不要用——那是模板，不是写作）。表达情绪唯一正确的方式：找到属于这个角色、这个时刻的独一无二的动作。一个人在紧张时会做什么，取决于他是谁，不取决于"紧张"这个情绪本身。对话中留沉默，留未说出口的话。
 22. **对话场景**: 变速。高手过招: 每句话都在推进（试探→交锋→摊牌）。菜鸟吵架: 各说各的。对话不是信息传递工具，是角色意志碰撞的战场。每轮对话后给一个动作或神态停顿。
 
 ### 冲突控制（每章至少一个，标强度）
@@ -101,6 +103,33 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。你拥有完全的�
 39. **禁止过度描写环境**：环境描写每章不超过 3 处，每处不超过 40 字。除非环境本身是冲突的一部分（比如毒雾、陷阱、密室）。不是冲突的环境 = 不写。
 40. **禁止内心独白超过 3 句**：角色想事情想了一整段 = AI 味。内心的纠结用动作表达，不要直接写出来。
 41. **每段必须有推进**：写完后问自己——这段删掉，剧情还成立吗？如果成立，删掉。如果读者看完这段不会更想知道接下来发生什么，删掉。
+
+### 🚫 禁用意象与陈词滥调（违反 = 不合格）
+
+以下短语和描写模式是 AI 生成小说的"水印"，真人作者几乎不用。出现任何一个 = 本章不合格。
+
+**禁用身体描写**：
+- 太阳穴突突地跳 / 太阳穴突突直跳
+- 胸口发紧 / 胸口一紧 / 心口一紧
+- 手心出汗 / 手心全是汗
+- 心跳加速 / 心跳漏了一拍 / 心跳如擂鼓
+- 呼吸急促 / 呼吸一滞 / 倒吸一口凉气
+- 脊背发凉 / 后背一凉
+- 胃里翻江倒海
+- 瞳孔骤缩 / 瞳孔猛地一缩
+- 额角渗出冷汗 / 冷汗直流
+- 浑身一震 / 身躯一震 / 虎躯一震
+
+**禁用意象**：
+- 墙上的影子（碎了/裂了/晃了）
+- 嘴角勾起一抹（弧度/冷笑/笑意）
+- 眼底闪过一丝（寒光/杀意/复杂）
+- 目光如炬 / 目光如电
+- 空气仿佛凝固了
+- 时间仿佛静止了
+- 这一刻，他（明白了/懂了/悟了）
+
+**正确替代**：用具体的、个人化的动作来表达情绪。不用"太阳穴突突跳"写紧张，写"他把茶杯转了四圈才端起来喝"。不用"嘴角勾起一抹冷笑"写不屑，写"他看着那张脸看了三秒，转身就走"。
 
 ### 高潮节奏 — 波浪式推进
 42. **拒绝平铺**：一章内必须有至少 2 次情绪起伏——急→缓→更急。不能全程一个速度走到底。
@@ -321,6 +350,7 @@ class Writer:
         log.info(f"Writing chapter: {genre}/{style}/{writing_mode}, pass 1/2 (draft)")
         
         draft = ""
+        finish_reason = "unknown"
         # max_tokens 根据目标字数动态计算，长章节不受 6000 硬限制
         safe_max_tokens = min(int(target_words * 3), 12000)
         stream = self._create(
@@ -339,8 +369,41 @@ class Writer:
             if delta.content:
                 draft += delta.content
                 yield delta.content  # 流式输出初稿
+            # 捕获 finish_reason
+            if chunk.choices[0].finish_reason:
+                finish_reason = chunk.choices[0].finish_reason
         
-        log.info(f"Draft done: {len(draft)} chars")
+        log.info(f"Draft done: {len(draft)} chars, finish_reason={finish_reason}")
+
+        # ── finish_reason 检测: API 因 token 不足截断 ──
+        if finish_reason == "length" and len(draft) < target_words * 0.8:
+            log.warning(f"Draft truncated by API (finish_reason=length, {len(draft)} < {int(target_words*0.8)}). "
+                       f"Retrying with doubled max_tokens...")
+            try:
+                retry_max_tokens = min(int(target_words * 6), 24000)  # 2x
+                retry_stream = self._create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt + "\n\n⚠️ 上次生成因token不足被截断。请确保本次完整生成，字数达到{target_words}字左右。"},
+                        {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
+                    ],
+                    temperature=0.8,
+                    max_tokens=retry_max_tokens,
+                    stream=True,
+                )
+                retry_draft = ""
+                for chunk in retry_stream:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        retry_draft += delta.content
+                        yield delta.content
+                if len(retry_draft) > len(draft):
+                    log.info(f"Retry OK (length truncation): {len(retry_draft)} chars (was {len(draft)})")
+                    draft = retry_draft
+                else:
+                    log.warning(f"Retry (length) no better: {len(retry_draft)} chars")
+            except Exception as e:
+                log.warning(f"Retry (length) failed: {e}")
 
         final_text = draft  # default: use draft as-is
         
@@ -417,20 +480,26 @@ class Writer:
         except Exception as e:
             log.warning(f"Humanizer pass failed: {e}, using current text")
 
-        # ── 截断检测 ──
+        # ── 截断检测 (最多重试2次，每次翻倍 max_tokens) ──
         try:
-            is_trunc, reason = _check_truncation(final_text, target_words)
-            if is_trunc:
-                log.warning(f"Truncation detected: {reason}. Retrying once...")
+            retry_multiplier = 2
+            for retry_round in range(2):
+                is_trunc, reason = _check_truncation(final_text, target_words)
+                if not is_trunc:
+                    break  # 不截断，直接通过
+                
+                log.warning(f"Truncation detected (round {retry_round+1}): {reason}. "
+                           f"Retrying with {retry_multiplier}x max_tokens...")
+                retry_max = min(int(target_words * 3 * retry_multiplier), 24000)
                 retry_text = ""
                 retry_stream = self._create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": system_prompt + f"\n\n⚠️ 注意：上次生成被截断了（{reason}）。请确保本次完整生成。"},
+                        {"role": "system", "content": system_prompt + f"\n\n⚠️ 上次生成不完整（{reason}）。请确保本次完整生成，字数至少{target_words}字。"},
                         {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
                     ],
                     temperature=0.8,
-                    max_tokens=safe_max_tokens,
+                    max_tokens=retry_max,
                     stream=True,
                 )
                 for chunk in retry_stream:
@@ -438,14 +507,20 @@ class Writer:
                     if delta.content:
                         retry_text += delta.content
                 
-                is_trunc2, reason2 = _check_truncation(retry_text, target_words)
+                is_trunc2, _ = _check_truncation(retry_text, target_words)
                 if not is_trunc2 and len(retry_text) > len(final_text) * 0.5:
                     final_text = retry_text
-                    log.info(f"Retry OK: {len(retry_text)} chars")
-                else:
-                    log.warning(f"Retry also truncated or short, using best available")
+                    log.info(f"Retry OK (round {retry_round+1}): {len(retry_text)} chars")
+                    break
+                elif len(retry_text) > len(final_text):
+                    final_text = retry_text  # 有改善就接受
+                    log.info(f"Retry partial improvement (round {retry_round+1}): {len(retry_text)} chars")
+                
+                retry_multiplier *= 2  # 下次翻倍
+            else:
+                log.warning(f"All retries failed, using best available ({len(final_text)} chars)")
         except Exception as e:
-            log.warning(f"Truncation check failed: {e}, using current text")
+            log.warning(f"Truncation check/retry failed: {e}, using current text")
 
 
 def _check_truncation(text: str, target_words: int) -> tuple:
@@ -463,10 +538,11 @@ def _check_truncation(text: str, target_words: int) -> tuple:
     if last_char not in valid_endings:
         return True, f"结尾不完整 (最后字符: {last_char})"
     
-    # 2. 长度比率: 不能太短
-    ratio = len(text) / (target_words * 2)  # 约每个中文字2个token
-    if ratio < 0.15:
-        return True, f"长度过短 ({len(text)}字 vs 目标{target_words}字)"
+    # 2. 长度比率: 低于50%目标字数视为截断
+    char_count = len(text)
+    min_acceptable = max(500, int(target_words * 0.5))  # 至少500字，且不低于目标50%
+    if char_count < min_acceptable:
+        return True, f"长度不足 ({char_count}字 vs 目标{target_words}字, 最低要求{min_acceptable}字)"
     
     # 3. 钩子检查: 结尾应该有悬念/期待感
     last_100 = text[-100:] if len(text) > 100 else text
