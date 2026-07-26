@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -156,7 +157,7 @@ class RequirementDecomposer:
         log.info(f"RequirementDecomposer v2.2: analyzing '{inspiration[:80]}...'")
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": DECOMPOSER_SYSTEM},

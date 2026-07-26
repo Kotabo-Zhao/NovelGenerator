@@ -14,6 +14,7 @@ import re
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -212,7 +213,7 @@ class OpeningOptimizer:
 请生成 {count} 个替代开头方案。只输出JSON。"""
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system},

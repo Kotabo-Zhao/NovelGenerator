@@ -8,6 +8,7 @@ import json
 import os
 import logging
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ class ContextUpdater:
             current_state["chapters_summary"] = {}
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": CU_SYSTEM},

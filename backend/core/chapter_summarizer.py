@@ -23,6 +23,7 @@ import json
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ class ChapterSummarizer:
 重要性: {importance}"""
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": SUMMARIZER_SYSTEM},

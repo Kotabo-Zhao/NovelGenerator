@@ -6,6 +6,7 @@ from typing import AsyncGenerator
 from openai import OpenAI
 from .styles import get_style, build_style_prompt, build_custom_style
 from .humanizer import humanize_text, build_humanizer_prompt
+from .resilient_client import ResilientLLMClient, RetryConfig
 
 log = logging.getLogger(__name__)
 
@@ -231,27 +232,37 @@ class Writer:
     def __init__(self, client: OpenAI, model: str):
         self.client = client
         self.model = model
+        # v2.14: 使用韧性客户端统一处理重试、限流、断线重连
+        self._resilient = ResilientLLMClient(client, model)
 
     def _create(self, **kwargs):
-        """创建 LLM 请求，v4 系列自动禁用 reasoning，非流式调用自动重试"""
-        if "v4" in self.model:
-            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        """创建 LLM 请求 — v2.14: 委托给韧性客户端，统一重试+限流+超时"""
+        is_stream = kwargs.pop("stream", False)
+        messages = kwargs.pop("messages", [])
+        temperature = kwargs.pop("temperature", 0.8)
+        max_tokens = kwargs.pop("max_tokens", 4096)
         
-        is_stream = kwargs.get("stream", False)
-        max_retries = 0 if is_stream else 3  # 流式不重试（会丢上下文），非流式重试3次
-        
-        last_error = None
-        for attempt in range(max_retries + 1):
-            try:
-                return self.client.chat.completions.create(**kwargs)
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries:
-                    wait = 2 ** attempt  # 1s, 2s, 4s
-                    log.warning(f"API call failed (attempt {attempt+1}/{max_retries+1}), retrying in {wait}s: {e}")
-                    time.sleep(wait)
-                else:
-                    raise last_error
+        if is_stream:
+            # 流式调用返回 response 对象（供 write_stream 迭代）
+            call_kwargs = dict(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+            if "v4" in self.model:
+                call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+            call_kwargs.update(kwargs)
+            return self.client.chat.completions.create(**call_kwargs)
+        else:
+            # 非流式调用走韧性网关（自动重试+限流+退避）
+            return self._resilient.create(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
 
     async def write_stream(
         self,
@@ -385,25 +396,26 @@ class Writer:
         finish_reason = "unknown"
         # max_tokens 根据目标字数动态计算，长章节不受 6000 硬限制
         safe_max_tokens = min(int(target_words * 3), 12000)
-        stream = self._create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+        
+        # v2.14: 使用韧性客户端的流式调用，支持断线重连
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        
+        async for chunk in self._resilient.create_stream(
+            messages=messages,
             temperature=0.85,
             max_tokens=safe_max_tokens,
-            stream=True,
-        )
+        ):
+            draft += chunk
+            yield chunk  # 流式输出初稿
         
-        for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta.content:
-                draft += delta.content
-                yield delta.content  # 流式输出初稿
-            # 捕获 finish_reason
-            if chunk.choices[0].finish_reason:
-                finish_reason = chunk.choices[0].finish_reason
+        # 流式调用完成后推断 finish_reason
+        if len(draft) < target_words * 0.8:
+            finish_reason = "length"
+        else:
+            finish_reason = "stop"
         
         log.info(f"Draft done: {len(draft)} chars, finish_reason={finish_reason}")
 

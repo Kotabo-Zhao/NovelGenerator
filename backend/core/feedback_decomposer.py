@@ -18,6 +18,7 @@ import re
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -151,7 +152,7 @@ class FeedbackDecomposer:
         log.info(f"FeedbackDecomposer: analyzing '{feedback[:80]}...'")
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": DECOMPOSER_SYSTEM},
@@ -227,7 +228,7 @@ class FeedbackDecomposer:
 只输出 JSON 格式的 change_plan（与主 decompose 格式相同）。"""
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": DECOMPOSER_SYSTEM},

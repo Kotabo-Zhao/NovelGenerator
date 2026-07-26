@@ -20,6 +20,7 @@ import re
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -680,7 +681,7 @@ class ConsistencyValidator:
         log.info(f"ConsistencyValidator L2: chapter {chapter_num}")
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": self.VALIDATOR_SYSTEM},

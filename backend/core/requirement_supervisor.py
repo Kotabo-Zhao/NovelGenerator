@@ -8,6 +8,7 @@ import json
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class RequirementSupervisor:
         log.info(f"RequirementSupervisor: checking {len(subtasks)} subtasks")
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": SUPERVISOR_SYSTEM},
