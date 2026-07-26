@@ -393,7 +393,7 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"Requirement decomposition failed, proceeding without it: {e}")
                 enhanced_input = dict(creative_input)
-                yield {"type": "warning", "message": f"需求深度拆解跳过: {e}，使用原始灵感生成"}
+                yield {"type": "warning", "message": f"⚠️ 需求深度分析跳过，将直接使用您的灵感描述生成。原因：{e}"}
         else:
             enhanced_input = dict(creative_input)
         
@@ -422,11 +422,11 @@ class NovelEngine:
                 plan = event.get("plan")
                 if not isinstance(plan, dict):
                     log.error(f"create_novel_stream: plan is {type(plan).__name__}, not dict")
-                    yield {"type": "error", "message": "大纲数据结构异常，请重试"}
+                    yield {"type": "error", "message": "❌ 大纲生成失败：数据结构异常。建议检查灵感描述是否清晰，或稍后重试。"}
                     return
                 if "title" not in plan or not plan["title"]:
                     log.error(f"create_novel_stream: plan missing title, keys={list(plan.keys())[:10]}")
-                    yield {"type": "error", "message": "大纲缺少书名，请重试"}
+                    yield {"type": "error", "message": "❌ 大纲生成失败：未检测到书名。建议在灵感中明确书名，或稍后重试。"}
                     return
                 novel_dir = self.memory.get_novel_dir(plan["title"])
                 os.makedirs(novel_dir, exist_ok=True)
@@ -484,8 +484,8 @@ class NovelEngine:
                                 f"score={report['score']}")
                     if not report.get("passed"):
                         yield {"type": "warning", "message": 
-                              f"大纲逻辑检查发现 {sum(1 for i in report.get('issues',[]) if i['severity']=='P0')} 个断裂点，"
-                              f"已自动修补 {len(report.get('fixes_applied',[]))} 处"}
+                              f"🔧 大纲逻辑检查发现 {sum(1 for i in report.get('issues',[]) if i['severity']=='P0')} 个断裂点，"
+                              f"已自动修补 {len(report.get('fixes_applied',[]))} 处。生成质量不受影响。"}
                 except Exception as e:
                     log.warning(f"CoherenceValidator skipped (non-fatal): {e}")
                 
@@ -498,7 +498,7 @@ class NovelEngine:
         """根据修改意见重新生成大纲（保留世界观和角色）"""
         plan = self.get_novel(novel_id)
         if not plan:
-            yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+            yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
             return
 
         genre = plan.get("genre", "玄幻")
@@ -689,7 +689,7 @@ class NovelEngine:
             try:
                 lock_age = time.time() - os.path.getmtime(lock_file)
                 if lock_age < 300:
-                    yield {"type": "error", "message": f"第{chapter_num}章正在生成中，请等待完成（已运行{int(lock_age)}秒）"}
+                    yield {"type": "error", "message": f"⏳ 第{chapter_num}章正在生成中（已运行{int(lock_age)}秒），请等待完成后再试"}
                     return
                 else:
                     log.warning(f"Stale lock file for chapter {chapter_num}, removing")
@@ -708,7 +708,7 @@ class NovelEngine:
         try:
             plan = self.get_novel(novel_id)
             if not plan:
-                yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+                yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
                 return
 
             # 找到本章大纲
@@ -870,7 +870,7 @@ class NovelEngine:
                     
                     # 重试一次
                     yield {"type": "quality_warning", "score": qr["score"], "issues": qr["issues"],
-                           "message": f"质量评分 {qr['score']}，自动重生成..."}
+                           "message": f"📝 质量检查发现 {len(qr['issues'])} 个可改进点（评分 {qr['score']}），正在自动优化重写..."}
                     
                     retry_text = ""
                     async for text in self.writer.write_stream(
@@ -972,7 +972,7 @@ class NovelEngine:
             if is_trunc:
                 log.warning(f"Chapter {chapter_num} incomplete after Writer retries: {reason}. "
                            f"Engine fallback: retrying generation...")
-                yield {"type": "warning", "message": f"本章不完整（{reason}），自动重新生成..."}
+                yield {"type": "warning", "message": f"⏳ 本章内容不完整（{reason}），正在自动重新生成以补全内容..."}
                 
                 # Engine-level retry: 用更大的 max_tokens 重新调用 Writer
                 try:
@@ -1147,6 +1147,24 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"AutoCalibration skipped: {e}")
 
+            # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
+            try:
+                chapter_text = self.get_chapter(novel_id, chapter_num) or full_text
+                if chapter_text and len(chapter_text) > 200:
+                    summary_result = await asyncio.to_thread(
+                        self.chapter_summarizer.summarize_chapter,
+                        chapter_num, chapter_text
+                    )
+                    if summary_result:
+                        state = self.memory.get_novel_state(novel_id)
+                        if "summaries" not in state:
+                            state["summaries"] = {}
+                        state["summaries"][str(chapter_num)] = summary_result
+                        self.memory.save_novel_state(novel_id, state)
+                        log.info(f"Auto-summary for Ch{chapter_num}: {len(summary_result.get('summary',''))} chars")
+            except Exception as e:
+                log.warning(f"Auto-summary for Ch{chapter_num} skipped: {e}")
+
             # ── 渐进式摘要压缩（每10章）──
             try:
                 compress_result = check_and_compress(
@@ -1162,7 +1180,7 @@ class NovelEngine:
 
         except Exception as e:
             log.exception(f"Chapter generation failed: {e}")
-            yield {"type": "error", "message": str(e)}
+            yield {"type": "error", "message": f"❌ 章节生成失败：{e}。请检查网络连接或稍后重试。"}
         finally:
             # 清理并发锁
             try:
@@ -1206,7 +1224,7 @@ class NovelEngine:
         try:
             plan = self.get_novel(novel_id)
             if not plan:
-                yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+                yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
                 return
             
             chapter_outline = self._find_chapter_outline(plan, chapter_num)
@@ -1367,7 +1385,7 @@ class NovelEngine:
             is_trunc, reason = _check_truncation(full_text, chapter_outline.get("target_words", 2000))
             if is_trunc:
                 log.warning(f"Atomic chapter {chapter_num} may be incomplete: {reason}")
-                yield {"type": "warning", "message": f"本章可能不完整（{reason}），建议用常规模式重生成"}
+                yield {"type": "warning", "message": f"⚠️ 原子模式生成的本章可能不完整（{reason}），建议使用常规模式重新生成此章"}
             
             # ── v2.10: 提取章节桥接数据 ──
             try:
@@ -1650,7 +1668,7 @@ class NovelEngine:
         """v2 交互式大纲: FeedbackDecomposer 语义拆解 → 逐条精确执行 → diff输出"""
         plan = self.get_novel(novel_id)
         if not plan:
-            yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+            yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
             return
 
         # 保存旧版本用于 diff

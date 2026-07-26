@@ -6,6 +6,7 @@
 
 import logging
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class Embellisher:
     def __init__(self, client: OpenAI, model: str):
         self.client = client
         self.model = model
+        self._resilient = ResilientLLMClient(client, model)
 
     def polish(self, draft: str, style_config: dict, target_words: int) -> str:
         """对初稿进行风格打磨
@@ -59,7 +61,7 @@ class Embellisher:
 
         log.info(f"Embellisher polishing: {len(draft)} chars")
         
-        response = self.client.chat.completions.create(
+        response = self._resilient.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},

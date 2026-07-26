@@ -8,6 +8,7 @@ import re
 import json
 import logging
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class PacingChecker:
     def __init__(self, client: OpenAI, model: str):
         self.client = client
         self.model = model
+        self._resilient = ResilientLLMClient(client, model)
 
     def analyze(self, chapter_text: str, chapter_num: int) -> dict:
         """对章节进行节奏分析
@@ -76,7 +78,7 @@ class PacingChecker:
 请输出 JSON 格式的节奏分析报告。"""
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": PACING_SYSTEM},

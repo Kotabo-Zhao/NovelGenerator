@@ -7,6 +7,7 @@
 import json
 import logging
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ class ForeshadowingDesigner:
     def __init__(self, client: OpenAI, model: str):
         self.client = client
         self.model = model
+        self._resilient = ResilientLLMClient(client, model)
 
     def design(self, plan: dict, target_count: int = 5) -> list:
         """分析大纲，规划伏笔
@@ -83,7 +85,7 @@ class ForeshadowingDesigner:
 
         log.info(f"ForeshadowingDesigner: designing {target_count} hooks")
         
-        response = self.client.chat.completions.create(
+        response = self._resilient.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": FD_SYSTEM},

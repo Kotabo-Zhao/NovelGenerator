@@ -6,6 +6,7 @@ from typing import AsyncGenerator
 from openai import OpenAI
 from .styles import get_style, build_style_prompt, build_custom_style
 from .humanizer import humanize_text, build_humanizer_prompt
+from .resilient_client import ResilientLLMClient, RetryConfig
 
 log = logging.getLogger(__name__)
 
@@ -231,27 +232,37 @@ class Writer:
     def __init__(self, client: OpenAI, model: str):
         self.client = client
         self.model = model
+        # v2.14: 使用韧性客户端统一处理重试、限流、断线重连
+        self._resilient = ResilientLLMClient(client, model)
 
     def _create(self, **kwargs):
-        """创建 LLM 请求，v4 系列自动禁用 reasoning，非流式调用自动重试"""
-        if "v4" in self.model:
-            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        """创建 LLM 请求 — v2.14: 委托给韧性客户端，统一重试+限流+超时"""
+        is_stream = kwargs.pop("stream", False)
+        messages = kwargs.pop("messages", [])
+        temperature = kwargs.pop("temperature", 0.8)
+        max_tokens = kwargs.pop("max_tokens", 4096)
         
-        is_stream = kwargs.get("stream", False)
-        max_retries = 0 if is_stream else 3  # 流式不重试（会丢上下文），非流式重试3次
-        
-        last_error = None
-        for attempt in range(max_retries + 1):
-            try:
-                return self.client.chat.completions.create(**kwargs)
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries:
-                    wait = 2 ** attempt  # 1s, 2s, 4s
-                    log.warning(f"API call failed (attempt {attempt+1}/{max_retries+1}), retrying in {wait}s: {e}")
-                    time.sleep(wait)
-                else:
-                    raise last_error
+        if is_stream:
+            # 流式调用返回 response 对象（供 write_stream 迭代）
+            call_kwargs = dict(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+            if "v4" in self.model:
+                call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+            call_kwargs.update(kwargs)
+            return self.client.chat.completions.create(**call_kwargs)
+        else:
+            # 非流式调用走韧性网关（自动重试+限流+退避）
+            return self._resilient.create(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
 
     async def write_stream(
         self,
@@ -262,13 +273,17 @@ class Writer:
         writing_mode: str = "webnovel",
         normal_pacing: bool = False,
         fast_food: bool = False,
+        chapter_outline: dict = None,
+        skip_ending: bool = False,  # v2.12: 质量门重试时跳过Phase 2(避免重复生成结尾)
     ) -> AsyncGenerator[str, None]:
-        """流式生成章节正文
+        """流式生成章节正文 (v2.12: 两阶段 — 正文 + 独立结尾)
         
         Args:
             writing_mode: 'webnovel' (网文) or 'literary' (文学)
             normal_pacing: False=快节奏默认, True=正常节奏
+            chapter_outline: 大纲中的本章数据 (含 bridge_to_next/hook)
         """
+        chapter_outline = chapter_outline or {}
         # 解析风格
         if style in ("自定义风格",) or style.startswith("自定义"):
             style_config = build_custom_style(style)
@@ -381,25 +396,26 @@ class Writer:
         finish_reason = "unknown"
         # max_tokens 根据目标字数动态计算，长章节不受 6000 硬限制
         safe_max_tokens = min(int(target_words * 3), 12000)
-        stream = self._create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+        
+        # v2.14: 使用韧性客户端的流式调用，支持断线重连
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        
+        async for chunk in self._resilient.create_stream(
+            messages=messages,
             temperature=0.85,
             max_tokens=safe_max_tokens,
-            stream=True,
-        )
+        ):
+            draft += chunk
+            yield chunk  # 流式输出初稿
         
-        for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta.content:
-                draft += delta.content
-                yield delta.content  # 流式输出初稿
-            # 捕获 finish_reason
-            if chunk.choices[0].finish_reason:
-                finish_reason = chunk.choices[0].finish_reason
+        # 流式调用完成后推断 finish_reason
+        if len(draft) < target_words * 0.8:
+            finish_reason = "length"
+        else:
+            finish_reason = "stop"
         
         log.info(f"Draft done: {len(draft)} chars, finish_reason={finish_reason}")
 
@@ -434,6 +450,64 @@ class Writer:
                 log.warning(f"Retry (length) failed: {e}")
 
         final_text = draft  # default: use draft as-is
+        
+        # ═══════════════════════════════════════════════
+        # v2.12: Phase 2 — 独立结尾生成（架构级修复）
+        # 根因: 单次生成=LLM不会管理token预算, 写到max_tokens就停
+        # 修复: 正文用完预算后, 独立调用专门写结尾
+        # ═══════════════════════════════════════════════
+        bridge_to_next = chapter_outline.get("bridge_to_next", "")
+        hook = chapter_outline.get("hook", "")
+        
+        if not skip_ending and len(final_text) > 500 and (bridge_to_next or hook):
+            try:
+                # 取最后400字作为上下文，让LLM知道写到哪了
+                tail_context = final_text[-400:] if len(final_text) > 400 else final_text
+                
+                ending_constraints = []
+                if bridge_to_next:
+                    ending_constraints.append(f"本章结尾必须自然引出：【{bridge_to_next}】")
+                if hook:
+                    ending_constraints.append(f"结尾钩子：【{hook}】")
+                
+                ending_prompt = (
+                    f"你是一段章节的结尾写手。以下是本章正文的结尾部分，请接着写一个100-200字的收束结尾。\n\n"
+                    f"规则：\n"
+                    f"1. 必须先收束当前场景（完成正在进行的动作/对话），再抛出钩子\n"
+                    f"2. 结尾必须是一段连贯的文字，直接续接上文，不要新开标题\n"
+                    f"3. {' '.join(ending_constraints)}\n"
+                    f"4. 结尾要有节奏：收束句(1-2句) → 转折或悬念(1句) → 留白结尾(1句)\n"
+                    f"5. 不要写「本章完」「未完待续」等元标记\n\n"
+                    f"=== 上文结尾 ===\n{tail_context}\n\n=== 请直接续写结尾（不要重复上文内容） ==="
+                )
+                
+                ending_stream = self._create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "你是一个专业的章节结尾写手。只写100-200字的结尾，直接续接上文，不另起标题。先收束再抛钩。"},
+                        {"role": "user", "content": ending_prompt},
+                    ],
+                    temperature=0.7,
+                    max_tokens=400,  # 够写200字中文
+                    stream=True,
+                )
+                
+                ending_text = ""
+                for chunk in ending_stream:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        ending_text += delta.content
+                
+                if len(ending_text) >= 60:
+                    final_text = final_text + "\n\n" + ending_text
+                    yield "\n\n" + ending_text  # 流式输出结尾
+                    log.info(f"Phase 2 ending generated: {len(ending_text)} chars")
+                else:
+                    log.warning(f"Ending too short ({len(ending_text)} chars), using raw draft ending")
+            except Exception as e:
+                log.warning(f"Phase 2 ending generation failed: {e}, using raw draft")
+        elif not bridge_to_next and not hook:
+            log.info("No bridge_to_next or hook in outline, skipping dedicated ending")
         
         # ── 第二遍: 风格打磨（长文跳过——3000字以上初稿质量已够，省一轮API调用）──
         polish_skipped = len(draft) < 500 or style_config.get("is_custom") or len(draft) > 2000
