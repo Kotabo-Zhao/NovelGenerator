@@ -125,6 +125,35 @@ class GenerateChapterRequest(BaseModel):
     feedback: Optional[str] = None  # 用户修改意见（重生成场景）
 
 
+# ── v2.16: 输入校验工具函数 ──
+
+def _validate_novel_id(novel_id: str) -> str:
+    """校验小说ID：只允许ASCII字母/数字/中文/下划线/连字符"""
+    import re
+    if not novel_id or not isinstance(novel_id, str):
+        raise HTTPException(400, "❌ 小说ID不能为空")
+    if len(novel_id) > 200:
+        raise HTTPException(400, "❌ 小说ID过长（最多200字符）")
+    if re.search(r'[<>"/\\|?*]', novel_id):
+        raise HTTPException(400, "❌ 小说ID包含非法字符")
+    # 反路径遍历
+    if ".." in novel_id:
+        raise HTTPException(400, "❌ 小说ID包含非法路径序列")
+    return novel_id
+
+
+def _validate_chapter_range(start: int, end: int):
+    """校验章节范围"""
+    if not isinstance(start, int) or not isinstance(end, int):
+        raise HTTPException(400, "❌ 章节号必须为整数")
+    if start < 1 or end < 1:
+        raise HTTPException(400, "❌ 章节号必须大于0")
+    if start > end:
+        raise HTTPException(400, f"❌ 起始章节({start})不能大于结束章节({end})")
+    if end - start > 200:
+        raise HTTPException(400, "❌ 批量生成一次最多200章")
+
+
 # ── Routes ──
 
 @app.get("/api/health")
