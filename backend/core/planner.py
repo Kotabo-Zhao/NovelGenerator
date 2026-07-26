@@ -488,8 +488,8 @@ class Planner:
                     _faction_text += f"- {f.get('name','')} ({f.get('alignment','中立')}): {f.get('description','')[:60]}\n"
         wb_summary_compact = f"""## 🌍 世界观
 - 时代: {_wb.get('era', '')}
-- 地点: {_wb.get('geography', '')[:200]}
-- 力量体系: {_wb.get('power_system', '')[:200]}
+- 地点: {str(_wb.get('geography', ''))[:200]}
+- 力量体系: {str(_wb.get('power_system', ''))[:200]}
 - 核心冲突: {_wb.get('core_conflict', '')}
 - 势力: {_faction_text.strip() or '待展开'}"""
 

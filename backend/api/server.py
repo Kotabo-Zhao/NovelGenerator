@@ -346,8 +346,13 @@ async def _sse_with_heartbeat(event_generator):
                     event = {"type": "warning", "message": f"内部数据格式异常: {type(event).__name__}"}
                 await q.put(("event", event))
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             log.exception("SSE producer crashed")
-            await q.put(("error", str(e)))
+            # v2.10: 返回异常类型以便快速定位
+            err_msg = f"生成过程出错 [{type(e).__name__}]: {str(e)[:300]}"
+            log.error(f"SSE crash details:\n{tb}")
+            await q.put(("error", err_msg))
         await q.put(("done", None))
     
     async def heartbeater():
