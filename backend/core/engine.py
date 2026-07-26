@@ -686,6 +686,7 @@ class NovelEngine:
                 target_words=target_words,
                 writing_mode=writing_mode,
                 normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                chapter_outline=chapter_outline,  # v2.12: 传递大纲用于两阶段结尾生成
             ):
                 full_text += text
                 # 每500字增量保存一次
@@ -762,6 +763,7 @@ class NovelEngine:
                         target_words=target_words,
                         writing_mode=writing_mode,
                         normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                        chapter_outline=chapter_outline,
                     ):
                         retry_text += text
                     
@@ -867,6 +869,7 @@ class NovelEngine:
                         writing_mode=writing_mode,
                         normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
                         fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                        chapter_outline=chapter_outline,
                     ):
                         retry_text += text
                         yield {"type": "text", "content": text}
@@ -979,6 +982,7 @@ class NovelEngine:
                             target_words=target_words,
                             writing_mode=writing_mode,
                             normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                            chapter_outline=chapter_outline,
                         ):
                             fixed_text += fix_chunk
                         

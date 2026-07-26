@@ -262,13 +262,16 @@ class Writer:
         writing_mode: str = "webnovel",
         normal_pacing: bool = False,
         fast_food: bool = False,
+        chapter_outline: dict = None,
     ) -> AsyncGenerator[str, None]:
-        """流式生成章节正文
+        """流式生成章节正文 (v2.12: 两阶段 — 正文 + 独立结尾)
         
         Args:
             writing_mode: 'webnovel' (网文) or 'literary' (文学)
             normal_pacing: False=快节奏默认, True=正常节奏
+            chapter_outline: 大纲中的本章数据 (含 bridge_to_next/hook)
         """
+        chapter_outline = chapter_outline or {}
         # 解析风格
         if style in ("自定义风格",) or style.startswith("自定义"):
             style_config = build_custom_style(style)
@@ -434,6 +437,64 @@ class Writer:
                 log.warning(f"Retry (length) failed: {e}")
 
         final_text = draft  # default: use draft as-is
+        
+        # ═══════════════════════════════════════════════
+        # v2.12: Phase 2 — 独立结尾生成（架构级修复）
+        # 根因: 单次生成=LLM不会管理token预算, 写到max_tokens就停
+        # 修复: 正文用完预算后, 独立调用专门写结尾
+        # ═══════════════════════════════════════════════
+        bridge_to_next = chapter_outline.get("bridge_to_next", "")
+        hook = chapter_outline.get("hook", "")
+        
+        if len(final_text) > 500 and (bridge_to_next or hook):
+            try:
+                # 取最后400字作为上下文，让LLM知道写到哪了
+                tail_context = final_text[-400:] if len(final_text) > 400 else final_text
+                
+                ending_constraints = []
+                if bridge_to_next:
+                    ending_constraints.append(f"本章结尾必须自然引出：【{bridge_to_next}】")
+                if hook:
+                    ending_constraints.append(f"结尾钩子：【{hook}】")
+                
+                ending_prompt = (
+                    f"你是一段章节的结尾写手。以下是本章正文的结尾部分，请接着写一个100-200字的收束结尾。\n\n"
+                    f"规则：\n"
+                    f"1. 必须先收束当前场景（完成正在进行的动作/对话），再抛出钩子\n"
+                    f"2. 结尾必须是一段连贯的文字，直接续接上文，不要新开标题\n"
+                    f"3. {' '.join(ending_constraints)}\n"
+                    f"4. 结尾要有节奏：收束句(1-2句) → 转折或悬念(1句) → 留白结尾(1句)\n"
+                    f"5. 不要写「本章完」「未完待续」等元标记\n\n"
+                    f"=== 上文结尾 ===\n{tail_context}\n\n=== 请直接续写结尾（不要重复上文内容） ==="
+                )
+                
+                ending_stream = self._create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "你是一个专业的章节结尾写手。只写100-200字的结尾，直接续接上文，不另起标题。先收束再抛钩。"},
+                        {"role": "user", "content": ending_prompt},
+                    ],
+                    temperature=0.7,
+                    max_tokens=400,  # 够写200字中文
+                    stream=True,
+                )
+                
+                ending_text = ""
+                for chunk in ending_stream:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        ending_text += delta.content
+                
+                if len(ending_text) >= 60:
+                    final_text = final_text + "\n\n" + ending_text
+                    yield "\n\n" + ending_text  # 流式输出结尾
+                    log.info(f"Phase 2 ending generated: {len(ending_text)} chars")
+                else:
+                    log.warning(f"Ending too short ({len(ending_text)} chars), using raw draft ending")
+            except Exception as e:
+                log.warning(f"Phase 2 ending generation failed: {e}, using raw draft")
+        elif not bridge_to_next and not hook:
+            log.info("No bridge_to_next or hook in outline, skipping dedicated ending")
         
         # ── 第二遍: 风格打磨（长文跳过——3000字以上初稿质量已够，省一轮API调用）──
         polish_skipped = len(draft) < 500 or style_config.get("is_custom") or len(draft) > 2000
