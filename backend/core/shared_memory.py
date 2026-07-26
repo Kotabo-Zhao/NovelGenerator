@@ -507,15 +507,29 @@ class SharedMemoryManager:
             for b in beats:
                 beats_text += f"- 节拍{b.get('beat','?')}「{b.get('name','')}」: {b.get('function','')} → {b.get('key_action','')}\n"
         
+        cause = chapter_outline.get("cause_from_prev", "")
+        bridge = chapter_outline.get("bridge_to_next", "")
+        opening = chapter_outline.get("opening_scene", "")
+        intensity = chapter_outline.get("conflict_intensity", "")
+        
         outline_text = f"""## 本章大纲
 
 - 章节: 第{chapter_num}章「{chapter_outline.get('title', '')}」
 - 核心事件: {chapter_outline.get('summary', '')}
 - 情绪曲线: {chapter_outline.get('emotion_curve', '')}
 - 出场角色: {', '.join(chapter_outline.get('characters', []))}
+- 冲突强度: {intensity if intensity else '未设定'}/5
 - 结尾钩子: {chapter_outline.get('hook', '')}
-- 目标字数: {chapter_outline.get('target_words', 3000)} 字
-{beats_text}"""
+- 目标字数: {chapter_outline.get('target_words', 3000)} 字"""
+
+        if cause:
+            outline_text += f"\n- ⛓️ 因果链: {cause}"
+        if bridge:
+            outline_text += f"\n- ➡️ 引出下章: {bridge}"
+        if opening:
+            outline_text += f"\n- 🎬 开场场景: {opening}"
+
+        outline_text += f"\n{beats_text}"
         parts.append(outline_text)
 
         # ── v2.6: 对话密度告警 — 检测前几章是否对话过多 ──

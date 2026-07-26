@@ -37,6 +37,7 @@ from .beat_decomposer import BeatDecomposer, Beat
 from .atomic_writer import AtomicWriter
 from .beat_assembler import BeatAssembler
 from .storygraph_interventions import analyze_and_inject
+from .coherence_validator import validate_and_repair_outline
 
 log = logging.getLogger(__name__)
 
@@ -342,6 +343,26 @@ class NovelEngine:
                     await asyncio.to_thread(self._init_storygraph_and_arcs, plan, novel_dir)
                 except Exception as e:
                     log.warning(f"StoryGraph init skipped in stream: {e}")
+                
+                # ── v2.10: 大纲因果链验证 ──
+                try:
+                    result = await asyncio.to_thread(
+                        validate_and_repair_outline,
+                        plan.get("outline", {}), auto_fix=True
+                    )
+                    report = result["report"]
+                    plan["outline"] = result["outline"]
+                    # 如果有修复，重新保存 plan.json
+                    if report.get("fixes_applied"):
+                        atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
+                        log.info(f"CoherenceValidator: {len(report['fixes_applied'])} fixes applied, "
+                                f"score={report['score']}")
+                    if not report.get("passed"):
+                        yield {"type": "warning", "message": 
+                              f"大纲逻辑检查发现 {sum(1 for i in report.get('issues',[]) if i['severity']=='P0')} 个断裂点，"
+                              f"已自动修补 {len(report.get('fixes_applied',[]))} 处"}
+                except Exception as e:
+                    log.warning(f"CoherenceValidator skipped (non-fatal): {e}")
                 
                 log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)"
                         f" — requirements: {self._requirements.get(plan['title'], {}).get('total_count', 0)} subtasks")
@@ -1454,6 +1475,18 @@ class NovelEngine:
                 new_plan = event["plan"]
                 # 验证并修复
                 new_plan["outline"] = self.planner.repair_outline(new_plan.get("outline", {}))
+                
+                # ── v2.10: 大纲因果链验证 ──
+                try:
+                    cv_result = await asyncio.to_thread(
+                        validate_and_repair_outline,
+                        new_plan.get("outline", {}), auto_fix=True
+                    )
+                    new_plan["outline"] = cv_result["outline"]
+                    if cv_result["report"].get("fixes_applied"):
+                        log.info(f"CoherenceValidator (interactive): {len(cv_result['report']['fixes_applied'])} fixes")
+                except Exception as e:
+                    log.warning(f"CoherenceValidator skipped in interactive path: {e}")
                 
                 # 保存
                 novel_dir = self.memory.get_novel_dir(novel_id)
