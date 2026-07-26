@@ -658,9 +658,13 @@ th{{background:#f8f9fa;font-weight:600;font-size:12px;color:#555}}
 </body></html>"""
     
     if output_path:
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(html)
-        log.info(f"Evaluation report saved: {output_path}")
+        try:
+            os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            log.info(f"Evaluation report saved: {output_path}")
+        except IOError as e:
+            log.error(f"Failed to save evaluation report: {e}")
     
     return html
 

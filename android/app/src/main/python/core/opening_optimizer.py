@@ -93,6 +93,8 @@ class OpeningOptimizer:
     def __init__(self, client: OpenAI = None, model: str = None):
         self.client = client
         self.model = model
+        if client and model:
+            self._resilient = ResilientLLMClient(client, model)
 
     # ═══════════════════════════════════════════
     # 公开接口

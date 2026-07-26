@@ -233,7 +233,7 @@ class CreativeSeedEngine:
         try:
             with open(self._usage_path(), 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except (FileNotFoundError, json.JSONDecodeError, IOError):
             return {"used_global": [], "novel_seeds": {}}
     
     def _save_usage(self):

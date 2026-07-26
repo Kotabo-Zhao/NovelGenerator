@@ -125,6 +125,35 @@ class GenerateChapterRequest(BaseModel):
     feedback: Optional[str] = None  # 用户修改意见（重生成场景）
 
 
+# ── v2.16: 输入校验工具函数 ──
+
+def _validate_novel_id(novel_id: str) -> str:
+    """校验小说ID：只允许ASCII字母/数字/中文/下划线/连字符"""
+    import re
+    if not novel_id or not isinstance(novel_id, str):
+        raise HTTPException(400, "❌ 小说ID不能为空")
+    if len(novel_id) > 200:
+        raise HTTPException(400, "❌ 小说ID过长（最多200字符）")
+    if re.search(r'[<>"/\\|?*]', novel_id):
+        raise HTTPException(400, "❌ 小说ID包含非法字符")
+    # 反路径遍历
+    if ".." in novel_id:
+        raise HTTPException(400, "❌ 小说ID包含非法路径序列")
+    return novel_id
+
+
+def _validate_chapter_range(start: int, end: int):
+    """校验章节范围"""
+    if not isinstance(start, int) or not isinstance(end, int):
+        raise HTTPException(400, "❌ 章节号必须为整数")
+    if start < 1 or end < 1:
+        raise HTTPException(400, "❌ 章节号必须大于0")
+    if start > end:
+        raise HTTPException(400, f"❌ 起始章节({start})不能大于结束章节({end})")
+    if end - start > 200:
+        raise HTTPException(400, "❌ 批量生成一次最多200章")
+
+
 # ── Routes ──
 
 @app.get("/api/health")
@@ -238,24 +267,95 @@ async def delete_style_seed(name: str):
     return {"success": True}
 
 
-@app.get("/api/novels")
-async def list_novels():
-    """列出所有小说"""
-    return {"novels": engine.list_novels()}
-
-
-@app.get("/api/novels/{novel_id}")
-async def get_novel(novel_id: str):
-    """获取小说详情"""
+@app.get("/api/novels/{novel_id}/quality-dashboard")
+async def get_quality_dashboard(novel_id: str):
+    """v2.16: 小说质量仪表板 — 聚合所有质量维度"""
     plan = engine.get_novel(novel_id)
     if not plan:
         raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在")
     
-    # 移除过大的章节内容
-    if "chapters" in plan:
-        del plan["chapters"]
+    state = engine.memory.get_novel_state(novel_id)
+    completed = state.get("completed_chapters", [])
+    total = plan.get("outline", {}).get("total_chapters", 0)
     
-    return {"novel": plan}
+    # 1. 完整性评分
+    completeness = min(100, int(len(completed) / max(total, 1) * 100)) if total > 0 else 0
+    
+    # 2. AI痕迹评分（取最近一章）
+    ai_score = None
+    if completed:
+        last_ch = max(completed)
+        last_content = engine.get_chapter(novel_id, last_ch)
+        if last_content and len(last_content) > 200:
+            try:
+                from core.humanizer import humanize_text
+                h_result = humanize_text(last_content)
+                ai_score = h_result["score"]
+            except Exception:
+                pass
+    
+    # 3. 章节字数统计
+    word_counts = {}
+    if completed:
+        for ch in completed[-5:]:
+            content = engine.get_chapter(novel_id, ch)
+            if content:
+                word_counts[str(ch)] = len(content)
+    
+    # 4. 伏笔统计
+    foreshadow_ledger = plan.get("foreshadow_ledger", {})
+    total_hooks = len(foreshadow_ledger)
+    resolved_hooks = sum(1 for fs in foreshadow_ledger.values() if fs.get("actual_payoff_chapter"))
+    
+    # 5. 摘要数量（长篇连续性）
+    summary_count = len(state.get("summaries", {}))
+    
+    return {
+        "novel_id": novel_id,
+        "title": plan.get("title", ""),
+        "quality": {
+            "completeness": {
+                "score": completeness,
+                "completed_chapters": len(completed),
+                "total_chapters": total,
+            },
+            "ai_score": {
+                "score": ai_score,
+                "grade": "A" if ai_score and ai_score >= 80 else ("B" if ai_score and ai_score >= 60 else ("C" if ai_score and ai_score >= 40 else "N/A")),
+                "note": "基于最近一章检测" if ai_score else "尚无已生成章节",
+            },
+            "chapter_word_counts": word_counts,
+            "foreshadowing": {
+                "total": total_hooks,
+                "resolved": resolved_hooks,
+                "rate": int(resolved_hooks / max(total_hooks, 1) * 100),
+            },
+            "continuity": {
+                "auto_summaries": summary_count,
+                "bridges": len(plan.get("coherence_report", {}).get("bridges", [])),
+            },
+        },
+        "recommendations": _generate_quality_recommendations(
+            completeness, ai_score, total_hooks, resolved_hooks, summary_count, total
+        ),
+    }
+
+
+def _generate_quality_recommendations(completeness, ai_score, total_hooks, resolved_hooks, 
+                                      summary_count, total_chapters):
+    """生成质量改进建议"""
+    recs = []
+    if completeness < 30:
+        recs.append("📝 建议继续生成更多章节以完成故事")
+    if ai_score and ai_score < 60:
+        recs.append("🤖 最新一章AI痕迹较重，建议开启Humanizer重写")
+    if total_hooks > 0 and resolved_hooks < total_hooks * 0.3:
+        recs.append(f"🎯 伏笔回收率偏低({resolved_hooks}/{total_hooks})，建议在后续章节中回收伏笔")
+    if total_chapters > 20 and summary_count < total_chapters * 0.5:
+        recs.append("📚 长篇上下文不足，建议启用自动摘要功能以提升长篇连贯性")
+    if not recs:
+        recs.append("👍 当前质量良好，继续写作！")
+    return recs
 
 
 @app.get("/api/novels/{novel_id}/chapters/{chapter_num}")

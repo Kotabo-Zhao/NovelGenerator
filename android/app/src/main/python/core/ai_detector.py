@@ -49,6 +49,8 @@ class AIDetector:
     def __init__(self, client: OpenAI = None, model: str = None):
         self.client = client
         self.model = model
+        if client and model:
+            self._resilient = ResilientLLMClient(client, model)
 
     def detect(self, text: str) -> dict:
         """检测文本中的 AI 痕迹"""
@@ -164,6 +166,10 @@ class HumanRewriter:
     def __init__(self, client: OpenAI = None, model: str = None):
         self.client = client
         self.model = model
+        if client and model:
+            self._resilient = ResilientLLMClient(client, model)
+        if client and model:
+            self._resilient = ResilientLLMClient(client, model)
 
     def rewrite(self, text: str, detection: dict = None, 
                 examples: str = "", target_length: int = None) -> str:

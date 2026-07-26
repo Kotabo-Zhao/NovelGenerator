@@ -59,6 +59,7 @@ class RequirementSupervisor:
     def __init__(self, client: OpenAI = None, model: str = None):
         self.client = client
         self.model = model
+        self._resilient = ResilientLLMClient(client, model) if client else None
         self._max_retries = 3  # 单个子任务最大重试次数
 
     def supervise(self, requirements: dict, plan: dict) -> dict:
