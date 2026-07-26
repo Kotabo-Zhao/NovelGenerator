@@ -350,7 +350,7 @@ async def create_novel_stream(req: CreateNovelRequest):
 
 
 async def _sse_with_heartbeat(event_generator):
-    """通用心跳包装: 每8s发送ping防止Render超时断开SSE"""
+    """通用心跳包装: 每5s发送ping防止超时断开SSE (v2.14: 无上限，跟随producer生命周期)"""
     q = asyncio.Queue()
     cancelled = False
     
@@ -373,10 +373,12 @@ async def _sse_with_heartbeat(event_generator):
         await q.put(("done", None))
     
     async def heartbeater():
-        for t in range(60):  # max 480s
-            await asyncio.sleep(8)
+        t = 0
+        while not cancelled:
+            await asyncio.sleep(5)  # v2.14: 5秒间隔(原来8秒)，更积极保活
             if cancelled:
                 break
+            t += 1
             await q.put(("ping", {"type":"ping","t":t}))
     
     p_task = asyncio.create_task(producer())
