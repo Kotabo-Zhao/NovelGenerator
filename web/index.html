@@ -1865,7 +1865,7 @@ const app = createApp({
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     const writingModeLiterary = ref(false);
-    const useAtomicMode = ref(false); // v2.3.1: 默认关闭原子化——分beat独立LLM调用导致段落间逻辑断裂
+    const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
     const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
 
     // v2.3: 剧情图谱

@@ -1002,6 +1002,38 @@ class NovelEngine:
                     "target_words": config.DEFAULT_CHAPTER_WORDS,
                 }
             
+            # ── v2.9 Phase 0: 生成章节蓝图 ──
+            yield {"type": "status", "message": "生成章节蓝图..."}
+            
+            # 构建完整写作上下文（常规Writer用的五层上下文）
+            chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+            
+            # 用LLM生成300字叙事蓝图
+            blueprint = ""
+            try:
+                blueprint_prompt = f"""根据以下大纲和设定，写出本章的叙事蓝图。蓝图是一段200-300字的连贯叙事概要，描述本章从头到尾具体发生了什么。不是大纲条目，是用叙述语言把本章过一遍。
+
+{chapter_context[:2000]}
+
+只输出蓝图正文，不要标题。"""
+                
+                bp_resp = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "你是一位小说策划。把大纲转化为叙事蓝图。"},
+                        {"role": "user", "content": blueprint_prompt},
+                    ],
+                    temperature=0.7,
+                    max_tokens=600,
+                )
+                blueprint = bp_resp.choices[0].message.content.strip()
+                log.info(f"Blueprint generated for Ch{chapter_num}: {len(blueprint)} chars")
+            except Exception as e:
+                log.warning(f"Blueprint generation failed, using summary: {e}")
+                blueprint = chapter_outline.get("summary", "继续推进主线剧情")
+            
+            yield {"type": "blueprint", "text": blueprint[:100] + "..."}
+            
             # ── Phase 1: 拆解为 beat ──
             yield {"type": "status", "message": f"拆解第{chapter_num}章为节拍..."}
             
@@ -1067,7 +1099,8 @@ class NovelEngine:
             
             beats_text = []
             async for beat_result in self.atomic_writer.write_beats_stream(
-                beats, char_context, style_guide, chapter_num
+                beats, char_context, style_guide, chapter_num,
+                blueprint=blueprint, chapter_context=chapter_context[:1200]
             ):
                 beats_text.append({
                     "index": beat_result["beat_index"],
