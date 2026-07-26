@@ -31,6 +31,7 @@ import re
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -1319,7 +1320,7 @@ class LogicSupervisor:
         log.info(f"LogicSupervisor L2: chapter {chapter_num} ({len(chapter_text)} chars)")
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": self.L2_SYSTEM},

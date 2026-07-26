@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class AIDetector:
             return self._offline_detect(text)
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": DETECTOR_SYSTEM},
@@ -204,7 +205,7 @@ class HumanRewriter:
         log.info(f"HumanRewriter: rewriting {len(text)} chars")
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": REWRITER_SYSTEM},

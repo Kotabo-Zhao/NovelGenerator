@@ -14,6 +14,7 @@ import re
 import logging
 from typing import Optional
 from openai import OpenAI
+from .resilient_client import ResilientLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -393,7 +394,7 @@ class TwistDesigner:
 请规划反转分布。只输出JSON。"""
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system},
@@ -440,7 +441,7 @@ class TwistDesigner:
         user = f"第{chapter_num}章: {json.dumps(chapter_outline, ensure_ascii=False)[:300]}\n前情: {prev_summary[:200]}"
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._resilient.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system},

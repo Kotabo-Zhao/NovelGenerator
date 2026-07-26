@@ -71,7 +71,10 @@ async def serve_frontend():
     index_path = os.path.join(WEB_DIR, "index.html")
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
-            return f.read()
+            return HTMLResponse(
+                f.read(),
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+            )
     return HTMLResponse("<h1>NovelGenerator</h1><p>Frontend not found</p>", status_code=404)
 
 
@@ -88,7 +91,10 @@ async def serve_vue():
 async def serve_sw():
     path = os.path.join(WEB_DIR, "sw.js")
     if os.path.exists(path):
-        return FileResponse(path, media_type="application/javascript")
+        return FileResponse(
+            path, media_type="application/javascript",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
     return Response("// sw.js not found", media_type="application/javascript", status_code=404)
 
 @app.get("/manifest.json")
@@ -344,7 +350,7 @@ async def create_novel_stream(req: CreateNovelRequest):
 
 
 async def _sse_with_heartbeat(event_generator):
-    """通用心跳包装: 每8s发送ping防止Render超时断开SSE"""
+    """通用心跳包装: 每5s发送ping防止超时断开SSE (v2.14: 无上限，跟随producer生命周期)"""
     q = asyncio.Queue()
     cancelled = False
     
@@ -446,15 +452,28 @@ async def generate_chapter_atomic(req: GenerateChapterRequest):
 
 @app.post("/api/novels/{novel_id}/generate/batch")
 async def generate_batch(novel_id: str, req: dict):
-    """批量生成章节 (SSE 流式进度)"""
+    """批量生成章节 (SSE 流式进度 + 检查点断点续传)"""
     start = req.get("start_chapter", 1)
     end = req.get("end_chapter", 1)
     writing_mode = req.get("writing_mode", "webnovel")
+    resume = req.get("resume", False)  # v2.14: 断点续传
+    
+    # v2.14: 断点续传 — 读取上次检查点，跳过已生成章节
+    if resume:
+        checkpoint = _read_batch_checkpoint(novel_id)
+        if checkpoint:
+            start = checkpoint.get("next_chapter", start)
+            log.info(f"Resuming batch for {novel_id} from chapter {start} (checkpoint)")
     
     async def event_stream():
         try:
             failed = []
             for ch_num in range(start, end + 1):
+                # v2.14: 跳过已生成的章节（断点续传时）
+                if resume and engine.memory.chapter_exists(novel_id, ch_num):
+                    yield f"data: {json.dumps({'type':'chapter_skipped','chapter':ch_num,'message':'已存在，跳过'}, ensure_ascii=False)}\n\n"
+                    continue
+                    
                 yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
                 chapter_error = None
                 try:
@@ -466,6 +485,8 @@ async def generate_batch(novel_id: str, req: dict):
                             chapter_error = event.get("message", "未知错误")
                     if not chapter_error:
                         yield f"data: {json.dumps({'type':'chapter_done','chapter':ch_num}, ensure_ascii=False)}\n\n"
+                        # v2.14: 写入检查点
+                        _save_batch_checkpoint(novel_id, ch_num + 1, end)
                 except Exception as ch_err:
                     chapter_error = str(ch_err)
                     log.warning(f"Batch chapter {ch_num} exception: {ch_err}")
@@ -473,16 +494,74 @@ async def generate_batch(novel_id: str, req: dict):
                 if chapter_error:
                     failed.append(ch_num)
                     yield f"data: {json.dumps({'type':'chapter_failed','chapter':ch_num,'error':chapter_error}, ensure_ascii=False)}\n\n"
+            
+            # v2.14: 批量完成，清除检查点
+            _clear_batch_checkpoint(novel_id)
             yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end,'failed':failed}, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("batch generate crashed")
-            yield f"data: {json.dumps({'type':'error','message':str(e)}, ensure_ascii=False)}\n\n"
+            # v2.14: 保留检查点，允许用户后续续传
+            yield f"data: {json.dumps({'type':'error','message':f'❌ 批量生成中断：{e}。已生成章节已保存，可使用"断点续传"恢复。'}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+def _checkpoint_path(novel_id: str) -> str:
+    """获取检查点文件路径"""
+    import os
+    novel_dir = os.path.join(config.NOVELS_DIR, novel_id)
+    return os.path.join(novel_dir, ".batch_checkpoint.json")
+
+
+def _save_batch_checkpoint(novel_id: str, next_chapter: int, end_chapter: int):
+    """保存批量生成检查点"""
+    import os, json, time as _time
+    try:
+        cp = {"novel_id": novel_id, "next_chapter": next_chapter, 
+              "end_chapter": end_chapter, "saved_at": _time.time()}
+        path = _checkpoint_path(novel_id)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cp, f, ensure_ascii=False)
+    except Exception as e:
+        log.warning(f"Failed to save checkpoint: {e}")
+
+
+def _read_batch_checkpoint(novel_id: str) -> dict:
+    """读取批量生成检查点"""
+    import os, json
+    try:
+        path = _checkpoint_path(novel_id)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return None
+
+
+def _clear_batch_checkpoint(novel_id: str):
+    """清除检查点"""
+    import os
+    try:
+        path = _checkpoint_path(novel_id)
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+@app.get("/api/novels/{novel_id}/batch/checkpoint")
+async def get_batch_checkpoint(novel_id: str):
+    """检查是否有未完成的批量生成检查点"""
+    cp = _read_batch_checkpoint(novel_id)
+    if cp:
+        return {"has_checkpoint": True, **cp}
+    return {"has_checkpoint": False}
 
 
 @app.get("/api/novels/{novel_id}/export")

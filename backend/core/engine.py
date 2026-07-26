@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import copy
+import hashlib
 import logging
 import asyncio
 from typing import AsyncGenerator, Optional, AsyncIterator
@@ -40,6 +41,111 @@ from .storygraph_interventions import analyze_and_inject
 from .coherence_validator import validate_and_repair_outline
 
 log = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════
+# v2.13: Humanizer 语义结尾保护
+# ═══════════════════════════════════════════
+
+def _extract_key_ending(text: str, window: int = 600) -> dict | None:
+    """提取原文关键结尾信息，用于 Humanizer 后恢复保护。
+    
+    返回 {sentences, ngrams, has_hook} 或 None。
+    """
+    import re
+    if len(text) < 100:
+        return None
+    
+    # 按句子边界切分
+    raw = re.split(r'(?<=[。！？……])', text[-window:])
+    sentences = [s.strip() for s in raw if s.strip() and len(s.strip()) > 2]
+    
+    if len(sentences) < 2:
+        return None
+    
+    # 最后 2-3 句为关键结尾
+    key = sentences[-3:] if len(sentences) >= 3 else sentences[-2:]
+    ending_text = ''.join(key)
+    
+    # 3-gram 特征集
+    chars = ending_text.replace(' ', '').replace('\n', '')
+    ngrams = {chars[i:i+3] for i in range(len(chars) - 2)} if len(chars) >= 3 else set()
+    
+    # 勾子检测
+    hook_markers = ['突然', '忽然', '猛地', '即将', '等待', '然而', '可是',
+                    '但', '只见', '……', '—', '未完', '待续', '下一章']
+    has_hook = any(m in ending_text for m in hook_markers)
+    
+    return {
+        "text": ending_text,
+        "ngrams": ngrams,
+        "has_hook": has_hook,
+        "sentence_count": len(key),
+    }
+
+
+def _protect_ending_semantic(original: str, rewritten: str, ending_info: dict) -> str:
+    """v2.13: 语义结尾保护 — 三重检测决定是否恢复原文结尾。
+    
+    1. n-gram 重叠率 < 40% → 结尾已被大改
+    2. 原文结尾长度 > 改写结尾 1.5x → 被截断
+    3. 原文有勾子改写版没有 → 悬念被抹掉
+    
+    满足任一条件即恢复原文结尾。
+    """
+    import re
+    
+    # 提取改写版结尾
+    raw = re.split(r'(?<=[。！？……])', rewritten[-600:])
+    r_sentences = [s.strip() for s in raw if s.strip() and len(s.strip()) > 2]
+    if len(r_sentences) < 2:
+        # 改写版结尾太短 — 直接用原文结尾替换
+        if len(ending_info["text"]) > 80:
+            cutoff = max(0, len(rewritten) - len(ending_info["text"]))
+            protected = rewritten[:cutoff] + ending_info["text"]
+            log.info(f"Humanizer: ending protected (rewrite too short, {len(ending_info['text'])} chars kept)")
+            return protected
+        return rewritten
+    
+    r_ending_text = ''.join(r_sentences[-3:] if len(r_sentences) >= 3 else r_sentences[-2:])
+    
+    # 指标1: n-gram 重叠
+    if ending_info["ngrams"]:
+        r_chars = r_ending_text.replace(' ', '').replace('\n', '')
+        r_ngrams = {r_chars[i:i+3] for i in range(len(r_chars) - 2)} if len(r_chars) >= 3 else set()
+        if ending_info["ngrams"]:
+            overlap = len(ending_info["ngrams"] & r_ngrams) / len(ending_info["ngrams"])
+        else:
+            overlap = 1.0
+    else:
+        overlap = 1.0
+    
+    # 指标2: 长度剧烈缩短
+    length_shrink = len(ending_info["text"]) > len(r_ending_text) * 1.5
+    
+    # 指标3: 勾子丢失
+    hook_markers = ['突然', '忽然', '猛地', '即将', '等待', '然而', '可是',
+                    '但', '只见', '……', '—', '未完', '待续', '下一章']
+    r_has_hook = any(m in r_ending_text for m in hook_markers)
+    hook_lost = ending_info["has_hook"] and not r_has_hook
+    
+    needs_protection = overlap < 0.4 or length_shrink or hook_lost
+    
+    if needs_protection:
+        # 用原文结尾替换改写版结尾
+        ending_len = len(ending_info["text"])
+        cutoff = max(0, len(rewritten) - len(r_ending_text))
+        protected = rewritten[:cutoff] + ending_info["text"]
+        
+        reasons = []
+        if overlap < 0.4: reasons.append(f"overlap={overlap:.0%}")
+        if length_shrink: reasons.append("length_shrink")
+        if hook_lost: reasons.append("hook_lost")
+        
+        log.info(f"Humanizer: ending semantically protected ({', '.join(reasons)})")
+        return protected
+    
+    return rewritten
 
 
 class NovelEngine:
@@ -287,21 +393,40 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"Requirement decomposition failed, proceeding without it: {e}")
                 enhanced_input = dict(creative_input)
-                yield {"type": "warning", "message": f"需求深度拆解跳过: {e}，使用原始灵感生成"}
+                yield {"type": "warning", "message": f"⚠️ 需求深度分析跳过，将直接使用您的灵感描述生成。原因：{e}"}
         else:
             enhanced_input = dict(creative_input)
         
+        # ── v2.11: 创意种子注入（架构级随机性）──
+        try:
+            from .creative_seeds import create_seed_engine
+            seed_engine = create_seed_engine(self.memory.storage_dir)
+            temp_id = hashlib.md5((inspiration or enhanced_input.get("title","") or "untitled").encode()).hexdigest()[:12]
+            seed_text, seeds = seed_engine.inject_into_planning_context(
+                temp_id, creative_input.get("genre", ""), ""
+            )
+            if seeds:
+                # 将创意约束作为第一个系统指令注入
+                enhanced_input["_creative_seeds"] = seeds
+                enhanced_input["_creative_seeds_text"] = seed_text
+                enhanced_input["_creative_seeds_temp_id"] = temp_id
+                yield {"type": "progress", "phase": "creative_seeds", "pct": 1,
+                       "label": f"已注入 {len(seeds)} 个创意约束"}
+                yield {"type": "creative_seeds_injected", "count": len(seeds), "temp_id": temp_id}
+        except Exception as e:
+            log.warning(f"Creative seed injection failed: {e}")
+
         # ── Phase 1-3: 标准流式规划（使用增强版输入）──
         async for event in self.planner.plan_stream(enhanced_input):
             if event["type"] == "done":
                 plan = event.get("plan")
                 if not isinstance(plan, dict):
                     log.error(f"create_novel_stream: plan is {type(plan).__name__}, not dict")
-                    yield {"type": "error", "message": "大纲数据结构异常，请重试"}
+                    yield {"type": "error", "message": "❌ 大纲生成失败：数据结构异常。建议检查灵感描述是否清晰，或稍后重试。"}
                     return
                 if "title" not in plan or not plan["title"]:
                     log.error(f"create_novel_stream: plan missing title, keys={list(plan.keys())[:10]}")
-                    yield {"type": "error", "message": "大纲缺少书名，请重试"}
+                    yield {"type": "error", "message": "❌ 大纲生成失败：未检测到书名。建议在灵感中明确书名，或稍后重试。"}
                     return
                 novel_dir = self.memory.get_novel_dir(plan["title"])
                 os.makedirs(novel_dir, exist_ok=True)
@@ -359,8 +484,8 @@ class NovelEngine:
                                 f"score={report['score']}")
                     if not report.get("passed"):
                         yield {"type": "warning", "message": 
-                              f"大纲逻辑检查发现 {sum(1 for i in report.get('issues',[]) if i['severity']=='P0')} 个断裂点，"
-                              f"已自动修补 {len(report.get('fixes_applied',[]))} 处"}
+                              f"🔧 大纲逻辑检查发现 {sum(1 for i in report.get('issues',[]) if i['severity']=='P0')} 个断裂点，"
+                              f"已自动修补 {len(report.get('fixes_applied',[]))} 处。生成质量不受影响。"}
                 except Exception as e:
                     log.warning(f"CoherenceValidator skipped (non-fatal): {e}")
                 
@@ -373,7 +498,7 @@ class NovelEngine:
         """根据修改意见重新生成大纲（保留世界观和角色）"""
         plan = self.get_novel(novel_id)
         if not plan:
-            yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+            yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
             return
 
         genre = plan.get("genre", "玄幻")
@@ -564,7 +689,7 @@ class NovelEngine:
             try:
                 lock_age = time.time() - os.path.getmtime(lock_file)
                 if lock_age < 300:
-                    yield {"type": "error", "message": f"第{chapter_num}章正在生成中，请等待完成（已运行{int(lock_age)}秒）"}
+                    yield {"type": "error", "message": f"⏳ 第{chapter_num}章正在生成中（已运行{int(lock_age)}秒），请等待完成后再试"}
                     return
                 else:
                     log.warning(f"Stale lock file for chapter {chapter_num}, removing")
@@ -583,7 +708,7 @@ class NovelEngine:
         try:
             plan = self.get_novel(novel_id)
             if not plan:
-                yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+                yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
                 return
 
             # 找到本章大纲
@@ -666,6 +791,7 @@ class NovelEngine:
                 target_words=target_words,
                 writing_mode=writing_mode,
                 normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                chapter_outline=chapter_outline,  # v2.12: 传递大纲用于两阶段结尾生成
             ):
                 full_text += text
                 # 每500字增量保存一次
@@ -686,6 +812,9 @@ class NovelEngine:
                 rewriter = HumanRewriter(self.client, self.model)
                 
                 chapter_summary = chapter_outline.get("summary", "") or chapter_outline.get("title", "")
+                # v2.13: 保存结尾 (Humanizer会覆盖全文 → 语义保护Phase 2结尾)
+                # 不再仅靠长度——改用句子拆分 + n-gram重叠 + 勾子检测三重保护
+                _ending_saved = _extract_key_ending(full_text)
                 result = await asyncio.to_thread(
                     humanize_pipeline, full_text, detector, rewriter,
                     scene_desc=chapter_summary,
@@ -694,7 +823,15 @@ class NovelEngine:
                 )
                 if result["rewritten"]:
                     ai_report = result
-                    full_text = result["text"]
+                    rewritten = result["text"]
+                    if len(rewritten) > 500 and _ending_saved:
+                        protected = _protect_ending_semantic(full_text, rewritten, _ending_saved)
+                        if protected != rewritten:
+                            full_text = protected
+                        else:
+                            full_text = rewritten
+                    else:
+                        full_text = rewritten
                     log.info(f"AI Humanizer: score {ai_report['ai_score_before']}→{ai_report.get('ai_score_after','?')}, rewritten")
                     yield {"type": "ai_report", 
                            "score_before": ai_report["ai_score_before"],
@@ -733,7 +870,7 @@ class NovelEngine:
                     
                     # 重试一次
                     yield {"type": "quality_warning", "score": qr["score"], "issues": qr["issues"],
-                           "message": f"质量评分 {qr['score']}，自动重生成..."}
+                           "message": f"📝 质量检查发现 {len(qr['issues'])} 个可改进点（评分 {qr['score']}），正在自动优化重写..."}
                     
                     retry_text = ""
                     async for text in self.writer.write_stream(
@@ -742,6 +879,8 @@ class NovelEngine:
                         target_words=target_words,
                         writing_mode=writing_mode,
                         normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                        chapter_outline=chapter_outline,
+                        skip_ending=True,  # v2.12: 重试不重复生成结尾
                     ):
                         retry_text += text
                     
@@ -833,7 +972,7 @@ class NovelEngine:
             if is_trunc:
                 log.warning(f"Chapter {chapter_num} incomplete after Writer retries: {reason}. "
                            f"Engine fallback: retrying generation...")
-                yield {"type": "warning", "message": f"本章不完整（{reason}），自动重新生成..."}
+                yield {"type": "warning", "message": f"⏳ 本章内容不完整（{reason}），正在自动重新生成以补全内容..."}
                 
                 # Engine-level retry: 用更大的 max_tokens 重新调用 Writer
                 try:
@@ -847,6 +986,8 @@ class NovelEngine:
                         writing_mode=writing_mode,
                         normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
                         fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                        chapter_outline=chapter_outline,
+                        skip_ending=True,  # v2.12: 重试不重复生成结尾
                     ):
                         retry_text += text
                         yield {"type": "text", "content": text}
@@ -959,6 +1100,8 @@ class NovelEngine:
                             target_words=target_words,
                             writing_mode=writing_mode,
                             normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                            chapter_outline=chapter_outline,
+                            skip_ending=True,  # v2.12: 修复重试不重复生成结尾
                         ):
                             fixed_text += fix_chunk
                         
@@ -1004,6 +1147,24 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"AutoCalibration skipped: {e}")
 
+            # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
+            try:
+                chapter_text = self.get_chapter(novel_id, chapter_num) or full_text
+                if chapter_text and len(chapter_text) > 200:
+                    summary_result = await asyncio.to_thread(
+                        self.chapter_summarizer.summarize_chapter,
+                        chapter_num, chapter_text
+                    )
+                    if summary_result:
+                        state = self.memory.get_novel_state(novel_id)
+                        if "summaries" not in state:
+                            state["summaries"] = {}
+                        state["summaries"][str(chapter_num)] = summary_result
+                        self.memory.save_novel_state(novel_id, state)
+                        log.info(f"Auto-summary for Ch{chapter_num}: {len(summary_result.get('summary',''))} chars")
+            except Exception as e:
+                log.warning(f"Auto-summary for Ch{chapter_num} skipped: {e}")
+
             # ── 渐进式摘要压缩（每10章）──
             try:
                 compress_result = check_and_compress(
@@ -1019,7 +1180,7 @@ class NovelEngine:
 
         except Exception as e:
             log.exception(f"Chapter generation failed: {e}")
-            yield {"type": "error", "message": str(e)}
+            yield {"type": "error", "message": f"❌ 章节生成失败：{e}。请检查网络连接或稍后重试。"}
         finally:
             # 清理并发锁
             try:
@@ -1063,7 +1224,7 @@ class NovelEngine:
         try:
             plan = self.get_novel(novel_id)
             if not plan:
-                yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+                yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
                 return
             
             chapter_outline = self._find_chapter_outline(plan, chapter_num)
@@ -1224,7 +1385,7 @@ class NovelEngine:
             is_trunc, reason = _check_truncation(full_text, chapter_outline.get("target_words", 2000))
             if is_trunc:
                 log.warning(f"Atomic chapter {chapter_num} may be incomplete: {reason}")
-                yield {"type": "warning", "message": f"本章可能不完整（{reason}），建议用常规模式重生成"}
+                yield {"type": "warning", "message": f"⚠️ 原子模式生成的本章可能不完整（{reason}），建议使用常规模式重新生成此章"}
             
             # ── v2.10: 提取章节桥接数据 ──
             try:
@@ -1507,7 +1668,7 @@ class NovelEngine:
         """v2 交互式大纲: FeedbackDecomposer 语义拆解 → 逐条精确执行 → diff输出"""
         plan = self.get_novel(novel_id)
         if not plan:
-            yield {"type": "error", "message": f"小说 '{novel_id}' 不存在"}
+            yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
             return
 
         # 保存旧版本用于 diff

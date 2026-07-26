@@ -59,12 +59,9 @@ class TestPlannerJSON(unittest.TestCase):
         self.assertEqual(r, {"a": 1})
 
     def test_04_trailing_comma_array(self):
+        # v2.12: _parse_json wraps arrays as {'data': [...], 'chapters': [...]} for planner compatibility
         r = self.p._parse_json('[1,2,]')
-        # v2.13: _parse_json may wrap arrays as {data, chapters}
-        if isinstance(r, dict):
-            self.assertEqual(r['data'], [1, 2])
-        else:
-            self.assertEqual(r, [1, 2])
+        self.assertEqual(r, {"data": [1, 2], "chapters": [1, 2]})
 
     def test_05_nested_trailing_comma(self):
         r = self.p._parse_json('{"a":{"b":2,},}')
@@ -473,13 +470,10 @@ class TestEdgeCases(unittest.TestCase):
         self.assertEqual(r, {})
 
     def test_51_array_only(self):
+        # v2.12: _parse_json wraps arrays as {'data': [...], 'chapters': [...]} for planner compatibility
         p = Planner(None, 'mock')
         r = p._parse_json('[1,2,3,4,5]')
-        # v2.13: _parse_json may wrap arrays as {data, chapters}
-        if isinstance(r, dict):
-            self.assertEqual(r['data'], [1, 2, 3, 4, 5])
-        else:
-            self.assertEqual(r, [1, 2, 3, 4, 5])
+        self.assertEqual(r, {"data": [1, 2, 3, 4, 5], "chapters": [1, 2, 3, 4, 5]})
 
     def test_52_escaped_quotes_in_string(self):
         p = Planner(None, 'mock')

@@ -488,19 +488,39 @@ class SharedMemoryManager:
             else:
                 log.warning(f"Previous chapter {prev_chapter} content not found on disk!")
         
-        # L2c: 更早章节的摘要（最近3章，帮助理解多章弧线）
+        # L2c: 前几章剧情摘要（优先使用实际生成摘要，降级用大纲summary）
         if chapter_num > 2:
+            state = self.read("global_state", novel_id)
+            generated_summaries = state.get("summaries", {}) if isinstance(state, dict) else {}
+            
             summaries = []
             for ch_num in range(max(1, chapter_num - 3), chapter_num):
-                for vol in plan.get("outline", {}).get("volumes", []):
-                    for ch in vol.get("chapters", []):
-                        if int(ch.get("number", 0)) == ch_num:
-                            s = ch.get("summary", "")
-                            if s:
-                                summaries.append(f"第{ch_num}章: {s}")
+                # 优先：实际生成的摘要（v2.14 每章自动生成）
+                gen_summary = generated_summaries.get(str(ch_num))
+                if gen_summary:
+                    if isinstance(gen_summary, dict):
+                        s = gen_summary.get("summary", "")
+                        hooks = gen_summary.get("hooks", [])
+                        if hooks:
+                            s += f" | 伏笔: {', '.join(str(h)[:30] for h in hooks[:2])}"
+                    else:
+                        s = str(gen_summary)
+                else:
+                    # 降级：大纲中的summary
+                    s = ""
+                    for vol in plan.get("outline", {}).get("volumes", []):
+                        for ch in vol.get("chapters", []):
+                            if int(ch.get("number", 0)) == ch_num:
+                                s = ch.get("summary", "")
+                                break
+                        if s:
                             break
+                
+                if s:
+                    summaries.append(f"第{ch_num}章: {s}")
+            
             if summaries:
-                parts.append(f"## 📚 前几章大纲剧情线\n" + "\n".join(summaries))
+                parts.append(f"## 📚 前几章剧情线\n" + "\n".join(summaries))
 
         # L3: 全局状态快照
         state = self.read("global_state", novel_id)
