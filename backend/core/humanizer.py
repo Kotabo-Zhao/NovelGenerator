@@ -286,6 +286,64 @@ AI_PATTERNS = [
         "pattern": r"(.{5,15})(?:的|地|得)(.{5,15})(?:，{0,2}|、)(.{5,15})(?:的|地|得)(.{5,15})",
         "fix": "打破平行句式。长短交错，不要两句一样节奏"
     },
+
+    # ── 第6阶段: 中文网络小说特有AI痕迹 (v2.14新增) ──
+    {
+        "id": 38,
+        "name": "万能身体反应",
+        "category": "内容",
+        "pattern": r"(?:太阳穴突突|胸口一紧|心口一紧|手心出汗|心跳加速|心跳漏了一拍|呼吸急促|呼吸一滞|倒吸一口凉气|脊背发凉|后背一凉|胃里翻江倒海|瞳孔骤缩|瞳孔猛地一缩|额角渗出冷汗|冷汗直流|浑身一震|虎躯一震)",
+        "fix": "用角色独有的动作表达情绪。'太阳穴突突跳' → '他把茶杯转了四圈才端起来喝'"
+    },
+    {
+        "id": 39,
+        "name": "陈词意象",
+        "category": "风格",
+        "pattern": r"(?:嘴角勾起一抹|眼底闪过一丝|目光如炬|目光如电|空气仿佛凝固|时间仿佛静止|这一刻.{0,5}明白了)",
+        "fix": "用具体的、个人化的动作替代。'嘴角勾起一抹冷笑' → '他看着那张脸看了三秒，转身就走'"
+    },
+    {
+        "id": 40,
+        "name": "重复确认对话",
+        "category": "交流",
+        "pattern": r"[「」""].{2,8}[」」""].{0,10}[「「""].{2,8}[」」""].{0,10}[「「""].{2,8}[」」""]",
+        "fix": "对话不超过4轮必须用动作打断。删掉确认性废话（'你说什么？''你确定？'）"
+    },
+    {
+        "id": 41,
+        "name": "空洞升级描写",
+        "category": "内容",
+        "pattern": r"(?:实力暴涨|修为大增|境界突破|力量飙升|气势暴涨|实力突飞猛进)(?!.{0,10}(?:的|了|，|。))",
+        "fix": "不要用'实力暴涨'这种空泛词。写具体变化：能举起多重的石头？速度快了多少？能看到多远的敌人？"
+    },
+    {
+        "id": 42,
+        "name": "万能反派嘲讽",
+        "category": "内容",
+        "pattern": r"(?:就凭你|不自量力|螳臂当车|蚍蜉撼树|区区|雕虫小技|班门弄斧|不知死活|找死)",
+        "fix": "反派不要只会说成语嘲讽。让反派用行动展示实力差距，而非嘴上说说"
+    },
+    {
+        "id": 43,
+        "name": "内心独白过长",
+        "category": "风格",
+        "pattern": r"(?:他|她|它)想[，。:：].{80,}",
+        "fix": "内心独白不超过3句。用动作表达纠结：'他顿了顿'比'他心想...'有力"
+    },
+    {
+        "id": 44,
+        "name": "场景切换生硬",
+        "category": "风格",
+        "pattern": r"\n\n(?:此时|与此同时|另一边|在.{2,8}那边|话说)",
+        "fix": "场景切换用空行+环境细节过渡，不要用'另一边'这种AI过渡词"
+    },
+    {
+        "id": 45,
+        "name": "过度铺垫",
+        "category": "内容",
+        "pattern": r"(?:众所周知|在这片大陆上|在这个世界里|自古以来|传说中)(?!.{0,5}(?:的|是|，))",
+        "fix": "世界观融入剧情，不要用旁白式说明。读者通过角色行动理解世界规则"
+    },
 ]
 
 
@@ -328,13 +386,13 @@ def build_humanizer_prompt(detected: list) -> str:
 
     summary = "\n".join(
         f"- [{p['name']}] 出现{p['count']}次 (类别: {p['category']})"
-        for p in detected[:8]
+        for p in detected[:10]
     )
 
-    # 取前5个最严重的模式的具体 fix 建议
+    # 取前6个最严重的模式的具体 fix 建议
     fixes = "\n".join(
         f"{i+1}. {_get_fix(p)}"
-        for i, p in enumerate(detected[:5])
+        for i, p in enumerate(detected[:6])
     )
 
     return f"""## Humanizer 检测结果
@@ -356,6 +414,16 @@ def build_humanizer_prompt(detected: list) -> str:
 - 承认复杂性——真实的人有复杂的感受和矛盾的想法
 - 允许一些混乱——完美的结构反而显得机械
 - 对感受要具体——用具体的感官细节替代抽象的情绪概括
+
+## 故事连贯性保护（最高优先级）
+
+- **不得删除任何剧情事件、角色对话、关键转折**
+- **不得改变角色性格、关系、动机**
+- **不得新增原文没有的情节或角色**
+- **只改写表达方式，不改写故事内容**
+- **保留原文的伏笔、钩子、悬念结构**
+- **对话内容可以调整语气但不能改变信息量**
+- **如果一段文字已经很自然，不要为了改而改**
 
 直接输出修改后的文本，不需要标注修改了哪里。"""
 
@@ -381,23 +449,54 @@ def humanize_text(text: str) -> dict:
     
     total_issues = sum(p["count"] for p in detected)
     
-    # 综合评分: pattern detections + burstiness
+    # ── v2.14: 分类别统计 ──
+    category_stats = {}
+    for p in detected:
+        cat = p["category"]
+        category_stats[cat] = category_stats.get(cat, 0) + p["count"]
+    
+    # 综合评分: pattern detections + burstiness + 类别权重
     word_count = len(text)
     issue_density = total_issues / max(word_count, 1) * 100
     score = max(0, 100 - int(issue_density * 20))
+    
     # 破折号惩罚: 每500字超过1个扣3分
     dash_count = text.count("—")
     dash_budget = max(1, word_count // 500)
     if dash_count > dash_budget:
         score = max(0, score - (dash_count - dash_budget) * 2)
     
+    # v2.14: 高严重度模式额外扣分
+    HIGH_SEVERITY_IDS = {38, 39, 43, 44}  # 万能身体反应、陈词意象、内心独白过长、场景切换生硬
+    MEDIUM_SEVERITY_IDS = {7, 9, 25, 26, 28, 30, 41, 42}  # AI高频词、否定排比、二元对比壳等
+    
+    for p in detected:
+        if p["id"] in HIGH_SEVERITY_IDS:
+            score = max(0, score - p["count"] * 3)
+        elif p["id"] in MEDIUM_SEVERITY_IDS:
+            score = max(0, score - p["count"] * 1)
+    
+    # v2.14: 评分等级
+    if score >= 80:
+        grade = "A"
+    elif score >= 60:
+        grade = "B"
+    elif score >= 40:
+        grade = "C"
+    elif score >= 20:
+        grade = "D"
+    else:
+        grade = "F"
+    
     return {
         "detected": detected,
         "prompt": build_humanizer_prompt(detected),
         "score": score,
+        "grade": grade,
         "total_issues": total_issues,
         "word_count": word_count,
         "burstiness": burst_issues,
+        "category_stats": category_stats,
     }
 
 
