@@ -403,6 +403,24 @@ class SharedMemoryManager:
 
     def _build_writer_context(self, novel_id: str, kwargs: dict) -> str:
         """为 Writer 构建完整写作上下文（五层）"""
+        try:
+            return self._build_writer_context_impl(novel_id, kwargs)
+        except Exception as e:
+            import traceback
+            log.error(f"FATAL: _build_writer_context crashed for novel={novel_id}, kwargs_keys={list(kwargs.keys())}: {e}\n{traceback.format_exc()}")
+            # 最小降级上下文
+            chapter_num = kwargs.get("chapter_num", 1)
+            chapter_outline = kwargs.get("chapter_outline", {})
+            return f"""## 本章大纲（上下文构建降级）
+
+- 章节: 第{chapter_num}章「{str(chapter_outline.get('title', ''))}」
+- 核心事件: {str(chapter_outline.get('summary', ''))}
+- 目标字数: {chapter_outline.get('target_words', 3000)} 字
+
+（注意：高级上下文构建失败，已降级为最小化提示，请继续写作）"""
+
+    def _build_writer_context_impl(self, novel_id: str, kwargs: dict) -> str:
+        """_build_writer_context 的实际实现（含异常保护）"""
         chapter_num = kwargs.get("chapter_num", 1)
         chapter_outline = kwargs.get("chapter_outline", {})
         
@@ -587,7 +605,7 @@ class SharedMemoryManager:
         parts = []
         protagonist = plan.get("characters", {}).get("protagonist", {})
         parts.append(f"主角: {protagonist.get('name', '')}")
-        parts.append(f"力量体系: {plan.get('worldbuilding', {}).get('power_system', '')[:200]}")
+        parts.append(f"力量体系: {_s(plan.get('worldbuilding', {}).get('power_system', ''))[:200]}")
         
         if state:
             parts.append(f"当前状态: {json.dumps(state, ensure_ascii=False)[:500]}")
@@ -1037,6 +1055,15 @@ class SharedMemoryManager:
 # ═══════════════════════════════════════════
 # v2.4.1: 上下文清洗 — 合并短行成正常段落
 # ═══════════════════════════════════════════
+
+# v2.10: 安全字符串切片 — 防止非字符串类型调用 [:] 产生 slice 错误
+def _s(text, default=""):
+    """将任意值安全转为字符串（防御 dict/list/None 等非预期的 .get() 返回值）"""
+    if isinstance(text, str):
+        return text
+    if text is None:
+        return default
+    return str(text)
 
 def _normalize_context_paragraphs(text: str) -> str:
     """轻量清洗：合并相邻短行，防止短行风格自我毒化循环。
