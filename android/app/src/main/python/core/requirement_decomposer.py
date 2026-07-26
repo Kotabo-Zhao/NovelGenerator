@@ -169,7 +169,34 @@ class RequirementDecomposer:
             )
 
             content = response.choices[0].message.content
-            result = json.loads(content)
+            
+            # v2.14: 增强JSON解析容错 — 避免不必要的离线降级
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError:
+                # 尝试修复: 去除markdown代码块标记
+                cleaned = content.strip()
+                if cleaned.startswith("```"):
+                    cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+                if cleaned.endswith("```"):
+                    cleaned = cleaned[:-3].strip()
+                try:
+                    result = json.loads(cleaned)
+                    log.info("RequirementDecomposer: JSON recovered after markdown cleanup")
+                except json.JSONDecodeError:
+                    # 最终降级: 尝试提取JSON片段
+                    import re as _re
+                    json_match = _re.search(r'\{[\s\S]*\}', cleaned)
+                    if json_match:
+                        try:
+                            result = json.loads(json_match.group())
+                            log.info("RequirementDecomposer: JSON recovered via regex extraction")
+                        except json.JSONDecodeError:
+                            log.error(f"RequirementDecomposer JSON unrecoverable, first 300 chars: {cleaned[:300]}")
+                            return self._offline_decompose(inspiration, plan)
+                    else:
+                        log.error(f"RequirementDecomposer no JSON found in response, first 300 chars: {cleaned[:300]}")
+                        return self._offline_decompose(inspiration, plan)
             
             # 补充元数据
             result["original_inspiration"] = inspiration
