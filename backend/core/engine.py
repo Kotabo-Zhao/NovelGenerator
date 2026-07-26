@@ -824,8 +824,37 @@ class NovelEngine:
             from .writer import _check_truncation
             is_trunc, reason = _check_truncation(full_text, target_words)
             if is_trunc:
-                log.warning(f"Chapter {chapter_num} may be incomplete: {reason}")
-                yield {"type": "warning", "message": f"本章可能不完整（{reason}），建议查看后重生成"}
+                log.warning(f"Chapter {chapter_num} incomplete after Writer retries: {reason}. "
+                           f"Engine fallback: retrying generation...")
+                yield {"type": "warning", "message": f"本章不完整（{reason}），自动重新生成..."}
+                
+                # Engine-level retry: 用更大的 max_tokens 重新调用 Writer
+                try:
+                    retry_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+                    retry_text = ""
+                    async for text in self.writer.write_stream(
+                        context=retry_context,
+                        genre=genre,
+                        style=style,
+                        target_words=max(target_words, int(len(full_text) * 1.5 / 2)),  # 调高目标
+                        writing_mode=writing_mode,
+                        normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                        fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                    ):
+                        retry_text += text
+                        yield {"type": "text", "content": text}
+                    
+                    is_trunc2, reason2 = _check_truncation(retry_text, target_words)
+                    if not is_trunc2 and len(retry_text) > len(full_text):
+                        full_text = retry_text
+                        log.info(f"Engine retry OK: {len(full_text)} chars")
+                        yield {"type": "status", "message": "重新生成完成，内容已补全"}
+                    else:
+                        log.warning(f"Engine retry also short ({len(retry_text)} chars), using best")
+                        if len(retry_text) > len(full_text):
+                            full_text = retry_text
+                except Exception as re:
+                    log.warning(f"Engine retry failed: {re}, keeping original")
 
             # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
             try:
@@ -1179,6 +1208,13 @@ class NovelEngine:
             
             # ── Phase 4: 保存 ──
             self.memory.save_chapter(novel_id, chapter_num, formatted)
+            
+            # ── 完整度验证 ──
+            from .writer import _check_truncation
+            is_trunc, reason = _check_truncation(full_text, chapter_outline.get("target_words", 2000))
+            if is_trunc:
+                log.warning(f"Atomic chapter {chapter_num} may be incomplete: {reason}")
+                yield {"type": "warning", "message": f"本章可能不完整（{reason}），建议用常规模式重生成"}
             
             # ── v2.10: 提取章节桥接数据 ──
             try:
