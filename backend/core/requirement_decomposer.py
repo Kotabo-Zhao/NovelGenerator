@@ -118,6 +118,9 @@ class RequirementDecomposer:
     def __init__(self, client: OpenAI = None, model: str = None):
         self.client = client
         self.model = model
+        # v2.14: 韧性客户端（批量脚本未匹配到= None签名，手动补上）
+        if client and model:
+            self._resilient = ResilientLLMClient(client, model)
 
     def decompose(self, inspiration: str, plan: dict = None, 
                   existing_requirements: dict = None) -> dict:

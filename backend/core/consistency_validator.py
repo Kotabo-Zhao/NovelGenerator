@@ -118,6 +118,7 @@ class ConsistencyValidator:
     def __init__(self, client: OpenAI = None, model: str = None):
         self.client = client
         self.model = model
+        self._resilient = ResilientLLMClient(client, model) if client else None
         self._state_cache = {}  # 缓存角色/世界状态
 
     # ═══════════════════════════════════════════

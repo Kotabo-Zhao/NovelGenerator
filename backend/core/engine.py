@@ -182,7 +182,7 @@ class NovelEngine:
         # v2.2: 需求拆解与监督系统
         self.requirement_decomposer = RequirementDecomposer(self.client, self.model)
         self.requirement_supervisor = RequirementSupervisor(self.client, self.model)
-        self._requirements = {}  # novel_id → requirements dict
+        self._requirements = {}  # novel_id → requirements dict (per-novel isolation, PENDING: needs DB migration for multi-process)
         # v2.3: 原子化生成引擎
         self.atomic_writer = AtomicWriter(self.client, self.model)
         self.beat_assembler = BeatAssembler()

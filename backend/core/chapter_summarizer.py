@@ -62,6 +62,7 @@ class ChapterSummarizer:
     def __init__(self, client: OpenAI = None, model: str = None):
         self.client = client
         self.model = model
+        self._resilient = ResilientLLMClient(client, model) if client else None
         self._key_chapters = set()  # 用户标记为关键的章节号
 
     # ── 公开接口 ──

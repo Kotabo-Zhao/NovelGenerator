@@ -278,6 +278,7 @@ class LogicSupervisor:
     def __init__(self, client: OpenAI = None, model: str = None):
         self.client = client
         self.model = model
+        self._resilient = ResilientLLMClient(client, model) if client else None
         self._character_states = {}     # novel_id → {char_name: {traits, last_location, ...}}
         self._item_inventory = {}       # novel_id → {item_name: {status, last_mentioned_ch}}
         self._death_log = {}            # novel_id → [{name, chapter, confirmed}]

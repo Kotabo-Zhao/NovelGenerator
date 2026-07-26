@@ -50,6 +50,7 @@ class ContextUpdater:
     def __init__(self, client: OpenAI, model: str):
         self.client = client
         self.model = model
+        self._resilient = ResilientLLMClient(client, model)
 
     def update(self, novel_id: str, chapter_num: int, chapter_content: str,
                current_state: dict) -> dict:
