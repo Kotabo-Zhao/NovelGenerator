@@ -55,6 +55,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:1
 ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 
 #app{display:flex;min-height:100dvh}
+[v-cloak]{display:none !important}
 
 /* ── Sidebar ── */
 .sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border-light);display:flex;flex-direction:column;padding:24px 0;position:sticky;top:0;height:100dvh;flex-shrink:0}
@@ -520,7 +521,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 </style>
 </head>
 <body>
-<div id="app">
+<div id="app" v-cloak>
   <!-- Toast -->
   <div v-if="toast.visible" class="toast-overlay" @click.self="toast.visible=false">
     <div class="toast-box">
@@ -562,7 +563,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div class="sub">{{ novels.length }} 部作品</div>
       </div>
 
-      <div v-if="loading.shelf" class="text-center mt-24"><div class="spinner"></div></div>
+      <div v-if="loading.shelf && novels.length===0" class="text-center mt-24"><div class="spinner"></div><p class="color-text2 mt-8 text-xs">加载中…</p></div>
       
       <div v-else-if="novels.length===0" class="empty">
         <div class="empty-icon">📚</div>
@@ -2650,6 +2651,9 @@ const app = createApp({
       applyAppearance();
       loadStyles(); loadStyleSeeds(); // fire-and-forget
       
+      // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
+      setTimeout(() => { if (loading.shelf) { loading.shelf = false; console.warn('Shelf loading: forced close after 12s'); } }, 12000);
+      
       // v2.11: 全局加载安全阀 — 任何loading状态持续超过2分钟自动重置
       let _safetyTimer = null;
       const _resetSafety = () => {
@@ -2665,8 +2669,9 @@ const app = createApp({
           }
         }, 120000);
       };
-      // 用 Vue watch 监听 loading 变化（与 Proxy 兼容）
-      Vue.watch(() => Object.values(Object.assign({}, loading)).some(v => v), (busy) => {
+      // 用 computed 监听 loading（通过每个字段触发追踪）
+      const _anyLoading = Vue.computed(() => loading.shelf || loading.create || loading.write || loading.export || loading.saving || loading.batch);
+      Vue.watch(_anyLoading, (busy) => {
         if (busy) _resetSafety();
         else if (_safetyTimer) { clearTimeout(_safetyTimer); _safetyTimer = null; }
       });
