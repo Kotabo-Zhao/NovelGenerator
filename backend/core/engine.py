@@ -1147,6 +1147,24 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"AutoCalibration skipped: {e}")
 
+            # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
+            try:
+                chapter_text = self.get_chapter(novel_id, chapter_num) or full_text
+                if chapter_text and len(chapter_text) > 200:
+                    summary_result = await asyncio.to_thread(
+                        self.chapter_summarizer.summarize_chapter,
+                        chapter_num, chapter_text
+                    )
+                    if summary_result:
+                        state = self.memory.get_novel_state(novel_id)
+                        if "summaries" not in state:
+                            state["summaries"] = {}
+                        state["summaries"][str(chapter_num)] = summary_result
+                        self.memory.save_novel_state(novel_id, state)
+                        log.info(f"Auto-summary for Ch{chapter_num}: {len(summary_result.get('summary',''))} chars")
+            except Exception as e:
+                log.warning(f"Auto-summary for Ch{chapter_num} skipped: {e}")
+
             # ── 渐进式摘要压缩（每10章）──
             try:
                 compress_result = check_and_compress(
