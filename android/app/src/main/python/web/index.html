@@ -1834,11 +1834,11 @@ const app = createApp({
       let buf = '';
       let lastData = Date.now();
       const timeoutCheck = setInterval(() => {
-        if (Date.now() - lastData > 120000) {  // v2.11: 放宽到2分钟(大纲生成可能很慢)
-          reader.cancel('SSE timeout (120s no data)');
+        if (Date.now() - lastData > 600000) {  // v2.14: 放宽到10分钟(Android WebView后台节流+多阶段生成)
+          reader.cancel('SSE timeout (600s no data)');
           clearInterval(timeoutCheck);
         }
-      }, 10000);  // v2.11: 10s检查一次(原来5s太频繁)
+      }, 15000);  // v2.14: 15s检查一次(减少Android WebView JS调度压力)
       
       try {
         while (true) {
@@ -2654,7 +2654,7 @@ const app = createApp({
       // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
       setTimeout(() => { if (loading.shelf) { loading.shelf = false; console.warn('Shelf loading: forced close after 12s'); } }, 12000);
       
-      // v2.11: 全局加载安全阀 — 任何loading状态持续超过2分钟自动重置
+      // v2.14: 全局加载安全阀 — 放宽到15分钟(Android WebView后台节流+多阶段LLM生成)
       let _safetyTimer = null;
       const _resetSafety = () => {
         if (_safetyTimer) clearTimeout(_safetyTimer);
@@ -2667,7 +2667,7 @@ const app = createApp({
             console.warn('Auto-recovered stuck loading:', recovered.join(', '));
             error.value = '操作超时，已自动恢复（'+recovered.join('、')+'）。请重试。';
           }
-        }, 120000);
+        }, 900000);  // 15分钟
       };
       // 用 computed 监听 loading（通过每个字段触发追踪）
       const _anyLoading = Vue.computed(() => loading.shelf || loading.create || loading.write || loading.export || loading.saving || loading.batch);
