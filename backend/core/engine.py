@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import copy
+import hashlib
 import logging
 import asyncio
 from typing import AsyncGenerator, Optional, AsyncIterator
@@ -291,6 +292,25 @@ class NovelEngine:
         else:
             enhanced_input = dict(creative_input)
         
+        # ── v2.11: 创意种子注入（架构级随机性）──
+        try:
+            from .creative_seeds import create_seed_engine
+            seed_engine = create_seed_engine(self.memory.storage_dir)
+            temp_id = hashlib.md5((inspiration or enhanced_input.get("title","") or "untitled").encode()).hexdigest()[:12]
+            seed_text, seeds = seed_engine.inject_into_planning_context(
+                temp_id, creative_input.get("genre", ""), ""
+            )
+            if seeds:
+                # 将创意约束作为第一个系统指令注入
+                enhanced_input["_creative_seeds"] = seeds
+                enhanced_input["_creative_seeds_text"] = seed_text
+                enhanced_input["_creative_seeds_temp_id"] = temp_id
+                yield {"type": "progress", "phase": "creative_seeds", "pct": 1,
+                       "label": f"已注入 {len(seeds)} 个创意约束"}
+                yield {"type": "creative_seeds_injected", "count": len(seeds), "temp_id": temp_id}
+        except Exception as e:
+            log.warning(f"Creative seed injection failed: {e}")
+
         # ── Phase 1-3: 标准流式规划（使用增强版输入）──
         async for event in self.planner.plan_stream(enhanced_input):
             if event["type"] == "done":

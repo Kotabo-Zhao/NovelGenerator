@@ -401,6 +401,9 @@ class Planner:
         normal_pacing = creative_input.get("normal_pacing", False)
         fast_food = creative_input.get("fast_food", False)
         
+        # v2.11: 创意种子注入（架构级随机约束）
+        creative_seeds_text = creative_input.get("_creative_seeds_text", "")
+        
         # 构建节奏指令
         if normal_pacing:
             pacing_instruction = """## 节奏：正常节奏（铺陈充分）
@@ -465,8 +468,16 @@ class Planner:
 {wb_context}
 """
         
-        wb_prompt = f"""你是一位世界观架构师。请根据以下创意和用户需求生成世界设定。
+        # v2.11: 创意种子注入（在所有需求之前，最高优先级）
+        creative_seeds_block = ""
+        if creative_seeds_text:
+            creative_seeds_block = f"""
 
+{creative_seeds_text}
+"""
+        
+        wb_prompt = f"""你是一位世界观架构师。请根据以下创意和用户需求生成世界设定。
+{creative_seeds_block}
 风格: {style_config['name']} ({style_config['author']})
 创意: {effective_inspiration}
 题材: {genre}
