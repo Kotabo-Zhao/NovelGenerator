@@ -515,7 +515,7 @@ class Planner:
                     "factions": [{"name":"主角阵营","description":"","alignment":"正"}]
                 }
             }
-            yield {"type": "warning", "message": "世界观生成部分降级，已使用默认设定"}
+            yield {"type": "warning", "message": "⚠️ 世界观生成遇到问题，已自动使用默认设定。您可以在创建后手动编辑世界观。"}
             fallback_count += 1
 
         yield {"type": "progress", "phase": "worldbuilding", "pct": 30, "label": "世界观完成 ✓"}
@@ -615,7 +615,7 @@ class Planner:
                     "bible_summary": "主角与挚友并肩对抗宿敌"
                 }
             }
-            yield {"type": "warning", "message": "角色生成部分降级，已使用默认设定"}
+            yield {"type": "warning", "message": "⚠️ 角色生成遇到问题，已自动使用默认设定。您可以在创建后手动编辑角色信息。"}
             fallback_count += 1
 
         yield {"type": "progress", "phase": "characters", "pct": 55, "label": "角色设计完成 ✓"}
@@ -625,9 +625,9 @@ class Planner:
         antag_count = len(chars.get('characters', {}).get('antagonist', []) or [])
         protag_name = chars.get('characters', {}).get('protagonist', {}).get('name', '')
         if not protag_name or protag_name in ('主角', '待定', ''):
-            yield {"type": "warning", "message": "主角未设定真实姓名，LLM可能生成了占位符"}
+            yield {"type": "warning", "message": "⚠️ 主角姓名未明确设定，系统可能生成了占位符。请在角色列表中检查并修改主角姓名。"}
         if supp_count < 2:
-            yield {"type": "warning", "message": f"配角数量不足({supp_count}个，建议2-4个)，大纲可能缺少角色互动"}
+            yield {"type": "warning", "message": f"⚠️ 配角数量偏少（当前{supp_count}个，建议2-4个），故事可能缺少角色互动。您可以后续手动添加配角。"}
 
         # ── Phase 3: 大纲 (55% → 95%) ──
         # ── Phase 3: 大纲（分卷生成，每卷独立 LLM 调用，杜绝截断）──
@@ -767,7 +767,7 @@ class Planner:
             volumes_meta = [{"vol": i+1, "title": f"第{i+1}卷", "act": ["第一幕·建置","第二幕·对抗","第三幕·解决"][min(i,2)],
                             "theme": "主线推进", "ch_count": ch_per_vol, "act_function": "推进故事"}
                            for i in range(vol_count)]
-            yield {"type": "warning", "message": "卷结构使用默认规划"}
+            yield {"type": "warning", "message": "⚠️ 卷结构生成遇到问题，已自动使用默认规划（三幕式结构）。生成质量不受影响。"}
             fallback_count += 1
 
         # Phase 3b: 全局章节骨架 — 一次性规划全部章节概要，保证故事连续
@@ -835,7 +835,7 @@ class Planner:
             unknown_names = potential_names - set(all_char_names) - stop_words
             if unknown_names:
                 log.warning(f"Skeleton contains unknown character names: {unknown_names}")
-                yield {"type": "warning", "message": f"骨架出现未设定角色名: {', '.join(list(unknown_names)[:5])}。这些名字在角色池中不存在，将在展开阶段自动修正。"}
+                yield {"type": "warning", "message": f"🔧 大纲规划中发现 {len(list(unknown_names)[:5])} 个未设定角色名（{', '.join(list(unknown_names)[:3])}{'等' if len(unknown_names) > 3 else ''}），系统将在详细展开时自动修正。"}
         
         has_skeleton = len(skeleton_map) > 0
         
