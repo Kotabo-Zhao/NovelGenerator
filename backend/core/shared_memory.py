@@ -40,6 +40,7 @@ MEMORY_FILES = {
     "character_bible":{"file": "character_bible.json",   "type": "json", "versioned": False},
     "foreshadowing":  {"file": "foreshadowing.json",     "type": "json", "versioned": False},
     "storygraph":     {"file": "storygraph.json",        "type": "json", "versioned": False},
+    "chapter_bridge": {"file": "chapter_bridges.json",   "type": "json", "versioned": False},
     "chapter":        {"file": "chapters/chapter_{:04d}.md", "type": "text", "versioned": False},
 }
 
@@ -72,6 +73,7 @@ class SharedMemoryManager:
             "character_bible": 60.0,  # 人物宝典几乎不变
             "foreshadowing": 10.0,
             "storygraph": 10.0,    # storygraph 中等频率更新
+            "chapter_bridge": 5.0, # 桥接数据频繁读写，5s TTL
         }
         self._cache_lock = threading.Lock()
 
@@ -198,6 +200,182 @@ class SharedMemoryManager:
         return sorted(chapters)
 
     # ═══════════════════════════════════════════
+    # 章节桥接 (ChapterBridge) — v2.10 防止章节间逻辑断裂
+    # ═══════════════════════════════════════════
+
+    def get_bridge(self, novel_id: str, chapter_num: int) -> Optional[dict]:
+        """获取指定章节的桥接数据（上一章结尾状态 → 下一章起始指令）"""
+        bridges = self.read("chapter_bridge", novel_id) or {}
+        if not isinstance(bridges, dict):
+            bridges = {}
+        return bridges.get(str(chapter_num))
+
+    def save_bridge(self, novel_id: str, chapter_num: int, bridge_data: dict):
+        """保存章节桥接数据"""
+        bridges = self.read("chapter_bridge", novel_id) or {}
+        if not isinstance(bridges, dict):
+            bridges = {}
+        bridges[str(chapter_num)] = bridge_data
+        # 清理旧桥接（只保留最近5章，防止文件膨胀）
+        all_keys = sorted(int(k) for k in bridges.keys())
+        for old_key in all_keys[:-5]:
+            bridges.pop(str(old_key), None)
+        self.write("chapter_bridge", novel_id, bridges)
+
+    def extract_bridge_from_chapter(
+        self, chapter_text: str, chapter_num: int, chapter_outline: dict,
+        client=None, model: str = None,
+    ) -> dict:
+        """从已生成的章节中提取结构化桥接数据
+
+        用轻量 LLM 调用分析章节结尾，提取：
+        - end_scene: 结尾场景描述（在哪、谁在、正在做什么）
+        - character_states: 关键角色当前状态（位置/情绪/伤势）
+        - unresolved_actions: 未完成的动作（战斗中断/对话未完/事件待续）
+        - next_beat: 接下来必须推进的叙事节拍
+        - hook_to_resolve: 本章留下的钩子（下章必须回应）
+
+        Args:
+            chapter_text: 章节全文
+            chapter_num: 章节号
+            chapter_outline: 本章大纲
+            client: OpenAI client（外部注入）
+            model: 模型名
+
+        Returns:
+            bridge dict，可供下章 Writer 作为强制接续指令
+        """
+        if not client:
+            log.warning("No LLM client for bridge extraction, using fallback")
+            return self._fallback_bridge(chapter_text, chapter_num, chapter_outline)
+
+        # 只分析最后 1500 字（结尾部分最关键）
+        end_text = chapter_text[-2000:] if len(chapter_text) > 2000 else chapter_text
+        # 也取开头 200 字帮助理解全貌
+        opening_text = chapter_text[:300]
+
+        prompt = f"""分析以下小说章节，提取结构化的"章节桥接数据"。
+
+## 本章大纲
+- 标题: {chapter_outline.get('title', '')}
+- 核心事件: {chapter_outline.get('summary', '')}
+- 计划钩子: {chapter_outline.get('hook', '')}
+
+## 章节开头（供参考）
+{opening_text}
+
+## 章节结尾（重点分析）
+{end_text}
+
+## 任务
+提取以下信息。**只输出 JSON，不要任何其他内容**：
+
+```json
+{{
+  "end_scene": "结尾场景：描述章节最后一幕发生什么。在哪？谁在场？正在进行什么动作？",
+  "character_states": [
+    {{"name": "角色名", "status": "该角色在本章结尾的状态：位置/情绪/伤势/关系变化"}}
+  ],
+  "unresolved_actions": ["任何未完成的动作或事件：战斗是否结束？对话是否说完？事件是否等待结果？"],
+  "next_beat": "根据本章结尾，下一章必须推进的叙事节拍（用一句话描述必须发生什么）",
+  "hook_to_resolve": "本章结尾留下的钩子——下一章必须在某个节点回应的悬念或期待（如果没有则填'无'）"
+}}
+```
+
+**重要**：
+- end_scene 要具体到"角色A在XX地点刚做了YY，正要ZZ"
+- next_beat 必须是 actionable 的指令，不是模糊的"继续推进"
+- character_states 只列出状态有变化的角色"""
+
+        try:
+            response = client.chat.completions.create(
+                model=model or "deepseek-chat",
+                messages=[
+                    {"role": "system", "content": "你是一位小说编辑，擅长分析叙事结构和章节衔接。只输出JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                max_tokens=800,
+            )
+            content = response.choices[0].message.content.strip()
+            # 去掉可能的 markdown 代码块
+            if content.startswith("```"):
+                lines = content.split("\n")
+                content = "\n".join(lines[1:]) if lines[0].startswith("```") else content
+                if content.endswith("```"):
+                    content = content[:-3].strip()
+            bridge = json.loads(content)
+            bridge["extracted_at"] = time.time()
+            bridge["chapter_num"] = chapter_num
+            log.info(f"Bridge extracted for chapter {chapter_num}: {json.dumps(bridge, ensure_ascii=False)[:200]}")
+            return bridge
+        except Exception as e:
+            log.warning(f"Bridge extraction failed for chapter {chapter_num}: {e}, using fallback")
+            return self._fallback_bridge(chapter_text, chapter_num, chapter_outline)
+
+    def _fallback_bridge(self, chapter_text: str, chapter_num: int, chapter_outline: dict) -> dict:
+        """无需 LLM 的桥接兜底：取结尾原文 + 大纲钩子"""
+        end_text = chapter_text[-500:] if len(chapter_text) > 500 else chapter_text
+        return {
+            "end_scene": f"（从正文结尾提取）{end_text[:300]}",
+            "character_states": [],
+            "unresolved_actions": [],
+            "next_beat": chapter_outline.get("summary", ""),
+            "hook_to_resolve": chapter_outline.get("hook", ""),
+            "extracted_at": time.time(),
+            "chapter_num": chapter_num,
+            "fallback": True,
+        }
+
+    def format_bridge_for_writer(self, bridge: dict, chapter_num: int) -> str:
+        """将桥接数据格式化为 Writer 上下文中的高优先级指令"""
+        if not bridge:
+            return ""
+        
+        parts = [f"## 🔗 第{chapter_num}章 → 第{chapter_num+1}章 桥接指令（最高优先级·必须遵守）\n"]
+
+        end_scene = bridge.get("end_scene", "")
+        if end_scene:
+            parts.append(
+                f"### 上一章结尾（第{chapter_num}章）\n"
+                f"**{end_scene}**\n\n"
+                f"⚠️ 第{chapter_num+1}章必须从这个精确场景继续。开头不能跳时间、不能换地点、不能忽略上一章最后正在进行的动作。"
+            )
+
+        char_states = bridge.get("character_states", [])
+        if char_states:
+            parts.append("\n### 角色当前状态（必须保持一致性）")
+            for cs in char_states:
+                parts.append(f"- **{cs.get('name', '?')}**: {cs.get('status', '')}")
+
+        unresolved = bridge.get("unresolved_actions", [])
+        if unresolved:
+            parts.append("\n### 未完成事件（必须在本章处理）")
+            for ua in unresolved:
+                parts.append(f"- {ua}")
+
+        next_beat = bridge.get("next_beat", "")
+        if next_beat:
+            parts.append(
+                f"\n### 🎯 强制叙事节拍\n"
+                f"**{next_beat}**\n\n"
+                f"这是本章必须推进的核心事件。可以在推进中加入创意，但不能跳过或替换。"
+            )
+
+        hook = bridge.get("hook_to_resolve", "")
+        if hook and hook != "无":
+            parts.append(
+                f"\n### 🔗 待回应钩子\n"
+                f"**{hook}**\n\n"
+                f"本章必须在某个节点回应这个钩子——可以是揭晓、延续、或用更大的悬念替代，但不能无视。"
+            )
+
+        if bridge.get("fallback"):
+            parts.append("\n⚠️ （注意：以上为自动提取，可能与实际结尾有偏差，请以原文结尾为准）")
+
+        return "\n".join(parts)
+
+    # ═══════════════════════════════════════════
     # 分模块上下文构建
     # ═══════════════════════════════════════════
 
@@ -257,32 +435,42 @@ class SharedMemoryManager:
                 core += f"- {c.get('name', '?')}: {c.get('identity', '')}, {c.get('relation', '')}\n"
         parts.append(core)
 
-        # L2: 上一章完整上下文（结尾+摘要）
+        # L2: 上一章完整上下文（桥接指令 + 结尾 + 钩子）
         prev_chapter = chapter_num - 1
         if prev_chapter >= 1:
+            # L2a: v2.10 章节桥接指令（最高优先级——结构化接续指令）
+            prev_bridge = self.get_bridge(novel_id, prev_chapter)
+            if prev_bridge:
+                bridge_text = self.format_bridge_for_writer(prev_bridge, prev_chapter)
+                if bridge_text:
+                    parts.append(bridge_text)
+                    log.info(f"Bridge injected for chapter {chapter_num}: from Ch{prev_chapter} bridge")
+            else:
+                log.warning(f"No bridge found for chapter {prev_chapter}, chapter {chapter_num} may lose continuity")
+
+            # L2b: 上一章结尾原文（作为桥接的补充参考）
             prev_content = self.read_chapter(novel_id, prev_chapter)
             if prev_content:
-                # 取上一章最后 2000 字作为连续性上下文（原来只取 500，太少了）
-                take_chars = min(2000, len(prev_content))
+                # 取上一章最后 1500 字（原来取2000，现在桥接已提供结构化指令，原文减少到1500）
+                take_chars = min(1500, len(prev_content))
                 prev_ending = prev_content[-take_chars:]
                 # v2.4.1: 清洗上下文 —— 合并短行成正常段落，切断短行风格自我强化循环
                 prev_ending = _normalize_context_paragraphs(prev_ending)
-                parts.append(f"## ⬆️ 上一章结尾（必须从这里接着写！开头要无缝衔接）\n\n{prev_ending}")
+                # 注意：桥接指令在前，原文结尾作为参考在后
+                parts.append(f"## 📖 上一章结尾原文（供参考——桥接指令为准）\n\n{prev_ending}")
                 
-                # 上一章钩子
+                # 上一章大纲钩子
                 for vol in plan.get("outline", {}).get("volumes", []):
                     for ch in vol.get("chapters", []):
                         if int(ch.get("number", 0)) == prev_chapter:
                             hook = ch.get("hook", "")
                             if hook:
-                                parts.append(f"## 🔗 上一章留下的钩子（本章必须在某个节点回应）\n{hook}")
-                            # 也加入上一章的摘要作为背景
-                            prev_summary = ch.get("summary", "")
-                            if prev_summary and prev_summary != hook:
-                                parts.append(f"## 📝 上一章大纲摘要\n{prev_summary}")
+                                parts.append(f"## 🔗 上一章大纲计划钩子\n{hook}")
                             break
+            else:
+                log.warning(f"Previous chapter {prev_chapter} content not found on disk!")
         
-        # L2b: 更早章节的摘要（最近3章，帮助理解多章弧线）
+        # L2c: 更早章节的摘要（最近3章，帮助理解多章弧线）
         if chapter_num > 2:
             summaries = []
             for ch_num in range(max(1, chapter_num - 3), chapter_num):
@@ -294,7 +482,7 @@ class SharedMemoryManager:
                                 summaries.append(f"第{ch_num}章: {s}")
                             break
             if summaries:
-                parts.append(f"## 📚 前几章剧情线\n" + "\n".join(summaries))
+                parts.append(f"## 📚 前几章大纲剧情线\n" + "\n".join(summaries))
 
         # L3: 全局状态快照
         state = self.read("global_state", novel_id)

@@ -746,6 +746,22 @@ class NovelEngine:
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
 
+            # ── v2.10: 提取章节桥接数据 → 保证下章接续 ──
+            try:
+                bridge = await asyncio.to_thread(
+                    self.memory.extract_bridge_from_chapter,
+                    full_text, chapter_num, chapter_outline,
+                    client=self.client, model=self.model,
+                )
+                if bridge:
+                    self.memory.save_bridge(novel_id, chapter_num, bridge)
+                    log.info(f"ChapterBridge saved for chapter {chapter_num}: "
+                            f"next_beat={bridge.get('next_beat','')[:60]}...")
+                else:
+                    log.warning(f"ChapterBridge extraction returned None for chapter {chapter_num}")
+            except Exception as e:
+                log.warning(f"ChapterBridge extraction failed (non-fatal): {e}")
+
             # 更新状态（v2.2.1: 加重试+验证）
             state = self.memory.get_novel_state(novel_id)
             completed = state.get("completed_chapters", [])
@@ -1142,6 +1158,19 @@ class NovelEngine:
             
             # ── Phase 4: 保存 ──
             self.memory.save_chapter(novel_id, chapter_num, formatted)
+            
+            # ── v2.10: 提取章节桥接数据 ──
+            try:
+                bridge = await asyncio.to_thread(
+                    self.memory.extract_bridge_from_chapter,
+                    full_text, chapter_num, chapter_outline,
+                    client=self.client, model=self.model,
+                )
+                if bridge:
+                    self.memory.save_bridge(novel_id, chapter_num, bridge)
+                    log.info(f"ChapterBridge (atomic) saved for chapter {chapter_num}")
+            except Exception as e:
+                log.warning(f"ChapterBridge extraction failed in atomic (non-fatal): {e}")
             
             # 更新状态
             state = self.memory.get_novel_state(novel_id)
