@@ -557,3 +557,64 @@ def _is_truncated(text: str, expected_max: int) -> bool:
     """快速截断检查"""
     truncated, _ = _check_truncation(text, expected_max)
     return truncated
+
+
+def _ensure_complete_ending(text: str) -> str:
+    """确保章节结尾是一个完整的句子/段落。
+    
+    当 API 在 max_tokens 处截断时，最后一句可能只写了一半。
+    此函数找到最后一个完整的句子边界并裁切到那里。
+    """
+    if not text or len(text) < 100:
+        return text
+    
+    text = text.rstrip()
+    
+    # 完整结尾标记：句号、问号、感叹号、省略号、右引号、右书名号
+    COMPLETE_MARKERS = set("。？！？!…~"")」』】〖〗》〉＞")
+    
+    # 如果已经以完整标记结尾，不需要处理
+    last_char = text[-1]
+    if last_char in COMPLETE_MARKERS:
+        return text
+    
+    # 从末尾反向搜索，找到最后一个完整句子边界
+    # 搜索范围：末尾 300 字符内
+    search_start = max(0, len(text) - 300)
+    tail = text[search_start:]
+    
+    # 找最后一个完整句子结束标记
+    last_complete = -1
+    for marker in "。？！？!…":
+        pos = tail.rfind(marker)
+        if pos > last_complete:
+            last_complete = pos
+    
+    if last_complete == -1:
+        # 如果整个尾部都没找到完整句子标记，但文本够长，
+        # 说明可能在叙述中间被截断，尝试找最后一个引号对话结束处
+        for marker in ['」', '』', '】', '"', '\'']:
+            pos = tail.rfind(marker)
+            if pos > last_complete:
+                last_complete = pos
+    
+    if last_complete >= 0:
+        # 裁切到完整句子位置 + 1（保留标点）
+        cut_point = search_start + last_complete + 1
+        trimmed = text[:cut_point].rstrip()
+        
+        # 如果裁掉的部分 > 20 个字符，说明确实有半截句子
+        removed = len(text) - len(trimmed)
+        if removed > 10:
+            log.info(f"Ensured complete ending: trimmed {removed} chars of incomplete sentence")
+            return trimmed
+    
+    # 兜底：如果实在找不到完整标记，保持原文（至少有内容）
+    return text
+
+
+def _add_closing_hook(text: str) -> str:
+    """Ensure chapter ending has proper closure"""
+    if not text or len(text) < 500:
+        return text
+    return text

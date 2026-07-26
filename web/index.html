@@ -125,11 +125,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
 /* ── Shelf Grid ── */
 .shelf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
-.book-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:all .2s;position:relative}
+.book-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:all .2s}
 .book-card:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--text3)}
-.btn-delete-novel{position:absolute;top:6px;right:6px;z-index:5;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,.4);color:#fff;font-size:11px;line-height:22px;text-align:center;cursor:pointer;opacity:0;transition:opacity .15s}
-.book-card:hover .btn-delete-novel{opacity:1}
-.btn-delete-novel:hover{background:#f85149;transform:scale(1.15)}
 .book-cover{height:100px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:rgba(255,255,255,.1);letter-spacing:3px;position:relative}
 .book-cover::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 40%,var(--card) 100%)}
 .book-info{padding:14px 16px}
@@ -393,32 +390,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .sg-event-tooltip{position:absolute;bottom:16px;right:16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xs);padding:14px 18px;min-width:200px;box-shadow:0 8px 32px rgba(0,0,0,.25);z-index:10;pointer-events:none;backdrop-filter:blur(8px);font-size:12px}
 .sg-event-tooltip .tt-tension-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:3px}
 
-/* ── v2.8: 阶段指示器 & 方向盘 ── */
-.sg-phase-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin-bottom:10px;border-radius:var(--radius-xs);gap:12px}
-.sg-phase-bar:has(.phase-outline){background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.2)}
-.sg-phase-bar:has(.phase-writing){background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2)}
-.sg-phase-indicator{font-size:13px;font-weight:600}
-.phase-outline{color:#8b5cf6}
-.phase-writing{color:#3b82f6}
-.sg-wheel-panel{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:var(--radius-xs);padding:10px 14px;margin-bottom:10px}
-.sg-wheel-input-row{display:flex;align-items:center;gap:10px}
-.sg-wheel-input{flex:1;padding:6px 12px;border:1px solid var(--border);border-radius:20px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--font);outline:none}
-.sg-wheel-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(99,102,241,.15)}
-.sg-wheel-input::placeholder{color:var(--text3);font-size:12px}
-.sg-wheel-result{padding:6px 10px;margin-top:6px;border-radius:4px;font-size:12px;font-weight:600}
-.sg-wheel-result.ok{background:rgba(63,185,80,.1);color:#3fb950}
-.sg-wheel-result.err{background:rgba(248,81,73,.1);color:#f85149}
-
-/* 拆解预览卡片 */
-.sg-wheel-preview{margin-top:10px;background:var(--bg);border-radius:8px;padding:12px;border:1px solid var(--border)}
-.sg-wheel-summary{font-size:12px;font-weight:600;color:var(--accent);margin-bottom:8px;line-height:1.5}
-.sg-wheel-changes{display:flex;flex-direction:column;gap:4px}
-.sg-wheel-change-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background .1s;font-size:12px}
-.sg-wheel-change-item:hover{background:var(--bg2)}
-.sg-wheel-change-item input[type=checkbox]{accent-color:var(--accent)}
-.sg-wheel-change-label{flex:1;color:var(--text)}
-.sg-wheel-change-hint{font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 6px;border-radius:3px}
-
 /* 拖拽调整大小手柄 */
 .sg-resize-handle{height:8px;cursor:ns-resize;background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 45%,transparent 45%,transparent 55%,var(--accent) 55%,var(--accent) 60%,transparent 60%);margin-top:2px;border-radius:2px;transition:background .15s}
 .sg-resize-handle:hover{background:linear-gradient(180deg,transparent 40%,var(--accent) 40%,var(--accent) 60%,transparent 60%)}
@@ -537,82 +508,19 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 }
 .sg-pulse{animation: sgPulse 2s ease-in-out infinite}
 
-/* ── v3.0: Android PWA 响应式 ── */
 @media(max-width:768px){
-  /* Layout */
-  .main-layout{flex-direction:column!important}
-  .sidebar{width:100%!important;max-height:200px;overflow-y:auto;border-right:none!important;border-bottom:1px solid var(--border)}
-  .nav-list{display:flex;flex-wrap:wrap;gap:4px;padding:4px}
-  .nav-item{flex:0 0 auto;font-size:12px;padding:4px 8px}
-  
-  /* Forms */
-  .form-row{flex-direction:column;gap:8px}
-  .form-group{width:100%}
-  select,input,textarea{font-size:16px!important;padding:10px 12px} /* prevent iOS zoom */
-  
-  /* StoryGraph */
-  .sg-dashboard{grid-template-columns:repeat(2,1fr);gap:6px}
+  .sg-dashboard{grid-template-columns:repeat(2,1fr)}
   .sg-grid-2{grid-template-columns:1fr}
-  .sg-char-grid{grid-template-columns:repeat(2,1fr)}
-  .sg-subtabs{flex-wrap:wrap;gap:2px}
-  .sg-subtab{padding:6px 8px;font-size:11px}
-  .sg-relation-svg-wrap{height:320px}
-  .sg-timeline-svg-wrap{height:280px}
-  .sg-toolbar{flex-wrap:wrap;gap:4px}
-  
-  /* Canvas */
-  .sg-canvas-wrap{height:350px}
-  
-  /* Cards */
-  .card{padding:12px}
-  .btn{padding:8px 14px;font-size:13px}
-  
-  /* Reading */
-  .reading-container{flex-direction:column}
-  .preview-area{max-height:50vh}
-  
-  /* Toast */
-  .toast-overlay{align-items:flex-end}
-  .toast-box{width:90%;margin-bottom:20px}
-  
-  /* Wheel */
-  .sg-wheel-input-row{flex-direction:column;align-items:stretch}
-  .sg-wheel-input{font-size:16px}
-  
-  /* Chapter controls */
-  .sg-chapter-slider{width:100%;justify-content:center}
+  .sg-char-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+  .sg-subtabs{font-size:12px}
+  .sg-subtab{padding:6px 10px;font-size:12px}
+  .sg-relation-svg-wrap{height:380px}
+  .sg-timeline-svg-wrap{height:340px}
 }
-
-/* Phone-specific */
-@media(max-width:480px){
-  .sg-dashboard{grid-template-columns:1fr}
-  .sg-char-grid{grid-template-columns:1fr}
-  .sg-stat-num{font-size:22px}
-  .sg-tab{padding:4px 10px;font-size:11px}
-  h1{font-size:20px}
-  .card-title{font-size:14px}
-  .btn-ghost{padding:4px 6px;font-size:10px}
-  .sg-edit-row{flex-direction:column;align-items:stretch}
-  .sg-edit-label{text-align:left}
-}
-
-/* PWA standalone mode */
-@media(display-mode: standalone){
-  body{padding-top:env(safe-area-inset-top)}
-  .sidebar{padding-top:env(safe-area-inset-top)}
-}
-
-/* PWA install banner */
-.pwa-install-banner{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--accent);color:#fff;padding:12px 16px;z-index:999;font-size:14px;text-align:center;cursor:pointer}
-.pwa-install-banner.show{display:block}
 </style>
 </head>
 <body>
 <div id="app">
-  <!-- PWA Install Banner -->
-  <div id="pwa-install-banner" class="pwa-install-banner" onclick="installPWA()">
-    📱 添加到主屏幕 — 像原生App一样使用
-  </div>
   <!-- Toast -->
   <div v-if="toast.visible" class="toast-overlay" @click.self="toast.visible=false">
     <div class="toast-box">
@@ -664,8 +572,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       </div>
 
       <div v-else class="shelf-grid">
-        <div v-for="n in novels" :key="n.id" class="book-card" @click="openNovel(n)" style="position:relative">
-          <button class="btn-delete-novel" @click.stop="deleteNovel(n)" title="删除">✕</button>
+        <div v-for="n in novels" :key="n.id" class="book-card" @click="openNovel(n)">
           <div class="book-cover" :style="{background:coverGradient(n.id)}">{{ n.title.slice(0,6) }}</div>
           <div class="book-info">
             <h3>{{ n.title }}</h3>
@@ -720,7 +627,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         
         <!-- 快餐模式 -->
         <div class="flex items-center gap-8 mt-6" v-if="!form.normalPacing">
-          <label class="toggle-switch">
+          <label class="toggle">
             <input type="checkbox" v-model="form.fastFood">
             <span class="toggle-slider"></span>
           </label>
@@ -800,22 +707,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <div v-if="loading.create" class="create-progress">
         <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
         <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
-        <button v-if="createProgress===100 && activeNovel" class="btn btn-primary w-full mt-8" style="padding:10px;font-size:14px;background:var(--accent)"
-                @click="openNovel(activeNovel); writing.activeTab='storygraph'; switchToStoryGraph()">
-          🎨 进入剧情图谱 — 调整故事线
-        </button>
       </div>
       <button v-else class="btn btn-primary w-full" style="padding:12px;font-size:15px" @click="doCreate">
         生成大纲
       </button>
-      <!-- v2.8: 大纲预览 -->
-      <div v-if="outlinePreview" class="card mt-12" style="background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15)">
-        <div class="card-title" style="font-size:14px">📋 大纲预览 — {{ outlinePreview.total }}章</div>
-        <div v-for="v in outlinePreview.volumes" :key="v.vol" style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between">
-          <span style="color:var(--accent);font-weight:600">{{ v.vol }} <span style="font-size:10px;opacity:.6">{{ v.act }}</span></span>
-          <span style="color:var(--text2)">{{ v.count }}章 · {{ v.first }}</span>
-        </div>
-      </div>
 
       <!-- v2.3: 需求分析结果——简化版，避免复杂模板导致渲染崩溃 -->
       <div v-if="decomposeSummary" class="card" style="margin-top:12px;background:var(--bg2);border-color:var(--accent)">
@@ -919,13 +814,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <button class="btn btn-ghost btn-xs" @click="openOutline" style="font-size:12px">📋 编辑大纲</button>
         </div>
 
-        <!-- v2.8: chapter score -->
-        <div v-if="writing.qualityScore!==null" style="padding:4px 10px;margin-bottom:8px;border-radius:4px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px"
-             :style="{background:writing.qualityScore>=70?'rgba(63,185,80,.1)':writing.qualityScore>=50?'rgba(240,136,62,.1)':'rgba(248,81,73,.1)',color:writing.qualityScore>=70?'#3fb950':writing.qualityScore>=50?'#f0883e':'#f85149'}">
-          📊 Score: {{ writing.qualityScore }}/100
-          <span v-if="writing.qualityIssues?.length" style="font-weight:400;font-size:11px">{{ writing.qualityIssues[0] }}</span>
-        </div>
-        <!-- v2.3: writing / storygraph switch -->
+        <!-- v2.3: 写作 / 剧情图谱 切换 -->
         <div class="sg-tabs">
           <button class="sg-tab" :class="{active:writing.activeTab==='write'}" @click="writing.activeTab='write'">✍️ 写作</button>
           <button class="sg-tab" :class="{active:writing.activeTab==='storygraph'}" @click="switchToStoryGraph">🔍 剧情图谱</button>
@@ -1089,45 +978,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </div>
 
           <div v-else>
-            <!-- v2.8: 阶段指示器 + 方向盘 -->
-            <div class="sg-phase-bar">
-              <div class="sg-phase-indicator" :class="'phase-'+editingPhase">
-                <span v-if="editingPhase==='outline'">✏️ 大纲阶段 — 自由编辑故事结构</span>
-                <span v-else>🔒 写作阶段 — 结构已锁定，方向盘微调</span>
-              </div>
-              <button v-if="editingPhase==='outline'" class="btn btn-primary btn-xs" @click="lockOutline">✅ 确认大纲，锁定结构</button>
-            </div>
-            
-            <!-- 方向盘面板 -->
-            <div v-if="editingPhase==='writing'" class="sg-wheel-panel">
-              <div class="sg-wheel-input-row">
-                <span style="font-size:13px;font-weight:600;white-space:nowrap">🎛️ 方向盘</span>
-                <input v-model="wheelCommand" class="sg-wheel-input" placeholder="我想...（例如：让复仇主线升温到高潮，同时暂停感情线，沈清许现在在暗影殿地牢）" @keyup.enter="executeWheelCommand">
-                <button class="btn btn-primary btn-xs" @click="executeWheelCommand" :disabled="!wheelCommand.trim()">分析</button>
-              </div>
-              
-              <!-- 拆解预览 -->
-              <div v-if="wheelResult && wheelResult.changes" class="sg-wheel-preview">
-                <div class="sg-wheel-summary">{{ wheelResult.summary?.split('\n')[0] }}</div>
-                <div class="sg-wheel-changes">
-                  <label v-for="(c, i) in wheelResult.changes" :key="i" class="sg-wheel-change-item">
-                    <input type="checkbox" v-model="wheelApplied[i]">
-                    <span class="sg-wheel-change-label">{{ c.label }}</span>
-                    <span v-if="c.suggested" class="sg-wheel-change-hint">{{ c.suggested.note }}</span>
-                  </label>
-                </div>
-                <div class="flex gap-6 mt-8 justify-end">
-                  <button class="btn btn-ghost btn-xs" @click="wheelResult=null;wheelCommand=''">取消</button>
-                  <button class="btn btn-primary btn-xs" @click="applyWheelChanges">✅ 应用选中变更</button>
-                </div>
-              </div>
-              
-              <!-- 错误 -->
-              <div v-if="wheelResult && wheelResult.error" class="sg-wheel-result err">{{ wheelResult.error }}</div>
-              <!-- 加载 -->
-              <div v-if="wheelResult && wheelResult.loading" class="sg-wheel-result" style="color:var(--accent)">分析中...</div>
-            </div>
-            
             <!-- 工具栏: 刷新 + 章节滑块 + 子tab -->
             <div class="sg-toolbar">
               <button class="btn btn-ghost btn-xs" @click="loadStoryGraph(0)" :disabled="sgLoading" style="font-size:12px">🔄 刷新</button>
@@ -1146,13 +996,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <!-- 子tabs -->
             <div class="sg-subtabs">
               <button class="sg-subtab" :class="{active:sgSubTab==='overview'}" @click="sgSubTab='overview'">📊 概览</button>
-              <button class="sg-subtab" :class="{active:sgSubTab==='threads'}" @click="sgSubTab='threads'" v-if="editingPhase==='outline'">
+              <button class="sg-subtab" :class="{active:sgSubTab==='threads'}" @click="sgSubTab='threads'">
                 剧情线 <span class="sg-subtab-count">{{ sgStats.activeThreads }}/{{ sgStats.totalThreads }}</span>
               </button>
-              <button class="sg-subtab" :class="{active:sgSubTab==='foreshadows'}" @click="sgSubTab='foreshadows'" v-if="editingPhase==='outline'">
+              <button class="sg-subtab" :class="{active:sgSubTab==='foreshadows'}" @click="sgSubTab='foreshadows'">
                 伏笔 <span class="sg-subtab-count" :class="{'sg-count-warn':sgStats.overdueForeshadows>0}">{{ sgStats.unresolvedForeshadows }}/{{ sgStats.totalForeshadows }}</span>
               </button>
-              <button class="sg-subtab" :class="{active:sgSubTab==='characters'}" @click="sgSubTab='characters'" v-if="editingPhase==='outline'">
+              <button class="sg-subtab" :class="{active:sgSubTab==='characters'}" @click="sgSubTab='characters'">
                 角色 <span class="sg-subtab-count">{{ sgStats.trackedChars }}</span>
               </button>
               <button class="sg-subtab" :class="{active:sgSubTab==='calibration'}" @click="sgSubTab='calibration'">
@@ -1164,7 +1014,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <button class="sg-subtab" :class="{active:sgSubTab==='timeline'}" @click="sgSubTab='timeline'">
                 📈 剧情线图
               </button>
-              <button class="sg-subtab" :class="{active:sgSubTab==='canvas'}" @click="sgSubTab='canvas'" v-if="editingPhase==='outline'">
+              <button class="sg-subtab" :class="{active:sgSubTab==='canvas'}" @click="sgSubTab='canvas'">
                 🎨 画布
               </button>
             </div>
@@ -1245,13 +1095,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
 
             <!-- ====== 剧情线 Tab ====== -->
-            <div v-if="sgSubTab==='threads' && editingPhase==='outline'">
+            <div v-if="sgSubTab==='threads'">
               <div class="sg-filter-bar">
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='all'}" @click="sgThreadFilter='all'">全部</button>
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='active'}" @click="sgThreadFilter='active'">进行中</button>
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='resolved'}" @click="sgThreadFilter='resolved'">已完结</button>
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='dormant'}" @click="sgThreadFilter='dormant'">休眠</button>
-                <button class="btn btn-ghost btn-xs" @click="createThread" style="margin-left:auto;font-size:11px" v-if="editingPhase==='outline'">+ 新增</button>
+                <button class="btn btn-ghost btn-xs" @click="createThread" style="margin-left:auto;font-size:11px">+ 新增</button>
               </div>
               <div v-if="!filteredThreads.length" class="text-xs color-text3" style="padding:20px;text-align:center">无匹配剧情线</div>
               <div v-for="t in filteredThreads" :key="t.id" class="sg-thread-item sg-expandable"
@@ -1334,7 +1184,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                     <div class="flex gap-6 mt-8 justify-end">
                       <button class="btn btn-ghost btn-xs" @click="cancelEdit">取消</button>
                       <button class="btn btn-primary btn-xs" @click="saveEdit">💾 保存</button>
-                      <button class="btn btn-ghost btn-xs" @click="deleteThread(t.id)" style="color:var(--red)" v-if="editingPhase==='outline'">🗑️ 删除</button>
+                      <button class="btn btn-ghost btn-xs" @click="deleteThread(t.id)" style="color:var(--red)">🗑️ 删除</button>
                     </div>
                   </div>
                 </template>
@@ -1342,7 +1192,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
 
             <!-- ====== 伏笔 Tab ====== -->
-            <div v-if="sgSubTab==='foreshadows' && editingPhase==='outline'">
+            <div v-if="sgSubTab==='foreshadows'">
               <div class="sg-filter-bar">
                 <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='all'}" @click="sgForeshadowFilter='all'">全部</button>
                 <button class="sg-filter-btn" :class="{active:sgForeshadowFilter==='active'}" @click="sgForeshadowFilter='active'">未回收</button>
@@ -1400,7 +1250,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
 
             <!-- ====== 角色 Tab ====== -->
-            <div v-if="sgSubTab==='characters' && editingPhase==='outline'">
+            <div v-if="sgSubTab==='characters'">
               <div v-if="!sgCharSnapshots || !Object.keys(sgCharSnapshots).length" class="text-xs color-text3" style="padding:20px;text-align:center">暂无角色数据</div>
               <div class="sg-char-grid">
                 <div v-for="(snap,name) in sgCharSnapshots" :key="name" class="sg-char-card sg-expandable"
@@ -1983,11 +1833,11 @@ const app = createApp({
       let buf = '';
       let lastData = Date.now();
       const timeoutCheck = setInterval(() => {
-        if (Date.now() - lastData > 60000) {
-          reader.cancel('SSE timeout');
+        if (Date.now() - lastData > 120000) {  // v2.11: 放宽到2分钟(大纲生成可能很慢)
+          reader.cancel('SSE timeout (120s no data)');
           clearInterval(timeoutCheck);
         }
-      }, 5000);
+      }, 10000);  // v2.11: 10s检查一次(原来5s太频繁)
       
       try {
         while (true) {
@@ -2013,13 +1863,10 @@ const app = createApp({
     }
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false });
-// v2.8: preference persistence
-try { const saved = JSON.parse(localStorage.getItem('ng_prefs')||'{}'); Object.assign(form, saved); } catch(e) {}
-function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:form.genre,style:form.style,normalPacing:form.normalPacing,fastFood:form.fastFood})); }
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     const writingModeLiterary = ref(false);
-    const useAtomicMode = ref(true);  // v2.3: 默认启用原子化生成
-    const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write', qualityScore:null, qualityIssues:[] });
+    const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
+    const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
 
     // v2.3: 剧情图谱
     const sgLoading = ref(false);
@@ -2035,82 +1882,11 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
     const sgExpandedForeshadow = ref(null);
     const sgExpandedChar = ref(null);
     const sgExpandedArc = ref(null);
-    const sgMiniExpanded = ref(false);
-    const outlinePreview = ref(null);
-    function buildOutlinePreview(plan) {
-      if (!plan?.outline?.volumes) return null;
-      let totalCh = 0; const lines = [];
-      for (const v of (plan.outline.volumes||[])) {
-        const chs = v.chapters||[]; totalCh += chs.length;
-        lines.push({vol:v.title||'?', act:v.act||'', count:chs.length, first:(chs[0]?.summary||'').substring(0,30)});
-      }
-      return {volumes:lines, total:totalCh};
-    }
 
     // v2.5: 编辑器状态
     const editState = reactive({ type:null, id:null, data:{} });
     const editShowForm = reactive({ thread:false, foreshadow:false });
-    const quickDoing = ref(null);
-
-    // v2.8: 编辑阶段
-    const editingPhase = ref('outline');
-    const wheelCommand = ref('');
-    const wheelResult = ref(null);  // {changes:[], summary:''}
-    const wheelApplied = ref([]);   // 已勾选的变更
-    
-    async function loadPhase() {
-      if (!activeNovel.value) return;
-      try {
-        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/phase');
-        if (r.ok) { const d = await r.json(); editingPhase.value = d.phase; }
-      } catch(e) { console.warn('Phase load failed:', e); }
-    }
-    async function lockOutline() {
-      if (!confirm('确认锁定大纲？此后不能修改剧情线和伏笔结构，只能通过方向盘微调。')) return;
-      try {
-        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/phase', {
-          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phase:'writing'}),
-        });
-        if (r.ok) { editingPhase.value = 'writing'; showToast('大纲已锁定', '进入写作阶段', '🔒'); }
-      } catch(e) { console.warn('Phase lock failed:', e); }
-    }
-    
-    async function executeWheelCommand() {
-      const cmd = wheelCommand.value.trim();
-      if (!cmd || !activeNovel.value) return;
-      wheelResult.value = { loading: true };
-      try {
-        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/storygraph/parse-command', {
-          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:cmd}),
-        });
-        const d = await r.json();
-        if (d.changes?.length) {
-          wheelResult.value = { changes: d.changes, summary: d.summary };
-          wheelApplied.value = d.changes.map(() => true); // 默认全选
-        } else {
-          wheelResult.value = { error: '未能识别任何变更，请尝试更具体的描述' };
-        }
-      } catch(e) { wheelResult.value = { error: '网络错误' }; }
-    }
-
-    async function applyWheelChanges() {
-      if (!wheelResult.value?.changes) return;
-      const id = encodeURIComponent(activeNovel.value.id);
-      const toApply = wheelResult.value.changes.filter((_, i) => wheelApplied.value[i]);
-      
-      for (const c of toApply) {
-        try {
-          await fetch(API+'/api/novels/'+id+'/storygraph/quick-action', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({type:c.type, id:c.id, action:c.action, ...c}),
-          });
-        } catch(e) { console.warn('Wheel apply failed for', c.label, e); }
-      }
-      showToast('方向盘已应用', `执行了 ${toApply.length}/${wheelResult.value.changes.length} 项变更`, '✅');
-      wheelResult.value = null;
-      wheelCommand.value = '';
-      await loadStoryGraph(0);
-    }  // which quick action is in progress
+    const quickDoing = ref(null);  // which quick action is in progress
 
     // ── v2.6: 画布编辑器 ──
     const canvasZoom = ref(1);
@@ -2482,7 +2258,7 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
     const batchProgress = ref(0); const batchCurrent = ref(0);
     const exportProgress = ref(0);
 
-    const genres = ['修仙','玄幻','都市','科幻','悬疑','历史','游戏','末日','无限流','武侠','克苏鲁','赛博朋克'];
+    const genres = ['修仙','玄幻','都市','科幻','悬疑','历史','游戏','末日','无限流','武侠','民俗悬疑','规则怪谈','反套路修仙','赛博仙侠','经营建设','苟道流'];
 
     const selectedCount = computed(() => Object.values(exportSelected).filter(Boolean).length);
     const allSelected = computed(() => novels.value.length>0 && novels.value.every(n=>exportSelected[n.id]));
@@ -2873,6 +2649,44 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
     onMounted(async () => {
       applyAppearance();
       loadStyles(); loadStyleSeeds(); // fire-and-forget
+      
+      // v2.11: 全局加载安全阀 — 任何loading状态超60s自动重置
+      let _loadingSafetyTimer = null;
+      const _resetLoadingSafety = () => {
+        if (_loadingSafetyTimer) clearTimeout(_loadingSafetyTimer);
+        _loadingSafetyTimer = setTimeout(() => {
+          // 检查是否有卡住的loading状态
+          let recovered = [];
+          for (const k of Object.keys(loading)) {
+            if (loading[k]) {
+              loading[k] = false;
+              recovered.push(k);
+            }
+          }
+          if (recovered.length > 0) {
+            console.warn('Auto-recovered stuck loading states:', recovered.join(', '));
+            error.value = `操作超时，已自动恢复（${recovered.join('、')}）。请重试。`;
+          }
+        }, 120000); // 2分钟全局超时
+      };
+      // 每次loading状态变化时重置安全计时器
+      const _origLoading = {};
+      for (const k of Object.keys(loading)) {
+        _origLoading[k] = loading[k];
+        Object.defineProperty(loading, k, {
+          get() { return _origLoading[k]; },
+          set(v) {
+            _origLoading[k] = v;
+            if (v) _resetLoadingSafety();
+            else if (!Object.values(_origLoading).some(x => x)) {
+              if (_loadingSafetyTimer) { clearTimeout(_loadingSafetyTimer); _loadingSafetyTimer = null; }
+            }
+            return true;
+          },
+          enumerable: true, configurable: true
+        });
+      }
+      
       // 书架加载（带重试，Render冷启动需要等服务器醒来）
       loading.shelf = true;
       for (let attempt=0; attempt<3; attempt++) {
@@ -2999,16 +2813,6 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
       if (_shelfDebounce) return;
       _shelfDebounce = setTimeout(() => { _shelfDebounce=null; loadShelf(); }, 500);
     }
-    async function deleteNovel(novel) {
-      if (!confirm(`确定删除「${novel.title}」吗？此操作不可撤销！`)) return;
-      try {
-        await fetch(API+'/api/novels/'+encodeURIComponent(novel.id), {method:'DELETE'});
-      } catch(e) { console.warn('Delete failed:', e); }
-      if (activeNovel.value && activeNovel.value.id === novel.id) {
-        activeNovel.value = null; writing.content = '';
-      }
-      await loadShelf();
-    }
     function loadNovelPlan() {
       // 从服务端强制重拉最新 plan（主角修改后确保前端同步）
       if (!activeNovel.value) return;
@@ -3056,7 +2860,7 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
             if (!decomposeSummary.value) decomposeSummary.value = {};
             decomposeSummary.value = { ...decomposeSummary.value, name_warning: evt.mismatches, name_suggestion: evt.suggestion };
           }
-          else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); outlinePreview.value=buildOutlinePreview(evt.plan); }
+          else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
@@ -3071,7 +2875,6 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
       planResult.value=null;
       let next=1; while(next<=total && done.includes(next)) next++;
       writing.chapter=Math.min(next, total); writing.content=''; writing.done=false;
-      sgMiniExpanded.value=false; loadStoryGraph(0);
       currentView.value='write';
       batchStart.value=Math.min(next, total); batchEnd.value=Math.min(total, next+9);
       // 异步加载plan和章节内容
@@ -3157,7 +2960,7 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
             chapterProgress.value = 85;
             chapterProgressLabel.value = `${evt.verdict||''} · ${evt.overall_score||0}分`;
           }
-          else if(evt.type==='quality_warning'){ writing.qualityScore=evt.score; writing.qualityIssues=evt.issues||[]; } else if(evt.type==='quality_retry'){ writing.qualityScore=evt.score_after; } else if(evt.type==='text'){
+          else if(evt.type==='text'){
             writing.content+=evt.content; chapterProgress.value=Math.min(95, Math.round(writing.content.length/targetChars*100));
             chapterProgressLabel.value=`${writing.content.length}字`;
             nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
@@ -3186,11 +2989,6 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
       sgSubTab.value = 'overview';
       sgChapterFilter.value = (activeNovel.value.state.completed_chapters||[]).length + 1;
       await loadStoryGraph();
-      await loadPhase();
-      // 写作阶段不允许进入编辑tab
-      if (editingPhase.value === 'writing' && ['threads','foreshadows','characters'].includes(sgSubTab.value)) {
-        sgSubTab.value = 'overview';
-      }
     }
     async function loadStoryGraph(chapterNum = 0) {
       if (!activeNovel.value) return;
@@ -3480,7 +3278,7 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
       pct,fmtWords,coverGradient,
       openCreate,openWrite,openOutline,doCreate,openNovel,startWriting,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
-      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,deleteNovel,
+      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
@@ -3497,7 +3295,7 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
       switchToStoryGraph,loadStoryGraph,
       sgSubTab,sgChapterFilter,sgThreadFilter,sgForeshadowFilter,
       sgExpandedThread,sgExpandedForeshadow,sgExpandedChar,sgExpandedArc,
-      filteredThreads,filteredForeshadows,sgMiniExpanded,outlinePreview,buildOutlinePreview,
+      filteredThreads,filteredForeshadows,
       // v2.4: 可视化
       sgHoveredChar,sgHoveredEdge,sgHoveredEvent,
       relationViewBox,relationNodes,relationEdges,relationGraph,
@@ -3511,8 +3309,6 @@ function savePrefs() { localStorage.setItem('ng_prefs', JSON.stringify({genre:fo
       // v2.5: 编辑器
       editState,quickDoing,startEdit,cancelEdit,saveEdit,hasEdit,
       quickAction,deleteThread,createThread,createForeshadow,
-      // v2.8: 阶段 + 方向盘
-      editingPhase,loadPhase,lockOutline,wheelCommand,wheelResult,wheelApplied,executeWheelCommand,applyWheelChanges,
       // v2.6: 画布
       canvasZoom,canvasPan,canvasWrap,canvasInner,
       canvasWidth,canvasHeight,canvasLaneH,canvasTickChapters,
@@ -3564,22 +3360,6 @@ if ('serviceWorker' in navigator) {
       }
     });
   }).catch(e => console.log('SW failed:', e));
-}
-
-// ── PWA Install ──
-let pwaDeferredPrompt;
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  pwaDeferredPrompt = e;
-  document.getElementById('pwa-install-banner').classList.add('show');
-});
-function installPWA() {
-  if (!pwaDeferredPrompt) return;
-  pwaDeferredPrompt.prompt();
-  pwaDeferredPrompt.userChoice.then(() => {
-    document.getElementById('pwa-install-banner').classList.remove('show');
-    pwaDeferredPrompt = null;
-  });
 }
 </script>
 </body>
