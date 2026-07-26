@@ -263,6 +263,7 @@ class Writer:
         normal_pacing: bool = False,
         fast_food: bool = False,
         chapter_outline: dict = None,
+        skip_ending: bool = False,  # v2.12: 质量门重试时跳过Phase 2(避免重复生成结尾)
     ) -> AsyncGenerator[str, None]:
         """流式生成章节正文 (v2.12: 两阶段 — 正文 + 独立结尾)
         
@@ -446,7 +447,7 @@ class Writer:
         bridge_to_next = chapter_outline.get("bridge_to_next", "")
         hook = chapter_outline.get("hook", "")
         
-        if len(final_text) > 500 and (bridge_to_next or hook):
+        if not skip_ending and len(final_text) > 500 and (bridge_to_next or hook):
             try:
                 # 取最后400字作为上下文，让LLM知道写到哪了
                 tail_context = final_text[-400:] if len(final_text) > 400 else final_text

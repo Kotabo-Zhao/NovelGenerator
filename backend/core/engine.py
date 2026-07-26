@@ -707,6 +707,8 @@ class NovelEngine:
                 rewriter = HumanRewriter(self.client, self.model)
                 
                 chapter_summary = chapter_outline.get("summary", "") or chapter_outline.get("title", "")
+                # v2.12: 保存结尾 (Humanizer会覆盖全文 → 必须保住Phase 2结尾)
+                _ending_protect = full_text[-300:] if len(full_text) > 300 else full_text
                 result = await asyncio.to_thread(
                     humanize_pipeline, full_text, detector, rewriter,
                     scene_desc=chapter_summary,
@@ -715,7 +717,21 @@ class NovelEngine:
                 )
                 if result["rewritten"]:
                     ai_report = result
-                    full_text = result["text"]
+                    rewritten = result["text"]
+                    # v2.12: Humanizer可能破坏Phase 2结尾 → 如果改写后结尾变短/变差, 用原文结尾
+                    if len(rewritten) > 500 and len(_ending_protect) > 80:
+                        rewritten_ending = rewritten[-300:] if len(rewritten) > 300 else rewritten
+                        # 比较结尾质量: 原文结尾更长或更完整 → 保留原文结尾
+                        if len(_ending_protect) > len(rewritten_ending) * 1.5:
+                            # 找到原文结尾在改写版本中的位置(前面部分可能有改动)
+                            # 简单策略: 替换改写版的最后200字
+                            protect_len = min(200, len(_ending_protect))
+                            full_text = rewritten[:-protect_len] + _ending_protect[-protect_len:]
+                            log.info(f"Humanizer: ending protected ({len(_ending_protect)} chars kept)")
+                        else:
+                            full_text = rewritten
+                    else:
+                        full_text = rewritten
                     log.info(f"AI Humanizer: score {ai_report['ai_score_before']}→{ai_report.get('ai_score_after','?')}, rewritten")
                     yield {"type": "ai_report", 
                            "score_before": ai_report["ai_score_before"],
@@ -764,6 +780,7 @@ class NovelEngine:
                         writing_mode=writing_mode,
                         normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
                         chapter_outline=chapter_outline,
+                        skip_ending=True,  # v2.12: 重试不重复生成结尾
                     ):
                         retry_text += text
                     
@@ -870,6 +887,7 @@ class NovelEngine:
                         normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
                         fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
                         chapter_outline=chapter_outline,
+                        skip_ending=True,  # v2.12: 重试不重复生成结尾
                     ):
                         retry_text += text
                         yield {"type": "text", "content": text}
@@ -983,6 +1001,7 @@ class NovelEngine:
                             writing_mode=writing_mode,
                             normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
                             chapter_outline=chapter_outline,
+                            skip_ending=True,  # v2.12: 修复重试不重复生成结尾
                         ):
                             fixed_text += fix_chunk
                         
