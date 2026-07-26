@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Crash Test</title>
+<script src="/vue.global.prod.js"></script>
+<style>
+  body { background:#0d1117; color:#c9d1d9; font-family:sans-serif; margin:20px; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; margin-top:12px; }
+  .card-title { font-size:14px; font-weight:600; margin-bottom:8px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <button @click="simulateEvent">模拟需求分析完成</button>
+  <div v-if="loading" class="card">
+    <div>进度: {{ progress }}% — {{ label }}</div>
+  </div>
+  
+  <!-- 完全复制真实 decomposeSummary 模板 -->
+  <div v-if="ds" class="card">
+    <div class="card-title">📋 需求分析结果
+      <span v-if="ds.subtasks">{{ ds.p0_count }}个P0 · 共{{ ds.subtask_count }}项</span>
+    </div>
+    <div style="font-size:13px;line-height:1.6;margin-bottom:10px">
+      <div v-if="ds.core_theme"><b>核心主题：</b>{{ ds.core_theme }}</div>
+      <div v-if="ds.target_audience"><b>目标读者：</b>{{ ds.target_audience }}</div>
+      <div v-if="ds.summary">{{ ds.summary }}</div>
+      <div v-if="ds.offline_mode">⚠️ 离线模式</div>
+    </div>
+    <template v-if="ds.subtasks && ds.subtasks.length">
+      <div v-for="cat in ['worldbuilding','character','plot','style','structure']" :key="cat">
+        <div v-if="grouped(cat).length">
+          <div>{{ cat }}</div>
+          <div v-for="st in grouped(cat)" :key="st.id" @click="st._expanded = !st._expanded">
+            <span v-if="st.priority==='P0'" style="color:red">P0</span>
+            <span v-else-if="st.priority==='P1'" style="color:orange">P1</span>
+            <span>{{ st.title }}</span>
+            <span v-if="st._expanded">▲</span><span v-else>▼</span>
+            <div v-if="st._expanded">
+              <div v-if="st.description">📝 {{ st.description }}</div>
+              <div v-if="st.must_include && st.must_include.length">
+                ✅ <span v-for="(m,mi) in st.must_include" :key="mi">{{ m }}<span v-if="mi<st.must_include.length-1"> · </span></span>
+              </div>
+              <div v-if="st.must_avoid && st.must_avoid.length">
+                ❌ <span v-for="(a,ai) in st.must_avoid" :key="ai">{{ a }}<span v-if="ai<st.must_avoid.length-1"> · </span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+  <div id="result"></div>
+</div>
+<script>
+const { createApp, ref, reactive, computed } = Vue;
+
+// 模拟后端会发的数据（包含可能的极端情况）
+const SAMPLE_EVENTS = [
+  // Case 1: 正常数据
+  {
+    type: 'requirements_decomposed',
+    summary: '一个从底层崛起的修仙故事',
+    core_theme: '少年逆境崛起',
+    target_audience: '年轻男性读者',
+    subtask_count: 15,
+    p0_count: 3,
+    offline_mode: false,
+    subtasks: [
+      { id:'s1', title:'修真境界划分', category:'worldbuilding', sub_category:'power_system', priority:'P0', description:'需要明确练气到渡劫', must_include:['九层境界','突破瓶颈'], must_avoid:['境界混乱'] },
+      { id:'s2', title:'主角性格缺陷', category:'character', sub_category:'protagonist', priority:'P1', description:'主角初始懦弱', must_include:['成长弧线'], must_avoid:['龙傲天'] },
+      { id:'s3', title:'战斗描写', category:'plot', sub_category:'action', priority:'P0', description:'精彩打斗', must_include:['招式描述'], must_avoid:['一招秒杀'] },
+      { id:'s4', title:'文风', category:'style', sub_category:'tone', priority:'P1', description:'热血激昂', must_include:['激情'], must_avoid:['拖沓'] },
+      { id:'s5', title:'节奏控制', category:'structure', sub_category:'pacing', priority:'P0', description:'张弛有度', must_include:['高潮','低谷'], must_avoid:['全程平淡'] },
+    ]
+  },
+  // Case 2: subtasks 为空数组
+  { type:'requirements_decomposed', summary:'test', core_theme:'test', subtask_count:0, p0_count:0, offline_mode:false, target_audience:'', subtasks:[] },
+  // Case 3: 无 subtasks 字段
+  { type:'requirements_decomposed', summary:'test', core_theme:'test', subtask_count:0, p0_count:0, offline_mode:false, target_audience:'' },
+  // Case 4: must_include 为 null
+  { type:'requirements_decomposed', summary:'test', core_theme:'test', subtask_count:1, p0_count:0, offline_mode:false, target_audience:'', subtasks:[{ id:'x', title:'test', category:'worldbuilding', sub_category:'x', priority:'', description:'', must_include:null, must_avoid:null }] },
+  // Case 5: must_include 为字符串而非数组
+  { type:'requirements_decomposed', summary:'test', core_theme:'test', subtask_count:1, p0_count:0, offline_mode:false, target_audience:'', subtasks:[{ id:'x', title:'test', category:'worldbuilding', sub_category:'x', priority:'', description:'', must_include:'九层境界', must_avoid:'境界混乱' }] },
+  // Case 6: 超大文本
+  { type:'requirements_decomposed', summary:'x'.repeat(500), core_theme:'x'.repeat(200), subtask_count:1, p0_count:0, offline_mode:false, target_audience:'x'.repeat(100), subtasks:[{ id:'x', title:'x'.repeat(100), category:'worldbuilding', sub_category:'x'.repeat(50), priority:'P0', description:'x'.repeat(200), must_include:['a'.repeat(50)], must_avoid:['b'.repeat(50)] }] },
+];
+
+let caseIdx = 0;
+
+createApp({
+  setup() {
+    const ds = ref(null);
+    const loading = ref(false);
+    const progress = ref(0);
+    const label = ref('');
+
+    function grouped(cat) {
+      try {
+        if (!ds.value) return [];
+        const list = ds.value.subtasks;
+        if (!Array.isArray(list) || !list.length) return [];
+        return list.filter(s => s && s.category === cat);
+      } catch(e) { document.getElementById('result').textContent = '❌ grouped error: ' + e.message; return []; }
+    }
+
+    function simulateEvent() {
+      const evt = SAMPLE_EVENTS[caseIdx % SAMPLE_EVENTS.length];
+      caseIdx++;
+      
+      loading.value = true;
+      progress.value = 4;
+      label.value = '测试事件 #' + caseIdx + ': ' + evt.type;
+      
+      try {
+        ds.value = evt;
+        document.getElementById('result').textContent = '✅ Case ' + caseIdx + ' passed (subtasks=' + 
+          (evt.subtasks ? evt.subtasks.length : 'undefined') + ')';
+      } catch(e) {
+        document.getElementById('result').textContent = '❌ CRASH: ' + e.message;
+      }
+      
+      setTimeout(() => { loading.value = false; }, 500);
+    }
+
+    return { ds, loading, progress, label, grouped, simulateEvent };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

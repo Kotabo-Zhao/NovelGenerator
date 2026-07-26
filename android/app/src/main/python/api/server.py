@@ -48,8 +48,22 @@ app.add_middleware(
 engine = NovelEngine()
 
 # 前端文件目录 — 使用 abspath 防止 __file__ 为相对路径时解析错误
-_WEB_BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-WEB_DIR = os.path.join(_WEB_BASE, "web")
+# Android Chaquopy: __file__ = .../api/server.py, web/ 在 .../web/ (2层)
+# PC: __file__ = .../backend/api/server.py, web/ 在 .../web/ (3层)
+_api_dir = os.path.dirname(os.path.abspath(__file__))  # .../api/
+_python_root = os.path.dirname(_api_dir)                # .../ (python root)
+_pc_root = os.path.dirname(_python_root)                # PC project root
+
+# 先检查 web/ 在哪（兼容 Android 2层 和 PC 3层）
+_web_dir_2 = os.path.join(_python_root, "web")          # Android Chaquopy 路径
+_web_dir_3 = os.path.join(_pc_root, "web")              # PC 路径
+if os.path.isdir(_web_dir_2):
+    WEB_DIR = _web_dir_2
+elif os.path.isdir(_web_dir_3):
+    WEB_DIR = _web_dir_3
+else:
+    WEB_DIR = os.getenv("WEB_DIR", _web_dir_2)  # 环境变量兜底
+log.info(f"WEB_DIR resolved to: {WEB_DIR} (exists={os.path.isdir(WEB_DIR)})")
 
 
 # ── Frontend Route (仅/，子路径走 StaticFiles) ──
