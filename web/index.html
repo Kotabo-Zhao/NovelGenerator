@@ -2650,51 +2650,42 @@ const app = createApp({
       applyAppearance();
       loadStyles(); loadStyleSeeds(); // fire-and-forget
       
-      // v2.11: 全局加载安全阀 — 任何loading状态超60s自动重置
-      let _loadingSafetyTimer = null;
-      const _resetLoadingSafety = () => {
-        if (_loadingSafetyTimer) clearTimeout(_loadingSafetyTimer);
-        _loadingSafetyTimer = setTimeout(() => {
-          // 检查是否有卡住的loading状态
+      // v2.11: 全局加载安全阀 — 任何loading状态持续超过2分钟自动重置
+      let _safetyTimer = null;
+      const _resetSafety = () => {
+        if (_safetyTimer) clearTimeout(_safetyTimer);
+        _safetyTimer = setTimeout(() => {
           let recovered = [];
           for (const k of Object.keys(loading)) {
-            if (loading[k]) {
-              loading[k] = false;
-              recovered.push(k);
-            }
+            if (loading[k]) { loading[k] = false; recovered.push(k); }
           }
-          if (recovered.length > 0) {
-            console.warn('Auto-recovered stuck loading states:', recovered.join(', '));
-            error.value = `操作超时，已自动恢复（${recovered.join('、')}）。请重试。`;
+          if (recovered.length) {
+            console.warn('Auto-recovered stuck loading:', recovered.join(', '));
+            error.value = '操作超时，已自动恢复（'+recovered.join('、')+'）。请重试。';
           }
-        }, 120000); // 2分钟全局超时
+        }, 120000);
       };
-      // 每次loading状态变化时重置安全计时器
-      const _origLoading = {};
-      for (const k of Object.keys(loading)) {
-        _origLoading[k] = loading[k];
-        Object.defineProperty(loading, k, {
-          get() { return _origLoading[k]; },
-          set(v) {
-            _origLoading[k] = v;
-            if (v) _resetLoadingSafety();
-            else if (!Object.values(_origLoading).some(x => x)) {
-              if (_loadingSafetyTimer) { clearTimeout(_loadingSafetyTimer); _loadingSafetyTimer = null; }
-            }
-            return true;
-          },
-          enumerable: true, configurable: true
-        });
-      }
+      // 用 Vue watch 监听 loading 变化（与 Proxy 兼容）
+      Vue.watch(() => Object.values(Object.assign({}, loading)).some(v => v), (busy) => {
+        if (busy) _resetSafety();
+        else if (_safetyTimer) { clearTimeout(_safetyTimer); _safetyTimer = null; }
+      });
       
-      // 书架加载（带重试，Render冷启动需要等服务器醒来）
-      loading.shelf = true;
-      for (let attempt=0; attempt<3; attempt++) {
-        const ok = await _loadShelfOnce();
-        if (ok) break;
-        if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
+      // 书架加载（带重试 + fail-safe）
+      try {
+        loading.shelf = true;
+        // v2.11: 先等API就绪（Android嵌入式服务器可能启动较慢）
+        try { await fetch(API+'/api/health', {signal: AbortSignal.timeout(5000)}); } catch(_) {}
+        for (let attempt=0; attempt<3; attempt++) {
+          const ok = await _loadShelfOnce();
+          if (ok) break;
+          if (attempt < 2) await new Promise(r => setTimeout(r, 1500));
+        }
+      } catch(e) {
+        console.warn('Shelf load error:', e);
+      } finally {
+        loading.shelf = false;  // v2.11: 无论如何都要关闭loading
       }
-      loading.shelf = false;
       // 恢复上次session — 两步兜底：
       //   1) 书架里找（最优，带完整 state）
       //   2) 书架没找到/加载失败 → 直接用 sessionStorage 的 ID 去 API 拿
