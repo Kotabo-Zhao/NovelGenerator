@@ -48,8 +48,19 @@ app.add_middleware(
 engine = NovelEngine()
 
 # 前端文件目录 — 使用 abspath 防止 __file__ 为相对路径时解析错误
-_WEB_BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-WEB_DIR = os.path.join(_WEB_BASE, "web")
+# PC: __file__ = .../backend/api/server.py, web/ 在 .../web/ (3层)
+# Android: __file__ = .../api/server.py, web/ 在 .../web/ (2层)
+_api_dir = os.path.dirname(os.path.abspath(__file__))
+_python_root = os.path.dirname(_api_dir)
+_pc_root = os.path.dirname(_python_root)
+_web_dir_2 = os.path.join(_python_root, "web")
+_web_dir_3 = os.path.join(_pc_root, "web")
+if os.path.isdir(_web_dir_2):
+    WEB_DIR = _web_dir_2
+elif os.path.isdir(_web_dir_3):
+    WEB_DIR = _web_dir_3
+else:
+    WEB_DIR = os.getenv("WEB_DIR", _web_dir_2)
 
 
 # ── Frontend Route (仅/，子路径走 StaticFiles) ──
