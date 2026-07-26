@@ -71,7 +71,10 @@ async def serve_frontend():
     index_path = os.path.join(WEB_DIR, "index.html")
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
-            return f.read()
+            return HTMLResponse(
+                f.read(),
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+            )
     return HTMLResponse("<h1>NovelGenerator</h1><p>Frontend not found</p>", status_code=404)
 
 
@@ -88,7 +91,10 @@ async def serve_vue():
 async def serve_sw():
     path = os.path.join(WEB_DIR, "sw.js")
     if os.path.exists(path):
-        return FileResponse(path, media_type="application/javascript")
+        return FileResponse(
+            path, media_type="application/javascript",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
     return Response("// sw.js not found", media_type="application/javascript", status_code=404)
 
 @app.get("/manifest.json")
