@@ -350,6 +350,7 @@ class Writer:
         log.info(f"Writing chapter: {genre}/{style}/{writing_mode}, pass 1/2 (draft)")
         
         draft = ""
+        finish_reason = "unknown"
         # max_tokens 根据目标字数动态计算，长章节不受 6000 硬限制
         safe_max_tokens = min(int(target_words * 3), 12000)
         stream = self._create(
@@ -368,8 +369,41 @@ class Writer:
             if delta.content:
                 draft += delta.content
                 yield delta.content  # 流式输出初稿
+            # 捕获 finish_reason
+            if chunk.choices[0].finish_reason:
+                finish_reason = chunk.choices[0].finish_reason
         
-        log.info(f"Draft done: {len(draft)} chars")
+        log.info(f"Draft done: {len(draft)} chars, finish_reason={finish_reason}")
+
+        # ── finish_reason 检测: API 因 token 不足截断 ──
+        if finish_reason == "length" and len(draft) < target_words * 0.8:
+            log.warning(f"Draft truncated by API (finish_reason=length, {len(draft)} < {int(target_words*0.8)}). "
+                       f"Retrying with doubled max_tokens...")
+            try:
+                retry_max_tokens = min(int(target_words * 6), 24000)  # 2x
+                retry_stream = self._create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt + "\n\n⚠️ 上次生成因token不足被截断。请确保本次完整生成，字数达到{target_words}字左右。"},
+                        {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
+                    ],
+                    temperature=0.8,
+                    max_tokens=retry_max_tokens,
+                    stream=True,
+                )
+                retry_draft = ""
+                for chunk in retry_stream:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        retry_draft += delta.content
+                        yield delta.content
+                if len(retry_draft) > len(draft):
+                    log.info(f"Retry OK (length truncation): {len(retry_draft)} chars (was {len(draft)})")
+                    draft = retry_draft
+                else:
+                    log.warning(f"Retry (length) no better: {len(retry_draft)} chars")
+            except Exception as e:
+                log.warning(f"Retry (length) failed: {e}")
 
         final_text = draft  # default: use draft as-is
         
@@ -446,20 +480,26 @@ class Writer:
         except Exception as e:
             log.warning(f"Humanizer pass failed: {e}, using current text")
 
-        # ── 截断检测 ──
+        # ── 截断检测 (最多重试2次，每次翻倍 max_tokens) ──
         try:
-            is_trunc, reason = _check_truncation(final_text, target_words)
-            if is_trunc:
-                log.warning(f"Truncation detected: {reason}. Retrying once...")
+            retry_multiplier = 2
+            for retry_round in range(2):
+                is_trunc, reason = _check_truncation(final_text, target_words)
+                if not is_trunc:
+                    break  # 不截断，直接通过
+                
+                log.warning(f"Truncation detected (round {retry_round+1}): {reason}. "
+                           f"Retrying with {retry_multiplier}x max_tokens...")
+                retry_max = min(int(target_words * 3 * retry_multiplier), 24000)
                 retry_text = ""
                 retry_stream = self._create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": system_prompt + f"\n\n⚠️ 注意：上次生成被截断了（{reason}）。请确保本次完整生成。"},
+                        {"role": "system", "content": system_prompt + f"\n\n⚠️ 上次生成不完整（{reason}）。请确保本次完整生成，字数至少{target_words}字。"},
                         {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
                     ],
                     temperature=0.8,
-                    max_tokens=safe_max_tokens,
+                    max_tokens=retry_max,
                     stream=True,
                 )
                 for chunk in retry_stream:
@@ -467,14 +507,20 @@ class Writer:
                     if delta.content:
                         retry_text += delta.content
                 
-                is_trunc2, reason2 = _check_truncation(retry_text, target_words)
+                is_trunc2, _ = _check_truncation(retry_text, target_words)
                 if not is_trunc2 and len(retry_text) > len(final_text) * 0.5:
                     final_text = retry_text
-                    log.info(f"Retry OK: {len(retry_text)} chars")
-                else:
-                    log.warning(f"Retry also truncated or short, using best available")
+                    log.info(f"Retry OK (round {retry_round+1}): {len(retry_text)} chars")
+                    break
+                elif len(retry_text) > len(final_text):
+                    final_text = retry_text  # 有改善就接受
+                    log.info(f"Retry partial improvement (round {retry_round+1}): {len(retry_text)} chars")
+                
+                retry_multiplier *= 2  # 下次翻倍
+            else:
+                log.warning(f"All retries failed, using best available ({len(final_text)} chars)")
         except Exception as e:
-            log.warning(f"Truncation check failed: {e}, using current text")
+            log.warning(f"Truncation check/retry failed: {e}, using current text")
 
 
 def _check_truncation(text: str, target_words: int) -> tuple:
@@ -492,10 +538,11 @@ def _check_truncation(text: str, target_words: int) -> tuple:
     if last_char not in valid_endings:
         return True, f"结尾不完整 (最后字符: {last_char})"
     
-    # 2. 长度比率: 不能太短
-    ratio = len(text) / (target_words * 2)  # 约每个中文字2个token
-    if ratio < 0.15:
-        return True, f"长度过短 ({len(text)}字 vs 目标{target_words}字)"
+    # 2. 长度比率: 低于50%目标字数视为截断
+    char_count = len(text)
+    min_acceptable = max(500, int(target_words * 0.5))  # 至少500字，且不低于目标50%
+    if char_count < min_acceptable:
+        return True, f"长度不足 ({char_count}字 vs 目标{target_words}字, 最低要求{min_acceptable}字)"
     
     # 3. 钩子检查: 结尾应该有悬念/期待感
     last_100 = text[-100:] if len(text) > 100 else text
