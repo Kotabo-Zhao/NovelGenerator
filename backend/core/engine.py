@@ -43,6 +43,111 @@ from .coherence_validator import validate_and_repair_outline
 log = logging.getLogger(__name__)
 
 
+# ═══════════════════════════════════════════
+# v2.13: Humanizer 语义结尾保护
+# ═══════════════════════════════════════════
+
+def _extract_key_ending(text: str, window: int = 600) -> dict | None:
+    """提取原文关键结尾信息，用于 Humanizer 后恢复保护。
+    
+    返回 {sentences, ngrams, has_hook} 或 None。
+    """
+    import re
+    if len(text) < 100:
+        return None
+    
+    # 按句子边界切分
+    raw = re.split(r'(?<=[。！？……])', text[-window:])
+    sentences = [s.strip() for s in raw if s.strip() and len(s.strip()) > 2]
+    
+    if len(sentences) < 2:
+        return None
+    
+    # 最后 2-3 句为关键结尾
+    key = sentences[-3:] if len(sentences) >= 3 else sentences[-2:]
+    ending_text = ''.join(key)
+    
+    # 3-gram 特征集
+    chars = ending_text.replace(' ', '').replace('\n', '')
+    ngrams = {chars[i:i+3] for i in range(len(chars) - 2)} if len(chars) >= 3 else set()
+    
+    # 勾子检测
+    hook_markers = ['突然', '忽然', '猛地', '即将', '等待', '然而', '可是',
+                    '但', '只见', '……', '—', '未完', '待续', '下一章']
+    has_hook = any(m in ending_text for m in hook_markers)
+    
+    return {
+        "text": ending_text,
+        "ngrams": ngrams,
+        "has_hook": has_hook,
+        "sentence_count": len(key),
+    }
+
+
+def _protect_ending_semantic(original: str, rewritten: str, ending_info: dict) -> str:
+    """v2.13: 语义结尾保护 — 三重检测决定是否恢复原文结尾。
+    
+    1. n-gram 重叠率 < 40% → 结尾已被大改
+    2. 原文结尾长度 > 改写结尾 1.5x → 被截断
+    3. 原文有勾子改写版没有 → 悬念被抹掉
+    
+    满足任一条件即恢复原文结尾。
+    """
+    import re
+    
+    # 提取改写版结尾
+    raw = re.split(r'(?<=[。！？……])', rewritten[-600:])
+    r_sentences = [s.strip() for s in raw if s.strip() and len(s.strip()) > 2]
+    if len(r_sentences) < 2:
+        # 改写版结尾太短 — 直接用原文结尾替换
+        if len(ending_info["text"]) > 80:
+            cutoff = max(0, len(rewritten) - len(ending_info["text"]))
+            protected = rewritten[:cutoff] + ending_info["text"]
+            log.info(f"Humanizer: ending protected (rewrite too short, {len(ending_info['text'])} chars kept)")
+            return protected
+        return rewritten
+    
+    r_ending_text = ''.join(r_sentences[-3:] if len(r_sentences) >= 3 else r_sentences[-2:])
+    
+    # 指标1: n-gram 重叠
+    if ending_info["ngrams"]:
+        r_chars = r_ending_text.replace(' ', '').replace('\n', '')
+        r_ngrams = {r_chars[i:i+3] for i in range(len(r_chars) - 2)} if len(r_chars) >= 3 else set()
+        if ending_info["ngrams"]:
+            overlap = len(ending_info["ngrams"] & r_ngrams) / len(ending_info["ngrams"])
+        else:
+            overlap = 1.0
+    else:
+        overlap = 1.0
+    
+    # 指标2: 长度剧烈缩短
+    length_shrink = len(ending_info["text"]) > len(r_ending_text) * 1.5
+    
+    # 指标3: 勾子丢失
+    hook_markers = ['突然', '忽然', '猛地', '即将', '等待', '然而', '可是',
+                    '但', '只见', '……', '—', '未完', '待续', '下一章']
+    r_has_hook = any(m in r_ending_text for m in hook_markers)
+    hook_lost = ending_info["has_hook"] and not r_has_hook
+    
+    needs_protection = overlap < 0.4 or length_shrink or hook_lost
+    
+    if needs_protection:
+        # 用原文结尾替换改写版结尾
+        ending_len = len(ending_info["text"])
+        cutoff = max(0, len(rewritten) - len(r_ending_text))
+        protected = rewritten[:cutoff] + ending_info["text"]
+        
+        reasons = []
+        if overlap < 0.4: reasons.append(f"overlap={overlap:.0%}")
+        if length_shrink: reasons.append("length_shrink")
+        if hook_lost: reasons.append("hook_lost")
+        
+        log.info(f"Humanizer: ending semantically protected ({', '.join(reasons)})")
+        return protected
+    
+    return rewritten
+
+
 class NovelEngine:
     """小说创作引擎 — 多智能体架构:
     Pipeline: Planner → Writer → ConsistencyValidator → OpeningOptimizer → TwistDesigner
@@ -707,8 +812,9 @@ class NovelEngine:
                 rewriter = HumanRewriter(self.client, self.model)
                 
                 chapter_summary = chapter_outline.get("summary", "") or chapter_outline.get("title", "")
-                # v2.12: 保存结尾 (Humanizer会覆盖全文 → 必须保住Phase 2结尾)
-                _ending_protect = full_text[-300:] if len(full_text) > 300 else full_text
+                # v2.13: 保存结尾 (Humanizer会覆盖全文 → 语义保护Phase 2结尾)
+                # 不再仅靠长度——改用句子拆分 + n-gram重叠 + 勾子检测三重保护
+                _ending_saved = _extract_key_ending(full_text)
                 result = await asyncio.to_thread(
                     humanize_pipeline, full_text, detector, rewriter,
                     scene_desc=chapter_summary,
@@ -718,16 +824,10 @@ class NovelEngine:
                 if result["rewritten"]:
                     ai_report = result
                     rewritten = result["text"]
-                    # v2.12: Humanizer可能破坏Phase 2结尾 → 如果改写后结尾变短/变差, 用原文结尾
-                    if len(rewritten) > 500 and len(_ending_protect) > 80:
-                        rewritten_ending = rewritten[-300:] if len(rewritten) > 300 else rewritten
-                        # 比较结尾质量: 原文结尾更长或更完整 → 保留原文结尾
-                        if len(_ending_protect) > len(rewritten_ending) * 1.5:
-                            # 找到原文结尾在改写版本中的位置(前面部分可能有改动)
-                            # 简单策略: 替换改写版的最后200字
-                            protect_len = min(200, len(_ending_protect))
-                            full_text = rewritten[:-protect_len] + _ending_protect[-protect_len:]
-                            log.info(f"Humanizer: ending protected ({len(_ending_protect)} chars kept)")
+                    if len(rewritten) > 500 and _ending_saved:
+                        protected = _protect_ending_semantic(full_text, rewritten, _ending_saved)
+                        if protected != rewritten:
+                            full_text = protected
                         else:
                             full_text = rewritten
                     else:
