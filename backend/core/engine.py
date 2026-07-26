@@ -763,6 +763,13 @@ class NovelEngine:
             except Exception as e:
                 log.warning(f"Quality gate skipped: {e}")
 
+            # ── v2.11: 确保结尾是完整句子 ──
+            from .writer import _ensure_complete_ending
+            original_len = len(full_text)
+            full_text = _ensure_complete_ending(full_text)
+            if len(full_text) != original_len:
+                log.info(f"Ending trimmed from {original_len} to {len(full_text)} chars (removed incomplete sentence)")
+
             # 最终保存章节（覆盖增量保存的临时文件）
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
@@ -1199,6 +1206,9 @@ class NovelEngine:
                 from core.shared_memory import normalize_chapter_paragraphs
                 before_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
                 full_text = normalize_chapter_paragraphs(full_text)
+                # v2.11: 确保结尾完整句子
+                from .writer import _ensure_complete_ending
+                full_text = _ensure_complete_ending(full_text)
                 formatted = f"# 第{chapter_num}章 {chapter_outline.get('title', f'第{chapter_num}章')}\n\n{full_text}"
                 after_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
                 if before_lines != after_lines:

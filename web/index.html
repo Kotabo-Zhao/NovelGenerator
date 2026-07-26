@@ -1833,11 +1833,11 @@ const app = createApp({
       let buf = '';
       let lastData = Date.now();
       const timeoutCheck = setInterval(() => {
-        if (Date.now() - lastData > 60000) {
-          reader.cancel('SSE timeout');
+        if (Date.now() - lastData > 120000) {  // v2.11: 放宽到2分钟(大纲生成可能很慢)
+          reader.cancel('SSE timeout (120s no data)');
           clearInterval(timeoutCheck);
         }
-      }, 5000);
+      }, 10000);  // v2.11: 10s检查一次(原来5s太频繁)
       
       try {
         while (true) {
@@ -2258,7 +2258,7 @@ const app = createApp({
     const batchProgress = ref(0); const batchCurrent = ref(0);
     const exportProgress = ref(0);
 
-    const genres = ['修仙','玄幻','都市','科幻','悬疑','历史','游戏','末日','无限流','武侠','克苏鲁','赛博朋克'];
+    const genres = ['修仙','玄幻','都市','科幻','悬疑','历史','游戏','末日','无限流','武侠','民俗悬疑','规则怪谈','反套路修仙','赛博仙侠','经营建设','苟道流'];
 
     const selectedCount = computed(() => Object.values(exportSelected).filter(Boolean).length);
     const allSelected = computed(() => novels.value.length>0 && novels.value.every(n=>exportSelected[n.id]));
@@ -2649,6 +2649,44 @@ const app = createApp({
     onMounted(async () => {
       applyAppearance();
       loadStyles(); loadStyleSeeds(); // fire-and-forget
+      
+      // v2.11: 全局加载安全阀 — 任何loading状态超60s自动重置
+      let _loadingSafetyTimer = null;
+      const _resetLoadingSafety = () => {
+        if (_loadingSafetyTimer) clearTimeout(_loadingSafetyTimer);
+        _loadingSafetyTimer = setTimeout(() => {
+          // 检查是否有卡住的loading状态
+          let recovered = [];
+          for (const k of Object.keys(loading)) {
+            if (loading[k]) {
+              loading[k] = false;
+              recovered.push(k);
+            }
+          }
+          if (recovered.length > 0) {
+            console.warn('Auto-recovered stuck loading states:', recovered.join(', '));
+            error.value = `操作超时，已自动恢复（${recovered.join('、')}）。请重试。`;
+          }
+        }, 120000); // 2分钟全局超时
+      };
+      // 每次loading状态变化时重置安全计时器
+      const _origLoading = {};
+      for (const k of Object.keys(loading)) {
+        _origLoading[k] = loading[k];
+        Object.defineProperty(loading, k, {
+          get() { return _origLoading[k]; },
+          set(v) {
+            _origLoading[k] = v;
+            if (v) _resetLoadingSafety();
+            else if (!Object.values(_origLoading).some(x => x)) {
+              if (_loadingSafetyTimer) { clearTimeout(_loadingSafetyTimer); _loadingSafetyTimer = null; }
+            }
+            return true;
+          },
+          enumerable: true, configurable: true
+        });
+      }
+      
       // 书架加载（带重试，Render冷启动需要等服务器醒来）
       loading.shelf = true;
       for (let attempt=0; attempt<3; attempt++) {
