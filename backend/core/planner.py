@@ -39,6 +39,22 @@ PLANNER_SYSTEM = """你是一位资深的小说策划编辑，专精于网文和
 - 第一道门（幕一→幕二）: 主角做出"无法回头"的选择，旧世界对他关闭
 - 第二道门（幕二→幕三）: 最低谷后的顿悟，获得最终决战的钥匙（不是力量是认知）
 
+## 因果链规划（最高优先级——大纲的核心质量指标）
+
+小说不是事件列表，是因果链。每一章的存在必须有原因，且必须引发下一章。你必须确保：
+
+### 因果链接规则
+- **每章必须回答**: 上一章结尾的状态直接导致了本章的开场——哪里？谁？什么状态？正在进行什么？
+- **每章必须引出**: 本章的事件会产生什么后果，导致下一章必须发生什么？
+- **连锁反应**: 不允许"第5章在山洞获得武器→第6章在集市遇到仇人"这种跳跃。必须在第5章中给出第6章的前提（如"武器需要去集市找人鉴定"）
+- **冲突递进**: 每章的冲突强度必须 ≥ 上一章。不能打完Boss回头去杀小贼。
+
+### 必须的因果字段（在每章大纲中标注）
+- **opening_scene**: 本章开场时，角色在何处、何种状态、正在做什么？（必须承接上章 ending）
+- **cause_from_prev**: 为什么这个事件是上一章的必然结果？（用"因为上章X→所以本章Y"一句话说明）
+- **bridge_to_next**: 本章结尾事件如何引出下一章？（用"本章Z→导致下章必须W"一句话说明）
+- **conflict_intensity**: 本章冲突强度 1-5 级（必须 ≥ 上一章的强度）
+
 ## 输出要求
 
 ### 世界观 (worldbuilding)
@@ -217,9 +233,13 @@ class Planner:
             "number": 1,
             "title": "章标题",
             "summary": "核心事件一句话描述",
+            "cause_from_prev": "因为上章X → 所以本章必须Y（一句话因果链。第1章填'开篇'）",
+            "opening_scene": "本章开场的具体场景：角色在何地点、何种情绪/身体状态、正在做什么？必须承接上章结尾的状态",
+            "bridge_to_next": "本章Z → 导致下章必须W（一句话引出下一章的必要性）",
             "scene_type": "动作场景/情感场景/对话场景/混合",
             "emotion_curve": "压抑→爆发→余韵（本章情绪弧线）",
-            "conflict": "冲突描述与类型[IN内心/IR人际/EN环境/DE宿命]:强度1-5",
+            "conflict": "冲突描述与类型[IN内心/IR人际/EN环境/DE宿命]",
+            "conflict_intensity": "冲突强度1-5（本章数值必须≥上一章，除非是缓冲章可降1级）",
             "scene_beats": [
               {{"beat": 1, "name": "开篇钩子", "function": "用动作/对话/悬念立即抓住读者", "key_action": "具体发生了什么"}},
               {{"beat": 2, "name": "冲突升级", "function": "障碍增加/信息揭露/矛盾激化", "key_action": ""}},
@@ -243,12 +263,14 @@ class Planner:
 重要：
 - 确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。
 - 大纲的卷结构和节奏必须严格匹配「{style_config['name']}」的风格要求。
+- **因果链是硬要求**: 每章的 cause_from_prev/bridge_to_next 必须填写，不能留空或写"无"。相邻章节不能是独立事件——必须是"因为A所以B"的因果链。
+- **冲突强度**: conflict_intensity 必须逐章递增（T2缓冲章除外），不能出现"3→2→4"这种上下跳。
 
 【章节标题多样性要求】
-- 禁止所有章节使用同一格式模板（如「XXXX·XX」「XX者」「XX的XX」）
-- 标题应多样化：可以来自动作、对话、意象、悬念、细节
-- 相邻章节标题风格应明显不同，长短交错
-- 示例好标题: 「墙上的影子先碎了」「三碗酒」「剑还在转」「他不叫叶凡」"""
+- 标题必须来自本章的一个具体时刻（动作/对话/意象/细节），不能套公式
+- 检验标准：把标题换到另一章还能用 → 不合格
+- 相邻章节标题风格、字数、语气必须明显不同
+- 禁止用冒号、破折号、书名号分割标题"""
         log.info(f"Planning novel: {genre}/{style_name} - {inspiration[:50]}...")
         
         # 重试机制：3次 API 调用 + 温度递减 + 简化兜底
@@ -466,8 +488,8 @@ class Planner:
                     _faction_text += f"- {f.get('name','')} ({f.get('alignment','中立')}): {f.get('description','')[:60]}\n"
         wb_summary_compact = f"""## 🌍 世界观
 - 时代: {_wb.get('era', '')}
-- 地点: {_wb.get('geography', '')[:200]}
-- 力量体系: {_wb.get('power_system', '')[:200]}
+- 地点: {str(_wb.get('geography', ''))[:200]}
+- 力量体系: {str(_wb.get('power_system', ''))[:200]}
 - 核心冲突: {_wb.get('core_conflict', '')}
 - 势力: {_faction_text.strip() or '待展开'}"""
 
@@ -483,8 +505,8 @@ class Planner:
 - 两字姓可用（欧阳、慕容、上官），单字姓更自然。名用1-2字，避免单字玄幻名
 - 配角名要区分度：不同阵营、不同阶层用不同风格的名字
 - 反派名要有"人味"——不是天生邪恶，是境遇造就。禁用"暗""影""煞""灭"等标签化命名
-- 示例好名字: 周怀瑾, 柳如意, 沈砚, 顾长卿, 卫小蝶, 曹阿满, 姜白石, 陆青崖
-"""
+- 名字应该贴合角色的阶层、出身和时代，不要为了"好听"堆砌生僻字"""
+
 
         # v2.2: 注入角色相关需求
         char_requirements_block = ""
@@ -818,18 +840,30 @@ class Planner:
 {pacing_instruction}
 全书进度: 第{vol_num}/{vol_count}卷 · 本章起始号{chapter_counter+1}
 
-【章节标题多样性要求（关键！）】
-- 禁止使用固定格式模板，每章标题应该有独特风格
-- 禁止的格式: 「XXXX·XX」「事件名*角色名」「名词的XX」「XX者」「XX之路」「XX之X」
-- 好标题举例: 「墙上的影子先碎了」「他不叫叶凡」「三碗酒」「剑还在转」「那天雨很大」
-- 坏标题举例: 「觉醒·初战」「修炼者之路」「力量的真谛」「守护者」「复仇之火」
-- 标题来源可以来自: 一个动作、一句对话、一个意象、一个悬念、一个细节
-- 相邻章节的标题风格应有明显差异，长短交替
+## ⛓️ 因果链（大纲核心质量指标——必须填写）
+- **每章的 cause_from_prev**: 用"因为上章X → 所以本章Y"说明因果。第{chapter_counter+1}章填"开篇"。
+- **每章的 bridge_to_next**: 用"本章Z → 导致下章必须W"说明引出关系。
+- **每章的 opening_scene**: 具体描述本章开场时角色在何处、何种状态。
+- **每章的 conflict_intensity**: 1-5级，必须≥上一章（缓冲章可降1级）。
+- 各章的 cause_from_prev 和 bridge_to_next 必须前后对齐：
+  第N章的 bridge_to_next ≈ 第N+1章的 cause_from_prev（从不同角度描述同一因果）
+- 冲突强度必须连续递进，不能"3→2→4"上下跳。
+
+## 📖 opening_scene 编写指南
+- 描述本章第一幕的具体画面: 地点 + 角色 + 情绪状态 + 正在进行什么
+- 必须能从上一章的 ending 直接推导出来
+- 必须包含一个具体的、只属于本章的视觉细节（不是"大殿内气氛凝重"，而是什么样的大殿、谁在哪里、手里拿着什么）
+
+【章节标题创作原则（关键！）】
+- 每章标题必须来自该章的一个具体时刻：一个动作/一句对话/一个意象/一个细节
+- 禁止套用任何格式模板。不用冒号、破折号、书名号分割标题
+- 检验标准：这标题能换到另一章吗？能 → 重写
+- 相邻章节标题风格、字数、语气必须明显不同
 
 只输出JSON数组，{n_ch}个章节对象:
 ```json
 [
-  {{"number":{chapter_counter+1},"title":"章节标题(禁止格式模板)","summary":"30字内核心事件","emotion_curve":"压抑→爆发→余韵","conflict":"冲突描述","characters":["出场角色"],"hook":"结尾钩子","target_words":{chapter_words}}}
+  {{"number":{chapter_counter+1},"title":"章节标题(禁止格式模板)","summary":"30字内核心事件","cause_from_prev":"因为上章X→所以本章Y(第1章填'开篇')","opening_scene":"本章开场场景:地点+角色状态+动作","bridge_to_next":"本章Z→导致下章必须W","emotion_curve":"压抑→爆发→余韵","conflict":"冲突描述与类型[IN/IR/EN/DE]","conflict_intensity":"冲突强度1-5(必须≥上一章)","characters":["出场角色"],"hook":"结尾钩子","target_words":{chapter_words}}}
 ]
 ```
 只输出JSON。"""
@@ -841,8 +875,13 @@ class Planner:
                 fallback_count += 1
                 ch_result = [
                     {"number": chapter_counter + j + 1, "title": f"第{chapter_counter + j + 1}章",
-                     "summary": f"第{vol_num}卷第{j+1}章核心剧情", "emotion_curve": "平稳→起伏→悬念",
-                     "conflict": "主线推进", "characters": ["主角"],
+                     "summary": f"第{vol_num}卷第{j+1}章核心剧情",
+                     "cause_from_prev": "开篇" if j == 0 else f"承接第{chapter_counter+j}章剧情",
+                     "opening_scene": "场景待展开",
+                     "bridge_to_next": f"引出第{chapter_counter+j+2}章",
+                     "emotion_curve": "平稳→起伏→悬念",
+                     "conflict": "主线推进", "conflict_intensity": 2 + min(j, 3),
+                     "characters": ["主角"],
                      "hook": "引导下一章", "target_words": chapter_words}
                     for j in range(n_ch)
                 ]
@@ -1276,6 +1315,19 @@ class Planner:
                     ch["conflict"] = ""
                 if "hook" not in ch:
                     ch["hook"] = ""
+                # v2.10: 因果链字段向后兼容
+                if "cause_from_prev" not in ch:
+                    ch["cause_from_prev"] = "（大纲生成时未包含因果链，建议重新生成）"
+                if "bridge_to_next" not in ch:
+                    ch["bridge_to_next"] = "（大纲生成时未包含因果链，建议重新生成）"
+                if "opening_scene" not in ch:
+                    ch["opening_scene"] = "承接上章结尾"
+                if "conflict_intensity" not in ch:
+                    # 从 conflict 字符串中尝试提取
+                    cf = ch.get("conflict", "")
+                    import re as _re2
+                    m = _re2.search(r'强度(\d)', cf)
+                    ch["conflict_intensity"] = int(m.group(1)) if m else min(2 + counter // 5, 5)
         
         outline["total_chapters"] = counter
         

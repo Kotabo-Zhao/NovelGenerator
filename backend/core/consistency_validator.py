@@ -650,7 +650,7 @@ class ConsistencyValidator:
             f"## 小说设定",
             f"- 主角: {protagonist.get('name', '')}",
             f"- 世界观: {json.dumps(plan.get('worldbuilding', {}), ensure_ascii=False)[:300]}",
-            f"- 力量体系: {plan.get('worldbuilding', {}).get('power_system', '')[:200]}",
+            f"- 力量体系: {str(plan.get('worldbuilding', {}).get('power_system', ''))[:200]}",
         ]
         
         # 已有角色状态

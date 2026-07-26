@@ -94,22 +94,25 @@ class AtomicWriter:
                 else:
                     raise last_error
     
-    def write_beat(self, beat: Beat, prev_last_sentence: str = "",
+    def write_beat(self, beat: Beat, prev_full_text: str = "",
                    char_snapshots: str = "", style_guide: str = "",
-                   rhythm_hint: str = "", num_candidates: int = 3) -> dict:
+                   rhythm_hint: str = "", blueprint: str = "",
+                   chapter_context: str = "", num_candidates: int = 3) -> dict:
         """生成一个节拍，返回最佳候选
         
         Args:
             beat: Beat 对象
-            prev_last_sentence: 前一beat的末句（≤50字），用于衔接
+            prev_full_text: 前一beat的完整正文（v2.9: 滚动上下文，替代prev_last_sentence）
             char_snapshots: 角色当前状态快照
             style_guide: 风格指南
+            blueprint: 章节蓝图（300字叙事梗概，所有beat共享）
+            chapter_context: 章节大纲+角色+灵感（完整的写作上下文）
             num_candidates: 候选数（越大越多样，越贵）
         
         Returns:
             {"text": str, "candidates": list, "selected_index": int, "temperature": float}
         """
-        prompt = self._build_beat_prompt(beat, prev_last_sentence, char_snapshots, rhythm_hint)
+        prompt = self._build_beat_prompt(beat, prev_full_text, char_snapshots, rhythm_hint, blueprint, chapter_context)
         system = ATOMIC_WRITER_SYSTEM
         if style_guide:
             system += f"\n\n## 风格要求\n{style_guide}"
@@ -204,13 +207,15 @@ class AtomicWriter:
         }
     
     async def write_beats_stream(self, beats: list, char_snapshots: str = "",
-                                  style_guide: str = "", chapter_num: int = 0) -> AsyncGenerator:
+                                  style_guide: str = "", chapter_num: int = 0,
+                                  blueprint: str = "", chapter_context: str = "") -> AsyncGenerator:
         """逐beat流式生成，每beat yield一次
         
-        这是集成到 engine.generate_chapter 的入口。
-        每个beat独立LLM调用 → 最大随机性。
+        v2.9: 
+        - 共享蓝图: 所有beat共享章节叙事梗概
+        - 滚动上下文: 传上一个beat的完整正文（而非仅末句≤50字）
         """
-        prev_last = ""
+        prev_full = ""
         rhythm_log = []  # 记录已生成beat的短句占比
         
         for i, beat in enumerate(beats):
@@ -219,7 +224,8 @@ class AtomicWriter:
             rhythm_hint = self._compute_rhythm_hint(rhythm_log, beat, i, len(beats))
             
             result = await asyncio.to_thread(
-                self.write_beat, beat, prev_last, char_snapshots, style_guide, rhythm_hint
+                self.write_beat, beat, prev_full, char_snapshots, style_guide,
+                rhythm_hint, blueprint, chapter_context
             )
             
             text = result["text"]
@@ -248,7 +254,8 @@ class AtomicWriter:
                 "selected_candidate": result["selected_index"],
             }
             
-            prev_last = _extract_last_sentence(text)
+            # v2.9: 滚动上下文 — 传完整前文
+            prev_full = text
     
     def _compute_rhythm_hint(self, log: list, current_beat, index: int, total: int) -> str:
         """计算节奏反平衡提示
@@ -273,16 +280,37 @@ class AtomicWriter:
             hints.append("接近章末，不要用≤8字的碎片短句，用≥20字的完整长句铺陈。")
         return " | ".join(hints) if hints else ""
     
-    def _build_beat_prompt(self, beat: Beat, prev_last: str, char_snapshots: str,
-                           rhythm_hint: str = "") -> str:
-        """构建单个 beat 的 prompt"""
-        lines = [
+    def _build_beat_prompt(self, beat: Beat, prev_full: str, char_snapshots: str,
+                           rhythm_hint: str = "", blueprint: str = "",
+                           chapter_context: str = "") -> str:
+        """构建单个 beat 的 prompt（v2.9: 蓝图 + 滚动上下文）
+        
+        核心改进：
+        - 蓝图注入：所有beat共享章节叙事梗概，保证方向一致
+        - 滚动上下文：传上一个beat完整正文，保证段落衔接
+        - 章节上下文：世界观/角色/大纲，保证内容不跑偏
+        """
+        lines = []
+        
+        # v2.9: 章节蓝图（最高优先级 — 所有beat共享的目标）
+        if blueprint:
+            lines.extend([
+                f"## 📖 本章蓝图（所有节拍必须朝这个方向写）",
+                blueprint,
+                "---",
+            ])
+        
+        # v2.9: 章节上下文（核心设定速览）
+        if chapter_context:
+            lines.append(f"## 📋 本章大纲速览\n{chapter_context[:600]}")
+        
+        lines.extend([
             f"## 当前节拍",
             f"功能: {beat.function} — {beat.goal}",
             f"情绪: {beat.emotion_start} → {beat.emotion_end}",
             f"冲突: {beat.conflict_type} {beat.conflict_intensity}/5",
             f"目标字数: {beat.min_words}-{beat.max_words}字",
-        ]
+        ])
         if beat.paragraph_style:
             lines.append(f"段落节奏: {beat.paragraph_style}")
         if rhythm_hint:
@@ -292,9 +320,9 @@ class AtomicWriter:
         if beat.character_focus:
             lines.append(f"聚焦角色: {beat.character_focus}")
         
-        if prev_last:
-            lines.append(f"\n## 紧接上文末尾\n「{prev_last}」")
-            lines.append("必须从此句直接继续。")
+        if prev_full:
+            lines.append(f"\n## ⬆️ 上一节拍的完整正文（从这里直接接续）\n{prev_full}")
+            lines.append("必须从此处毫无痕迹地接着写。场景、情感、节奏不能断层。")
         
         if char_snapshots:
             lines.append(f"\n## 角色参考\n{char_snapshots}")
