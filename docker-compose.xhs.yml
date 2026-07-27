@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # ── NovelGenerator Server ──
+  novelgen:
+    build:
+      context: .
+      dockerfile: Dockerfile.xhs
+    image: novelgen-server:latest
+    build: false  # Use pre-built or build separately
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./novels:/app/novels
+      - ./output:/app/output
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+    restart: unless-stopped
+
+  # ── XHS Pipeline Worker ──
+  xhs-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.xhs
+    image: xhs-pipeline:latest
+    build: false
+    depends_on:
+      - novelgen
+    volumes:
+      - ./output:/app/output
+      - ./configs:/app/configs
+    environment:
+      - XHS_API_URL=http://novelgen:8002
+      - XHS_OUTPUT_DIR=/app/output/xhs_queue
+    # Run daily at 8 AM
+    # For one-shot: command: python tools/xhs_pipeline.py batch --config configs/xhs_batch.json
+    # For cron: use external scheduler (cron / k8s CronJob)
+    profiles:
+      - worker
+
+  # ── Optional: Scheduler (cron-like) ──
+  xhs-scheduler:
+    image: alpine:latest
+    depends_on:
+      - novelgen
+    volumes:
+      - ./scripts:/scripts
+    command: |
+      sh -c '
+      echo "0 8 * * * curl -s http://xhs-worker:8002/health || true" > /etc/crontabs/root
+      crond -f -l 2
+      '
+    profiles:
+      - scheduler

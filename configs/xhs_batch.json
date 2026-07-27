@@ -1,0 +1,26 @@
+{
+  "description": "XHS Batch Generation Config — 每周自动生产21篇（每天3篇）",
+  "tasks": [
+    {"preset_id": "slap_001", "comment": "爽文 - 被退婚后我成了首富"},
+    {"preset_id": "slap_002", "comment": "爽文 - 婆婆赶我出门后疯了"},
+    {"preset_id": "slap_003", "comment": "爽文 - 闺蜜偷我人生后崩溃了"},
+    {"preset_id": "slap_004", "comment": "爽文 - 全公司等我辞职后跪了"},
+    {"preset_id": "slap_005", "comment": "爽文 - 亲妈把我卖给傻子后"},
+    
+    {"preset_id": "chase_001", "comment": "虐文 - 替身新娘的致命报复"},
+    {"preset_id": "chase_002", "comment": "虐文 - 我死后他才发现爱的是我"},
+    {"preset_id": "chase_003", "comment": "虐文 - 假千金被真千金碾压后"},
+    {"preset_id": "chase_004", "comment": "虐文 - 他娶我只是为了她的心脏"},
+    
+    {"preset_id": "family_001", "comment": "世情 - 拆迁款全给弟弟后"},
+    {"preset_id": "family_002", "comment": "世情 - 继母毁我高考后我成了她领导"},
+    {"preset_id": "family_003", "comment": "世情 - 全家等我死后继承遗产"},
+    {"preset_id": "family_004", "comment": "世情 - 嫁出去的女儿泼出去的水"},
+    
+    {"preset_id": "sweet_001", "comment": "甜宠 - 错把总裁当相亲对象"},
+    {"preset_id": "sweet_002", "comment": "甜宠 - 契约婚姻假戏真做"},
+    {"preset_id": "sweet_003", "comment": "甜宠 - 我的室友是隐藏顶流"},
+    {"preset_id": "sweet_004", "comment": "甜宠 - 闪婚后老公是帝国继承人"},
+    {"preset_id": "sweet_005", "comment": "甜宠 - 校霸暗恋我三年被发现了"}
+  ]
+}

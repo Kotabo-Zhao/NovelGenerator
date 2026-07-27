@@ -1,0 +1,19 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy pipeline script
+COPY tools/xhs_pipeline.py /app/tools/
+COPY configs/ /app/configs/
+
+# Output directory
+RUN mkdir -p /app/output/xhs_queue/ready /app/output/xhs_queue/sent
+
+# Default: run daily schedule
+ENV XHS_API_URL=http://host.docker.internal:8002
+
+CMD ["python", "tools/xhs_pipeline.py", "schedule", "--count", "3", "--delay", "10"]
