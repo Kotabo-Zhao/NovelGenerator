@@ -913,12 +913,12 @@ class NovelEngine:
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
 
-            # ── v2.10: 提取章节桥接数据 → 保证下章接续 ──
+            # ── v2.10: 提取章节桥接数据 → 保证下章接续（v2.15: 使用韧性客户端）──
             try:
                 bridge = await asyncio.to_thread(
                     self.memory.extract_bridge_from_chapter,
                     full_text, chapter_num, chapter_outline,
-                    client=self.client, model=self.model,
+                    client=self._resilient, model=self.model,
                 )
                 if bridge:
                     self.memory.save_bridge(novel_id, chapter_num, bridge)
@@ -1387,12 +1387,12 @@ class NovelEngine:
                 log.warning(f"Atomic chapter {chapter_num} may be incomplete: {reason}")
                 yield {"type": "warning", "message": f"⚠️ 原子模式生成的本章可能不完整（{reason}），建议使用常规模式重新生成此章"}
             
-            # ── v2.10: 提取章节桥接数据 ──
+            # ── v2.10: 提取章节桥接数据（v2.15: 使用韧性客户端）──
             try:
                 bridge = await asyncio.to_thread(
                     self.memory.extract_bridge_from_chapter,
                     full_text, chapter_num, chapter_outline,
-                    client=self.client, model=self.model,
+                    client=self._resilient, model=self.model,
                 )
                 if bridge:
                     self.memory.save_bridge(novel_id, chapter_num, bridge)
