@@ -93,6 +93,11 @@ PLANNER_SYSTEM = """你是一位资深的小说策划编辑，专精于网文和
 - 力量体系/科技水平（如有）
 - 核心冲突（主线矛盾）
 - 势力分布（3-5个势力/组织）
+- 世界档案 world_canon: 凡是小说涉及已有原著的设定——包括历史时代、神话体系、武侠/动漫/影视IP、经典文学——都必须为每个借用世界建立档案
+  * 每个世界的 key 是世界名称（如"风云""三国""火影""封神""明朝万历"）
+  * 每个世界包含: source（原著/史料来源）、timeline（关键时间节点）、key_characters（核心角色及其关系和性格）、key_locations（关键地点）、power_system（力量体系简述）
+  * 例: "风云": {{"source":"漫画《风云》马荣成","timeline":"天下会崛起→步惊云叛逃→雄霸覆灭..."}}
+  * 例: "明末": {{"source":"《明史》+万历朝鲜战争史料","timeline":"1592年壬辰倭乱→碧蹄馆之战→..."}}""
 
 ### 角色 (characters) — 人物宝典级深度
 - 主角必须包含以下完整档案：
@@ -203,7 +208,8 @@ class Planner:
     "core_conflict": "核心矛盾",
     "factions": [
       {{"name": "势力名", "description": "描述", "alignment": "正/邪/中立"}}
-    ]
+    ],
+    "world_canon": {{"世界名": {{"source": "原著来源", "timeline": "关键时间节点", "key_characters": ["核心角色"], "key_locations": ["关键地点"], "power_system": "力量体系"}}}}
   }},
   "characters": {{
     "protagonist": {{
@@ -494,7 +500,8 @@ class Planner:
     "geography": "地理环境（3-5个关键地点）",
     "power_system": "力量/科技体系",
     "core_conflict": "核心矛盾（主线冲突的本质）",
-    "factions": [{{"name":"","description":"","alignment":"正/邪/中立"}}]
+    "factions": [{{"name":"","description":"","alignment":"正/邪/中立"}}],
+    "world_canon": {{"世界名": {{"source": "原著来源", "timeline": "关键时间节点", "key_characters": ["核心角色"], "key_locations": ["关键地点"], "power_system": "力量体系"}}}}
   }}
 }}
 ```
@@ -795,6 +802,13 @@ class Planner:
 - 章节之间的事件必须**严格连续**——每章是上一章的直接发展，不能跳跃
 - 故事必须有清晰的**上升弧线**: 建置(前25%)→对抗升级(中50%)→高潮解决(后25%)
 - 冲突类型必须多样化: 不要>3章连续用同一冲突类型
+
+## 🚫 绝对禁止重复！
+- **后一半章节不能重复前一半的事件、场景、冲突模式**
+- 每一章的 skeleton 必须是全新的事件推进，不能只是换了标题的同一事件
+- 检验标准: 把任意两个 skeleton 放在一起，读者能不能区分它们？不能→不合格
+- 25章必须是25个完全不同的故事节点，不能是12个事件各写两遍
+
 - 重要: 第1章必须是一个**立即抓住读者**的场景(动作/冲突/悬念)，不能是背景介绍
 
 只输出 JSON 数组，{total_chapters}个对象:
@@ -803,7 +817,7 @@ class Planner:
 ```
 只输出JSON。"""
 
-        skeleton_result = await self._call_llm(skeleton_prompt, "global_skeleton", max_tokens=4096)
+        skeleton_result = await self._call_llm(skeleton_prompt, "global_skeleton", max_tokens=8192)
         skeleton_map = {}  # {chapter_num: skeleton_text}
         if skeleton_result:
             if isinstance(skeleton_result, list):
@@ -816,9 +830,34 @@ class Planner:
                     if isinstance(s, dict):
                         skeleton_map[int(s.get("ch", 0))] = s.get("skeleton", "")
         
-        if len(skeleton_map) < total_chapters * 0.5:
-            log.warning(f"Skeleton only covered {len(skeleton_map)}/{total_chapters} chapters, will fall back to per-volume generation")
-            skeleton_map = {}  # 降级：不用骨架
+        has_skeleton = len(skeleton_map) >= total_chapters * 0.7  # v2.29: 70%才算有效（之前50%太松）
+        if not has_skeleton:
+            log.warning(f"Skeleton only covered {len(skeleton_map)}/{total_chapters} chapters (<70%), will use per-volume fallback with anti-duplication")
+            # v2.29: 记录已有骨架章节，后续卷生成时注入反重复约束
+        else:
+            log.info(f"Skeleton covers {len(skeleton_map)}/{total_chapters} chapters")
+        
+        # v2.31: 骨架去重 — 跨章节检测相似事件并替换为升级事件
+        if skeleton_map:
+            from difflib import SequenceMatcher
+            sorted_chs = sorted(skeleton_map.keys())
+            deduped = 0
+            for i in range(len(sorted_chs)):
+                ch_i = sorted_chs[i]
+                si = skeleton_map[ch_i]
+                for j in range(i+1, len(sorted_chs)):
+                    ch_j = sorted_chs[j]
+                    if ch_j - ch_i <= 3:  # 跳过相邻章节
+                        continue
+                    sj = skeleton_map[ch_j]
+                    ratio = SequenceMatcher(None, si, sj).ratio()
+                    if ratio > 0.6:
+                        # 替换为升级事件
+                        skeleton_map[ch_j] = f"{sj}——事态严重升级，波及面扩大至此前数倍"
+                        deduped += 1
+                        log.info(f"Skeleton dedup: Ch{ch_i}≈Ch{ch_j} ({ratio:.0%}) → escalated Ch{ch_j}")
+            if deduped:
+                log.info(f"Skeleton dedup: {deduped} near-duplicate entries escalated")
         
         # v2.2: 骨架角色名校验 — 扫描全部角色名而非仅主角
         if skeleton_map and all_char_names:
@@ -839,9 +878,10 @@ class Planner:
         
         has_skeleton = len(skeleton_map) > 0
         
-        # Phase 3c: 逐卷展开 — 将骨架章节展开为详细大纲
+        # Phase 3c: 逐卷展开 — 分批生成（v2.25: 每批≤4章，防止LLM截断）
         all_volumes = []
         chapter_counter = 0
+        BATCH_SIZE = 4  # 每批最多4章，保证LLM不会输出到一半就停
 
         for idx, vol_meta in enumerate(volumes_meta[:vol_count]):
             vol_num = vol_meta.get("vol", idx + 1)
@@ -857,7 +897,7 @@ class Planner:
             yield {"type": "progress", "phase": "outline", "pct": pct,
                    "label": f"展开第{vol_num}卷「{vol_title}」({n_ch}章)…"}
 
-            # v2.2: 骨架驱动 — 取出本卷骨架作为"剧本"，连续性由骨架保证
+            # 骨架引导
             skeleton_guide = ""
             if has_skeleton:
                 skeleton_guide = "## 📜 全局章节骨架（按骨架展开，不要自创剧情）\n\n"
@@ -872,85 +912,91 @@ class Planner:
                         skeleton_guide += f"- 第{ci}章: {sk}\n"
                 skeleton_guide += "\n**按骨架逐章展开即可，不要增加或减少章节。**\n"
 
-            ch_prompt = f"""展开第{vol_num}卷「{vol_title}」的{n_ch}章详细大纲。
+            # v2.25: 分批生成 — 每批BATCH_SIZE章，保证LLM输出完整
+            vol_chapters = []
+            batch_start = 0
+            while batch_start < n_ch:
+                batch_n = min(BATCH_SIZE, n_ch - batch_start)
+                batch_chapter_start = chapter_counter + batch_start + 1
+                
+                yield {"type": "progress", "phase": "outline", "pct": pct + int(5 * batch_start / n_ch),
+                       "label": f"第{vol_num}卷 第{batch_start+1}-{batch_start+batch_n}章…"}
+
+                # v2.31: 反重复 — 对所有非首卷强制注入前面所有卷的章节摘要+禁令
+                anti_dupe_block = ""
+                if idx > 0:
+                    anti_dupe_block = "## 🚫 严格禁止重复！以下事件已发生，本章不能出现类似情节\n"
+                    anti_dupe_block += "**绝对禁止**：以下任何事件、场景、冲突模式都不能在本卷复现。包括：相同的敌人、相同的地点、相同的冲突类型、相同的反转方式。\n\n"
+                    for prev_vol in all_volumes:
+                        for prev_ch in prev_vol.get("chapters", []):
+                            anti_dupe_block += f"- ❌ 已发生(Ch{prev_ch.get('number','?')}): {prev_ch.get('summary','')}\n"
+                    anti_dupe_block += "\n**若本卷任何章节与上面事件相似度超过50%，整卷大纲不合格。**\n"
+
+                ch_prompt = f"""为第{vol_num}卷「{vol_title}」写{batch_n}章大纲（共{n_ch}章的第{batch_start+1}-{batch_start+batch_n}章）。
 
 {name_lock}
 {worldbuilding_summary}
 {character_roster}
 {skeleton_guide}
+{anti_dupe_block}
 风格: {style_config['name']}
 {pacing_instruction}
-全书进度: 第{vol_num}/{vol_count}卷 · 本章起始号{chapter_counter+1}
 
-## ⛓️ 因果链（大纲核心质量指标——必须填写）
-- **每章的 cause_from_prev**: 用"因为上章X → 所以本章Y"说明因果。第{chapter_counter+1}章填"开篇"。
-- **每章的 bridge_to_next**: 用"本章Z → 导致下章必须W"说明引出关系。
-- **每章的 opening_scene**: 具体描述本章开场时角色在何处、何种状态。
-- **每章的 conflict_intensity**: 1-5级，必须≥上一章（缓冲章可降1级）。
-- 各章的 cause_from_prev 和 bridge_to_next 必须前后对齐：
-  第N章的 bridge_to_next ≈ 第N+1章的 cause_from_prev（从不同角度描述同一因果）
-- 冲突强度必须连续递进，不能"3→2→4"上下跳。
+## 每章必须包含
+- **summary**: 30字内，这一章发生什么核心事件
+- **hook**: 章末钩子，让读者想点下一章
+- **cause_from_prev**: 为什么这章是上一章的必然结果（第1章填"开篇"）
+- **bridge_to_next**: 这章结尾怎么引出下一章
 
-## 📖 opening_scene 编写指南
-- 描述本章第一幕的具体画面: 地点 + 角色 + 情绪状态 + 正在进行什么
-- 必须能从上一章的 ending 直接推导出来
-- 必须包含一个具体的、只属于本章的视觉细节（不是"大殿内气氛凝重"，而是什么样的大殿、谁在哪里、手里拿着什么）
-
-【章节标题创作原则（关键！）】
-- 每章标题必须来自该章的一个具体时刻：一个动作/一句对话/一个意象/一个细节
-- 禁止套用任何格式模板。不用冒号、破折号、书名号分割标题
-- 检验标准：这标题能换到另一章吗？能 → 重写
-- 相邻章节标题风格、字数、语气必须明显不同
-
-只输出JSON数组，{n_ch}个章节对象:
-```json
+只输出JSON数组 {batch_n} 个对象：
 [
-  {{"number":{chapter_counter+1},"title":"章节标题(禁止格式模板)","summary":"30字内核心事件","cause_from_prev":"因为上章X→所以本章Y(第1章填'开篇')","opening_scene":"本章开场场景:地点+角色状态+动作","bridge_to_next":"本章Z→导致下章必须W","emotion_curve":"压抑→爆发→余韵","conflict":"冲突描述与类型[IN/IR/EN/DE]","conflict_intensity":"冲突强度1-5(必须≥上一章)","characters":["出场角色"],"hook":"结尾钩子","target_words":{chapter_words}}}
+  {{"number":{batch_chapter_start},"title":"章节名","summary":"30字核心事件","cause_from_prev":"上章X→本章Y","bridge_to_next":"本章Z→下章W","emotion_curve":"压抑→爆发→余韵","characters":["角色"],"hook":"钩子","target_words":{chapter_words}}}
 ]
-```
 只输出JSON。"""
 
-            ch_result = await self._call_llm(ch_prompt, f"outline_vol{vol_num}", max_tokens=4096)
-            if not ch_result:
-                # 单卷失败 → 生成最小化fallback章节
-                log.warning(f"Volume {vol_num} chapter generation failed, using fallback")
-                fallback_count += 1
-                ch_result = [
-                    {"number": chapter_counter + j + 1, "title": f"第{chapter_counter + j + 1}章",
-                     "summary": f"第{vol_num}卷第{j+1}章核心剧情",
-                     "cause_from_prev": "开篇" if j == 0 else f"承接第{chapter_counter+j}章剧情",
-                     "opening_scene": "场景待展开",
-                     "bridge_to_next": f"引出第{chapter_counter+j+2}章",
-                     "emotion_curve": "平稳→起伏→悬念",
-                     "conflict": "主线推进", "conflict_intensity": 2 + min(j, 3),
-                     "characters": ["主角"],
-                     "hook": "引导下一章", "target_words": chapter_words}
-                    for j in range(n_ch)
-                ]
+                ch_result = await self._call_llm(ch_prompt, f"outline_v{vol_num}_b{batch_start}", max_tokens=4096)
+                
+                if not ch_result:
+                    log.warning(f"Volume {vol_num} batch {batch_start} failed, using fallback")
+                    fallback_count += 1
+                    ch_result = [
+                        {"number": batch_chapter_start + j, "title": f"第{batch_chapter_start+j}章",
+                         "summary": f"第{vol_num}卷第{batch_start+j+1}章核心剧情",
+                         "cause_from_prev": "开篇" if (batch_start+j)==0 else f"承接第{batch_chapter_start+j-1}章",
+                         "bridge_to_next": f"引出第{batch_chapter_start+j+1}章",
+                         "emotion_curve": "平稳→起伏→悬念",
+                         "characters": ["主角"], "hook": "引导下一章", "target_words": chapter_words}
+                        for j in range(batch_n)
+                    ]
 
-            # Handle both dict wrapper ({"data": [...]}, {"chapters": [...]}) and direct array
-            chapters = None
-            if isinstance(ch_result, list):
-                chapters = ch_result
-            elif isinstance(ch_result, dict):
-                chapters = ch_result.get("data") or ch_result.get("chapters")
+                # 解析结果
+                chapters = None
+                if isinstance(ch_result, list):
+                    chapters = ch_result
+                elif isinstance(ch_result, dict):
+                    chapters = ch_result.get("data") or ch_result.get("chapters")
+                    if not chapters:
+                        for v in ch_result.values():
+                            if isinstance(v, list): chapters = v; break
                 if not chapters:
-                    for v in ch_result.values():
-                        if isinstance(v, list): chapters = v; break
-            if not chapters:
-                chapters = []
+                    chapters = []
 
-            # Renumber to ensure continuity — 防御：确保每个 ch 都是 dict
-            for j, ch in enumerate(chapters):
-                if not isinstance(ch, dict):
-                    log.error(f"Chapter {j+1} in vol {vol_num} is {type(ch).__name__}, not dict. Replacing with fallback.")
-                    ch = {"number": chapter_counter + j + 1, "title": f"第{chapter_counter + j + 1}章",
-                          "summary": f"第{vol_num}卷第{j+1}章", "emotion_curve": "平稳→起伏→悬念",
-                          "conflict": "主线推进", "characters": ["主角"], "hook": "引导下一章",
-                          "target_words": chapter_words}
-                    chapters[j] = ch
+                # 确保每个ch是dict + 编号正确
+                for j, ch in enumerate(chapters):
+                    if not isinstance(ch, dict):
+                        ch = {"number": batch_chapter_start + j, "title": f"第{batch_chapter_start+j}章",
+                              "summary": f"第{vol_num}卷第{batch_start+j+1}章", "emotion_curve": "平稳→起伏→悬念",
+                              "characters": ["主角"], "hook": "引导下一章", "target_words": chapter_words}
+                        chapters[j] = ch
+                    ch["number"] = batch_chapter_start + j
+                    ch["target_words"] = chapter_words
+
+                vol_chapters.extend(chapters)
+                batch_start += len(chapters)
+
+            # Renumber sequentially
+            for j, ch in enumerate(vol_chapters):
                 ch["number"] = chapter_counter + j + 1
-                ch["target_words"] = chapter_words  # 强制覆盖，LLM 不能改字数
 
             all_volumes.append({
                 "number": vol_num,
@@ -958,9 +1004,9 @@ class Planner:
                 "act": vol_act,
                 "theme": vol_theme,
                 "act_function": vol_function,
-                "chapters": chapters
+                "chapters": vol_chapters
             })
-            chapter_counter += len(chapters)
+            chapter_counter += len(vol_chapters)
 
         yield {"type": "progress", "phase": "outline", "pct": 92, "label": "组装最终文档…"}
 
@@ -986,6 +1032,8 @@ class Planner:
                 "creative_input": creative_input,
                 "streamed": True,
                 "fallback_count": fallback_count,
+                "has_skeleton": has_skeleton,  # v2.29
+                "skeleton_covered": len(skeleton_map),  # v2.29
                 "is_partial": fallback_count > 0,
             },
         }

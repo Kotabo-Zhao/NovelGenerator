@@ -335,17 +335,77 @@ class SharedMemoryManager:
             return self._fallback_bridge(chapter_text, chapter_num, chapter_outline)
 
     def _fallback_bridge(self, chapter_text: str, chapter_num: int, chapter_outline: dict) -> dict:
-        """无需 LLM 的桥接兜底：取结尾原文 + 大纲钩子"""
-        end_text = chapter_text[-500:] if len(chapter_text) > 500 else chapter_text
+        """v2.24: 本地提取桥接 — 不依赖 LLM，从正文中直接抽取关键信息
+        
+        策略：
+        - 取结尾 800 字作为 end_scene（比之前 300 字多，提供足够上下文）
+        - 从结尾中检测角色名（引号/冒号前的名字 = 正在说话/行动的人）
+        - 检测未完成动作（短句 + 省略号/破折号结尾 = 被打断的动作）
+        - 大纲钩子作为兜底钩子
+        """
+        import re
+        end_text = chapter_text[-800:] if len(chapter_text) > 800 else chapter_text
+        
+        # 本地提取角色名（从结尾+大纲）
+        char_names = []
+        # 方法1: 从大纲提取角色（最准确）
+        outline_chars = chapter_outline.get("characters", [])
+        if outline_chars:
+            char_names = [c for c in outline_chars if isinstance(c, str) and len(c) >= 1]
+        
+        # 方法2: 从结尾检测这些角色是否实际出现
+        present_chars = []
+        for name in char_names:
+            if name in end_text:
+                present_chars.append(name)
+        
+        # 如果大纲角色不足，从结尾文本中检测未列出的名字
+        if len(present_chars) < 2:
+            blacklist = {'自己','心中','心里','暗暗','不由','不禁','忽然','突然','然后','只是','他','她','我','你','它','他们','她们','我们'}
+            speaking_verbs = r'(?:说|道|问|喊|叫|喝|怒喝|冷笑|沉声|低语|叹|吼|厉喝)'
+            for m in re.finditer(r'[」』](.{1,4})' + speaking_verbs, end_text[-500:]):
+                name = m.group(1).strip()
+                if name and name not in blacklist and name not in present_chars and not re.match(r'^[\d\W_]+$', name):
+                    present_chars.append(name)
+        char_names = present_chars[:5]
+        
+        # 检测未完成动作（省略号结尾的短句）
+        unresolved = []
+        sentences = re.split(r'[。！？\n]', end_text[-400:])
+        for s in sentences:
+            s = s.strip()
+            if not s:
+                continue
+            if s.endswith('…') or s.endswith('...') or s.endswith('——'):
+                unresolved.append(f"未完成的动作: {s[:60]}")
+            # 问句结尾 = 可能是在等待回答
+            if s.endswith('？') and len(s) < 30:
+                unresolved.append(f"待回答的问题: {s[:60]}")
+        unresolved = unresolved[-3:] if unresolved else []
+        
+        # 结尾关键词检测（情绪/状态）
+        end_keywords = []
+        emotional = {'愤怒':'处于愤怒状态', '恐惧':'处于恐惧中', '震惊':'刚受到震撼', 
+                     '杀意':'充满杀意', '绝望':'陷入绝望', '兴奋':'情绪激动',
+                     '重伤':'身受重伤', '昏迷':'昏迷不醒', '逃走':'正在逃离'}
+        for kw, desc in emotional.items():
+            if kw in end_text[-300:]:
+                end_keywords.append(desc)
+        
+        character_states = []
+        if char_names and end_keywords:
+            for name in char_names[:3]:
+                character_states.append({"name": name, "status": "; ".join(end_keywords[:2])})
+        
         return {
-            "end_scene": f"（从正文结尾提取）{end_text[:300]}",
-            "character_states": [],
-            "unresolved_actions": [],
+            "end_scene": end_text[:400],  # 直接给结尾原文（比LLM总结更准确）
+            "character_states": character_states,
+            "unresolved_actions": unresolved,
             "next_beat": chapter_outline.get("summary", ""),
             "hook_to_resolve": chapter_outline.get("hook", ""),
             "extracted_at": time.time(),
             "chapter_num": chapter_num,
-            "fallback": True,
+            "fallback": False,  # v2.24: 本地提取足够强，不再标记为fallback
         }
 
     def format_bridge_for_writer(self, bridge: dict, chapter_num: int) -> str:
@@ -392,7 +452,8 @@ class SharedMemoryManager:
             )
 
         if bridge.get("fallback"):
-            parts.append("\n⚠️ （注意：以上为自动提取，可能与实际结尾有偏差，请以原文结尾为准）")
+            # v2.24: fallback bridge 已足够强，不需要警告
+            pass
 
         return "\n".join(parts)
 
@@ -474,29 +535,73 @@ class SharedMemoryManager:
                 core += f"- {c.get('name', '?')}: {c.get('identity', '')}, {c.get('relation', '')}\n"
         parts.append(core)
 
+        # L1b: 世界档案 — 当小说涉及已知原著世界时注入
+        world_canon = wb.get("world_canon", {})
+        if world_canon and isinstance(world_canon, dict):
+            canon_parts = []
+            for world_name, canon in world_canon.items():
+                if isinstance(canon, dict) and canon:
+                    lines = [f"### {world_name} 世界档案\n"]
+                    if canon.get("source"):
+                        lines.append(f"- 原著: {canon['source']}")
+                    if canon.get("timeline"):
+                        lines.append(f"- 时间线: {canon['timeline']}")
+                    if canon.get("key_characters"):
+                        chars_list = canon['key_characters']
+                        if isinstance(chars_list, list):
+                            lines.append(f"- 核心角色: {', '.join(chars_list)}")
+                        else:
+                            lines.append(f"- 核心角色: {chars_list}")
+                    if canon.get("key_locations"):
+                        locs = canon['key_locations']
+                        if isinstance(locs, list):
+                            lines.append(f"- 关键地点: {', '.join(locs)}")
+                        else:
+                            lines.append(f"- 关键地点: {locs}")
+                    if canon.get("power_system"):
+                        lines.append(f"- 力量体系: {canon['power_system']}")
+                    canon_parts.append('\n'.join(lines))
+            if canon_parts:
+                canon_text = f"## 📖 原著世界档案（写作时严格遵守以下设定）\n\n" + '\n\n'.join(canon_parts)
+                parts.append(canon_text)
+
         # L2: 上一章完整上下文（桥接指令 + 结尾 + 钩子）
+        # v2.24: 重新排序 — 连续性信息放在上下文最前面（LLM对开头最敏感）
         prev_chapter = chapter_num - 1
+        bridge_inserted = False
         if prev_chapter >= 1:
-            # L2a: v2.10 章节桥接指令（最高优先级——结构化接续指令）
+            # L2a: 章节桥接指令（最高优先级——结构化接续指令）
             prev_bridge = self.get_bridge(novel_id, prev_chapter)
             if prev_bridge:
                 bridge_text = self.format_bridge_for_writer(prev_bridge, prev_chapter)
                 if bridge_text:
                     parts.append(bridge_text)
+                    bridge_inserted = True
                     log.info(f"Bridge injected for chapter {chapter_num}: from Ch{prev_chapter} bridge")
             else:
-                log.warning(f"No bridge found for chapter {prev_chapter}, chapter {chapter_num} may lose continuity")
+                log.warning(f"No bridge found for chapter {prev_chapter}, falling back to direct ending injection")
 
-            # L2b: 上一章结尾原文（作为桥接的补充参考）
+            # L2b: 上一章结尾原文（兜底 + 桥接补充）
             prev_content = self.read_chapter(novel_id, prev_chapter)
             if prev_content:
-                # 取上一章最后 1500 字（原来取2000，现在桥接已提供结构化指令，原文减少到1500）
-                take_chars = min(1500, len(prev_content))
+                # v2.24: 取结尾 1000 字（从1500减少，因为桥接已提供结构化指令）
+                take_chars = min(1000, len(prev_content))
                 prev_ending = prev_content[-take_chars:]
-                # v2.4.1: 清洗上下文 —— 合并短行成正常段落，切断短行风格自我强化循环
                 prev_ending = _normalize_context_paragraphs(prev_ending)
-                # 注意：桥接指令在前，原文结尾作为参考在后
-                parts.append(f"## 📖 上一章结尾原文（供参考——桥接指令为准）\n\n{prev_ending}")
+                
+                # v2.24: 如果没有桥接，结尾原文升级为强制接续指令
+                if not bridge_inserted:
+                    parts.insert(0, 
+                        f"## 🔗 强制连续性指令 — 从上一章精确继续（最高优先级）\n\n"
+                        f"⚠️ 以下是第{prev_chapter}章的结尾原文。第{chapter_num}章必须：\n"
+                        f"1. **第一句就从下面的场景开始**——不能跳时间、不能换地点\n"
+                        f"2. **角色状态保持**——位置/情绪/伤势 = 本章起始状态\n"
+                        f"3. **未完成的动作继续**——如果结尾在战斗中/对话中，从那里继续\n\n"
+                        f"### 第{prev_chapter}章结尾：\n\n{prev_ending}"
+                    )
+                    log.info(f"Direct ending injected for chapter {chapter_num} (no bridge available)")
+                else:
+                    parts.append(f"## 📖 上一章结尾原文（参考）\n\n{prev_ending}")
                 
                 # 上一章大纲钩子
                 for vol in plan.get("outline", {}).get("volumes", []):
@@ -547,6 +652,10 @@ class SharedMemoryManager:
         state = self.read("global_state", novel_id)
         if state:
             parts.append(self._format_state_snapshot(state, chapter_num))
+            # v2.42: 注入主角状态（从 global_state.json 的 protagonist_state 字段读取）
+            char_ctx = self._build_character_state_context(state)
+            if char_ctx:
+                parts.append(char_ctx)
 
         # L4: 伏笔
         hooks_ctx = self._build_foreshadowing_context(novel_id, chapter_num)
@@ -571,24 +680,43 @@ class SharedMemoryManager:
         opening = chapter_outline.get("opening_scene", "")
         intensity = chapter_outline.get("conflict_intensity", "")
         
-        outline_text = f"""## 本章大纲
+        # v2.40: 检测叙事人称
+        narrative_pov = plan.get('narrative_pov', '')
+        if not narrative_pov and chapter_num > 1:
+            # 从第一章文本推断人称
+            try:
+                ch1 = self.read_chapter(novel_id, 1)
+                if ch1:
+                    sample = ch1[:2000]
+                    first_count = sample.count('我') + sample.count('我们')
+                    third_count = sample.count('他') + sample.count('她')
+                    if first_count > third_count * 2 and first_count > 3:
+                        narrative_pov = 'first_person'
+                    elif third_count > first_count * 1.5 and third_count > 3:
+                        narrative_pov = 'third_person'
+            except Exception:
+                pass
+        
+        pov_instruction = ""
+        if narrative_pov == 'first_person':
+            pov_instruction = "\n叙事人称：第一人称「我」视角，全文用「我」叙述，禁止切换成「他」或角色名字。\n"
+        elif narrative_pov == 'third_person':
+            pov_instruction = "\n叙事人称：第三人称，始终用角色名字或「他」「她」叙述，不要用「我」。\n"
 
-- 章节: 第{chapter_num}章「{chapter_outline.get('title', '')}」
-- 核心事件: {chapter_outline.get('summary', '')}
-- 情绪曲线: {chapter_outline.get('emotion_curve', '')}
-- 出场角色: {', '.join(chapter_outline.get('characters', []))}
-- 冲突强度: {intensity if intensity else '未设定'}/5
-- 结尾钩子: {chapter_outline.get('hook', '')}
-- 目标字数: {chapter_outline.get('target_words', 3000)} 字"""
+        outline_text = f"""═══ 以下为写作元指令 ═══
 
-        if cause:
-            outline_text += f"\n- ⛓️ 因果链: {cause}"
-        if bridge:
-            outline_text += f"\n- ➡️ 引出下章: {bridge}"
-        if opening:
-            outline_text += f"\n- 🎬 开场场景: {opening}"
+本章必须覆盖以下核心事件，不可偏离：
+{chapter_outline.get('summary', '')}
 
-        outline_text += f"\n{beats_text}"
+本章结尾——把下面这句话作为全章最后一句话。写完立刻停笔，不添加任何后续内容：
+「{chapter_outline.get('hook', '无')}」
+{pov_instruction}
+接续状态：从上章结尾继续。{cause + ' ' if cause else ''}{opening if opening else ''}
+出场角色：{', '.join(chapter_outline.get('characters', ['主角']))}
+情绪曲线：{chapter_outline.get('emotion_curve', '未设定')}
+
+═══ 结束 ═══"""
+
         parts.append(outline_text)
 
         # ── v2.6: 对话密度告警 — 检测前几章是否对话过多 ──
@@ -794,7 +922,50 @@ class SharedMemoryManager:
         locations = state.get("locations", [])
         if locations:
             lines.append(f"\n### 已知地点: {', '.join(locations[-5:])}")
-        
+
+        return "\n".join(lines)
+
+    def _build_character_state_context(self, state: dict) -> str:
+        """从 global_state.json 构建主角状态上下文（v2.42 新增字段）"""
+        proto = state.get("protagonist_state")
+        if not proto:
+            return ""
+
+        lines = ["## 👤 主角状态"]
+        lines.append(f"- 姓名: {proto.get('name', '未知')}")
+        lines.append(f"- 身份: {proto.get('identity', '未知')}")
+        lines.append(f"- 修为: {proto.get('cultivation', '未知')}")
+        lines.append(f"- 声望: {proto.get('reputation', '无名小卒')}")
+        lines.append(f"- 位置: {proto.get('location', '未知')}")
+        equip = proto.get("equipment", [])
+        lines.append(f"- 装备: {'、'.join(equip) if equip else '无特殊装备'}")
+        lines.append(f"- 健康: {proto.get('health', '良好')}")
+        achievements = proto.get("achievements", [])
+        if achievements:
+            ach_text = "、".join([a.get("event", str(a)) for a in achievements[-5:]])
+            lines.append(f"- 成就: {ach_text}")
+
+        # 信息传播（最近5条）
+        spreads = state.get("information_spread", [])
+        if spreads:
+            lines.append("\n### 📡 信息传播")
+            for s in spreads[-5:]:
+                known = "、".join(s.get("new_known_by", s.get("known_by", [])))
+                regions = "、".join(s.get("spread_to", []))
+                spread_text = f"「{s.get('event', '?')}」→ {known}"
+                if regions:
+                    spread_text += f" ({regions})"
+                lines.append(f"- {spread_text}")
+
+        # 故事线定位
+        storyline = state.get("storyline_position", {})
+        if storyline:
+            lines.append("\n### 📖 故事线")
+            lines.append(f"- 当前弧: {storyline.get('current_arc', '未命名')}")
+            lines.append(f"- 进度: {storyline.get('arc_progress', '前期')}")
+            if storyline.get("timeline_days", 0) > 0:
+                lines.append(f"- 时间线: 约第{storyline['timeline_days']}天")
+
         return "\n".join(lines)
 
     # ═══════════════════════════════════════════

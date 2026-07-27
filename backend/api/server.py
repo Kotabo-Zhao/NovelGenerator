@@ -291,14 +291,14 @@ async def get_quality_dashboard(novel_id: str):
     plan = engine.get_novel(novel_id)
     if not plan:
         raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在")
-    
+
     state = engine.memory.get_novel_state(novel_id)
     completed = state.get("completed_chapters", [])
     total = plan.get("outline", {}).get("total_chapters", 0)
-    
+
     # 1. 完整性评分
     completeness = min(100, int(len(completed) / max(total, 1) * 100)) if total > 0 else 0
-    
+
     # 2. AI痕迹评分（取最近一章）
     ai_score = None
     if completed:
@@ -311,7 +311,7 @@ async def get_quality_dashboard(novel_id: str):
                 ai_score = h_result["score"]
             except Exception:
                 pass
-    
+
     # 3. 章节字数统计
     word_counts = {}
     if completed:
@@ -319,15 +319,15 @@ async def get_quality_dashboard(novel_id: str):
             content = engine.get_chapter(novel_id, ch)
             if content:
                 word_counts[str(ch)] = len(content)
-    
+
     # 4. 伏笔统计
     foreshadow_ledger = plan.get("foreshadow_ledger", {})
     total_hooks = len(foreshadow_ledger)
     resolved_hooks = sum(1 for fs in foreshadow_ledger.values() if fs.get("actual_payoff_chapter"))
-    
+
     # 5. 摘要数量（长篇连续性）
     summary_count = len(state.get("summaries", {}))
-    
+
     return {
         "novel_id": novel_id,
         "title": plan.get("title", ""),
@@ -359,7 +359,7 @@ async def get_quality_dashboard(novel_id: str):
     }
 
 
-def _generate_quality_recommendations(completeness, ai_score, total_hooks, resolved_hooks, 
+def _generate_quality_recommendations(completeness, ai_score, total_hooks, resolved_hooks,
                                       summary_count, total_chapters):
     """生成质量改进建议"""
     recs = []
@@ -462,7 +462,7 @@ async def create_novel_stream(req: CreateNovelRequest):
             })
         ):
             yield data
-    
+
     return StreamingResponse(event_stream(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -471,7 +471,7 @@ async def _sse_with_heartbeat(event_generator):
     """通用心跳包装: 每5s发送ping防止超时断开SSE (v2.14: 无上限，跟随producer生命周期)"""
     q = asyncio.Queue()
     cancelled = False
-    
+
     async def producer():
         try:
             async for event in event_generator:
@@ -489,7 +489,7 @@ async def _sse_with_heartbeat(event_generator):
             log.error(f"SSE crash details:\n{tb}")
             await q.put(("error", err_msg))
         await q.put(("done", None))
-    
+
     async def heartbeater():
         t = 0
         while not cancelled:
@@ -498,10 +498,10 @@ async def _sse_with_heartbeat(event_generator):
                 break
             t += 1
             await q.put(("ping", {"type":"ping","t":t}))
-    
+
     p_task = asyncio.create_task(producer())
     h_task = asyncio.create_task(heartbeater())
-    
+
     try:
         while True:
             kind, data = await q.get()
@@ -535,7 +535,7 @@ async def generate_chapter(req: GenerateChapterRequest):
             )
         ):
             yield data
-    
+
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
@@ -557,7 +557,7 @@ async def generate_chapter_atomic(req: GenerateChapterRequest):
             )
         ):
             yield data
-    
+
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
@@ -575,14 +575,14 @@ async def generate_batch(novel_id: str, req: dict):
     end = req.get("end_chapter", 1)
     writing_mode = req.get("writing_mode", "webnovel")
     resume = req.get("resume", False)  # v2.14: 断点续传
-    
+
     # v2.14: 断点续传 — 读取上次检查点，跳过已生成章节
     if resume:
         checkpoint = _read_batch_checkpoint(novel_id)
         if checkpoint:
             start = checkpoint.get("next_chapter", start)
             log.info(f"Resuming batch for {novel_id} from chapter {start} (checkpoint)")
-    
+
     async def event_stream():
         try:
             failed = []
@@ -591,7 +591,7 @@ async def generate_batch(novel_id: str, req: dict):
                 if resume and engine.memory.chapter_exists(novel_id, ch_num):
                     yield f"data: {json.dumps({'type':'chapter_skipped','chapter':ch_num,'message':'已存在，跳过'}, ensure_ascii=False)}\n\n"
                     continue
-                    
+
                 yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
                 chapter_error = None
                 try:
@@ -608,11 +608,11 @@ async def generate_batch(novel_id: str, req: dict):
                 except Exception as ch_err:
                     chapter_error = str(ch_err)
                     log.warning(f"Batch chapter {ch_num} exception: {ch_err}")
-                
+
                 if chapter_error:
                     failed.append(ch_num)
                     yield f"data: {json.dumps({'type':'chapter_failed','chapter':ch_num,'error':chapter_error}, ensure_ascii=False)}\n\n"
-            
+
             # v2.14: 批量完成，清除检查点
             _clear_batch_checkpoint(novel_id)
             yield f"data: {json.dumps({'type':'batch_done','from':start,'to':end,'failed':failed}, ensure_ascii=False)}\n\n"
@@ -620,7 +620,7 @@ async def generate_batch(novel_id: str, req: dict):
             log.exception("batch generate crashed")
             # v2.14: 保留检查点，允许用户后续续传
             yield f"data: {json.dumps({'type':'error','message':f'❌ 批量生成中断：{e}。已生成章节已保存，可使用"断点续传"恢复。'}, ensure_ascii=False)}\n\n"
-    
+
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
@@ -639,7 +639,7 @@ def _save_batch_checkpoint(novel_id: str, next_chapter: int, end_chapter: int):
     """保存批量生成检查点"""
     import os, json, time as _time
     try:
-        cp = {"novel_id": novel_id, "next_chapter": next_chapter, 
+        cp = {"novel_id": novel_id, "next_chapter": next_chapter,
               "end_chapter": end_chapter, "saved_at": _time.time()}
         path = _checkpoint_path(novel_id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -689,11 +689,11 @@ async def export_novel(novel_id: str, fmt: str = "txt"):
         return await export_novel_pdf(novel_id)
     if fmt == "epub":
         return await export_novel_epub(novel_id)
-    
+
     content, err = engine.export_novel(novel_id, "txt")
     if err:
         raise HTTPException(status_code=404, detail=err)
-    
+
     safe_name = novel_id.encode("ascii", errors="replace").decode().replace("?", "_") or "novel"
     return PlainTextResponse(
         content,
@@ -708,21 +708,21 @@ async def export_novel_pdf(novel_id: str):
         from fpdf import FPDF
     except ImportError:
         raise HTTPException(status_code=500, detail="PDF 导出需要安装 fpdf2: pip install fpdf2")
-    
+
     content, err = engine.export_novel(novel_id, "txt")
     if err:
         raise HTTPException(status_code=404, detail=err)
-    
+
     plan = engine.get_novel(novel_id)
     title = plan.get("title", novel_id) if plan else novel_id
-    
+
     pdf = FPDF()
     pdf.add_page()
-    
+
     # 添加中文字体
     font_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "fonts")
     os.makedirs(font_dir, exist_ok=True)
-    
+
     # 尝试使用系统字体或内置字体
     font_used = False
     for font_name in ["simsun.ttc", "simsun.ttf", "msyh.ttc", "msyh.ttf", "NotoSansSC-Regular.ttf"]:
@@ -732,30 +732,30 @@ async def export_novel_pdf(novel_id: str):
             pdf.set_font("CJK", "", 12)
             font_used = True
             break
-    
+
     if not font_used:
         # fallback: 无中文字体时用内置字体（中文会显示为方块，但英文正常）
         pdf.set_font("Helvetica", "", 12)
-    
+
     # 书名页
     pdf.set_font("CJK", "", 18) if font_used else pdf.set_font("Helvetica", "B", 18)
     pdf.cell(0, 20, title, new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(10)
-    
+
     if plan:
         pdf.set_font("CJK", "", 10) if font_used else pdf.set_font("Helvetica", "", 10)
         pdf.cell(0, 8, f"题材: {plan.get('genre','')}  风格: {plan.get('style','')}", new_x="LMARGIN", new_y="NEXT", align="C")
         pdf.ln(10)
-    
+
     # 正文
     pdf.set_font("CJK", "", 11) if font_used else pdf.set_font("Helvetica", "", 11)
-    
+
     for line in content.split("\n"):
         line = line.strip()
         if not line:
             pdf.ln(4)
             continue
-        
+
         if line.startswith("# "):
             pdf.set_font("CJK", "", 14) if font_used else pdf.set_font("Helvetica", "B", 14)
             pdf.cell(0, 10, line.lstrip("# "), new_x="LMARGIN", new_y="NEXT")
@@ -767,7 +767,7 @@ async def export_novel_pdf(novel_id: str):
             # 中文按字符宽度自动换行
             pdf.multi_cell(0, 6, line)
             pdf.ln(2)
-    
+
     pdf_bytes = pdf.output()
     return Response(
         content=pdf_bytes,
@@ -783,7 +783,7 @@ async def export_novel_epub(novel_id: str):
     content, err = engine.export_novel(novel_id, "epub")
     if err:
         raise HTTPException(status_code=404, detail=err)
-    
+
     return Response(
         content=content,
         media_type="application/epub+zip",
@@ -798,12 +798,12 @@ async def batch_export(req: dict = None):
         req = {}
     novel_ids = req.get("novel_ids", [])
     fmt = req.get("fmt", "txt")
-    
+
     if not novel_ids:
         # 导出全部
         novels = engine.list_novels()
         novel_ids = [n["id"] for n in novels]
-    
+
     results = []
     for nid in novel_ids:
         content, err = engine.export_novel(nid, fmt)
@@ -813,7 +813,7 @@ async def batch_export(req: dict = None):
             "error": err or None,
             "content": content if err is None else None,
         })
-    
+
     return {"results": results}
 
 
@@ -823,13 +823,13 @@ async def regenerate_outline(novel_id: str, req: dict):
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
-    
+
     async def event_stream():
         async for data in _sse_with_heartbeat(
             engine.regenerate_outline_stream(novel_id, feedback)
         ):
             yield data
-    
+
     return StreamingResponse(event_stream(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -840,13 +840,13 @@ async def interactive_outline(novel_id: str, req: dict):
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
-    
+
     async def event_stream():
         async for data in _sse_with_heartbeat(
             engine.interactive_outline_stream(novel_id, feedback)
         ):
             yield data
-    
+
     return StreamingResponse(event_stream(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -869,15 +869,15 @@ async def chapter_feedback(novel_id: str, chapter_num: int, req: dict):
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
-    
+
     plan = engine.get_novel(novel_id)
     if not plan:
         raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在")
-    
+
     chapter_outline = engine._find_chapter_outline(plan, chapter_num)
     if not chapter_outline:
         raise HTTPException(status_code=404, detail=f"第{chapter_num}章大纲不存在")
-    
+
     result = engine.feedback_decomposer.decompose_for_chapter(
         feedback, chapter_num, chapter_outline, plan
     )
@@ -903,7 +903,7 @@ async def logic_check_batch(novel_id: str, req: dict):
     plan = engine.get_novel(novel_id)
     if not plan:
         raise HTTPException(404, "小说不存在")
-    
+
     start = req.get("start", 1)
     end = req.get("end", 1)
     chapters = {}
@@ -911,7 +911,7 @@ async def logic_check_batch(novel_id: str, req: dict):
         content = engine.get_chapter(novel_id, ch)
         if content:
             chapters[ch] = content
-    
+
     result = engine.logic_supervisor.validate_chapter_batch(chapters, plan)
     return {"result": result}
 
@@ -997,7 +997,7 @@ async def check_pacing(novel_id: str, chapter_num: int):
     content = engine.get_chapter(novel_id, chapter_num)
     if content is None:
         raise HTTPException(status_code=404, detail=f"第{chapter_num}章不存在")
-    
+
     result = engine.pacing_checker.analyze(content, chapter_num)
     return {"result": result}
 
@@ -1012,7 +1012,7 @@ async def style_fingerprint(req: dict):
     text = req.get("text", "")
     if not text or len(text) < 500:
         raise HTTPException(status_code=400, detail="至少需要500字")
-    
+
     fp = fingerprinter.analyze(text)
     return {"fingerprint": fp}
 
@@ -1024,7 +1024,7 @@ async def compare_styles(req: dict):
     text_b = req.get("text_b", "")
     if not text_a or not text_b:
         raise HTTPException(status_code=400, detail="需要两个文本")
-    
+
     comparison = fingerprinter.compare(text_a, text_b)
     return {"comparison": comparison}
 
@@ -1035,7 +1035,7 @@ async def get_character_bible(novel_id: str):
     bible_path = os.path.join(engine.memory.get_novel_dir(novel_id), "character_bible.json")
     if not os.path.exists(bible_path):
         raise HTTPException(status_code=404, detail="人物宝典尚未生成")
-    
+
     with open(bible_path, "r", encoding="utf-8") as f:
         bible = json.load(f)
     return {"bible": bible}
@@ -1050,20 +1050,20 @@ async def get_character_bible(novel_id: str):
 @app.post("/api/requirements/preview-decompose")
 async def preview_decompose(req: dict):
     """预拆解用户灵感（创建小说前预览需求拆解结果）
-    
+
     v2.2: 新增端点，让用户在创建小说之前预览AI对其需求的理解。
     不依赖 novel_id，直接拆解灵感文本。
     """
     inspiration = req.get("inspiration", "")
     if not inspiration.strip():
         raise HTTPException(status_code=400, detail="请输入灵感或需求")
-    
+
     # 直接拆解，不关联任何小说
     result = engine.requirement_decomposer.decompose(inspiration)
-    
+
     # 同时返回阶段上下文
     phase_context = engine.requirement_decomposer.decompose_to_context(result)
-    
+
     return {
         "requirements": result,
         "phase_context": {
@@ -1144,7 +1144,7 @@ def _read_novel_file(novel_id: str, filename: str) -> dict:
 @app.get("/api/novels/{novel_id}/storygraph")
 async def get_storygraph(novel_id: str, chapter: int = 0):
     """获取剧情图谱数据（剧情线/伏笔账本/角色快照/因果链）
-    
+
     Query params:
         chapter: 指定章节号，仅返回该章及之前的剧情数据（时间回溯）
                  0或省略 = 返回全部
@@ -1152,11 +1152,11 @@ async def get_storygraph(novel_id: str, chapter: int = 0):
     data = _read_novel_file(novel_id, "storygraph.json")
     last_updated = data.get("last_updated_chapter", 0)
     version = data.get("version", 0)
-    
+
     # 如果指定了章节号，过滤到该时间点
     if chapter > 0 and chapter < last_updated:
         data = _filter_storygraph_to_chapter(data, chapter)
-    
+
     return {
         "novel_id": novel_id,
         "plot_threads": data.get("plot_threads", {}),
@@ -1175,7 +1175,7 @@ def _filter_storygraph_to_chapter(data: dict, chapter: int) -> dict:
     """将剧情图谱数据过滤到指定章节时间点"""
     import copy
     filtered = copy.deepcopy(data)
-    
+
     # 过滤剧情线节点（只保留 chapter <= 指定章的）
     for tid in filtered.get("plot_threads", {}):
         t = filtered["plot_threads"][tid]
@@ -1183,7 +1183,7 @@ def _filter_storygraph_to_chapter(data: dict, chapter: int) -> dict:
         # 如果在指定章时该线程还没有节点，状态回退
         if not t["key_nodes"] and t.get("status") in ("advancing", "climax", "resolved"):
             t["status"] = "active"
-    
+
     # 过滤伏笔（只保留 planted_chapter <= 指定章的）
     filtered["foreshadow_ledger"] = {
         fid: fs for fid, fs in filtered.get("foreshadow_ledger", {}).items()
@@ -1195,9 +1195,9 @@ def _filter_storygraph_to_chapter(data: dict, chapter: int) -> dict:
             fs["actual_payoff_chapter"] = None
             fs["status"] = "hinted" if fs.get("hint_count", 1) > 1 else "planted"
         if fs.get("last_hint_chapter", 0) > chapter:
-            fs["last_hint_chapter"] = max(fs.get("planted_chapter", 0), 
+            fs["last_hint_chapter"] = max(fs.get("planted_chapter", 0),
                                           min(n for n in [fs.get("planted_chapter",0)] if n <= chapter))
-    
+
     # 过滤角色快照（回退到指定章时的状态）
     for name in filtered.get("char_snapshots", {}):
         snap = filtered["char_snapshots"][name]
@@ -1208,13 +1208,13 @@ def _filter_storygraph_to_chapter(data: dict, chapter: int) -> dict:
             rc for rc in snap.get("relationship_changes", [])
             if rc.get("chapter", 0) <= chapter
         ]
-    
+
     # 过滤因果链
     filtered["causal_links"] = [
         cl for cl in filtered.get("causal_links", [])
         if cl.get("cause_chapter", 0) <= chapter
     ]
-    
+
     filtered["last_updated_chapter"] = chapter
     filtered["filtered"] = True
     return filtered
@@ -1276,14 +1276,14 @@ async def get_calibration(novel_id: str):
 @app.get("/api/novels/{novel_id}/storygraph/visualization")
 async def get_storygraph_visualization(novel_id: str, chapter: int = 0):
     """获取剧情图谱可视化数据：人物关系图 + 剧情线图
-    
+
     Query params:
         chapter: 指定章节号过滤（0=全部）
     """
     data = _read_novel_file(novel_id, "storygraph.json")
     if chapter > 0 and chapter < data.get("last_updated_chapter", 0):
         data = _filter_storygraph_to_chapter(data, chapter)
-    
+
     return {
         "novel_id": novel_id,
         "character_relations": _build_character_relation_graph(data),
@@ -1305,7 +1305,7 @@ def _validate_thread_fields(body: dict, is_new: bool = False):
     """校验剧情线字段"""
     ALLOWED_TYPES = {"main_plot", "subplot", "character_arc", "mystery"}
     ALLOWED_STATUS = {"dormant", "active", "advancing", "climax", "resolved"}
-    
+
     if is_new and not body.get("name"):
         raise HTTPException(400, "name 为必填字段")
     if "type" in body and body["type"] not in ALLOWED_TYPES:
@@ -1328,10 +1328,10 @@ def _validate_thread_fields(body: dict, is_new: bool = False):
 async def update_thread(novel_id: str, thread_id: str, body: dict):
     """更新或创建剧情线（partial update）"""
     _validate_thread_fields(body)
-    
+
     data = _read_novel_file(novel_id, "storygraph.json")
     threads = data.setdefault("plot_threads", {})
-    
+
     if thread_id not in threads:
         threads[thread_id] = {
             "id": thread_id, "name": body.get("name", thread_id),
@@ -1339,14 +1339,14 @@ async def update_thread(novel_id: str, thread_id: str, body: dict):
             "description": "", "key_nodes": [], "next_planned": "",
             "current_tension": 5, "characters": [],
         }
-    
+
     thread = threads[thread_id]
     updatable = ("name", "type", "status", "priority", "description",
                  "current_tension", "next_planned", "characters", "key_nodes")
     for key in updatable:
         if key in body:
             thread[key] = body[key]
-    
+
     data["version"] = data.get("version", 0) + 1
     _write_novel_file(novel_id, "storygraph.json", data)
     engine.memory.invalidate_all(novel_id)
@@ -1373,21 +1373,21 @@ async def update_foreshadow(novel_id: str, fs_id: str, body: dict):
     """更新伏笔"""
     data = _read_novel_file(novel_id, "storygraph.json")
     ledger = data.setdefault("foreshadow_ledger", {})
-    
+
     if fs_id not in ledger:
         raise HTTPException(404, "伏笔不存在")
-    
+
     fs = ledger[fs_id]
     updatable = ("description", "planned_payoff_chapter", "status",
                  "importance", "thread_id")
     for key in updatable:
         if key in body:
             fs[key] = body[key]
-    
+
     # 如果手动标记为 resolved，记录回收章节
     if body.get("status") == "resolved":
         fs["actual_payoff_chapter"] = body.get("actual_payoff_chapter") or data.get("last_updated_chapter", 0)
-    
+
     data["version"] = data.get("version", 0) + 1
     _write_novel_file(novel_id, "storygraph.json", data)
     engine.memory.invalidate_all(novel_id)
@@ -1400,10 +1400,10 @@ async def create_foreshadow(novel_id: str, body: dict):
     fs_id = body.get("id", "")
     if not fs_id:
         raise HTTPException(400, "id 为必填字段")
-    
+
     data = _read_novel_file(novel_id, "storygraph.json")
     ledger = data.setdefault("foreshadow_ledger", {})
-    
+
     ledger[fs_id] = {
         "id": fs_id,
         "description": body.get("description", ""),
@@ -1416,7 +1416,7 @@ async def create_foreshadow(novel_id: str, body: dict):
         "thread_id": body.get("thread_id", ""),
         "importance": body.get("importance", 3),
     }
-    
+
     data["version"] = data.get("version", 0) + 1
     _write_novel_file(novel_id, "storygraph.json", data)
     engine.memory.invalidate_all(novel_id)
@@ -1430,7 +1430,7 @@ async def update_character(novel_id: str, name: str, body: dict):
     """更新角色快照"""
     data = _read_novel_file(novel_id, "storygraph.json")
     snaps = data.setdefault("char_snapshots", {})
-    
+
     if name not in snaps:
         snaps[name] = {
             "name": name, "last_chapter_appeared": 0,
@@ -1439,14 +1439,14 @@ async def update_character(novel_id: str, name: str, body: dict):
             "relationship_changes": [], "current_emotion": "",
             "active_goals": [],
         }
-    
+
     snap = snaps[name]
     updatable = ("current_location", "current_emotion", "current_power_level",
                  "status_effects", "active_goals", "known_secrets")
     for key in updatable:
         if key in body:
             snap[key] = body[key]
-    
+
     data["version"] = data.get("version", 0) + 1
     _write_novel_file(novel_id, "storygraph.json", data)
     engine.memory.invalidate_all(novel_id)
@@ -1458,26 +1458,26 @@ async def update_character(novel_id: str, name: str, body: dict):
 @app.post("/api/novels/{novel_id}/storygraph/quick-action")
 async def quick_action(novel_id: str, body: dict):
     """执行快捷操作（升温/暂停/回收等）
-    
+
     Body:
         {"type": "thread|foreshadow", "id": "...", "action": "heat_up|pause|resolve|raise_priority|lower_priority"}
     """
     action = body.get("action", "")
     item_type = body.get("type", "")
     item_id = body.get("id", "")
-    
+
     if not action or not item_id:
         raise HTTPException(400, "action 和 id 为必填字段")
-    
+
     data = _read_novel_file(novel_id, "storygraph.json")
     result = {"ok": True, "action": action}
-    
+
     if item_type == "thread":
         threads = data.get("plot_threads", {})
         if item_id not in threads:
             raise HTTPException(404, "剧情线不存在")
         t = threads[item_id]
-        
+
         if action == "heat_up":
             t["current_tension"] = min(10, t.get("current_tension", 5) + 2)
             if t.get("status") in ("active", "dormant"):
@@ -1500,13 +1500,13 @@ async def quick_action(novel_id: str, body: dict):
             result["new_priority"] = t["priority"]
         else:
             raise HTTPException(400, f"未知操作: {action}")
-    
+
     elif item_type == "foreshadow":
         ledger = data.get("foreshadow_ledger", {})
         if item_id not in ledger:
             raise HTTPException(404, "伏笔不存在")
         f = ledger[item_id]
-        
+
         if action == "resolve":
             f["status"] = "resolved"
             f["actual_payoff_chapter"] = data.get("last_updated_chapter", 0)
@@ -1520,10 +1520,10 @@ async def quick_action(novel_id: str, body: dict):
             result["new_payoff"] = f["planned_payoff_chapter"]
         else:
             raise HTTPException(400, f"未知操作: {action}")
-    
+
     else:
         raise HTTPException(400, "type 必须是 thread 或 foreshadow")
-    
+
     data["version"] = data.get("version", 0) + 1
     _write_novel_file(novel_id, "storygraph.json", data)
     engine.memory.invalidate_all(novel_id)
@@ -1532,10 +1532,10 @@ async def quick_action(novel_id: str, body: dict):
 
 def _build_character_relation_graph(data: dict) -> dict:
     """构建人物关系图数据
-    
+
     Returns:
         {
-            "nodes": [{"id": "name", "label": "name", "emotion": "...", "location": "...", 
+            "nodes": [{"id": "name", "label": "name", "emotion": "...", "location": "...",
                         "last_chapter": N, "goals": [...]}],
             "edges": [{"source": "charA", "target": "charB", "label": "关系描述", "chapter": N}]
         }
@@ -1544,7 +1544,7 @@ def _build_character_relation_graph(data: dict) -> dict:
     nodes = []
     edges = []
     edge_set = set()  # 去重
-    
+
     for name, snap in snaps.items():
         # 节点
         nodes.append({
@@ -1557,7 +1557,7 @@ def _build_character_relation_graph(data: dict) -> dict:
             "secrets": snap.get("known_secrets", []),
             "power_level": snap.get("current_power_level", ""),
         })
-        
+
         # 边（从关系变化中提取）
         for rc in snap.get("relationship_changes", []):
             target = rc.get("with", "")
@@ -1573,7 +1573,7 @@ def _build_character_relation_graph(data: dict) -> dict:
                 "label": rc.get("change", "关联"),
                 "chapter": rc.get("chapter", 0),
             })
-    
+
     # 补充：从剧情线的角色列表中推断关系
     threads = data.get("plot_threads", {})
     for t in threads.values():
@@ -1589,13 +1589,13 @@ def _build_character_relation_graph(data: dict) -> dict:
                         "label": f"共同参与: {t.get('name', '')[:12]}",
                         "chapter": 0,
                     })
-    
+
     return {"nodes": nodes, "edges": edges}
 
 
 def _build_plot_timeline(data: dict) -> dict:
     """构建剧情线时间线图数据
-    
+
     Returns:
         {
             "lanes": [{"id": "thread_id", "name": "...", "type": "...", "status": "...",
@@ -1607,14 +1607,14 @@ def _build_plot_timeline(data: dict) -> dict:
     """
     threads = data.get("plot_threads", {})
     links = data.get("causal_links", [])
-    
+
     thread_colors = {
         "main_plot": "#f85149",
-        "subplot": "#f0883e", 
+        "subplot": "#f0883e",
         "character_arc": "#7c3aed",
         "mystery": "#58a6ff",
     }
-    
+
     lanes = []
     for tid, t in threads.items():
         nodes = t.get("key_nodes", [])
@@ -1630,10 +1630,10 @@ def _build_plot_timeline(data: dict) -> dict:
             "color": thread_colors.get(t.get("type", ""), "#8b949e"),
             "characters": t.get("characters", []),
         })
-    
+
     # 排序：按优先级降序
     lanes.sort(key=lambda x: -x["priority"])
-    
+
     # 计算章节范围
     all_chapters = []
     for lane in lanes:
@@ -1642,10 +1642,10 @@ def _build_plot_timeline(data: dict) -> dict:
     for cl in links:
         all_chapters.append(cl.get("cause_chapter", 0))
         all_chapters.append(cl.get("effect_chapter", 0))
-    
+
     ch_min = min(all_chapters) if all_chapters else 1
     ch_max = max(all_chapters) if all_chapters else 1
-    
+
     return {
         "lanes": lanes,
         "causal_links": links,
@@ -1682,6 +1682,136 @@ async def startup_repair():
             log.info("Startup repair: all states consistent")
     except Exception as e:
         log.error(f"Startup repair failed: {e}")
+
+
+# ── v2.39: 爆火小说分析 + 逆天生成 ──
+
+@app.post("/api/trends/analyze")
+async def analyze_trends(req: dict = None):
+    """抓取爆火小说并分析趋势"""
+    if not req:
+        req = {}
+    try:
+        from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
+
+        analyzer = TrendAnalyzer(None, "")
+        novels = analyzer.fetch_trending_novels(req.get("max_count", 20))
+        patterns = analyzer.extract_patterns(novels)
+
+        return {
+            "ok": True,
+            "hot_novels": [{"title": n["title"], "author": n["author"],
+                          "genre": n["genre"], "tags": n.get("tags", []),
+                          "popularity": n.get("popularity", 0)} for n in novels[:15]],
+            "patterns": patterns,
+            "source": "builtin" if not novels or all(n.get("source") != "qidian" for n in novels) else "live",
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/trends/bizarre")
+async def generate_bizarre(req: dict):
+    """基于爆火趋势生成逆天小说（剧情反转向）"""
+    count = min(req.get("count", 5), 10)
+    style = req.get("style", "热血爽文")
+    theme = req.get("theme", "")
+    genre = req.get("genre", "")
+
+    try:
+        from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
+
+        gen = BizarreNovelGenerator(None, "")
+        result = await gen.full_pipeline(count, style, theme, genre)
+
+        return {
+            "ok": True,
+            "trends": result["trends"],
+            "hot_novels": result["hot_novels"],
+            "bizarre_novels": [
+                {
+                    "premise": bn["premise"],
+                    "outline": bn.get("outline"),
+                }
+                for bn in result["bizarre_novels"]
+            ],
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/trends/bizarre/quick")
+async def quick_bizarre(req: dict):
+    """快速生成逆天小说设定（时事模式优先从网络抓热点新闻动态生成）"""
+    count = min(req.get("count", 3), 5)
+    genre = req.get("genre", "")
+    mode = req.get("mode", "topical")
+
+    try:
+        from core.trend_analyzer import quick_bizarre, BizarreNovelGenerator
+
+        # 时事模式: 先抓热点新闻
+        news_items = None
+        if mode in ("topical", "mixed"):
+            gen = BizarreNovelGenerator()
+            news_items = gen.fetch_hot_news(10)
+
+        novels = quick_bizarre(count, genre, mode, news_items=news_items)
+        return {
+            "ok": True,
+            "news_count": len(news_items) if news_items else 0,
+            "bizarre_novels": [
+                {
+                    "premise": n["premise"],
+                }
+                for n in novels
+            ],
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/trends/bizarre/create")
+async def create_bizarre_novel(req: dict):
+    """将剧情反转种子直接创建为小说"""
+    if not req or not req.get("premise"):
+        raise HTTPException(status_code=400, detail="缺少 premise")
+
+    try:
+        premise = req["premise"]
+        title = premise.get("title", "逆天小说")
+
+        engine = _get_engine()
+
+        if engine.memory.novel_exists(title):
+            raise HTTPException(status_code=409, detail=f"小说「{title}」已存在")
+
+        # 用剧情梗概作为灵感
+        synopsis = premise.get("synopsis", premise.get("one_liner", ""))
+        inspiration = f"【剧情反转种子·{premise.get('tag', '')}】{synopsis}"
+
+        from core.planner import NovelPlanner
+        planner = NovelPlanner(engine.client, engine.model)
+
+        plan = await planner.plan_stream(
+            genre=premise.get("genre", "玄幻").split("+")[0],
+            style=req.get("style", "热血爽文"),
+            inspiration=inspiration,
+            title=title,
+            target_words=50000,
+            natural_names=True,
+        )
+
+        async for event in plan:
+            pass
+
+        return {"ok": True, "title": title, "message": f"小说「{title}」创建成功"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

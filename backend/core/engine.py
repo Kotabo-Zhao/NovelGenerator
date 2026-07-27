@@ -148,6 +148,8 @@ def _protect_ending_semantic(original: str, rewritten: str, ending_info: dict) -
     return rewritten
 
 
+
+
 class NovelEngine:
     """小说创作引擎 — 多智能体架构:
     Pipeline: Planner → Writer → ConsistencyValidator → OpeningOptimizer → TwistDesigner
@@ -262,6 +264,14 @@ class NovelEngine:
             self._init_storygraph_and_arcs(plan, novel_dir)
         except Exception as e:
             log.warning(f"StoryGraph init skipped: {e}")
+        
+        # v2.42: 初始化角色状态追踪系统
+        try:
+            from .character_state import CharacterStateTracker
+            tracker = CharacterStateTracker(self.client, self.model, self.memory)
+            tracker.init_from_plan(plan["title"])
+        except Exception as e:
+            log.warning(f"Character state init skipped: {e}")
         
         log.info(f"Novel created: {plan['title']} ({total_chapters} chapters)")
         return plan
@@ -804,103 +814,83 @@ class NovelEngine:
                         log.warning(f"Incremental save failed (non-fatal): {e}")
                 yield {"type": "text", "content": text}
 
-            # ── AI 检测 & 人类化改写 (架构层去AI味) ──
-            ai_report = None
-            try:
-                from .ai_detector import AIDetector, HumanRewriter, humanize_pipeline
-                detector = AIDetector(self.client, self.model)
-                rewriter = HumanRewriter(self.client, self.model)
-                
-                chapter_summary = chapter_outline.get("summary", "") or chapter_outline.get("title", "")
-                # v2.13: 保存结尾 (Humanizer会覆盖全文 → 语义保护Phase 2结尾)
-                # 不再仅靠长度——改用句子拆分 + n-gram重叠 + 勾子检测三重保护
-                _ending_saved = _extract_key_ending(full_text)
-                result = await asyncio.to_thread(
-                    humanize_pipeline, full_text, detector, rewriter,
-                    scene_desc=chapter_summary,
-                    target_length=target_words,
-                    min_score_threshold=30,
-                )
-                if result["rewritten"]:
-                    ai_report = result
-                    rewritten = result["text"]
-                    if len(rewritten) > 500 and _ending_saved:
-                        protected = _protect_ending_semantic(full_text, rewritten, _ending_saved)
-                        if protected != rewritten:
-                            full_text = protected
-                        else:
-                            full_text = rewritten
-                    else:
-                        full_text = rewritten
-                    log.info(f"AI Humanizer: score {ai_report['ai_score_before']}→{ai_report.get('ai_score_after','?')}, rewritten")
-                    yield {"type": "ai_report", 
-                           "score_before": ai_report["ai_score_before"],
-                           "score_after": ai_report.get("ai_score_after", ai_report["ai_score_before"]),
-                           "rewritten": True}
-            except Exception as e:
-                log.warning(f"AI Humanizer skipped: {e}")
-
-            # ── v2.4.1: 段落规范化安全网 ──
-            # 在所有后处理后，强制合并短行碎片，确保输出是正常段落格式
-            try:
-                from core.shared_memory import normalize_chapter_paragraphs
-                before_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
-                full_text = normalize_chapter_paragraphs(full_text)
-                after_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
-                if before_lines != after_lines:
-                    log.info(f"Paragraph normalize: ≤10char lines reduced {before_lines}→{after_lines}")
-            except Exception as e:
-                log.warning(f"Paragraph normalize skipped: {e}")
-
-            # ── v2.6: 质量门 — 对话占比/爽点密度/碎片化自动检测 ──
+            # ── v2.27: 先跑质量门（本地规则，毫秒级），用结果控制后续处理 ──
             quality_report = None
             try:
                 is_fast_food = plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False)
                 checker = PacingChecker(self.client, self.model)
                 qr = checker.quick_quality_check(full_text, fast_food=is_fast_food)
                 quality_report = qr
-                log.info(f"Quality gate: score={qr['score']}, pass={qr['pass']}, issues={len(qr['issues'])}")
-                
-                if not qr["pass"] and qr["issues"]:
+                log.info(f"Quality gate: score={qr['score']}, issues={len(qr['issues'])}")
+
+                if qr["score"] < 40 and qr["issues"]:
                     issues_text = "; ".join(qr["issues"])
-                    log.warning(f"Quality gate FAILED (score={qr['score']}): {issues_text}")
-                    
-                    # 构建重生成反馈
-                    regenerate_feedback = f"【质量门自动反馈】以下问题需要修正：{issues_text}。请减少无意义对话，增加动作描写和冲突推进，确保每段都有实质性剧情推进。"
-                    
-                    # 重试一次
+                    log.warning(f"Quality gate CRITICAL (score={qr['score']}): {issues_text}")
                     yield {"type": "quality_warning", "score": qr["score"], "issues": qr["issues"],
-                           "message": f"📝 质量检查发现 {len(qr['issues'])} 个可改进点（评分 {qr['score']}），正在自动优化重写..."}
-                    
+                           "message": f"📝 严重质量瑕疵（评分 {qr['score']}），自动重写优化..."}
+
                     retry_text = ""
                     async for text in self.writer.write_stream(
-                        context=context + f"\n\n⚠️ 上一版质量不合格（评分{qr['score']}）。{regenerate_feedback}",
-                        genre=genre, style=style,
-                        target_words=target_words,
-                        writing_mode=writing_mode,
-                        normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
-                        chapter_outline=chapter_outline,
-                        skip_ending=True,  # v2.12: 重试不重复生成结尾
+                        context=context + f"\n\n⚠️ 上一版质量不合格（评分{qr['score']}）。以下问题必须修正：{issues_text}",
+                        genre=genre, style=style, target_words=target_words, writing_mode=writing_mode,
+                        normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                        fast_food=is_fast_food,
+                        chapter_outline=chapter_outline, skip_ending=True,
                     ):
                         retry_text += text
-                    
-                    if retry_text and len(retry_text) > len(full_text) * 0.5:
-                        # 再检查一次
+
+                    if retry_text and len(retry_text) > len(full_text) * 0.6:
                         qr2 = checker.quick_quality_check(retry_text, fast_food=is_fast_food)
-                        if qr2["score"] > qr["score"]:
+                        if qr2["score"] > qr["score"] + 5:
                             full_text = retry_text
                             quality_report = qr2
-                            log.info(f"Quality gate retry PASSED: score {qr['score']} → {qr2['score']}")
+                            log.info(f"Quality gate retry PASSED: {qr['score']} → {qr2['score']}")
                             yield {"type": "quality_retry", "score_before": qr["score"], "score_after": qr2["score"]}
                         else:
-                            log.warning(f"Quality gate retry still low: {qr2['score']}, keeping better version")
-                            if qr2["score"] >= qr["score"]:
-                                full_text = retry_text
-                                quality_report = qr2
+                            log.warning("Quality gate retry no improvement, keeping original")
                     else:
                         log.warning("Quality gate retry text too short, keeping original")
+                elif 40 <= qr["score"] < 60 and qr["issues"]:
+                    log.info(f"Quality gate MILD (score={qr['score']}): {len(qr['issues'])} minor issues, accepting as-is")
+                    yield {"type": "quality_minor", "score": qr["score"], "issues": qr["issues"]}
+                    
             except Exception as e:
                 log.warning(f"Quality gate skipped: {e}")
+
+            # ── v2.27: Humanizer 移到质量门之后 — 用分数决定是否跑 ──
+            ai_report = None
+            _quality_ok = quality_report and quality_report.get("score", 0) >= 50
+            if not _quality_ok:
+                try:
+                    from .ai_detector import AIDetector, HumanRewriter, humanize_pipeline
+                    detector = AIDetector(self.client, self.model)
+                    rewriter = HumanRewriter(self.client, self.model)
+                    
+                    chapter_summary = chapter_outline.get("summary", "") or chapter_outline.get("title", "")
+                    _ending_saved = _extract_key_ending(full_text)
+                    result = await asyncio.to_thread(
+                        humanize_pipeline, full_text, detector, rewriter,
+                        scene_desc=chapter_summary,
+                        target_length=target_words,
+                        min_score_threshold=40,
+                    )
+                    if result["rewritten"]:
+                        ai_report = result
+                        rewritten = result["text"]
+                        if len(rewritten) > 500 and _ending_saved:
+                            protected = _protect_ending_semantic(full_text, rewritten, _ending_saved)
+                            full_text = protected if protected != rewritten else rewritten
+                        else:
+                            full_text = rewritten
+                        log.info(f"AI Humanizer: score {ai_report['ai_score_before']}→{ai_report.get('ai_score_after','?')}, rewritten")
+                        yield {"type": "ai_report", 
+                               "score_before": ai_report["ai_score_before"],
+                               "score_after": ai_report.get("ai_score_after", ai_report["ai_score_before"]),
+                               "rewritten": True}
+                except Exception as e:
+                    log.warning(f"AI Humanizer skipped: {e}")
+            else:
+                log.info(f"AI Humanizer skipped: quality score={quality_report['score']}≥50, text already human-like")
 
             # ── v2.11: 确保结尾是完整句子 ──
             from .writer import _ensure_complete_ending
@@ -909,9 +899,73 @@ class NovelEngine:
             if len(full_text) != original_len:
                 log.info(f"Ending trimmed from {original_len} to {len(full_text)} chars (removed incomplete sentence)")
 
+            # ── v2.31: 后处理清除AI惯用语（prompt拦不住的硬过滤）──
+            _ai_replacements = {
+                '嘴角勾起一抹诡异的弧度': '冷冷一笑',
+                '嘴角勾起一抹冷笑': '冷笑一声',
+                '嘴角勾起一抹弧度': '笑了笑',
+                '嘴角勾起': '嘴角微动',
+                '瞳孔骤缩': '眼神一凝',
+                '瞳孔猛地一缩': '目光一沉',
+                '浑身一震': '身体一僵',
+                '脊背发凉': '汗毛倒竖',
+                '后背一凉': '汗毛倒竖',
+                '倒吸一口凉气': '呼吸一紧',
+                '眼底闪过一丝寒光': '眼神冷下来',
+                '眼底闪过一丝': '眼神中透着',
+                '眸光': '目光',
+                '眸色': '眼神',
+                '眸子': '眼睛',
+            }
+            _replaced_count = 0
+            for old, new in _ai_replacements.items():
+                if old in full_text:
+                    full_text = full_text.replace(old, new)
+                    _replaced_count += 1
+            if _replaced_count:
+                log.info(f"AI cliché filter: {_replaced_count} replacements")
+
+            # ── v2.4.1: 段落规范化安全网（必须在 Humanizer 和质量门之后执行）──
+            try:
+                from core.shared_memory import normalize_chapter_paragraphs
+                before_short = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
+                full_text = normalize_chapter_paragraphs(full_text)
+                after_short = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
+                if before_short != after_short:
+                    log.info(f"Paragraph normalize: short fragments {before_short}→{after_short}")
+            except Exception as e:
+                log.warning(f"Paragraph normalize skipped: {e}")
+
             # 最终保存章节（覆盖增量保存的临时文件）
-            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+            # v2.31: 去除 Writer 自动生成的所有标题行（# 开头且含章节号），防止多标题
+            _text_to_save = full_text
+            _lines = _text_to_save.split('\n')
+            while _lines and _lines[0].strip().startswith('#') and (
+                str(chapter_num) in _lines[0] or
+                any(w in _lines[0] for w in ['第一章','第二章','第三章','第四章','第五章','第六章','第七章','第八章','第九章','第十章',
+                                              '第一回','第二回','第三回','第四回','第五回','第六回','第七回','第八回','第九回','第十回'])
+            ):
+                _lines.pop(0)
+                # 跳过标题后的空行
+                while _lines and not _lines[0].strip():
+                    _lines.pop(0)
+            _text_to_save = '\n'.join(_lines)
+            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{_text_to_save}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
+
+            # v2.40: 第一章生成后自动检测叙事人称
+            if chapter_num == 1:
+                self._save_narrative_pov(novel_id, full_text)
+
+            # v2.42: 提取角色状态变化
+            try:
+                from .character_state import CharacterStateTracker
+                tracker = CharacterStateTracker(self.client, self.model, self.memory)
+                asyncio.ensure_future(tracker.update_from_chapter(
+                    novel_id, chapter_num, full_text
+                ))
+            except Exception as e:
+                log.warning(f"Character state extraction failed (non-fatal): {e}")
 
             # ── v2.10: 提取章节桥接数据 → 保证下章接续（v2.15: 使用韧性客户端）──
             try:
@@ -1245,9 +1299,25 @@ class NovelEngine:
             # 用LLM生成300字叙事蓝图
             blueprint = ""
             try:
-                blueprint_prompt = f"""根据以下大纲和设定，写出本章的叙事蓝图。蓝图是一段200-300字的连贯叙事概要，描述本章从头到尾具体发生了什么。不是大纲条目，是用叙述语言把本章过一遍。
+                # v2.36: 提取写作指令放到蓝图prompt最前面，否则被chapter_context[:2000]截断
+                outline_instr = ""
+                instr_marker = "═══ 以下为写作元指令"
+                if instr_marker in chapter_context:
+                    instr_start = chapter_context.find(instr_marker)
+                    # 找到写作指令的结束（下一个 ## section 或文件末尾）
+                    remaining = chapter_context[instr_start:]
+                    instr_end_marker = remaining.find("\n\n## ")
+                    if instr_end_marker > 0:
+                        outline_instr = remaining[:instr_end_marker].strip()
+                    else:
+                        outline_instr = remaining[:800].strip()
+                
+                blueprint_prompt = f"""根据以下写作指令和大纲，写出本章的叙事蓝图。蓝图是一段200-300字的连贯叙事概要，严格遵循写作指令中的核心事件和章末钩子。
 
-{chapter_context[:2000]}
+{outline_instr}
+
+---
+{chapter_context[:1500]}
 
 只输出蓝图正文，不要标题。"""
                 
@@ -1334,7 +1404,7 @@ class NovelEngine:
             beats_text = []
             async for beat_result in self.atomic_writer.write_beats_stream(
                 beats, char_context, style_guide, chapter_num,
-                blueprint=blueprint, chapter_context=chapter_context[:1200]
+                blueprint=blueprint, chapter_context=chapter_context  # v2.35: 全文传递，由beat prompt内部提取
             ):
                 beats_text.append({
                     "index": beat_result["beat_index"],
@@ -1380,6 +1450,20 @@ class NovelEngine:
             # ── Phase 4: 保存 ──
             self.memory.save_chapter(novel_id, chapter_num, formatted)
             
+            # v2.40: 第一章生成后自动检测叙事人称
+            if chapter_num == 1:
+                self._save_narrative_pov(novel_id, full_text)
+
+            # v2.42: 提取角色状态变化（原子路径）
+            try:
+                from .character_state import CharacterStateTracker
+                tracker = CharacterStateTracker(self.client, self.model, self.memory)
+                asyncio.ensure_future(tracker.update_from_chapter(
+                    novel_id, chapter_num, full_text
+                ))
+            except Exception as e:
+                log.warning(f"Character state extraction failed (non-fatal): {e}")
+
             # ── 完整度验证 ──
             from .writer import _check_truncation
             is_trunc, reason = _check_truncation(full_text, chapter_outline.get("target_words", 2000))
@@ -1472,6 +1556,62 @@ class NovelEngine:
                 if int(ch.get("number", 0)) == chapter_num:
                     return ch
         return None
+
+    @staticmethod
+    def _detect_narrative_pov(text: str) -> str:
+        """从章节正文自动检测叙事人称。
+        
+        策略：开篇前800字是POV信号最强的区域——主角自我介绍/内心独白必然用「我」。
+        全文采样作为兜底。
+        
+        Returns:
+            'first_person' | 'third_person' | '' (未确定)
+        """
+        if not text:
+            return ''
+        
+        # 去掉 markdown 标题行（# / ## 开头），避免干扰计数
+        import re
+        body = re.sub(r'^#.*$', '', text, flags=re.MULTILINE)
+        body = body.strip()
+        
+        if len(body) < 50:
+            return ''
+        
+        # 开篇 800 字 — 最强信号
+        opening = body[:800]
+        first_open = opening.count('我')
+        third_open = opening.count('他') + opening.count('她')
+        
+        if first_open > third_open * 2 and first_open >= 3:
+            return 'first_person'
+        if third_open > first_open * 2 and third_open >= 3:
+            return 'third_person'
+        
+        # 全量采样 3000 字 — 兜底
+        sample = body[:3000]
+        first_all = sample.count('我')
+        third_all = sample.count('他') + sample.count('她')
+        
+        if first_all > third_all * 2 and first_all > 5:
+            return 'first_person'
+        if third_all > first_all * 1.5 and third_all > 5:
+            return 'third_person'
+        
+        return ''
+
+    def _save_narrative_pov(self, novel_id: str, text: str):
+        """第一章生成后，从正文检测人称并存储到 plan 中。"""
+        try:
+            pov = self._detect_narrative_pov(text)
+            if pov:
+                plan = self.memory.read("plan", novel_id)
+                if plan.get('narrative_pov') != pov:
+                    plan['narrative_pov'] = pov
+                    self.memory.write("plan", novel_id, plan)
+                    log.info(f"POV auto-detected from chapter 1: {pov}")
+        except Exception as e:
+            log.warning(f"POV detection failed (non-fatal): {e}")
 
     def _save_character_bible(self, plan: dict, novel_dir: str):
         """生成人物宝典 — 独立的角色wiki文件"""

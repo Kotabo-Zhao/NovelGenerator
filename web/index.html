@@ -539,6 +539,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     <nav class="sidebar-nav">
       <div class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="nav-icon">📚</span>书架</div>
       <div class="nav-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="nav-icon">✨</span>新建</div>
+      <div class="nav-item" :class="{active:currentView==='trends'}" @click="openTrends"><span class="nav-icon">🔥</span>爆火分析</div>
       <div class="nav-item" :class="{active:currentView==='create'&&activeNovel}" @click="openOutline" v-if="activeNovel"><span class="nav-icon">📋</span>修改大纲</div>
       <div class="nav-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="nav-icon">✍️</span>写作</div>
       <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="nav-icon">↗</span>导出</div>
@@ -566,13 +567,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <div v-if="loading.shelf && novels.length===0" class="text-center mt-24"><div class="spinner"></div><p class="color-text2 mt-8 text-xs">加载中…</p></div>
       
       <div v-else-if="novels.length===0 && !loading.shelf" class="empty">
-        <div class="empty-icon">{{ _shelfLoadFailed ? '⚠️' : '📚' }}</div>
-        <h3>{{ _shelfLoadFailed ? '加载失败' : '书架空空' }}</h3>
-        <p>{{ _shelfLoadFailed ? '服务器暂未就绪，请稍后重试' : '选择一位大师的风格，开始你的第一部作品' }}</p>
-        <button class="btn btn-primary" @click="openCreate" v-if="!_shelfLoadFailed">开始创作</button>
-        <button class="btn btn-primary" @click="loadShelf(); _shelfLoadFailed=false" v-if="_shelfLoadFailed">🔄 重新加载</button>
-        <button class="btn btn-ghost mt-8" @click="loadShelf" style="font-size:12px" v-if="!_shelfLoadFailed">🔄 重新加载</button>
-      </div>
+        <div class="empty-icon">{{ shelfLoadFailed ? '⚠️' : '📚' }}</div>
+        <h3>{{ shelfLoadFailed ? '加载失败' : '书架空空' }}</h3>
+        <p>{{ shelfLoadFailed ? '服务器暂未就绪，请稍后重试' : '选择一位大师的风格，开始你的第一部作品' }}</p>
+        <button class="btn btn-primary" @click="openCreate" v-if="!shelfLoadFailed">开始创作</button>
+        <button class="btn btn-primary" @click="loadShelf(); shelfLoadFailed=false" v-if="shelfLoadFailed">🔄 重新加载</button>
+        <button class="btn btn-ghost mt-8" @click="loadShelf" style="font-size:12px" v-if="!shelfLoadFailed">🔄 重新加载</button>
       </div>
 
       <div v-else class="shelf-grid">
@@ -795,6 +795,100 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </div>
         </div>
       </template>
+    </template>
+
+    <!-- ====== Trends: 爆火分析 + 逆天生成 ====== -->
+    <template v-if="currentView==='trends'">
+      <div class="main-header">
+        <h2>🔥 爆火小说分析 & 逆天生成</h2>
+        <div class="sub">抓取热门小说 → 提取成功模式 → 离谱设定生成</div>
+      </div>
+      
+      <!-- 模式切换 -->
+      <div class="card" style="padding:8px 12px">
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:12px;color:var(--text2);margin-right:8px">生成模式:</span>
+          <button class="btn btn-sm" :class="bizarreMode==='topical'?'btn-primary':''" @click="bizarreMode='topical'" style="font-size:12px;padding:4px 12px">🌍 时事离谱</button>
+          <button class="btn btn-sm" :class="bizarreMode==='twist'?'btn-primary':''" @click="bizarreMode='twist'" style="font-size:12px;padding:4px 12px">🔀 剧情反转</button>
+          <button class="btn btn-sm" :class="bizarreMode==='mixed'?'btn-primary':''" @click="bizarreMode='mixed'" style="font-size:12px;padding:4px 12px">🎲 混搭</button>
+        </div>
+      </div>
+      
+      <div class="card">
+        <div class="card-title">操作</div>
+        <div class="flex gap-8">
+          <button class="btn btn-primary" @click="doTrendAnalyze" :disabled="trendLoading">
+            {{ trendLoading ? '分析中...' : '📊 分析爆火趋势' }}
+          </button>
+          <button class="btn btn-primary" @click="doBizarreQuick" :disabled="trendLoading" style="background:var(--accent2)">
+            {{ trendLoading ? '生成中...' : '🎲 快速生成 (×3)' }}
+          </button>
+          <button class="btn btn-primary" @click="doBizarreFull" :disabled="trendLoading" style="background:var(--accent3)">
+            {{ trendLoading ? '生成中...' : '🚀 完整生成 (×5, 含大纲)' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 趋势分析结果 -->
+      <div class="card" v-if="trendData">
+        <div class="card-title">📊 当前爆火趋势</div>
+        <div v-if="trendData.patterns">
+          <div style="margin-bottom:12px;color:var(--accent);font-weight:600">{{ trendData.patterns.success_formula?.summary }}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+            <span v-for="g in Object.keys(trendData.patterns.top_genres||{})" class="tag" style="background:var(--bg2);padding:4px 10px;border-radius:20px;font-size:12px">
+              {{ g }} ×{{ trendData.patterns.top_genres[g] }}
+            </span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            <span v-for="(t,i) in (trendData.patterns.common_tropes||[]).slice(0,10)" class="tag" style="background:var(--accent);opacity:0.8;color:#fff;padding:4px 10px;border-radius:20px;font-size:12px">
+              #{{ i+1 }} {{ t.name }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 热门小说 -->
+      <div class="card" v-if="trendData?.hot_novels?.length">
+        <div class="card-title">🔥 {{ trendData.source === 'live' ? '实时' : '内置' }}热门榜 TOP{{ trendData.hot_novels.length }}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">
+          <div v-for="n in trendData.hot_novels" style="background:var(--bg2);padding:8px 12px;border-radius:8px;font-size:12px">
+            <div style="font-weight:600;color:var(--accent)">{{ n.title }}</div>
+            <div style="color:var(--text2)">{{ n.author }} · {{ n.genre }}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
+              <span v-for="t in (n.tags||[]).slice(0,4)" style="background:var(--bg);padding:2px 6px;border-radius:4px;font-size:11px">{{ t }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 逆天小说卡片 -->
+      <div v-if="bizarreNovels?.length" style="margin-top:16px">
+        <div class="card-title" style="font-size:18px;margin-bottom:12px">🌀 剧情反转种子 ({{ bizarreNovels.length }}部)</div>
+        <div v-for="(bn,idx) in bizarreNovels" class="card" style="margin-bottom:14px;border-left:3px solid var(--accent2);position:relative;overflow:hidden">
+          <div style="position:absolute;top:8px;right:12px;font-size:11px;color:var(--text3);background:var(--bg2);padding:2px 8px;border-radius:10px">{{ bn.premise?.tag || bn.tag }}</div>
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;padding-right:80px">
+            <div>
+              <div style="font-size:16px;font-weight:700;color:var(--accent)">{{ bn.premise?.title || bn.title }}</div>
+              <div style="font-size:12px;color:var(--text2)">{{ bn.premise?.genre || bn.genre }} · {{ bn.premise?.trope || bn.twist }}</div>
+            </div>
+            <button class="btn btn-primary btn-sm" @click="createBizarreNovel(bn)" style="padding:4px 12px;font-size:12px">📖 创建小说</button>
+          </div>
+          <div style="font-size:13px;line-height:1.7;color:var(--text);margin-bottom:8px;font-style:italic">{{ bn.premise?.one_liner || bn.one_liner }}</div>
+          <div v-if="bn.premise?.synopsis" style="font-size:12px;line-height:1.8;color:var(--text2);background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:8px;white-space:pre-line">{{ bn.premise.synopsis }}</div>
+          <div v-if="bn.premise?.twist_chapter_hint" style="font-size:11px;color:var(--accent2);margin-bottom:8px;text-align:right">
+            ⚡ 转折节点: {{ bn.premise.twist_chapter_hint }}
+          </div>
+          <div v-if="bn.outline?.volumes" style="margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;font-size:12px">
+            <div style="font-weight:600;margin-bottom:4px">📋 大纲预览</div>
+            <div v-for="vol in (bn.outline.volumes||[]).slice(0,2)">
+              <div style="color:var(--accent)">第{{ vol.number }}卷: {{ vol.title }}</div>
+              <div v-for="ch in (vol.chapters||[]).slice(0,3)" style="padding-left:12px;color:var(--text2)">
+                Ch{{ ch.number }} [{{ ch.title }}] {{ ch.summary }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </template>
 
     <!-- ====== Write ====== -->
@@ -1868,7 +1962,7 @@ const app = createApp({
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
-    const _shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
+    const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
     const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
@@ -2698,11 +2792,11 @@ const app = createApp({
         }
       } catch(e) {
         console.warn('Shelf load error:', e);
-        _shelfLoadFailed.value = true;
+        shelfLoadFailed.value = true;
       } finally {
         loading.shelf = false;
         // v2.17: 全局安全阀 — 无论什么情况，30秒后强制清除loading
-        setTimeout(() => { if (loading.shelf) { loading.shelf = false; _shelfLoadFailed.value = true; } }, 30000);
+        setTimeout(() => { if (loading.shelf) { loading.shelf = false; shelfLoadFailed.value = true; } }, 30000);
       }
       // 恢复上次session — 两步兜底：
       //   1) 书架里找（最优，带完整 state）
@@ -2801,7 +2895,7 @@ const app = createApp({
         if (list.length > 0 || novels.value.length === 0) {
           novels.value = list;
         }
-        _shelfLoadFailed.value = false;  // v2.17: 成功加载，清除失败状态
+        shelfLoadFailed.value = false;  // v2.17: 成功加载，清除失败状态
         if (activeNovel.value && list.length > 0) {
           const updated = list.find(n => n.id === activeNovel.value.id);
           if (updated) activeNovel.value = updated;
@@ -2826,7 +2920,7 @@ const app = createApp({
           if (list.length > 0 || novels.value.length === 0) {
             novels.value = list;
           }
-          _shelfLoadFailed.value = false;  // v2.17: 加载成功，清除失败标记
+          shelfLoadFailed.value = false;  // v2.17: 加载成功，清除失败标记
         }
       } catch(e) {
         console.warn('Shelf refresh failed:', e.message);
@@ -2853,6 +2947,72 @@ const app = createApp({
         .catch(()=>{});
     }
     function openCreate() { if(isBusy.value) return; planResult.value=null; decomposeSummary.value=null; error.value=''; currentView.value='create'; }
+    
+    // ── v2.39: 爆火分析 + 逆天生成 ──
+    const trendData = ref(null);
+    const bizarreNovels = ref([]);
+    const bizarreMode = ref('topical');  // 'topical' | 'twist' | 'mixed'
+    const trendLoading = ref(false);
+    
+    function openTrends() {
+      if(isBusy.value) return;
+      planResult.value = null;
+      error.value = '';
+      currentView.value = 'trends';
+      if (!trendData.value) doTrendAnalyze();
+    }
+    
+    async function doTrendAnalyze() {
+      trendLoading.value = true; trendData.value = null; error.value = '';
+      try {
+        const r = await fetch(API+'/api/trends/analyze', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+        const d = await r.json();
+        if (d.ok) trendData.value = d;
+        else error.value = d.error;
+      } catch(e) { error.value = e.message; }
+      trendLoading.value = false;
+    }
+    
+    async function doBizarreQuick() {
+      trendLoading.value = true; error.value = '';
+      try {
+        const r = await fetch(API+'/api/trends/bizarre/quick', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:3, mode: bizarreMode.value})});
+        const d = await r.json();
+        if (d.ok) { bizarreNovels.value = d.bizarre_novels; if (!trendData.value) doTrendAnalyze(); }
+        else error.value = d.error;
+      } catch(e) { error.value = e.message; }
+      trendLoading.value = false;
+    }
+    
+    async function doBizarreFull() {
+      trendLoading.value = true; error.value = '';
+      try {
+        const r = await fetch(API+'/api/trends/bizarre', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:5, style:form.style||'热血爽文', mode: bizarreMode.value})});
+        const d = await r.json();
+        if (d.ok) { 
+          bizarreNovels.value = d.bizarre_novels;
+          if (d.trends) trendData.value = {patterns: d.trends, hot_novels: d.hot_novels, source: 'live'};
+        }
+        else error.value = d.error;
+      } catch(e) { error.value = e.message; }
+      trendLoading.value = false;
+    }
+    
+    async function createBizarreNovel(bn) {
+      if (isBusy.value) return;
+      isBusy.value = true; error.value = '';
+      try {
+        const p = bn.premise || bn;
+        form.genre = p.genre || '玄幻';
+        form.title = p.title || '';
+        // 用剧情梗概作为灵感，不去掉换行让LLM理解反转结构
+        form.inspiration = (p.synopsis || p.one_liner || '').replace(/\n/g, ' ');
+        form.target_words = 50000;
+        form.naturalNames = true;
+        await doCreate();
+      } catch(e) { error.value = e.message; }
+      isBusy.value = false;
+    }
     function openWrite() { if(isBusy.value) return; if(activeNovel.value) { currentView.value='write'; writing.activeTab='write'; _saveSession(); } }
     function openOutline() {
       if(isBusy.value) return;
@@ -2997,6 +3157,12 @@ const app = createApp({
             if(!ch.completed_chapters.includes(evt.chapter_num)) ch.completed_chapters.push(evt.chapter_num);
             ch.completed_chapters.sort((a,b)=>a-b); ch.current_chapter=Math.max(...ch.completed_chapters);
             loadShelfDebounced();
+            // v2.35: 生成完成后从API拉取保存版(已过规范化+过滤)，替换流式原始输出
+            const novId=encodeURIComponent(activeNovel.value.id);
+            fetch(API+'/api/novels/'+novId+'/chapters/'+evt.chapter_num)
+              .then(r=>r.ok?r.json():null)
+              .then(d=>{if(d&&d.content){writing.content=d.content;}})
+              .catch(()=>{});
             // v2.3.1: 自动刷新剧情图谱
             if (writing.activeTab === 'storygraph') loadStoryGraph(0);
           }
@@ -3299,10 +3465,11 @@ const app = createApp({
     });
 
     return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,toast,
-      form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,_shelfLoadFailed,
+      form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,shelfLoadFailed,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
       openCreate,openWrite,openOutline,doCreate,openNovel,startWriting,
+      openTrends,doTrendAnalyze,doBizarreQuick,doBizarreFull,createBizarreNovel,trendData,bizarreNovels,trendLoading,bizarreMode,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
