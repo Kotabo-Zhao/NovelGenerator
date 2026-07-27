@@ -598,11 +598,69 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     <template v-if="currentView==='create'">
       <div class="main-header">
         <h2>新作品</h2>
-        <div class="sub">灵感 → 世界观 → 大纲</div>
+        <div class="sub">选择模式开始创作</div>
       </div>
 
-      <div class="card">
-        <div class="card-title">灵感</div>
+      <!-- v2.50: 小红书爆款短篇模式 -->
+      <div class="card" :style="{border:'2px solid '+ (xhsMode ? 'var(--accent)' : 'var(--border)'), background: xhsMode ? 'linear-gradient(135deg, rgba(233,69,96,.08), rgba(255,107,107,.04))' : ''}">
+        <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" @click="xhsMode=!xhsMode">
+          <div>
+            <div style="font-size:16px;font-weight:700;color:var(--accent)">📕 小红书爆款短篇</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px">8000-10000字，女频爽文，一键生成完整短篇 + 爆款标题</div>
+          </div>
+          <div style="font-size:24px;color:var(--text2);transition:transform .2s" :style="{transform:xhsMode?'rotate(90deg)':''}">▶</div>
+        </div>
+        <template v-if="xhsMode">
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">选择模板</div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">
+              <button v-for="t in xhsTemplates" :key="t.key"
+                class="btn" :class="xhsTemplate===t.key?'btn-primary':'btn-secondary'"
+                style="font-size:11px;padding:8px 6px;text-align:center"
+                @click="xhsTemplate=t.key; loadXhsPresets()">
+                <div style="font-size:16px">{{ t.emoji }}</div>
+                <div style="margin-top:2px">{{ t.label }}</div>
+                <div style="font-size:9px;opacity:.5">{{ t.target_words }}字</div>
+              </button>
+            </div>
+            <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">预设剧情（点一下就能生成）</div>
+            <div v-if="xhsPresets.length>0" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin-bottom:10px;max-height:180px;overflow-y:auto">
+              <div v-for="p in xhsPresets" :key="p.id"
+                class="btn" :class="xhsPreset?.id===p.id?'btn-primary':'btn-secondary'"
+                style="font-size:11px;padding:8px;text-align:left;cursor:pointer"
+                @click="xhsPreset=p; xhsInspiration=''">
+                <div style="font-weight:600">{{ p.emoji }} {{ p.label }}</div>
+                <div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:4px">
+                  <span v-for="t in p.tags" style="font-size:9px;background:var(--bg2);color:var(--text2);padding:1px 5px;border-radius:8px">{{ t }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="xhsPreset" style="margin-bottom:10px;padding:8px 10px;background:var(--bg2);border-radius:6px;font-size:12px;color:var(--text2)">
+              📝 <b>{{ xhsPreset.label }}</b>：{{ xhsPreset.inspiration.slice(0,100) }}…
+            </div>
+            <div class="flex gap-8" style="margin-bottom:10px" v-if="!xhsPreset">
+              <input v-model="xhsInspiration" placeholder="或手动输入你的灵感…" style="font-size:12px;flex:1">
+            </div>
+            <button class="btn" style="width:100%;padding:12px;background:linear-gradient(135deg,#e94560,#ff6b6b);color:#fff;border:none;font-size:15px;font-weight:600"
+              @click="doXhsCreate" :disabled="loading.create || loading.xhs || (!xhsPreset && !xhsInspiration.trim())">
+              {{ loading.xhs ? '⏳ 生成中…' : '⚡ 一键生成短篇 + 爆款标题' }}
+            </button>
+            <div v-if="xhsResult" style="margin-top:16px;padding:12px;background:var(--bg2);border-radius:8px;font-size:12px">
+              <div style="color:var(--gold);margin-bottom:6px">✅ 生成完成 · {{ xhsResult.total_words }}字 · {{ xhsResult.chapters.length }}章</div>
+              <div style="color:var(--text2);margin-bottom:6px">📝 推荐标题（点击复制）：</div>
+              <div v-for="(t,i) in xhsResult.titles" :key="i" style="padding:4px 0;color:var(--text);border-bottom:1px solid var(--border);cursor:pointer" @click="navigator.clipboard.writeText(t);showToast('标题已复制','','✅')">
+                {{ i+1 }}. {{ t }}
+              </div>
+              <div class="flex gap-8 mt-8">
+                <span class="btn btn-primary btn-sm" style="cursor:pointer" @click="openNovel({id: xhsResult.novel_id, title: xhsResult.plan?.title, state: {completed_chapters: xhsResult.chapters.map(c=>c.number), total_chapters: 4, total_words: xhsResult.total_words}})">去书架写作</span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div style="font-size:14px;font-weight:600;color:var(--text2);margin-bottom:12px">📖 长篇模式 · 自定义创作</div>
         <div class="form-row">
           <div class="form-group"><label>题材</label><select v-model="form.genre"><option v-for="g in genres" :value="g">{{ g }}</option></select></div>
           <div class="form-group"><label>目标字数</label><select v-model="form.target_words"><option :value="10000">1万字</option><option :value="50000">5万字</option><option :value="100000">10万字</option><option :value="150000">15万字</option><option :value="200000">20万字</option><option :value="300000">30万字</option></select></div>
@@ -716,49 +774,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         生成大纲
       </button>
 
-      <!-- v2.50: 小红书爆款短篇快速模式 -->
-      <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
-        <div style="font-size:14px;font-weight:600;color:var(--accent);margin-bottom:8px">📕 小红书爆款短篇 · 一键生成</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
-          <button v-for="t in xhsTemplates" :key="t.key"
-            class="btn" :class="xhsTemplate===t.key?'btn-primary':'btn-secondary'"
-            style="font-size:11px;padding:6px"
-            @click="xhsTemplate=t.key; loadXhsPresets()">
-            {{ t.emoji }} {{ t.label }}
-          </button>
-        </div>
-        <!-- 预设组合 -->
-        <div v-if="xhsPresets.length>0" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px;margin-bottom:10px;max-height:200px;overflow-y:auto">
-          <div v-for="p in xhsPresets" :key="p.id"
-            class="btn btn-secondary" style="font-size:11px;padding:8px;text-align:left;cursor:pointer"
-            @click="xhsPreset=p; xhsInspiration=''">
-            <div style="font-weight:600">{{ p.emoji }} {{ p.label }}</div>
-            <div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:4px">
-              <span v-for="t in p.tags" style="font-size:9px;background:var(--bg2);color:var(--text2);padding:1px 5px;border-radius:8px">{{ t }}</span>
-            </div>
-          </div>
-        </div>
-        <div v-if="xhsPreset" style="margin-bottom:8px;padding:6px 8px;background:var(--bg2);border-radius:6px;font-size:11px;color:var(--text2)">
-          📝 {{ xhsPreset.emoji }} <b>{{ xhsPreset.label }}</b> — {{ xhsPreset.inspiration.slice(0,60) }}…
-        </div>
-        <div class="flex gap-8" style="margin-bottom:10px" v-if="!xhsPreset">
-          <input v-model="xhsInspiration" placeholder="或手动输入灵感…" style="font-size:11px;flex:1">
-        </div>
-        <button class="btn" style="width:100%;padding:10px;background:linear-gradient(135deg,#e94560,#ff6b6b);color:#fff;border:none;font-size:14px;font-weight:600"
-          @click="doXhsCreate" :disabled="loading.create || loading.xhs || (!xhsPreset && !xhsInspiration.trim())">
-          {{ loading.xhs ? '生成中…' : '⚡ 生成短篇 + 标题' }}
-        </button>
-        <div v-if="xhsResult" style="margin-top:16px;padding:12px;background:var(--bg2);border-radius:8px;font-size:12px">
-          <div style="color:var(--gold);margin-bottom:6px">✅ 生成完成 · {{ xhsResult.total_words }}字</div>
-          <div style="color:var(--text2);margin-bottom:6px">📝 推荐标题：</div>
-          <div v-for="(t,i) in xhsResult.titles" :key="i" style="padding:4px 0;color:var(--text);border-bottom:1px solid var(--border);cursor:pointer" @click="navigator.clipboard.writeText(t);alert('标题已复制')">
-            {{ i+1 }}. {{ t }}
-          </div>
-          <div class="flex gap-8 mt-8">
-            <a :href="'/api/novels/'+xhsResult.novel_id+'/export'" class="btn btn-secondary btn-sm" target="_blank">导出TXT</a>
-          </div>
-        </div>
-      </div>
       <!-- v2.3: 需求分析结果——简化版，避免复杂模板导致渲染崩溃 -->
       <div v-if="decomposeSummary" class="card" style="margin-top:12px;background:var(--bg2);border-color:var(--accent)">
         <div class="card-title" style="color:var(--accent);display:flex;align-items:center;justify-content:space-between">
@@ -2007,6 +2022,7 @@ const app = createApp({
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false, xhs:false });
     
     // v2.50: XHS 短篇模式
+    const xhsMode = ref(true);  // 默认展开
     const xhsTemplate = ref('爽文_打脸逆袭');
     const xhsInspiration = ref('');
     const xhsTwist = ref('');
@@ -3555,7 +3571,7 @@ const app = createApp({
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
       // v2.50
-      xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,doXhsCreate,loadXhsPresets,
+      xhsMode,xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,doXhsCreate,loadXhsPresets,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,
