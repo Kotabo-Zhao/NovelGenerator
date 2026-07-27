@@ -288,15 +288,36 @@ class SharedMemoryManager:
 - character_states 只列出状态有变化的角色"""
 
         try:
-            response = client.chat.completions.create(
-                model=model or "deepseek-chat",
-                messages=[
-                    {"role": "system", "content": "你是一位小说编辑，擅长分析叙事结构和章节衔接。只输出JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.2,
-                max_tokens=800,
-            )
+            # v2.15: 使用韧性客户端（如果传入的是ResilientClient则直接用，否则包装）
+            resilient = None
+            try:
+                from .resilient_client import ResilientLLMClient
+                if isinstance(client, ResilientLLMClient):
+                    resilient = client
+                else:
+                    resilient = ResilientLLMClient(client, model or "deepseek-chat")
+            except ImportError:
+                resilient = None
+            
+            if resilient:
+                response = resilient.create(
+                    messages=[
+                        {"role": "system", "content": "你是一位小说编辑，擅长分析叙事结构和章节衔接。只输出JSON。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.2,
+                    max_tokens=800,
+                )
+            else:
+                response = client.chat.completions.create(
+                    model=model or "deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": "你是一位小说编辑，擅长分析叙事结构和章节衔接。只输出JSON。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.2,
+                    max_tokens=800,
+                )
             content = response.choices[0].message.content.strip()
             # 去掉可能的 markdown 代码块
             if content.startswith("```"):
