@@ -267,6 +267,24 @@ async def delete_style_seed(name: str):
     return {"success": True}
 
 
+@app.get("/api/novels")
+async def list_novels():
+    """列出所有小说"""
+    return {"novels": engine.list_novels()}
+
+
+@app.get("/api/novels/{novel_id}")
+async def get_novel(novel_id: str):
+    """获取小说详情"""
+    plan = engine.get_novel(novel_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在")
+    # 移除过大的章节内容
+    if "chapters" in plan:
+        del plan["chapters"]
+    return {"novel": plan}
+
+
 @app.get("/api/novels/{novel_id}/quality-dashboard")
 async def get_quality_dashboard(novel_id: str):
     """v2.16: 小说质量仪表板 — 聚合所有质量维度"""
