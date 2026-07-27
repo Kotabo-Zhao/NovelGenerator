@@ -565,11 +565,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
       <div v-if="loading.shelf && novels.length===0" class="text-center mt-24"><div class="spinner"></div><p class="color-text2 mt-8 text-xs">加载中…</p></div>
       
-      <div v-else-if="novels.length===0" class="empty">
-        <div class="empty-icon">📚</div>
-        <h3>书架空空</h3>
-        <p>选择一位大师的风格，开始你的第一部作品</p>
-        <button class="btn btn-primary" @click="openCreate">开始创作</button>
+      <div v-else-if="novels.length===0 && !loading.shelf" class="empty">
+        <div class="empty-icon">{{ _shelfLoadFailed ? '⚠️' : '📚' }}</div>
+        <h3>{{ _shelfLoadFailed ? '加载失败' : '书架空空' }}</h3>
+        <p>{{ _shelfLoadFailed ? '服务器暂未就绪，请稍后重试' : '选择一位大师的风格，开始你的第一部作品' }}</p>
+        <button class="btn btn-primary" @click="openCreate" v-if="!_shelfLoadFailed">开始创作</button>
+        <button class="btn btn-primary" @click="loadShelf(); _shelfLoadFailed=false" v-if="_shelfLoadFailed">🔄 重新加载</button>
+        <button class="btn btn-ghost mt-8" @click="loadShelf" style="font-size:12px" v-if="!_shelfLoadFailed">🔄 重新加载</button>
+      </div>
       </div>
 
       <div v-else class="shelf-grid">
@@ -1865,6 +1868,7 @@ const app = createApp({
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
+    const _shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
     const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
@@ -2676,20 +2680,29 @@ const app = createApp({
         else if (_safetyTimer) { clearTimeout(_safetyTimer); _safetyTimer = null; }
       });
       
-      // 书架加载（带重试 + fail-safe）
+      // 书架加载（带重试 + fail-safe + timeout）
       try {
         loading.shelf = true;
-        // v2.11: 先等API就绪（Android嵌入式服务器可能启动较慢）
-        try { await fetch(API+'/api/health', {signal: AbortSignal.timeout(5000)}); } catch(_) {}
-        for (let attempt=0; attempt<3; attempt++) {
-          const ok = await _loadShelfOnce();
+        // v2.17: 兼容旧WebView的 fetch timeout（AbortSignal.timeout 需要 Chrome 103+）
+        const _fetchTimeout = (url, ms) => {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), ms);
+          return fetch(url, {signal: ctrl.signal}).finally(() => clearTimeout(timer));
+        };
+        // 先等API就绪
+        try { await _fetchTimeout(API+'/api/health', 8000); } catch(_) {}
+        for (let attempt=0; attempt<5; attempt++) {
+          const ok = await _loadShelfOnce(_fetchTimeout);
           if (ok) break;
-          if (attempt < 2) await new Promise(r => setTimeout(r, 1500));
+          if (attempt < 4) await new Promise(r => setTimeout(r, 2000));
         }
       } catch(e) {
         console.warn('Shelf load error:', e);
+        _shelfLoadFailed.value = true;
       } finally {
-        loading.shelf = false;  // v2.11: 无论如何都要关闭loading
+        loading.shelf = false;
+        // v2.17: 全局安全阀 — 无论什么情况，30秒后强制清除loading
+        setTimeout(() => { if (loading.shelf) { loading.shelf = false; _shelfLoadFailed.value = true; } }, 30000);
       }
       // 恢复上次session — 两步兜底：
       //   1) 书架里找（最优，带完整 state）
@@ -2778,32 +2791,49 @@ const app = createApp({
 
     async function loadStyles() { try { const r=await fetch(API+'/api/styles'); styleCategories.value=(await r.json()).categories||{}; } catch(e){} }
     let _shelfDebounce=null;
-    async function _loadShelfOnce() {
-      // 内部fetch，返回true/false，失败不覆盖已有数据
+    async function _loadShelfOnce(_ft) {
+      // v2.17: _ft 是兼容旧WebView的 fetch timeout 包装
       try {
-        const r = await fetch(API+'/api/novels');
+        const r = _ft ? await _ft(API+'/api/novels', 15000) : await fetch(API+'/api/novels');
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
         const list = data.novels || [];
-        // 仅在成功且有数据时更新（或首次加载）
         if (list.length > 0 || novels.value.length === 0) {
           novels.value = list;
         }
+        _shelfLoadFailed.value = false;  // v2.17: 成功加载，清除失败状态
         if (activeNovel.value && list.length > 0) {
           const updated = list.find(n => n.id === activeNovel.value.id);
           if (updated) activeNovel.value = updated;
         }
         return true;
       } catch(e) {
-        console.warn('Shelf fetch retry:', e.message);
+        console.warn('Shelf fetch failed:', e.message);
         return false;
       }
     }
     async function loadShelf() {
       if (_shelfDebounce) { clearTimeout(_shelfDebounce); _shelfDebounce=null; }
       if (!loading.shelf && novels.value.length === 0) loading.shelf = true;
-      await _loadShelfOnce();
-      loading.shelf = false;
+      // v2.17: 兼容旧WebView的手动timeout
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      try {
+        const r = await fetch(API+'/api/novels', {signal: ctrl.signal});
+        if (r.ok) {
+          const data = await r.json();
+          const list = data.novels || [];
+          if (list.length > 0 || novels.value.length === 0) {
+            novels.value = list;
+          }
+          _shelfLoadFailed.value = false;  // v2.17: 加载成功，清除失败标记
+        }
+      } catch(e) {
+        console.warn('Shelf refresh failed:', e.message);
+      } finally {
+        clearTimeout(timer);
+        loading.shelf = false;
+      }
     }
     function loadShelfDebounced() {
       if (_shelfDebounce) return;
@@ -3269,7 +3299,7 @@ const app = createApp({
     });
 
     return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,toast,
-      form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,
+      form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,_shelfLoadFailed,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
       openCreate,openWrite,openOutline,doCreate,openNovel,startWriting,
