@@ -1870,7 +1870,7 @@ async def create_xhs_novel(req: dict):
             creative_input["inspiration"] += f"\n\n必须包含的剧情反转：{twist}"
         
         # 用 planner 生成大纲
-        plan = await engine.planner.plan_stream(creative_input)
+        plan = engine.planner.plan_stream(creative_input)
         full_plan = None
         async for event in plan:
             if isinstance(event, dict) and event.get("type") == "plan_complete":
