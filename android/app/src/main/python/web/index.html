@@ -645,6 +645,15 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               @click="doXhsCreate" :disabled="loading.create || loading.xhs || (!xhsPreset && !xhsInspiration.trim())">
               {{ loading.xhs ? '⏳ 生成中…' : '⚡ 一键生成短篇 + 爆款标题' }}
             </button>
+            <div v-if="loading.xhs" style="margin-top:12px">
+              <div style="height:6px;background:var(--bg2);border-radius:3px;overflow:hidden">
+                <div :style="{width:xhsProgress+'%',height:'100%',background:'linear-gradient(90deg,#e94560,#ff6b6b)',transition:'width .3s'}"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--text2)">
+                <span>{{ xhsPhase || '准备中…' }}</span><span>{{ xhsProgress }}%</span>
+              </div>
+              <div v-if="xhsStreamText" style="margin-top:8px;padding:8px;background:var(--bg2);border-radius:6px;font-size:11px;color:var(--text2);max-height:120px;overflow-y:auto;white-space:pre-wrap;line-height:1.5">{{ xhsStreamText.slice(-500) }}</div>
+            </div>
             <div v-if="xhsResult" style="margin-top:16px;padding:12px;background:var(--bg2);border-radius:8px;font-size:12px">
               <div style="color:var(--gold);margin-bottom:6px">✅ 生成完成 · {{ xhsResult.total_words }}字 · {{ xhsResult.chapters.length }}章</div>
               <div style="color:var(--text2);margin-bottom:6px">📝 推荐标题（点击复制）：</div>
@@ -2025,11 +2034,13 @@ const app = createApp({
     const xhsMode = ref(true);  // 默认展开
     const xhsTemplate = ref('爽文_打脸逆袭');
     const xhsInspiration = ref('');
-    const xhsTwist = ref('');
     const xhsResult = ref(null);
     const xhsTemplates = ref([]);
     const xhsPresets = ref([]);
     const xhsPreset = ref(null);
+    const xhsProgress = ref(0);
+    const xhsPhase = ref('');
+    const xhsStreamText = ref('');
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
@@ -3076,17 +3087,35 @@ const app = createApp({
     }
     async function doXhsCreate() {
       if (loading.xhs) return;
-      loading.xhs = true; xhsResult.value = null; error.value = '';
+      loading.xhs = true; xhsResult.value = null; xhsProgress.value = 0; xhsPhase.value = ''; xhsStreamText.value = ''; error.value = '';
       const inspiration = xhsPreset.value ? xhsPreset.value.inspiration : xhsInspiration.value.trim();
       if (!inspiration) { reportError('请选择预设或输入灵感'); loading.xhs = false; return; }
       try {
-        const r = await fetch(API+'/api/xiaohongshu/create', {
+        const resp = await fetch(API+'/api/xiaohongshu/create', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ template: xhsTemplate.value, inspiration })
         });
-        const d = await r.json();
-        if (d.ok) { xhsResult.value = d; }
-        else { reportError(d.detail || '生成失败'); }
+        if (!resp.ok) { const d=await resp.json(); reportError(d.detail||'请求失败'); loading.xhs=false; return; }
+        const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, {stream: true});
+          const lines = buffer.split('\n'); buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const evt = JSON.parse(line.slice(6));
+                if (evt.type === 'progress') { xhsProgress.value = evt.pct; xhsPhase.value = evt.message; }
+                else if (evt.type === 'chapter_start') { xhsPhase.value = `撰写第${evt.number}章 · ${evt.title}`; xhsProgress.value = evt.pct; }
+                else if (evt.type === 'chunk' && evt.chapter === 3) { xhsStreamText.value += evt.text; }
+                else if (evt.type === 'chapter_done') { xhsProgress.value = evt.pct; }
+                else if (evt.type === 'done') { xhsResult.value = evt; xhsProgress.value = 100; xhsPhase.value = '完成！'; }
+                else if (evt.type === 'error') { reportError(evt.message); loading.xhs = false; return; }
+              } catch(e) {}
+            }
+          }
+        }
       } catch(e) { reportError(e.message||'网络错误'); }
       finally { loading.xhs = false; }
     }
@@ -3570,7 +3599,7 @@ const app = createApp({
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
       // v2.50
-      xhsMode,xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,doXhsCreate,loadXhsPresets,
+      xhsMode,xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,xhsProgress,xhsPhase,xhsStreamText,doXhsCreate,loadXhsPresets,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,

@@ -1842,129 +1842,126 @@ async def list_xhs_templates():
 
 @app.post("/api/xiaohongshu/create")
 async def create_xhs_novel(req: dict = None):
-    """创建并生成一篇完整的小红书短篇"""
+    """SSE流式创建小红书短篇 — 实时推送进展"""
     if not req:
         req = {}
     template_key = req.get("template", "爽文_打脸逆袭")
     inspiration = req.get("inspiration", "")
     twist = req.get("twist", "")
-    fast_mode = req.get("fast_mode", True)  # 默认快速模式
     
     if template_key not in TEMPLATES:
-        raise HTTPException(status_code=400, detail=f"未知模板: {template_key}。可用: {list(TEMPLATES.keys())}")
+        raise HTTPException(status_code=400, detail=f"未知模板: {template_key}")
     
-    try:
-        tpl = TEMPLATES[template_key]
-        
-        # 1. 生成大纲
-        log.info(f"XHS Create: template={template_key}, inspiration={inspiration[:50]}")
-        
-        # 构建 creative_input
-        creative_input = {
-            "genre": tpl["genre"],
-            "style": tpl["style"],
-            "inspiration": inspiration or tpl["typical_hooks"][0],
-            "target_words": tpl["target_words"],
-            "normal_pacing": False,
-            "fast_food": True,
-        }
-        if twist:
-            creative_input["inspiration"] += f"\n\n必须包含的剧情反转：{twist}"
-        
-        # 用 planner 生成大纲
-        plan = engine.planner.plan_stream(creative_input)
-        full_plan = None
-        async for event in plan:
-            if isinstance(event, dict) and event.get("type") == "plan_complete":
-                full_plan = event.get("plan")
-        if not full_plan:
-            full_plan = {"title": inspiration[:20] or "未命名"}
-        
-        # Override with template structure
-        # 用模板结构替换 LLM 生成的大纲
-        for i, ch_tpl in enumerate(tpl["chapters"]):
-            # 在已有的 volumes[0].chapters 中更新
-            volumes = full_plan.get("outline", {}).get("volumes", [])
-            if volumes and volumes[0].get("chapters"):
-                chapters = volumes[0]["chapters"]
-                if i < len(chapters):
-                    chapters[i]["title"] = ch_tpl["title"]
-                    chapters[i]["hook"] = ch_tpl["hook"]
-                    chapters[i]["target_words"] = ch_tpl["words"]
-                    chapters[i]["_function"] = ch_tpl["function"]
-        
-        # 创建小说
-        novel = engine.create_novel(full_plan)
-        novel_id = novel.get("title", full_plan.get("title", "xhs_novel"))
-        
-        # 2. 逐章生成
-        chapters_result = []
-        total_words = 0
-        for ch_tpl in tpl["chapters"]:
-            ch_num = ch_tpl["number"]
-            func = ch_tpl["function"]
-            is_cliffhanger = "★" in func or "付费" in func
+    tpl = TEMPLATES[template_key]
+    
+    async def event_stream():
+        try:
+            # Phase 0: 开始
+            yield f"data: {json.dumps({'type':'start','template':template_key,'total_chapters':len(tpl['chapters']),'label':tpl['label']})}\n\n"
             
-            log.info(f"XHS Generate: Ch{ch_num}/{len(tpl['chapters'])} - {func}")
+            # Phase 1: 生成大纲
+            yield f"data: {json.dumps({'type':'progress','phase':'planning','message':'生成大纲中…','pct':5})}\n\n"
             
-            # 构建反馈（带付费钩子指令）
-            feedback = None
-            if "★" in func or ch_num == 3:
-                feedback = f"""⚠️ 本章是付费卡点章节。必须做到：
-1. 开头立即回应当前一章的钩子
-2. 在500字内给出第一个爽点
-3. 反转层层递进，不要一次性揭露
-4. 结尾留悬念（为下一章铺垫）
-5. 本章至少3次打脸/反转"""
-            elif ch_num == 2:
-                feedback = f"""⚠️ 这是付费卡点前最后一章。结尾必须埋一个让读者「不付费就睡不着」的钩子：
-1. 在最关键的信息快要揭露时停笔
-2. 让主角处于「即将逆袭但还差一步」的状态
-3. 反派嚣张度达到顶点
-钩子参考：{ch_tpl['hook']}"""
+            creative_input = {
+                "genre": tpl["genre"], "style": tpl["style"],
+                "inspiration": inspiration or tpl["typical_hooks"][0],
+                "target_words": tpl["target_words"],
+                "normal_pacing": False, "fast_food": True,
+            }
+            if twist:
+                creative_input["inspiration"] += f"\n\n必须包含的剧情反转：{twist}"
             
-            full_text = ""
-            async for chunk in engine.generate_chapter_stream(
-                novel_id=novel_id,
-                chapter_num=ch_num,
-                writing_mode="webnovel",
-                feedback=feedback,
-            ):
-                if isinstance(chunk, dict):
-                    if chunk.get("type") == "chunk":
-                        full_text += chunk.get("text", "")
-                elif isinstance(chunk, str):
-                    full_text += chunk
+            plan = engine.planner.plan_stream(creative_input)
+            full_plan = None
+            async for event in plan:
+                if isinstance(event, dict):
+                    if event.get("type") == "plan_complete":
+                        full_plan = event.get("plan")
+                    elif event.get("type") == "progress":
+                        yield f"data: {json.dumps({'type':'progress','phase':'planning','message':event.get('label',''),'pct':min(10+event.get('pct',0)//5,25)})}\n\n"
             
-            if full_text:
-                chapters_result.append({
-                    "number": ch_num,
-                    "title": ch_tpl["title"],
-                    "function": func,
-                    "text": full_text,
-                    "word_count": len(full_text),
-                    "is_cliffhanger": is_cliffhanger,
-                })
-                total_words += len(full_text)
+            if not full_plan:
+                full_plan = {"title": inspiration[:20] or "未命名"}
+            
+            # Override with template structure
+            for i, ch_tpl in enumerate(tpl["chapters"]):
+                volumes = full_plan.get("outline", {}).get("volumes", [])
+                if volumes and volumes[0].get("chapters"):
+                    chapters = volumes[0]["chapters"]
+                    if i < len(chapters):
+                        chapters[i]["title"] = ch_tpl["title"]
+                        chapters[i]["hook"] = ch_tpl["hook"]
+                        chapters[i]["target_words"] = ch_tpl["words"]
+                        chapters[i]["_function"] = ch_tpl["function"]
+            
+            yield f"data: {json.dumps({'type':'progress','phase':'planning','message':'大纲完成','pct':25})}\n\n"
+            
+            # Phase 2: 创建小说
+            novel = engine.create_novel(full_plan)
+            novel_id = novel.get("title", full_plan.get("title", "xhs_novel"))
+            yield f"data: {json.dumps({'type':'novel_created','novel_id':novel_id,'title':full_plan.get('title','')})}\n\n"
+            
+            # Phase 3: 逐章生成（实时推送文本）
+            chapters_result = []
+            total_words = 0
+            for ch_tpl in tpl["chapters"]:
+                ch_num = ch_tpl["number"]
+                func = ch_tpl["function"]
+                pct_base = 25 + int((ch_num - 1) / len(tpl["chapters"]) * 50)
+                
+                yield f"data: {json.dumps({'type':'chapter_start','number':ch_num,'title':ch_tpl['title'],'function':func,'pct':pct_base})}\n\n"
+                
+                feedback = None
+                if "★" in func or ch_num == 3:
+                    feedback = f"⚠️ 本章是付费卡点章节。开头立即回应钩子，500字内给第一个爽点，反转层层递进，结尾留悬念，至少3次打脸/反转"
+                elif ch_num == 2:
+                    feedback = f"⚠️ 付费卡点前最后一章。结尾埋最强钩子让读者非看不可。参考：{ch_tpl['hook']}"
+                
+                full_text = ""
+                last_pct = pct_base
+                async for chunk in engine.generate_chapter_stream(
+                    novel_id=novel_id, chapter_num=ch_num, writing_mode="webnovel", feedback=feedback,
+                ):
+                    if isinstance(chunk, dict):
+                        if chunk.get("type") == "chunk":
+                            t = chunk.get("text", "")
+                            full_text += t
+                            yield f"data: {json.dumps({'type':'chunk','chapter':ch_num,'text':t})}\n\n"
+                        elif chunk.get("type") == "status":
+                            new_pct = pct_base + 5
+                            if new_pct > last_pct:
+                                yield f"data: {json.dumps({'type':'progress','phase':'writing','message':f'撰写第{ch_num}章…','pct':new_pct})}\n\n"
+                                last_pct = new_pct
+                    elif isinstance(chunk, str):
+                        full_text += chunk
+                        if len(full_text) % 200 < 10:
+                            yield f"data: {json.dumps({'type':'chunk','chapter':ch_num,'text':chunk})}\n\n"
+                
+                if full_text:
+                    chapters_result.append({
+                        "number": ch_num, "title": ch_tpl["title"], "function": func,
+                        "text": full_text, "word_count": len(full_text),
+                        "is_cliffhanger": "★" in func or "付费" in func,
+                    })
+                    total_words += len(full_text)
+                
+                pct_done = pct_base + 12
+                yield f"data: {json.dumps({'type':'chapter_done','number':ch_num,'title':ch_tpl['title'],'words':len(full_text),'pct':min(pct_done,90)})}\n\n"
+            
+            # Phase 4: 生成标题
+            yield f"data: {json.dumps({'type':'progress','phase':'titles','message':'生成爆款标题…','pct':92})}\n\n"
+            titles = generate_titles(engine.client, engine.model, full_plan,
+                                     " ".join([c["text"][:100] for c in chapters_result if c.get("text")]))
+            
+            # Phase 5: 完成
+            yield f"data: {json.dumps({'type':'done','ok':True,'novel_id':novel_id,'template':template_key,'plan':full_plan,'chapters':chapters_result,'titles':titles,'cliffhanger_chapter':3,'total_words':total_words,'pct':100})}\n\n"
         
-        # 3. 生成标题
-        titles = generate_titles(engine.client, engine.model, full_plan,
-                                 " ".join([c["text"][:100] for c in chapters_result if c.get("text")]))
-        
-        return {
-            "ok": True,
-            "novel_id": novel_id,
-            "template": template_key,
-            "plan": full_plan,
-            "chapters": chapters_result,
-            "titles": titles,
-            "cliffhanger_chapter": 3,
-            "total_words": total_words,
-        }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/xiaohongshu/presets")
