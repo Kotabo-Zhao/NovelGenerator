@@ -2816,9 +2816,8 @@ const app = createApp({
     onMounted(async () => {
       applyAppearance();
       loadStyles(); loadStyleSeeds(); // fire-and-forget
-      // v2.50: 加载小红书模板列表
-      fetch('/api/xiaohongshu/templates').then(r=>r.json()).then(d=>{ if(d.ok) xhsTemplates.value=d.templates; }).catch(()=>{});
-      loadXhsPresets();
+      // v2.50: 加载小红书模板列表（加载完自动加载预设）
+      fetch('/api/xiaohongshu/templates').then(r=>r.json()).then(d=>{ if(d.ok){ xhsTemplates.value=d.templates; loadXhsPresets(); } }).catch(()=>{});
       
       // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
       setTimeout(() => { if (loading.shelf) { loading.shelf = false; console.warn('Shelf loading: forced close after 12s'); } }, 12000);
