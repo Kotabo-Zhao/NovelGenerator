@@ -718,23 +718,34 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
       <!-- v2.50: 小红书爆款短篇快速模式 -->
       <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
-        <div style="font-size:14px;font-weight:600;color:var(--accent);margin-bottom:12px">📕 小红书爆款短篇 · 一键生成</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div style="font-size:14px;font-weight:600;color:var(--accent);margin-bottom:8px">📕 小红书爆款短篇 · 一键生成</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
           <button v-for="t in xhsTemplates" :key="t.key"
             class="btn" :class="xhsTemplate===t.key?'btn-primary':'btn-secondary'"
-            style="font-size:12px;padding:8px"
-            @click="xhsTemplate=t.key">
-            {{ t.emoji }} {{ t.label }}<br><span style="opacity:.5;font-size:10px">{{ t.target_words }}字</span>
+            style="font-size:11px;padding:6px"
+            @click="xhsTemplate=t.key; loadXhsPresets()">
+            {{ t.emoji }} {{ t.label }}
           </button>
         </div>
-        <div class="form-group" style="margin-bottom:8px">
-          <input v-model="xhsInspiration" placeholder="额外灵感（可选，如：被退婚后女主发现自己怀孕了）" style="font-size:12px">
+        <!-- 预设组合 -->
+        <div v-if="xhsPresets.length>0" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px;margin-bottom:10px;max-height:200px;overflow-y:auto">
+          <div v-for="p in xhsPresets" :key="p.id"
+            class="btn btn-secondary" style="font-size:11px;padding:8px;text-align:left;cursor:pointer"
+            @click="xhsPreset=p; xhsInspiration=''">
+            <div style="font-weight:600">{{ p.emoji }} {{ p.label }}</div>
+            <div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:4px">
+              <span v-for="t in p.tags" style="font-size:9px;background:var(--bg2);color:var(--text2);padding:1px 5px;border-radius:8px">{{ t }}</span>
+            </div>
+          </div>
         </div>
-        <div class="form-group" style="margin-bottom:8px">
-          <input v-model="xhsTwist" placeholder="指定反转（可选，如：最后发现反派是亲生父亲）" style="font-size:12px">
+        <div v-if="xhsPreset" style="margin-bottom:8px;padding:6px 8px;background:var(--bg2);border-radius:6px;font-size:11px;color:var(--text2)">
+          📝 {{ xhsPreset.emoji }} <b>{{ xhsPreset.label }}</b> — {{ xhsPreset.inspiration.slice(0,60) }}…
+        </div>
+        <div class="flex gap-8" style="margin-bottom:10px" v-if="!xhsPreset">
+          <input v-model="xhsInspiration" placeholder="或手动输入灵感…" style="font-size:11px;flex:1">
         </div>
         <button class="btn" style="width:100%;padding:10px;background:linear-gradient(135deg,#e94560,#ff6b6b);color:#fff;border:none;font-size:14px;font-weight:600"
-          @click="doXhsCreate" :disabled="loading.create || loading.xhs">
+          @click="doXhsCreate" :disabled="loading.create || loading.xhs || (!xhsPreset && !xhsInspiration.trim())">
           {{ loading.xhs ? '生成中…' : '⚡ 生成短篇 + 标题' }}
         </button>
         <div v-if="xhsResult" style="margin-top:16px;padding:12px;background:var(--bg2);border-radius:8px;font-size:12px">
@@ -2001,6 +2012,8 @@ const app = createApp({
     const xhsTwist = ref('');
     const xhsResult = ref(null);
     const xhsTemplates = ref([]);
+    const xhsPresets = ref([]);
+    const xhsPreset = ref(null);
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
@@ -2789,6 +2802,7 @@ const app = createApp({
       loadStyles(); loadStyleSeeds(); // fire-and-forget
       // v2.50: 加载小红书模板列表
       fetch('/api/xiaohongshu/templates').then(r=>r.json()).then(d=>{ if(d.ok) xhsTemplates.value=d.templates; }).catch(()=>{});
+      loadXhsPresets();
       
       // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
       setTimeout(() => { if (loading.shelf) { loading.shelf = false; console.warn('Shelf loading: forced close after 12s'); } }, 12000);
@@ -3040,17 +3054,20 @@ const app = createApp({
     }
 
     // v2.50: 小红书短篇一键生成
+    function loadXhsPresets() {
+      const tpl = xhsTemplate.value;
+      fetch('/api/xiaohongshu/presets?template='+encodeURIComponent(tpl))
+        .then(r=>r.json()).then(d=>{ if(d.ok) xhsPresets.value=d.presets; }).catch(()=>{});
+    }
     async function doXhsCreate() {
       if (loading.xhs) return;
       loading.xhs = true; xhsResult.value = null; error.value = '';
+      const inspiration = xhsPreset.value ? xhsPreset.value.inspiration : xhsInspiration.value.trim();
+      if (!inspiration) { reportError('请选择预设或输入灵感'); loading.xhs = false; return; }
       try {
         const r = await fetch(API+'/api/xiaohongshu/create', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({
-            template: xhsTemplate.value,
-            inspiration: xhsInspiration.value.trim(),
-            twist: xhsTwist.value.trim(),
-          })
+          body: JSON.stringify({ template: xhsTemplate.value, inspiration })
         });
         const d = await r.json();
         if (d.ok) { xhsResult.value = d; }
@@ -3538,7 +3555,7 @@ const app = createApp({
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
       // v2.50
-      xhsTemplate,xhsInspiration,xhsTwist,xhsTemplates,xhsResult,doXhsCreate,
+      xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,doXhsCreate,loadXhsPresets,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,

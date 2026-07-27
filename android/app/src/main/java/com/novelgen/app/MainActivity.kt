@@ -100,8 +100,10 @@ class MainActivity : AppCompatActivity() {
         binding.webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 binding.progressBar.visibility = View.GONE
+                binding.swipeRefresh.isRefreshing = false  // v2.27: 修复下拉刷新动画停不下来
             }
             override fun onReceivedError(view: WebView?, req: WebResourceRequest?, err: WebResourceError?) {
+                binding.swipeRefresh.isRefreshing = false  // 错误时也停止刷新动画
                 if (req?.isForMainFrame == true) {
                     handler.postDelayed({ binding.webView.reload() }, 1000)
                 }

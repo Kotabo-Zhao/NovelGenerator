@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NovelGenerator 测试报告</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;background:#0d1117;color:#e6edf3;padding:40px;max-width:800px;margin:0 auto}
+h1{font-size:24px;margin-bottom:4px}
+.status{display:inline-block;padding:4px 12px;border-radius:6px;font-weight:700;font-size:14px;background:#f8514922;color:#f85149;border:1px solid #f8514944}
+.meta{color:#8b949e;font-size:13px;margin:12px 0 24px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;margin-bottom:16px}
+.card h3{font-size:16px;margin:0 0 12px;color:#58a6ff}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.stat{text-align:center;padding:12px;background:#0d1117;border-radius:8px}
+.stat .num{font-size:28px;font-weight:700}
+.stat .label{font-size:12px;color:#8b949e;margin-top:4px}
+.good{color:#3fb950}.bad{color:#f85149}.warn{color:#d29922}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 12px;color:#8b949e;font-weight:500;border-bottom:1px solid #30363d}
+td{padding:8px 12px;border-bottom:1px solid #21262d}
+.log{background:#0d1117;border-radius:8px;padding:16px;font-family:'SF Mono',Consolas,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;max-height:400px;overflow:auto}
+</style>
+</head>
+<body>
+<h1>NovelGenerator 测试管线报告</h1>
+<div class="status">❌ 发现错误</div>
+<div class="meta">
+  生成时间: 2026-07-27 12:11:35<br>
+  服务器端口: 8898 | Python: 3.13.14
+</div>
+
+<div class="card">
+  <h3>📊 测试统计</h3>
+  <div class="stat-grid">
+    <div class="stat"><div class="num good">21</div><div class="label">通过</div></div>
+    <div class="stat"><div class="num bad">1</div><div class="label">失败</div></div>
+    <div class="stat"><div class="num good">0</div><div class="label">JS 错误</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>📋 关键检查项</h3>
+  <table>
+    <tr><th>项目</th><th>结果</th></tr>
+    <tr><td>服务器启动</td><td class="good">✅ OK</td></tr>
+    <tr><td>API 可用性</td><td class="good">✅ ok</td></tr>
+    <tr><td>前端页面加载</td><td class="good">✅ 正常</td></tr>
+    <tr><td>书架展示 (3本)</td><td class="good">✅ 3本</td></tr>
+    <tr><td>JS/Vue 错误数</td><td class="good">✅ 0</td></tr>
+    <tr><td>新建小说流程</td><td class="good">✅ 可用</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>📝 测试日志</h3>
+  <div class="log">
+═══ 启动 Python 服务器...
+  ✅ 服务器就绪 (port=8898)
+
+═══ 运行 E2E 浏览器测试...
+  ✅ E2E 测试完成
+  ✅ 零 JS 错误 ✅
+
+═══ 前端错误扫描...
+  ✅ 书架 (shelf) 无错误
+
+═══ 生成测试报告...</div>
+</div>
+</body>
+</html>

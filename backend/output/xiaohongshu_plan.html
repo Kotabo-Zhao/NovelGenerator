@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书 AI 小说变现计划书</title>
+<style>
+  :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; --gold: #f0a500; --text: #eee; --muted: #aaa; --border: #2a2a4a; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height:1.7; padding:20px; }
+  .container { max-width: 1000px; margin:0 auto; }
+  h1 { text-align:center; font-size:2.2em; background: linear-gradient(135deg, var(--accent), #ff6b6b); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:8px; }
+  .subtitle { text-align:center; color:var(--muted); font-size:0.95em; margin-bottom:40px; }
+  h2 { font-size:1.5em; color:var(--accent); border-bottom:2px solid var(--accent); padding-bottom:8px; margin:40px 0 20px; }
+  h3 { font-size:1.15em; color:var(--gold); margin:24px 0 12px; }
+  .card { background:var(--card); border-radius:12px; padding:24px; margin:16px 0; border:1px solid var(--border); }
+  .card-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px; }
+  .stat-row { display:flex; gap:20px; flex-wrap:wrap; }
+  .stat { flex:1; min-width:180px; background:var(--card); border-radius:12px; padding:20px; text-align:center; border:1px solid var(--border); }
+  .stat .num { font-size:2em; font-weight:bold; color:var(--accent); }
+  .stat .label { color:var(--muted); font-size:0.85em; margin-top:4px; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; }
+  th, td { padding:12px 16px; text-align:left; border-bottom:1px solid var(--border); }
+  th { color:var(--gold); font-size:0.9em; text-transform:uppercase; }
+  td { font-size:0.92em; }
+  .highlight { color:var(--accent); font-weight:bold; }
+  .tag { display:inline-block; background:var(--accent); color:#fff; padding:2px 10px; border-radius:12px; font-size:0.8em; margin-right:6px; }
+  .timeline { position:relative; padding-left:30px; }
+  .timeline::before { content:''; position:absolute; left:12px; top:0; bottom:0; width:2px; background:var(--accent); }
+  .timeline-item { position:relative; margin-bottom:24px; }
+  .timeline-item::before { content:''; position:absolute; left:-22px; top:4px; width:12px; height:12px; border-radius:50%; background:var(--accent); }
+  .timeline-item h3 { margin-top:0; }
+  .warning { background:#2a1a1a; border-left:4px solid #e94560; padding:16px; margin:16px 0; border-radius:0 8px 8px 0; }
+  .success { background:#1a2a1a; border-left:4px solid #4caf50; padding:16px; margin:16px 0; border-radius:0 8px 8px 0; }
+  ul, ol { margin-left:20px; }
+  li { margin-bottom:6px; }
+  .formula-box { background: #0d1117; border:1px solid var(--border); border-radius:8px; padding:16px; margin:12px 0; font-family: monospace; font-size:0.9em; }
+  .formula-box .phase { color:var(--gold); }
+  .formula-box .hook { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>📕 小红书 AI 短篇小说变现计划书</h1>
+<p class="subtitle">从零起号 → 日更量产 → 月入过万的完整作战方案 · 2026年7月</p>
+
+<!-- ═══════════════ 市场数据 ═══════════════ -->
+<h2>一、市场数据</h2>
+<div class="stat-row">
+  <div class="stat"><div class="num">3.39 亿</div><div class="label">小红书月活用户</div></div>
+  <div class="stat"><div class="num">495 亿</div><div class="label">2024 网文市场营收</div></div>
+  <div class="stat"><div class="num">85%</div><div class="label">用户为 95 后</div></div>
+  <div class="stat"><div class="num">66%</div><div class="label">一二线城市用户</div></div>
+</div>
+
+<div class="card">
+  <h3>已验证的赚钱案例</h3>
+  <table>
+    <tr><th>案例</th><th>玩法</th><th>销量</th><th>GMV</th></tr>
+    <tr><td>国外翻译小说</td><td>截图发笔记 → 橱窗卖电子版</td><td class="highlight">6,000 单</td><td class="highlight">¥40,000+</td></tr>
+    <tr><td>短篇小说合集</td><td>长文排版 → 挂商品链接</td><td class="highlight">13,000 单</td><td class="highlight">¥80,000+</td></tr>
+    <tr><td>单篇爆款</td><td>1.5万赞笔记 → 自动成交</td><td>5,000+ 单</td><td>¥30,000+</td></tr>
+  </table>
+  <p style="color:var(--muted);font-size:0.85em;margin-top:8px;">关键：0 版权成本（AI生成/翻译海外），0 物流成本（虚拟商品），利润率 ≈ 100%</p>
+</div>
+
+<!-- ═══════════════ 起号阶段 ═══════════════ -->
+<h2>二、起号阶段（第1-2周）</h2>
+
+<div class="card">
+  <h3>2.1 账号准备</h3>
+  <table>
+    <tr><td>注册</td><td>手机号注册，完成实名认证</td></tr>
+    <tr><td>定位</td><td>头像+昵称+简介明确"小说推荐"定位（如：<em>声声乌龙｜每天一本上头短篇</em>）</td></tr>
+    <tr><td>开店</td><td>创作者中心 → 全部服务 → 开通店铺（个人店即可）</td></tr>
+    <tr><td>类目</td><td>选择「其他电子资源」——支持自动发货</td></tr>
+    <tr><td>门槛</td><td>粉丝 ≥ 100（起号期先发笔记攒粉）</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>2.2 养号策略</h3>
+  <ol>
+    <li>每天刷 30 分钟同类爆款笔记（搜「已完结小说」「短篇完结」），点赞收藏评论</li>
+    <li>关注 20+ 同赛道账号，研究他们的标题、封面、截图像素和钩子位置</li>
+    <li>前 3 天不发商业内容，只发「书评/读后感」类内容建立人设</li>
+    <li>第 4 天开始发布第一篇小说试读笔记</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h3>2.3 第一篇笔记发布 Checklist</h3>
+  <ul>
+    <li>✅ 标题：情绪关键词 + 悬念（如：「全家避他如瘟神，我接回个财神爷」）</li>
+    <li>✅ 封面：AI 生成氛围感配图（古风/现代言情风格）</li>
+    <li>✅ 正文：小红书「长文」功能，8 页截图</li>
+    <li>✅ 截断点：第 8 页停在最高能的钩子处</li>
+    <li>✅ 标签：#已完结小说 #短篇完结 #追妻火葬场（根据题材选 3-5 个）</li>
+    <li>✅ 评论区：第一条评论引导「完整版在主页橱窗～」</li>
+    <li>✅ 发布时间：晚 8-10 点（女性用户高峰期）</li>
+  </ul>
+</div>
+
+<!-- ═══════════════ 爆款公式 ═══════════════ -->
+<h2>三、爆款小说公式（AI 生产模板）</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>🔴 爽文·打脸逆袭</h3>
+    <div class="formula-box">
+      <span class="phase">【0-2000字】</span> 受辱：主角被背叛/陷害/抛弃<br>
+      <span class="phase">【2000-5000字】</span> 反击：拿出隐藏底牌<br>
+      <span class="phase">【5000-8000字】</span> 打脸：反派连环出丑<br>
+      <span class="hook">【4000字处】</span> 🔥 付费钩子：主角亮出最终身份
+    </div>
+    <p style="font-size:0.85em;color:var(--muted);">适用：重生、穿越、马甲文</p>
+  </div>
+  <div class="card">
+    <h3>🟣 虐文·追妻火葬场</h3>
+    <div class="formula-box">
+      <span class="phase">【0-3000字】</span> 虐女主：男主偏心/冷暴力/误会<br>
+      <span class="phase">【3000-6000字】</span> 崩溃：女主离开/受伤/死亡边缘<br>
+      <span class="hook">【5000字处】</span> 🔥 付费钩子：女主递离婚协议<br>
+      <span class="phase">【6000-10000字】</span> 追妻：男主崩溃跪求
+    </div>
+    <p style="font-size:0.85em;color:var(--muted);">适用：先婚后爱、替身文学</p>
+  </div>
+  <div class="card">
+    <h3>🟢 世情·家庭反转</h3>
+    <div class="formula-box">
+      <span class="phase">【0-2000字】</span> 憋屈：全家冷漠/排挤/欺负<br>
+      <span class="phase">【2000-5000字】</span> 隐忍：默默收集证据<br>
+      <span class="phase">【5000-8000字】</span> 翻盘：一次性曝光真相<br>
+      <span class="hook">【4000字处】</span> 🔥 付费钩子：主角亮出关键证据
+    </div>
+    <p style="font-size:0.85em;color:var(--muted);">适用：家庭伦理、真假千金</p>
+  </div>
+  <div class="card">
+    <h3>🟡 甜宠·高糖轻虐</h3>
+    <div class="formula-box">
+      <span class="phase">【0-2000字】</span> 相遇：CP 建立，酸酸甜甜<br>
+      <span class="phase">【2000-5000字】</span> 拉扯：误会/情敌/身份差<br>
+      <span class="phase">【5000-8000字】</span> 告白：高潮甜蜜<br>
+      <span class="hook">【4000字处】</span> 🔥 付费钩子：男主强势表白/壁咚
+    </div>
+    <p style="font-size:0.85em;color:var(--muted);">适用：校园、职场、先婚后爱</p>
+  </div>
+</div>
+
+<div class="card">
+  <h3>标题公式（决定打开率）</h3>
+  <table>
+    <tr><th>公式</th><th>示例</th></tr>
+    <tr><td>身份反转</td><td>「全家避他如瘟神，我接回个财神爷」</td></tr>
+    <tr><td>情绪爆点 + 悬念</td><td>「太想哭了，一家人只顾着自保，只有侄子念着叔叔的恩情」</td></tr>
+    <tr><td>逆袭宣告</td><td>「3年前我跪着求他们别走，3年后他们跪着求我回去」</td></tr>
+    <tr><td>反差冲突</td><td>「婆婆说生不出儿子就滚，我滚了，现在她求我回去继承家产」</td></tr>
+    <tr><td>道德困境</td><td>「亲弟弟偷走我的录取通知书，10 年后我成了他的面试官」</td></tr>
+  </table>
+</div>
+
+<!-- ═══════════════ 生成器改造 ═══════════════ -->
+<h2>四、NovelGenerator 改造方案（技术实现）</h2>
+
+<div class="card">
+  <h3>4.1 新增「小红书爆款」写作模式</h3>
+  <table>
+    <tr><th>参数</th><th>推荐值</th><th>说明</th></tr>
+    <tr><td>字数</td><td class="highlight">8,000 - 12,000</td><td>一次生成完整短篇</td></tr>
+    <tr><td>结构</td><td class="highlight">4 段式</td><td>建置→冲突升级→反转→大结局</td></tr>
+    <tr><td>节奏</td><td>快餐模式</td><td>前 300 字必冲突，章章有钩子</td></tr>
+    <tr><td>付费卡点</td><td class="highlight">40%-50% 处</td><td>即 4,000-5,000 字处理最强钩子</td></tr>
+    <tr><td>标题</td><td>AI 生成 5 个备选</td><td>按标题公式匹配</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>4.2 需要新增的功能模块</h3>
+  <table>
+    <tr><th>模块</th><th>功能</th><th>优先级</th></tr>
+    <tr><td>短篇专用模板</td><td>4 种爆款类型 preset（爽文/虐文/世情/甜宠），一键选模板即生成</td><td class="highlight">P0</td></tr>
+    <tr><td>付费钩子引擎</td><td>自动在 40%-50% 位置插入最强悬念钩子</td><td class="highlight">P0</td></tr>
+    <tr><td>标题生成器</td><td>生成 5-10 个小红书风格标题（情绪关键词 + 悬念），并提供标题评分</td><td class="highlight">P0</td></tr>
+    <tr><td>排版输出</td><td>生成适合小红书长文排版的 markdown/HTML 格式</td><td>P1</td></tr>
+    <tr><td>批量生成队列</td><td>一次设置 5-10 篇不同题材，排队生成（支持全天候生产）</td><td>P1</td></tr>
+    <tr><td>去重检测</td><td>检测新生成内容与已发布内容的相似度，防止重复</td><td>P2</td></tr>
+    <tr><td>封面生成</td><td>根据小说题材自动生成氛围感封面图（接入 AI 绘图 API）</td><td>P2</td></tr>
+  </table>
+</div>
+
+<div class="success">
+  <strong>💡 最小可行产品（MVP）</strong><br>
+  本周就能上线的：在 Writer 里新增 4 种模板 system prompt，在 planner 里新增「短篇模式」（8000-12000字），在 output 阶段加标题生成逻辑。<br>
+  这三项就能支撑每天产出 2-4 篇可发布的短篇小说。
+</div>
+
+<!-- ═══════════════ 盈利预测 ═══════════════ -->
+<h2>五、盈利模型</h2>
+
+<div class="stat-row">
+  <div class="stat"><div class="num">¥6-10</div><div class="label">单篇定价</div></div>
+  <div class="stat"><div class="num">5-8%</div><div class="label">平均转化率</div></div>
+  <div class="stat"><div class="num">100%</div><div class="label">利润率（AI 生成）</div></div>
+  <div class="stat"><div class="num">¥0</div><div class="label">边际成本/篇</div></div>
+</div>
+
+<div class="card">
+  <h3>收入预估（保守 → 乐观）</h3>
+  <table>
+    <tr><th>阶段</th><th>月度</th><th>笔记数</th><th>单篇曝光</th><th>月销量</th><th>月收入</th></tr>
+    <tr><td>起号期</td><td>第1月</td><td>30 篇</td><td>200-500</td><td>30-80 单</td><td class="highlight">¥180-800</td></tr>
+    <tr><td>成长期</td><td>第2月</td><td>30 篇（累积60）</td><td>500-2000</td><td>150-400 单</td><td class="highlight">¥900-4,000</td></tr>
+    <tr><td>爆发期</td><td>第3月</td><td>30 篇（累积90）</td><td>1000-5000</td><td>300-1000 单</td><td class="highlight">¥1,800-10,000</td></tr>
+    <tr><td>稳定期</td><td>第4-6月</td><td>20 篇/月（稳定）</td><td>2000-10000</td><td>500-2000 单</td><td class="highlight">¥3,000-20,000</td></tr>
+    <tr><td>矩阵放大</td><td>第6月+</td><td>3 账号 × 20 篇</td><td>—</td><td>1500-5000 单</td><td class="highlight">¥9,000-50,000</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>多账号矩阵策略（第 3 个月启动）</h3>
+  <ol>
+    <li><strong>主号</strong>：综合推荐，覆盖全部题材</li>
+    <li><strong>二号</strong>：专注虐文/追妻火葬场（女频核心赛道）</li>
+    <li><strong>三号</strong>：专注世情/家庭伦理（40+ 女性受众）</li>
+  </ol>
+  <p style="color:var(--muted);font-size:0.85em;">同一生成器，不同账号定位，互不冲突。每个账号独立卖自己的小说。</p>
+</div>
+
+<!-- ═══════════════ 时间线 ═══════════════ -->
+<h2>六、执行时间线</h2>
+
+<div class="timeline">
+  <div class="timeline-item">
+    <h3>第 1 周：基础设施</h3>
+    <ul>
+      <li>注册小红书账号 + 实名认证 + 开通店铺</li>
+      <li>配置自动发货（其他电子资源类目）</li>
+      <li>NovelGenerator 接入「小红书爆款模式」</li>
+      <li>生成第一批 10 篇小说（每题材 2-3 篇）</li>
+    </ul>
+  </div>
+  <div class="timeline-item">
+    <h3>第 2 周：正式起号</h3>
+    <ul>
+      <li>每天发布 2-3 篇笔记（试读 + 引导购买）</li>
+      <li>持续优化标题和封面，记录数据</li>
+      <li>回复评论，维护互动</li>
+      <li>目标：攒 100 粉，出第一单</li>
+    </ul>
+  </div>
+  <div class="timeline-item">
+    <h3>第 3-4 周：找到爆款方向</h3>
+    <ul>
+      <li>分析数据，找出点击率最高的题材和标题风格</li>
+      <li>集中生产爆款方向的同类型小说</li>
+      <li>开通笔记付费（粉丝达标后申请）</li>
+      <li>目标：日销 10 单</li>
+    </ul>
+  </div>
+  <div class="timeline-item">
+    <h3>第 2 个月：稳定盈利</h3>
+    <ul>
+      <li>优化生成模板，提升平均质量</li>
+      <li>尝试小红书投流（薯条推广），测试 ROI</li>
+      <li>目标：月入 ¥3,000+</li>
+    </ul>
+  </div>
+  <div class="timeline-item">
+    <h3>第 3-6 个月：矩阵放大</h3>
+    <ul>
+      <li>启动 2-3 号账号，各走不同题材</li>
+      <li>探索多平台分发（知乎盐选、公众号）</li>
+      <li>尝试短篇合集打包售卖（¥29.9/合集）</li>
+      <li>目标：月入 ¥10,000 - ¥50,000</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ═══════════════ 风险 ═══════════════ -->
+<h2>七、风险与对策</h2>
+
+<div class="warning">
+  <strong>⚠️ 平台政策风险</strong><br>
+  小红书对 AI 生成内容的态度可能变化。对策：① 发布前人工润色，降低 AI 味；② 不标注「AI 生成」；③ 关注平台政策更新。
+</div>
+<div class="warning">
+  <strong>⚠️ 内容同质化</strong><br>
+  大家都在抄热门套路，容易撞车。对策：① 每次生成加随机种子，确保差异化；② 用 NovelGenerator 的反套路功能（bizarre 模式）偶尔产出创新题材。
+</div>
+<div class="warning">
+  <strong>⚠️ 账号限流</strong><br>
+  频繁发布可能被判营销号。对策：① 保持账号正常互动（刷评论、发日常）；② 单账号日发不超过 3 篇；③ 间隔 4 小时以上发布。
+</div>
+<div class="warning">
+  <strong>⚠️ 版权灰色地带</strong><br>
+  AI 生成内容在国内的版权归属尚不明确。对策：① 不模仿已有知名作品的情节；② 所有角色名/地名原创；③ 如遇投诉，立即下架。
+</div>
+
+<!-- ═══════════════ 总结 ═══════════════ -->
+<h2>八、总结</h2>
+
+<div class="card" style="border:2px solid var(--accent);">
+  <table>
+    <tr><td style="width:25%"><strong>核心公式</strong></td><td>AI 批量生成 × 小红书流量 × 虚拟商品自动发货 = 被动收入</td></tr>
+    <tr><td><strong>启动成本</strong></td><td>¥0（已有生成器 + 免费开店）</td></tr>
+    <tr><td><strong>日投入</strong></td><td>30 分钟（生成 2-3 篇 + 发布笔记 + 回复评论）</td></tr>
+    <tr><td><strong>月产出</strong></td><td>60 篇小说 = 60 篇笔记 = 60 × 曝光转化</td></tr>
+    <tr><td><strong>6 个月预期</strong></td><td class="highlight" style="font-size:1.2em;">¥50,000 - ¥100,000</td></tr>
+    <tr><td><strong>关键成功因素</strong></td><td>① 标题能力（打开率）② 钩子位置（转化率）③ 日更坚持（曝光量）</td></tr>
+  </table>
+</div>
+
+<p style="text-align:center;color:var(--muted);margin:40px 0 10px;">计划书基于 2026 年 7 月市场数据 · 小红书 3.39 亿 MAU · AI 内容红利窗口期</p>
+
+</div>
+</body>
+</html>

@@ -1814,6 +1814,186 @@ async def create_bizarre_novel(req: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ═══════════════════════════════════════════════
+# v2.50: 小红书爆款短篇模式
+# ═══════════════════════════════════════════════
+
+from core.xiaohongshu import TEMPLATES, create_xhs_novel_pipeline, generate_titles, PRESETS, get_presets
+
+
+@app.get("/api/xiaohongshu/templates")
+async def list_xhs_templates():
+    """列出所有可用的小红书爆款模板"""
+    result = []
+    for key, tpl in TEMPLATES.items():
+        result.append({
+            "key": key,
+            "label": tpl["label"],
+            "emoji": tpl["emoji"],
+            "genre": tpl["genre"],
+            "style": tpl["style"],
+            "target_words": tpl["target_words"],
+            "chapters": len(tpl["chapters"]),
+            "emotion_curve": tpl.get("emotion_curve", ""),
+            "typical_hooks": tpl.get("typical_hooks", [])[:3],
+        })
+    return {"ok": True, "templates": result}
+
+
+@app.post("/api/xiaohongshu/create")
+async def create_xhs_novel(req: dict):
+    """创建并生成一篇完整的小红书短篇"""
+    template_key = req.get("template", "爽文_打脸逆袭")
+    inspiration = req.get("inspiration", "")
+    twist = req.get("twist", "")
+    fast_mode = req.get("fast_mode", True)  # 默认快速模式
+    
+    if template_key not in TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"未知模板: {template_key}。可用: {list(TEMPLATES.keys())}")
+    
+    try:
+        tpl = TEMPLATES[template_key]
+        
+        # 1. 生成大纲
+        log.info(f"XHS Create: template={template_key}, inspiration={inspiration[:50]}")
+        
+        # 构建 creative_input
+        creative_input = {
+            "genre": tpl["genre"],
+            "style": tpl["style"],
+            "inspiration": inspiration or tpl["typical_hooks"][0],
+            "target_words": tpl["target_words"],
+            "normal_pacing": False,
+            "fast_food": True,
+        }
+        if twist:
+            creative_input["inspiration"] += f"\n\n必须包含的剧情反转：{twist}"
+        
+        # 用 planner 生成大纲
+        plan = await engine.planner.plan_stream(creative_input)
+        full_plan = None
+        async for event in plan:
+            if isinstance(event, dict) and event.get("type") == "plan_complete":
+                full_plan = event.get("plan")
+        if not full_plan:
+            full_plan = {"title": inspiration[:20] or "未命名"}
+        
+        # Override with template structure
+        # 用模板结构替换 LLM 生成的大纲
+        for i, ch_tpl in enumerate(tpl["chapters"]):
+            # 在已有的 volumes[0].chapters 中更新
+            volumes = full_plan.get("outline", {}).get("volumes", [])
+            if volumes and volumes[0].get("chapters"):
+                chapters = volumes[0]["chapters"]
+                if i < len(chapters):
+                    chapters[i]["title"] = ch_tpl["title"]
+                    chapters[i]["hook"] = ch_tpl["hook"]
+                    chapters[i]["target_words"] = ch_tpl["words"]
+                    chapters[i]["_function"] = ch_tpl["function"]
+        
+        # 创建小说
+        novel = engine.create_novel(full_plan)
+        novel_id = novel.get("title", full_plan.get("title", "xhs_novel"))
+        
+        # 2. 逐章生成
+        chapters_result = []
+        total_words = 0
+        for ch_tpl in tpl["chapters"]:
+            ch_num = ch_tpl["number"]
+            func = ch_tpl["function"]
+            is_cliffhanger = "★" in func or "付费" in func
+            
+            log.info(f"XHS Generate: Ch{ch_num}/{len(tpl['chapters'])} - {func}")
+            
+            # 构建反馈（带付费钩子指令）
+            feedback = None
+            if "★" in func or ch_num == 3:
+                feedback = f"""⚠️ 本章是付费卡点章节。必须做到：
+1. 开头立即回应当前一章的钩子
+2. 在500字内给出第一个爽点
+3. 反转层层递进，不要一次性揭露
+4. 结尾留悬念（为下一章铺垫）
+5. 本章至少3次打脸/反转"""
+            elif ch_num == 2:
+                feedback = f"""⚠️ 这是付费卡点前最后一章。结尾必须埋一个让读者「不付费就睡不着」的钩子：
+1. 在最关键的信息快要揭露时停笔
+2. 让主角处于「即将逆袭但还差一步」的状态
+3. 反派嚣张度达到顶点
+钩子参考：{ch_tpl['hook']}"""
+            
+            full_text = ""
+            async for chunk in engine.generate_chapter_stream(
+                novel_id=novel_id,
+                chapter_num=ch_num,
+                writing_mode="webnovel",
+                feedback=feedback,
+            ):
+                if isinstance(chunk, dict):
+                    if chunk.get("type") == "chunk":
+                        full_text += chunk.get("text", "")
+                elif isinstance(chunk, str):
+                    full_text += chunk
+            
+            if full_text:
+                chapters_result.append({
+                    "number": ch_num,
+                    "title": ch_tpl["title"],
+                    "function": func,
+                    "text": full_text,
+                    "word_count": len(full_text),
+                    "is_cliffhanger": is_cliffhanger,
+                })
+                total_words += len(full_text)
+        
+        # 3. 生成标题
+        titles = generate_titles(engine.client, engine.model, full_plan,
+                                 " ".join([c["text"][:100] for c in chapters_result if c.get("text")]))
+        
+        return {
+            "ok": True,
+            "novel_id": novel_id,
+            "template": template_key,
+            "plan": full_plan,
+            "chapters": chapters_result,
+            "titles": titles,
+            "cliffhanger_chapter": 3,
+            "total_words": total_words,
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/xiaohongshu/presets")
+async def list_xhs_presets(template: str = None):
+    """列出小红书预设组合。可选按模板筛选"""
+    presets = get_presets(template)
+    return {"ok": True, "presets": presets, "total": len(presets)}
+
+
+@app.post("/api/xiaohongshu/titles")
+async def generate_titles_endpoint(req: dict):
+    """为已有小说生成5个小红书风格标题"""
+    novel_id = req.get("novel_id", "")
+    if not novel_id:
+        raise HTTPException(status_code=400, detail="缺少 novel_id")
+    
+    try:
+        plan = engine.memory.read("plan", novel_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在")
+        
+        # 获取章节摘要
+        ch1 = engine.memory.read_chapter(novel_id, 1) or ""
+        summary = ch1[:300] if ch1 else ""
+        
+        titles = generate_titles(engine.client, engine.model, plan, summary)
+        return {"ok": True, "titles": titles}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     log.info(f"Starting NovelGenerator API on {HOST}:{PORT}")

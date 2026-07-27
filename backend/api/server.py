@@ -1818,7 +1818,7 @@ async def create_bizarre_novel(req: dict):
 # v2.50: 小红书爆款短篇模式
 # ═══════════════════════════════════════════════
 
-from core.xiaohongshu import TEMPLATES, create_xhs_novel_pipeline, generate_titles
+from core.xiaohongshu import TEMPLATES, create_xhs_novel_pipeline, generate_titles, PRESETS, get_presets
 
 
 @app.get("/api/xiaohongshu/templates")
@@ -1963,6 +1963,13 @@ async def create_xhs_novel(req: dict):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/xiaohongshu/presets")
+async def list_xhs_presets(template: str = None):
+    """列出小红书预设组合。可选按模板筛选"""
+    presets = get_presets(template)
+    return {"ok": True, "presets": presets, "total": len(presets)}
 
 
 @app.post("/api/xiaohongshu/titles")
