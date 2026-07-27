@@ -716,6 +716,38 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         生成大纲
       </button>
 
+      <!-- v2.50: 小红书爆款短篇快速模式 -->
+      <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
+        <div style="font-size:14px;font-weight:600;color:var(--accent);margin-bottom:12px">📕 小红书爆款短篇 · 一键生成</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <button v-for="t in xhsTemplates" :key="t.key"
+            class="btn" :class="xhsTemplate===t.key?'btn-primary':'btn-secondary'"
+            style="font-size:12px;padding:8px"
+            @click="xhsTemplate=t.key">
+            {{ t.emoji }} {{ t.label }}<br><span style="opacity:.5;font-size:10px">{{ t.target_words }}字</span>
+          </button>
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <input v-model="xhsInspiration" placeholder="额外灵感（可选，如：被退婚后女主发现自己怀孕了）" style="font-size:12px">
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <input v-model="xhsTwist" placeholder="指定反转（可选，如：最后发现反派是亲生父亲）" style="font-size:12px">
+        </div>
+        <button class="btn" style="width:100%;padding:10px;background:linear-gradient(135deg,#e94560,#ff6b6b);color:#fff;border:none;font-size:14px;font-weight:600"
+          @click="doXhsCreate" :disabled="loading.create || loading.xhs">
+          {{ loading.xhs ? '生成中…' : '⚡ 生成短篇 + 标题' }}
+        </button>
+        <div v-if="xhsResult" style="margin-top:16px;padding:12px;background:var(--bg2);border-radius:8px;font-size:12px">
+          <div style="color:var(--gold);margin-bottom:6px">✅ 生成完成 · {{ xhsResult.total_words }}字</div>
+          <div style="color:var(--text2);margin-bottom:6px">📝 推荐标题：</div>
+          <div v-for="(t,i) in xhsResult.titles" :key="i" style="padding:4px 0;color:var(--text);border-bottom:1px solid var(--border);cursor:pointer" @click="navigator.clipboard.writeText(t);alert('标题已复制')">
+            {{ i+1 }}. {{ t }}
+          </div>
+          <div class="flex gap-8 mt-8">
+            <a :href="'/api/novels/'+xhsResult.novel_id+'/export'" class="btn btn-secondary btn-sm" target="_blank">导出TXT</a>
+          </div>
+        </div>
+      </div>
       <!-- v2.3: 需求分析结果——简化版，避免复杂模板导致渲染崩溃 -->
       <div v-if="decomposeSummary" class="card" style="margin-top:12px;background:var(--bg2);border-color:var(--accent)">
         <div class="card-title" style="color:var(--accent);display:flex;align-items:center;justify-content:space-between">
@@ -1961,7 +1993,14 @@ const app = createApp({
     }
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false });
-    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
+    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false, xhs:false });
+    
+    // v2.50: XHS 短篇模式
+    const xhsTemplate = ref('爽文_打脸逆袭');
+    const xhsInspiration = ref('');
+    const xhsTwist = ref('');
+    const xhsResult = ref(null);
+    const xhsTemplates = ref([]);
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
@@ -2748,6 +2787,8 @@ const app = createApp({
     onMounted(async () => {
       applyAppearance();
       loadStyles(); loadStyleSeeds(); // fire-and-forget
+      // v2.50: 加载小红书模板列表
+      fetch('/api/xiaohongshu/templates').then(r=>r.json()).then(d=>{ if(d.ok) xhsTemplates.value=d.templates; }).catch(()=>{});
       
       // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
       setTimeout(() => { if (loading.shelf) { loading.shelf = false; console.warn('Shelf loading: forced close after 12s'); } }, 12000);
@@ -2997,7 +3038,27 @@ const app = createApp({
       } catch(e) { error.value = e.message; }
       trendLoading.value = false;
     }
-    
+
+    // v2.50: 小红书短篇一键生成
+    async function doXhsCreate() {
+      if (loading.xhs) return;
+      loading.xhs = true; xhsResult.value = null; error.value = '';
+      try {
+        const r = await fetch(API+'/api/xiaohongshu/create', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            template: xhsTemplate.value,
+            inspiration: xhsInspiration.value.trim(),
+            twist: xhsTwist.value.trim(),
+          })
+        });
+        const d = await r.json();
+        if (d.ok) { xhsResult.value = d; }
+        else { reportError(d.detail || '生成失败'); }
+      } catch(e) { reportError(e.message||'网络错误'); }
+      finally { loading.xhs = false; }
+    }
+
     async function createBizarreNovel(bn) {
       if (isBusy.value) return;
       isBusy.value = true; error.value = '';
@@ -3476,6 +3537,8 @@ const app = createApp({
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
+      // v2.50
+      xhsTemplate,xhsInspiration,xhsTwist,xhsTemplates,xhsResult,doXhsCreate,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,
