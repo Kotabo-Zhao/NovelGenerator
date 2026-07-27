@@ -1841,8 +1841,10 @@ async def list_xhs_templates():
 
 
 @app.post("/api/xiaohongshu/create")
-async def create_xhs_novel(req: dict):
+async def create_xhs_novel(req: dict = None):
     """创建并生成一篇完整的小红书短篇"""
+    if not req:
+        req = {}
     template_key = req.get("template", "爽文_打脸逆袭")
     inspiration = req.get("inspiration", "")
     twist = req.get("twist", "")
@@ -1973,8 +1975,10 @@ async def list_xhs_presets(template: str = None):
 
 
 @app.post("/api/xiaohongshu/titles")
-async def generate_titles_endpoint(req: dict):
+async def generate_titles_endpoint(req: dict = None):
     """为已有小说生成5个小红书风格标题"""
+    if not req:
+        req = {}
     novel_id = req.get("novel_id", "")
     if not novel_id:
         raise HTTPException(status_code=400, detail="缺少 novel_id")
