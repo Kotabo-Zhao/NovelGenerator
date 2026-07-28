@@ -1090,6 +1090,10 @@ class SharedMemoryManager:
             else:
                 self._cache.clear()
 
+    def invalidate_novel(self, novel_id: str):
+        """失效指定小说的所有缓存（invalidate_all 别名）"""
+        self.invalidate_all(novel_id=novel_id)
+
     # ═══════════════════════════════════════════
     # v2.2.1: 状态修复与容灾
     # ═══════════════════════════════════════════

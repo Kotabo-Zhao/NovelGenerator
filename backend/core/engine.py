@@ -667,6 +667,37 @@ class NovelEngine:
                 })
         return sorted(novels, key=lambda n: n["state"].get("created_at", ""), reverse=True)
 
+    def delete_novel(self, novel_id: str) -> bool:
+        """删除小说及其所有章节、状态文件
+        
+        Args:
+            novel_id: 小说目录名
+            
+        Returns:
+            True 如果删除成功，False 如果小说不存在
+        """
+        import shutil
+        novel_dir = self.memory.get_novel_dir(novel_id)
+        if not os.path.exists(novel_dir):
+            return False
+        
+        # v2.3: 输入校验 — 防止路径遍历攻击
+        safe_name = os.path.basename(os.path.normpath(novel_id))
+        if safe_name != novel_id or ".." in novel_id or "/" in novel_id or "\\" in novel_id:
+            log.warning(f"Rejected unsafe novel_id: {novel_id}")
+            return False
+        
+        # 清除缓存
+        self.memory.invalidate_novel(novel_id)
+        
+        try:
+            shutil.rmtree(novel_dir)
+            log.info(f"Novel deleted: {novel_id}")
+            return True
+        except OSError as e:
+            log.error(f"Failed to delete novel {novel_id}: {e}")
+            return False
+
     # ── Phase 2: 写作 ──
 
     def get_chapter(self, novel_id: str, chapter_num: int) -> Optional[str]:
