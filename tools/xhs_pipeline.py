@@ -136,61 +136,183 @@ def generate_story(template: str, inspiration: str, wait: bool = True) -> Option
 
 # ── Formatting ──
 
-def format_xhs_html(story: dict, title: str, output_path: str):
-    """生成小红书长文格式的 HTML 文件"""
+def format_xhs_screenshot_html(story: dict, title: str, output_path: str):
+    """生成精美截图级 HTML — 可直接截屏发小红书
+
+    布局：封面卡片 → 故事概要 → 正文图文
+    模仿小红书笔记的视觉风格，适配 1080×1920 截屏比例
+    """
     chapters = story.get("chapters", [])
-    
+    template_label = story.get("template", "")
+
+    # ── 生成文案（概要） ──
+    ch1_text = chapters[0].get("text", "") if chapters else ""
+    summary_sentences = []
+    for ch in chapters[:2]:
+        t = ch.get("text", "")
+        # 取每段第一句
+        for line in t.split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#") and len(line) > 15:
+                summary_sentences.append(line[:80] + "…")
+                if len(summary_sentences) >= 5:
+                    break
+        if len(summary_sentences) >= 5:
+            break
+    blurb = "\n".join(summary_sentences[:5])
+
+    # ── 标签 ──
+    tag_map = {
+        "爽文_打脸逆袭": "逆袭 打脸 爽文",
+        "虐文_追妻火葬场": "虐文 追妻 虐恋",
+        "世情_家庭反转": "家庭 反转 世情",
+        "甜宠_高糖轻虐": "甜宠 总裁 高糖",
+    }
+    tags = tag_map.get(template_label, "小说 推荐")
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=1080, initial-scale=1.0">
 <title>{title}</title>
 <style>
-body {{ font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; line-height: 2; color: #333; background: #fff; }}
-h1 {{ font-size: 20px; text-align: center; margin-bottom: 5px; color: #e94560; }}
-.meta {{ text-align: center; color: #999; font-size: 12px; margin-bottom: 20px; }}
-.section {{ margin-bottom: 16px; }}
-.section-title {{ font-size: 16px; font-weight: bold; color: #555; border-left: 3px solid #e94560; padding-left: 10px; margin: 20px 0 10px; }}
-.section p {{ text-indent: 2em; margin: 8px 0; }}
-.divider {{ text-align: center; color: #ccc; margin: 20px 0; font-size: 14px; }}
-.footer {{ text-align: center; color: #999; font-size: 12px; margin-top: 30px; padding-top: 15px; border-top: 1px solid #eee; }}
-.copy-btn {{ display: block; margin: 20px auto; padding: 10px 30px; background: #e94560; color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%);
+  min-height: 100vh; color: #e0e0e0; line-height: 1.8;
+}}
+
+/* ── Cover Card ── */
+.cover {{
+  width: 1080px; margin: 0 auto;
+  background: linear-gradient(135deg, #e94560 0%, #c23152 40%, #8b1e3f 100%);
+  padding: 80px 60px 60px; text-align: center;
+  position: relative; overflow: hidden;
+}}
+.cover::before {{
+  content: ''; position: absolute; top: -100px; right: -100px;
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+  border-radius: 50%;
+}}
+.cover .emoji {{ font-size: 72px; margin-bottom: 20px; }}
+.cover h1 {{ font-size: 48px; font-weight: 800; color: #fff; letter-spacing: 2px; margin-bottom: 16px; text-shadow: 0 2px 8px rgba(0,0,0,0.3); }}
+.cover .meta {{ font-size: 22px; color: rgba(255,255,255,0.8); }}
+.cover .meta span {{ margin: 0 12px; }}
+
+/* ── Summary Card ── */
+.summary-card {{
+  width: 1000px; margin: -40px auto 0;
+  background: linear-gradient(135deg, #1e2a4a 0%, #16213e 100%);
+  border-radius: 20px; padding: 40px 50px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  position: relative; z-index: 1;
+  border: 1px solid rgba(255,255,255,0.08);
+}}
+.summary-card .label {{
+  font-size: 14px; color: #e94560; text-transform: uppercase; letter-spacing: 4px; margin-bottom: 16px;
+}}
+.summary-card .blurb {{
+  font-size: 22px; line-height: 2; color: #c8d6e5; white-space: pre-wrap;
+}}
+
+/* ── Content Cards ── */
+.content-wrapper {{
+  width: 1000px; margin: 30px auto;
+  display: flex; flex-direction: column; gap: 24px;
+}}
+.chapter-card {{
+  background: linear-gradient(135deg, #1e2a4a, #16213e);
+  border-radius: 16px; padding: 40px 50px;
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}}
+.chapter-card .ch-header {{
+  display: flex; align-items: center; gap: 12px; margin-bottom: 24px; padding-bottom: 16px;
+  border-bottom: 2px solid rgba(233,69,96,0.3);
+}}
+.chapter-card .ch-num {{
+  font-size: 12px; color: #e94560; background: rgba(233,69,96,0.15); padding: 4px 12px; border-radius: 20px;
+}}
+.chapter-card .ch-title {{ font-size: 28px; font-weight: 700; color: #f0a500; }}
+.chapter-card .ch-func {{ font-size: 14px; color: #888; margin-left: auto; }}
+.chapter-card p {{
+  font-size: 24px; line-height: 2.1; margin-bottom: 16px; color: #c8d6e5; text-indent: 2em;
+  letter-spacing: 1px;
+}}
+
+/* ── Footer ── */
+.footer {{
+  width: 1000px; margin: 30px auto 60px; text-align: center; padding: 30px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}}
+.footer .tags {{ font-size: 18px; color: #888; }}
+.footer .tags span {{ color: #e94560; margin: 0 6px; }}
+.footer .brand {{ font-size: 14px; color: #555; margin-top: 12px; }}
+
+/* ── Print mode for screenshot ── */
+@media print {{
+  body {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+}}
 </style>
 </head>
 <body>
-<h1>{title}</h1>
-<div class="meta">全文约 {story.get('total_words', 0):,} 字 · {len(chapters)} 章</div>
+<div class="cover">
+  <div class="emoji">📖</div>
+  <h1>{title}</h1>
+  <div class="meta">
+    <span>全文 {story.get('total_words', 0):,} 字</span>
+    <span>·</span>
+    <span>{len(chapters)} 章</span>
+  </div>
+</div>
+
+<div class="summary-card">
+  <div class="label">✦ 故事概要</div>
+  <div class="blurb">{blurb}</div>
+</div>
+
+<div class="content-wrapper">
 """
-    
     for i, ch in enumerate(chapters):
         text = ch.get("text", "")
-        paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-        paragraphs = [p for p in paragraphs if not p.startswith("#")]
-        
+        paragraphs = [p.strip() for p in text.split("\n") if p.strip() and not p.startswith("#")]
         ch_num = ch.get("number", i + 1)
         ch_title = ch.get("title", f"第{ch_num}章")
-        
-        html += '<div class="section">\n'
-        html += f'<div class="section-title">{ch_title}</div>\n'
+        ch_func = ch.get("function", "")
+
+        badge = ""
+        if "🌟" in ch_func or "★" in ch_func:
+            badge = '<span class="ch-num" style="background:rgba(240,165,0,0.2);color:#f0a500">💰 付费卡点</span>'
+        elif "付费" in ch_func:
+            badge = '<span class="ch-num" style="background:rgba(240,165,0,0.2);color:#f0a500">💰 付费卡点</span>'
+
+        html += f"""<div class="chapter-card">
+  <div class="ch-header">
+    <span class="ch-num">第{ch_num}章</span>
+    <span class="ch-title">{ch_title}</span>
+    {badge}
+    <span class="ch-func">{ch_func.replace('★','').strip()}</span>
+  </div>
+"""
         for p in paragraphs:
-            html += f"<p>{p}</p>\n"
-        html += '</div>\n'
-        
-        if i < len(chapters) - 1:
-            html += '<div class="divider">· · · 翻页继续 · · ·</div>\n'
-    
-    html += f"""
-<button class="copy-btn" onclick="navigator.clipboard.writeText(document.body.innerText)">📋 一键复制全文</button>
-<div class="footer">Generated by NovelGenerator · {datetime.now().strftime('%Y-%m-%d')}</div>
+            html += f"  <p>{p}</p>\n"
+        html += "</div>\n"
+
+    html += f"""</div>
+
+<div class="footer">
+  <div class="tags">🏷️ {{tags}}</div>
+  <div class="brand">Generated by NovelGenerator · {datetime.now().strftime('%Y-%m-%d')}</div>
+</div>
 </body>
 </html>"""
-    
+
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
     return output_path
-
-
-def format_xhs_txt(story: dict, title: str, output_path: str):
     """生成纯文本版，适合直接复制到小红书长文编辑器"""
     chapters = story.get("chapters", [])
     
@@ -297,7 +419,7 @@ def cmd_generate(args):
         html_path = str(OUTPUT_DIR / "ready" / f"{date_str}_{safe_title}.html")
         txt_path = str(OUTPUT_DIR / "ready" / f"{date_str}_{safe_title}.txt")
         
-        format_xhs_html(story, title, html_path)
+        format_xhs_screenshot_html(story, title, html_path)
         format_xhs_txt(story, title, txt_path)
         story["files"] = [html_path, txt_path]
         
@@ -361,7 +483,7 @@ def cmd_batch(args):
             
             html_path = str(OUTPUT_DIR / "ready" / f"{date_str}_{safe_title}.html")
             txt_path = str(OUTPUT_DIR / "ready" / f"{date_str}_{safe_title}.txt")
-            format_xhs_html(story, title, html_path)
+            format_xhs_screenshot_html(story, title, html_path)
             format_xhs_txt(story, title, txt_path)
             story["files"] = [html_path, txt_path]
             stories.append(story)
@@ -400,7 +522,7 @@ def cmd_schedule(args):
             
             html_path = str(OUTPUT_DIR / "ready" / f"{date_str}_{safe_title}.html")
             txt_path = str(OUTPUT_DIR / "ready" / f"{date_str}_{safe_title}.txt")
-            format_xhs_html(story, title, html_path)
+            format_xhs_screenshot_html(story, title, html_path)
             format_xhs_txt(story, title, txt_path)
             story["files"] = [html_path, txt_path]
             stories.append(story)
@@ -455,7 +577,7 @@ def cmd_format(args):
     
     html_path = str(OUTPUT_DIR / "ready" / f"{date_str}_{safe_title}.html")
     txt_path = str(OUTPUT_DIR / "ready" / f"{date_str}_{safe_title}.txt")
-    format_xhs_html(story, title, html_path)
+    format_xhs_screenshot_html(story, title, html_path)
     format_xhs_txt(story, title, txt_path)
     
     print(f"📂 Formatted:")
