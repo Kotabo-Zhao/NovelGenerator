@@ -23,7 +23,7 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。
 
 ## 🎯 大纲执行 — 最高优先级
 
-- **系统提示末尾的元指令是你必须执行的剧本。** 「你必须写」后面的核心事件必须完整出现在正文中。「章末最后一句必须是」后面的钩子必须是本章最后一句话
+- **系统提示末尾的元指令是你必须执行的剧本。** 「你必须写」后面的核心事件必须完整出现在正文中。「章末钩子方向」处给出了本章结尾的方向——你必须写一个自然的收束+悬念，但不要照抄方向文字，用自己的话写。
 - 核心事件是一句话概括，你的任务是把这句话扩写成完整场景。不要改写、不要另起炉灶
 - 写完钩子后立即停止。不要在钩子后面添加任何内容
 - **不要把元指令里的任何文本复制进正文。尤其是「═══」「你必须写」「章末最后一句必须是」这些都不是正文内容**
@@ -359,120 +359,48 @@ class Writer:
         
         log.info(f"Draft done: {len(draft)} chars, finish_reason={finish_reason}")
 
-        # ── finish_reason 检测: API 因 token 不足截断 ──
+        # ── finish_reason 检测: API 因 token 不足截断 → 续写而不是重写 ──
         if finish_reason == "length" and len(draft) < target_words * 0.8:
             log.warning(f"Draft truncated by API (finish_reason=length, {len(draft)} < {int(target_words*0.8)}). "
-                       f"Retrying with doubled max_tokens...")
+                       f"Continuing from breakpoint with doubled max_tokens...")
             try:
-                retry_max_tokens = min(int(target_words * 6), 24000)  # 2x
+                retry_max_tokens = min(int(target_words * 6), 24000)
+                # v2.49: 从断点续写，而不是从头重写
+                # 将已生成内容作为 assistant 消息传递，让 LLM 知道已经写了什么
+                continue_msgs = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                    {"role": "assistant", "content": draft},
+                    {"role": "user", "content": "以上是你的初稿，但字数不足。请从上面的断点处继续写，不要重复已写内容。新增部分应该无缝衔接上文，保持同样的风格和视角。"},
+                ]
                 retry_stream = self._create(
                     model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt + "\n\n⚠️ 上次生成因token不足被截断。请确保本次完整生成，字数达到{target_words}字左右。"},
-                        {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
-                    ],
+                    messages=continue_msgs,
                     temperature=0.8,
                     max_tokens=retry_max_tokens,
                     stream=True,
                 )
-                retry_draft = ""
+                continuation = ""
                 for chunk in retry_stream:
                     delta = chunk.choices[0].delta
                     if delta.content:
-                        retry_draft += delta.content
+                        continuation += delta.content
                         yield delta.content
-                if len(retry_draft) > len(draft):
-                    log.info(f"Retry OK (length truncation): {len(retry_draft)} chars (was {len(draft)})")
-                    draft = retry_draft
+                if continuation:
+                    # 去重：检查续写开头是否与草稿结尾重叠
+                    cleaned = _dedup_continuation(draft, continuation)
+                    draft = draft + cleaned
+                    log.info(f"Continuation OK: +{len(cleaned)} chars → total {len(draft)} chars")
                 else:
-                    log.warning(f"Retry (length) no better: {len(retry_draft)} chars")
+                    log.warning("Continuation empty, keeping truncated draft")
             except Exception as e:
-                log.warning(f"Retry (length) failed: {e}")
+                log.warning(f"Continuation failed: {e}, keeping truncated draft")
 
         final_text = draft  # default: use draft as-is
         
-        # ═══════════════════════════════════════════════
-        # Phase 2 — 独立结尾生成
-        # v2.33: 先检查草稿是否已有钩子，有则跳过防止双结尾
-        # ═══════════════════════════════════════════════
-        bridge_to_next = chapter_outline.get("bridge_to_next", "")
-        hook = chapter_outline.get("hook", "")
-        
-        if not skip_ending and len(final_text) > 500 and (bridge_to_next or hook):
-            # 检查钩子是否已在草稿中
-            _need_ending = True
-            if hook and len(hook) > 10:
-                last300 = final_text[-300:]
-                hook_key = hook[:15]
-                hook_words = set(hook.replace('，',' ').replace('。',' ').split())
-                end_words = set(last300.replace('，',' ').replace('。',' ').split())
-                overlap = len(hook_words & end_words) / max(len(hook_words), 1)
-                if hook_key in last300 or overlap >= 0.25:
-                    _need_ending = False
-                    log.info(f"Phase 2 skipped: hook already in draft ending (overlap={overlap:.0%})")
-            
-            if _need_ending:
-                try:
-                    # Use enough context for POV detection (last 600 chars)
-                    tail_context = final_text[-600:] if len(final_text) > 600 else final_text
-                    
-                    # v2.40: Detect POV from draft content
-                    pov_instr = ""
-                    sample = final_text[:min(len(final_text), 2500)]
-                    first_count = sample.count('我')
-                    third_count = sample.count('他') + sample.count('她')
-                    if first_count > third_count * 2 and first_count > 3:
-                        pov_instr = "保持第一人称「我」视角，续写时继续用「我」。"
-                    elif third_count > first_count * 1.5 and third_count > 3:
-                        pov_instr = "保持第三人称，用角色名字或「他」「她」叙事。"
-                    else:
-                        pov_instr = "严格保持与上文相同的人称叙事，不要切换。"
-                    
-                    constraints = []
-                    if bridge_to_next:
-                        constraints.append(f"结尾必须自然引出以下情节：{bridge_to_next}")
-                    if hook:
-                        constraints.append(f"结尾用以下这句话收尾：{hook}")
-                    
-                    ending_prompt = (
-                        "你是一个章节结尾写手。请接着上文写一个100-200字的收束结尾。\n\n"
-                        "规则：\n"
-                        "1. 先收束当前场景（完成正在进行的动作），再抛出钩子\n"
-                        "2. 直接续接上文，不要新开标题\n"
-                        f"3. {' '.join(constraints)}\n"
-                        "4. 节奏：收束(1-2句) → 转折/悬念(1句) → 留白(1句)\n"
-                        "5. 不要写「本章完」「未完待续」\n"
-                        f"6. {pov_instr}\n\n"
-                        f"=== 上文结尾 ===\n{tail_context}\n\n=== 请直接续写 ==="
-                    )
-                    
-                    ending_stream = self._create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": f"写100-200字章节结尾，直接续接上文，先收束再抛钩。{pov_instr}"},
-                            {"role": "user", "content": ending_prompt},
-                        ],
-                        temperature=0.7,
-                        max_tokens=400,
-                        stream=True,
-                    )
-                    
-                    ending_text = ""
-                    for chunk in ending_stream:
-                        delta = chunk.choices[0].delta
-                        if delta.content:
-                            ending_text += delta.content
-                    
-                    if len(ending_text) >= 60:
-                        final_text = final_text + "\n\n" + ending_text
-                        yield "\n\n" + ending_text
-                        log.info(f"Phase 2 ending generated: {len(ending_text)} chars")
-                    else:
-                        log.warning(f"Ending too short ({len(ending_text)} chars), using draft ending")
-                except Exception as e:
-                    log.warning(f"Phase 2 ending failed: {e}, using draft")
-        elif not bridge_to_next and not hook:
-            log.info("No bridge_to_next or hook in outline, skipping ending")
+        # v2.53: Phase 2 已移除。主写手(WRITER_SYSTEM 第26-28行)已负责章末钩子。
+        # 之前 Phase 2 在主写手的钩子后又追加一段结尾，造成「固定内容」和双层结尾。
+        # 现在完全依赖主写手在上下文中自然收尾。
         
         # ── 第二遍: 风格打磨（长文跳过——3000字以上初稿质量已够，省一轮API调用）──
         polish_skipped = len(draft) < 500 or style_config.get("is_custom") or len(draft) > 2000
@@ -547,7 +475,7 @@ class Writer:
         except Exception as e:
             log.warning(f"Humanizer pass failed: {e}, using current text")
 
-        # ── 截断检测 (最多重试2次，每次翻倍 max_tokens) ──
+        # ── 截断检测 (最多重试2次，从断点续写而不是重写) ──
         try:
             retry_multiplier = 2
             for retry_round in range(2):
@@ -556,15 +484,19 @@ class Writer:
                     break  # 不截断，直接通过
                 
                 log.warning(f"Truncation detected (round {retry_round+1}): {reason}. "
-                           f"Retrying with {retry_multiplier}x max_tokens...")
+                           f"Continuing from breakpoint with {retry_multiplier}x max_tokens...")
                 retry_max = min(int(target_words * 3 * retry_multiplier), 24000)
+                # v2.49: 从断点续写，不重写
+                continue_msgs = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                    {"role": "assistant", "content": final_text},
+                    {"role": "user", "content": f"以上是你的草稿，但内容不完整（{reason}）。请从断点处直接继续写，不要重复已有内容。严格保持相同风格、视角和人称。新增的字数只需要补足剩余部分即可。"},
+                ]
                 retry_text = ""
                 retry_stream = self._create(
                     model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt + f"\n\n⚠️ 上次生成不完整（{reason}）。请确保本次完整生成，字数至少{target_words}字。"},
-                        {"role": "user", "content": f"请根据以下上下文和本章大纲，重新写正文：\n\n{context}"},
-                    ],
+                    messages=continue_msgs,
                     temperature=0.8,
                     max_tokens=retry_max,
                     stream=True,
@@ -574,20 +506,41 @@ class Writer:
                     if delta.content:
                         retry_text += delta.content
                 
-                is_trunc2, _ = _check_truncation(retry_text, target_words)
-                if not is_trunc2 and len(retry_text) > len(final_text) * 0.5:
-                    final_text = retry_text
-                    log.info(f"Retry OK (round {retry_round+1}): {len(retry_text)} chars")
-                    break
-                elif len(retry_text) > len(final_text):
-                    final_text = retry_text  # 有改善就接受
-                    log.info(f"Retry partial improvement (round {retry_round+1}): {len(retry_text)} chars")
+                if retry_text:
+                    cleaned = _dedup_continuation(final_text, retry_text)
+                    candidate = final_text + cleaned
+                    is_trunc2, _ = _check_truncation(candidate, target_words)
+                    if not is_trunc2 or len(candidate) > len(final_text):
+                        final_text = candidate
+                        log.info(f"Continuation OK (round {retry_round+1}): +{len(cleaned)} → {len(final_text)} chars")
+                        break
                 
                 retry_multiplier *= 2  # 下次翻倍
             else:
                 log.warning(f"All retries failed, using best available ({len(final_text)} chars)")
         except Exception as e:
             log.warning(f"Truncation check/retry failed: {e}, using current text")
+
+
+def _dedup_continuation(existing: str, continuation: str) -> str:
+    """去重续写内容：移除与前文结尾重叠的部分"""
+    if not continuation:
+        return ""
+    # 取前文最后 50 个字符作为重叠检测窗口
+    overlap_window = min(50, len(existing))
+    tail = existing[-overlap_window:]
+    
+    # 在续写内容中向前搜索重叠
+    best_cut = 0
+    for cut_len in range(min(overlap_window, len(continuation)), 3, -1):
+        if tail[-cut_len:] == continuation[:cut_len]:
+            best_cut = cut_len
+            break
+    
+    if best_cut > 0:
+        log.info(f"Dedup: removed {best_cut} overlapping chars")
+        return continuation[best_cut:]
+    return continuation
 
 
 def _check_truncation(text: str, target_words: int) -> tuple:

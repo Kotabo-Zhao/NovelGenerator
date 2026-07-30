@@ -589,15 +589,20 @@ class SharedMemoryManager:
                 prev_ending = prev_content[-take_chars:]
                 prev_ending = _normalize_context_paragraphs(prev_ending)
                 
-                # v2.24: 如果没有桥接，结尾原文升级为强制接续指令
+                # v2.46: 强制桥接：提取上一章结尾的最后一段作为强连续性锚点
                 if not bridge_inserted:
+                    last_paragraphs = prev_ending.strip().split('\n')[-5:]  # 最后5行
+                    last_line = last_paragraphs[-1].strip() if last_paragraphs else prev_ending[-100:]
                     parts.insert(0, 
                         f"## 🔗 强制连续性指令 — 从上一章精确继续（最高优先级）\n\n"
                         f"⚠️ 以下是第{prev_chapter}章的结尾原文。第{chapter_num}章必须：\n"
-                        f"1. **第一句就从下面的场景开始**——不能跳时间、不能换地点\n"
+                        f"1. **第一段就从下面的场景开始**——不能跳时间、不能换地点、不能忽略上一章最后正在进行的动作\n"
                         f"2. **角色状态保持**——位置/情绪/伤势 = 本章起始状态\n"
-                        f"3. **未完成的动作继续**——如果结尾在战斗中/对话中，从那里继续\n\n"
-                        f"### 第{prev_chapter}章结尾：\n\n{prev_ending}"
+                        f"3. **未完成的动作继续**——如果结尾在战斗中/对话中，直接从那里继续\n"
+                        f"4. **上一章最后一句作为本章第一句的出发点**\n\n"
+                        f"### 第{prev_chapter}章结尾（完整场景）：\n\n{prev_ending}\n\n"
+                        f"### ⚡ 强制起始句\n上一章结尾是：「{last_line}」\n"
+                        f"第{chapter_num}章的第一句话必须紧接着这个场景写。"
                     )
                     log.info(f"Direct ending injected for chapter {chapter_num} (no bridge available)")
                 else:
@@ -647,6 +652,57 @@ class SharedMemoryManager:
             
             if summaries:
                 parts.append(f"## 📚 前几章剧情线\n" + "\n".join(summaries))
+
+        # L2d: 后续章节反向连续性（如果后一章已存在，必须与之衔接）
+        next_chapter = chapter_num + 1
+        next_content = self.read_chapter(novel_id, next_chapter)
+        next_bridge = self.get_bridge(novel_id, chapter_num)  # 本章→下章的桥
+        has_prev = prev_chapter >= 1 and self.read_chapter(novel_id, prev_chapter) is not None
+        
+        if next_content:
+            next_opening = next_content[:800]  # 下一章开头800字
+            next_opening = _normalize_context_paragraphs(next_opening)
+            next_first_line = next_opening.strip().split('\n')[0] if next_opening else next_content[:100]
+            
+            backward_ctx = (
+                f"## 🔙 强制反向连续性指令 — 必须衔接到下一章（最高优先级）\n\n"
+                f"⚠️ 第{next_chapter}章已经存在！第{chapter_num}章必须：\n"
+                f"1. **结尾场景精确衔接到下一章开头**——下一章第一句写的是什么、在哪里、谁在场\n"
+                f"2. **角色状态自然过渡**——本章结尾的角色位置/情绪 = 下一章起始状态\n"
+                f"3. **不要创造新剧情导致下一章失效**——本章是为衔接第{next_chapter}章而写的\n\n"
+                f"### 第{next_chapter}章开头（必须衔接到这里）：\n\n{next_opening}"
+            )
+            
+            if next_bridge:
+                nbeat = next_bridge.get("next_beat", "")
+                hook_r = next_bridge.get("hook_to_resolve", "")
+                if nbeat or hook_r:
+                    backward_ctx += "\n\n### 本章→下一章桥接指令\n"
+                    if nbeat:
+                        backward_ctx += f"- 本章结尾必须配合的叙事节拍: **{nbeat}**\n"
+                    if hook_r:
+                        backward_ctx += f"- 本章结尾必须埋下的钩子: **{hook_r}**\n"
+                backward_ctx += (
+                    f"\n\n⚡ **本章最后一句话必须自然过渡到下一章的第一句话：**「{next_first_line}」"
+                )
+            
+            # 插入到高优先级位置
+            parts.insert(0, backward_ctx)
+            log.info(f"Backward continuity injected for chapter {chapter_num} → Ch{next_chapter}")
+        
+        # L2e: 可靠性评级
+        if not has_prev and not next_content:
+            parts.insert(0, (
+                f"## ⚠️ 连续性警告\n\n"
+                f"本章前后均无已生成的章节内容。生成的内容可能在上下文上不可靠。\n"
+                f"建议：生成前后章节后再回来审视本章衔接是否自然。\n"
+            ))
+            log.warning(f"Chapter {chapter_num}: no prev or next chapter — reliability warning")
+        elif not has_prev:
+            parts.insert(0, (
+                f"## ⚠️ 注意：这是第一章\n\n"
+                f"没有前情章节，请自由展开剧情。但需注意本章结尾应为后续章节留好钩子。\n"
+            ))
 
         # L3: 全局状态快照
         state = self.read("global_state", novel_id)
@@ -708,8 +764,9 @@ class SharedMemoryManager:
 本章必须覆盖以下核心事件，不可偏离：
 {chapter_outline.get('summary', '')}
 
-本章结尾——把下面这句话作为全章最后一句话。写完立刻停笔，不添加任何后续内容：
-「{chapter_outline.get('hook', '无')}」
+章末钩子方向（请根据本章实际剧情，用你自己的话写出自然的悬念收尾，
+不要照抄下面这句话，它是方向不是模板）：
+→ {chapter_outline.get('hook', '无')}
 {pov_instruction}
 接续状态：从上章结尾继续。{cause + ' ' if cause else ''}{opening if opening else ''}
 出场角色：{', '.join(chapter_outline.get('characters', ['主角']))}
@@ -1089,6 +1146,10 @@ class SharedMemoryManager:
                     del self._cache[k]
             else:
                 self._cache.clear()
+
+    def invalidate_novel(self, novel_id: str):
+        """失效指定小说的所有缓存（invalidate_all 别名）"""
+        self.invalidate_all(novel_id=novel_id)
 
     # ═══════════════════════════════════════════
     # v2.2.1: 状态修复与容灾

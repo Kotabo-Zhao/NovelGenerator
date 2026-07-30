@@ -265,8 +265,8 @@ class AtomicWriter:
                 "selected_candidate": result["selected_index"],
             }
             
-            # v2.9: 滚动上下文 — 传完整前文
-            prev_full = text
+            # v2.49: 累积上下文 — 传递所有前文而不是仅上一beat
+            prev_full = (prev_full + "\n\n" + text) if prev_full else text
     
     def _compute_rhythm_hint(self, log: list, current_beat, index: int, total: int) -> str:
         """计算节奏反平衡提示

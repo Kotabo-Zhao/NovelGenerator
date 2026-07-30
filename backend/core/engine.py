@@ -190,6 +190,14 @@ class NovelEngine:
         self.beat_assembler = BeatAssembler()
         self._use_atomic = True  # 默认启用原子化生成
 
+        # v2.46: 韧性客户端 — 用于桥接提取等辅助LLM调用
+        try:
+            from .resilient_client import ResilientLLMClient
+            self._resilient = ResilientLLMClient(self.client, self.model)
+            log.info("ResilientLLMClient initialized for bridge extraction")
+        except ImportError:
+            self._resilient = self.client  # 降级用普通客户端
+
     # ── Phase 1: 规划 ──
 
     def create_novel(self, creative_input: dict) -> dict:
@@ -770,6 +778,12 @@ class NovelEngine:
             # 组装上下文
             context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
 
+            # v2.51: 注入角色当前状态 — 写作前读取每个角色的位置/情绪/健康/目标
+            char_ctx = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
+            if char_ctx:
+                context = context + "\n\n" + char_ctx
+                log.info(f"Character state injected into writer context ({len(char_ctx)} chars)")
+
             # 方案C: 在弧高潮章自动注入反转设计
             try:
                 sg_path = os.path.join(self.memory.get_novel_dir(novel_id), "storygraph.json")
@@ -858,11 +872,12 @@ class NovelEngine:
                     issues_text = "; ".join(qr["issues"])
                     log.warning(f"Quality gate CRITICAL (score={qr['score']}): {issues_text}")
                     yield {"type": "quality_warning", "score": qr["score"], "issues": qr["issues"],
-                           "message": f"📝 严重质量瑕疵（评分 {qr['score']}），自动重写优化..."}
+                           "message": f"📝 严重质量瑕疵（评分 {qr['score']}），自动续写优化..."}
 
+                    # v2.49: 用 multi-turn history 续写修复，而不是从头重写
                     retry_text = ""
                     async for text in self.writer.write_stream(
-                        context=context + f"\n\n⚠️ 上一版质量不合格（评分{qr['score']}）。以下问题必须修正：{issues_text}",
+                        context=context + f"\n\n⚠️ 上一版质量不合格（评分{qr['score']}）。以下问题必须修正：{issues_text}\n\n【已生成内容参考】\n{full_text[-500:]}",
                         genre=genre, style=style, target_words=target_words, writing_mode=writing_mode,
                         normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
                         fast_food=is_fast_food,
@@ -1052,40 +1067,57 @@ class NovelEngine:
             log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
 
             # ── 完整度验证 ──
-            from .writer import _check_truncation
+            from .writer import _check_truncation, _dedup_continuation
             is_trunc, reason = _check_truncation(full_text, target_words)
             if is_trunc:
                 log.warning(f"Chapter {chapter_num} incomplete after Writer retries: {reason}. "
-                           f"Engine fallback: retrying generation...")
-                yield {"type": "warning", "message": f"⏳ 本章内容不完整（{reason}），正在自动重新生成以补全内容..."}
+                           f"Engine fallback: continuing from breakpoint...")
+                yield {"type": "warning", "message": f"⏳ 本章内容不完整（{reason}），正在自动补全内容..."}
                 
-                # Engine-level retry: 用更大的 max_tokens 重新调用 Writer
+                # v2.49: Engine-level retry — 从断点续写，不重写
                 try:
                     retry_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+                    # v2.51: 注入角色状态
+                    char_ctx2 = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
+                    if char_ctx2:
+                        retry_context = retry_context + "\n\n" + char_ctx2
+                    # 注入已生成内容作为参考
+                    retry_context = (
+                        f"## 📝 已生成草稿（请从断点继续，不要重复）\n\n"
+                        f"以下是已经写完的内容，字数约{len(full_text)//2}字，请从断点处直接续写：\n\n"
+                        f"{full_text[-800:]}\n\n"
+                        f"---\n\n"
+                        f"⚠️ 继续写的要求：1) 不要重复上述内容 2) 从断点直接衔接 3) 补足到{target_words}字\n\n"
+                        f"{retry_context}"
+                    )
                     retry_text = ""
                     async for text in self.writer.write_stream(
                         context=retry_context,
                         genre=genre,
                         style=style,
-                        target_words=max(target_words, int(len(full_text) * 1.5 / 2)),  # 调高目标
+                        target_words=max(target_words, int(len(full_text) * 1.5 / 2)),
                         writing_mode=writing_mode,
                         normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
                         fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
                         chapter_outline=chapter_outline,
-                        skip_ending=True,  # v2.12: 重试不重复生成结尾
+                        skip_ending=True,
                     ):
                         retry_text += text
                         yield {"type": "text", "content": text}
                     
-                    is_trunc2, reason2 = _check_truncation(retry_text, target_words)
-                    if not is_trunc2 and len(retry_text) > len(full_text):
-                        full_text = retry_text
-                        log.info(f"Engine retry OK: {len(full_text)} chars")
-                        yield {"type": "status", "message": "重新生成完成，内容已补全"}
+                    if retry_text:
+                        # v2.49: 智能去重拼接
+                        cleaned = _dedup_continuation(full_text, retry_text)
+                        candidate = full_text + cleaned
+                        is_trunc2, reason2 = _check_truncation(candidate, target_words)
+                        if not is_trunc2 or len(candidate) > len(full_text):
+                            full_text = candidate
+                            log.info(f"Engine continuation OK: +{len(cleaned)} → {len(full_text)} chars")
+                            yield {"type": "status", "message": "补全完成"}
+                        else:
+                            log.warning(f"Engine continuation no improvement")
                     else:
-                        log.warning(f"Engine retry also short ({len(retry_text)} chars), using best")
-                        if len(retry_text) > len(full_text):
-                            full_text = retry_text
+                        log.warning(f"Engine continuation empty, keeping original")
                 except Exception as re:
                     log.warning(f"Engine retry failed: {re}, keeping original")
 
@@ -1327,6 +1359,11 @@ class NovelEngine:
             # 构建完整写作上下文（常规Writer用的五层上下文）
             chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
             
+            # v2.51: 注入角色当前状态
+            char_ctx3 = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
+            if char_ctx3:
+                chapter_context = chapter_context + "\n\n" + char_ctx3
+            
             # 用LLM生成300字叙事蓝图
             blueprint = ""
             try:
@@ -1496,7 +1533,7 @@ class NovelEngine:
                 log.warning(f"Character state extraction failed (non-fatal): {e}")
 
             # ── 完整度验证 ──
-            from .writer import _check_truncation
+            from .writer import _check_truncation, _dedup_continuation
             is_trunc, reason = _check_truncation(full_text, chapter_outline.get("target_words", 2000))
             if is_trunc:
                 log.warning(f"Atomic chapter {chapter_num} may be incomplete: {reason}")

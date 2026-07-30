@@ -285,6 +285,15 @@ async def get_novel(novel_id: str):
     return {"novel": plan}
 
 
+@app.delete("/api/novels/{novel_id}")
+async def delete_novel(novel_id: str):
+    """删除小说及其所有章节、状态文件"""
+    success = engine.delete_novel(novel_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在或无法删除")
+    return {"success": True, "deleted": novel_id}
+
+
 @app.get("/api/novels/{novel_id}/quality-dashboard")
 async def get_quality_dashboard(novel_id: str):
     """v2.16: 小说质量仪表板 — 聚合所有质量维度"""

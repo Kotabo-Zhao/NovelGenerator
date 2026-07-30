@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#0d1117">
-    <title>NovelGenerator</title>
+    <title>墨·局 — 小说工坊</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
 <script src="/vue.global.prod.js?v=4"></script>
@@ -33,69 +33,79 @@ window.addEventListener('error', function(e) {
 </script>
 <style>
 :root {
-  --bg: #0d1117; --bg2: #161b22; --card: #1c2129; --card-hover: #212830;
-  --text: #e6edf3; --text2: #8b949e; --text3: #484f58;
-  --accent: #f0883e; --blue: #58a6ff; --green: #3fb950; --red: #f85149;
-  --border: #30363d; --border-light: #21262d;
-  --radius: 14px; --radius-sm: 10px; --radius-xs: 6px;
-  --shadow: 0 1px 3px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.15);
-  --font: -apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;
+  --bg: #f5f0e8; --bg2: #ede4d3; --card: #fffef9; --card-hover: #fdf8f0;
+  --text: #3d2b1f; --text2: #8b7355; --text3: #b8a088;
+  --accent: #c0392b; --blue: #2c6e8a; --green: #4a7c59; --red: #b73229;
+  --border: #d4c5b2; --border-light: #e5d9c8;
+  --radius: 8px; --radius-sm: 6px; --radius-xs: 4px;
+  --shadow: 0 1px 4px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.04);
+  --font: 'Georgia','Noto Serif SC','Songti SC','SimSun',serif;
+  --font-ui: 'PingFang SC','Microsoft YaHei',sans-serif;
   --font-mono: 'SF Mono','JetBrains Mono','Fira Code','Consolas',monospace;
+  --paper-texture: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(139,115,85,.02) 2px, rgba(139,115,85,.02) 4px);
 }
 [data-theme="light"] {
-  --bg: #f5f5f7; --bg2: #ffffff; --card: #ffffff; --card-hover: #f0f0f5;
-  --text: #1d1d1f; --text2: #6e6e73; --text3: #aeaeb2;
-  --accent: #e07030; --blue: #0071e3; --green: #248a3d; --red: #e0323a;
-  --border: #d2d2d7; --border-light: #e5e5ea;
-  --shadow: 0 1px 3px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+  --bg: #f5f0e8; --bg2: #ede4d3; --card: #fffef9; --card-hover: #fdf8f0;
+  --text: #3d2b1f; --text2: #8b7355; --text3: #b8a088;
+  --accent: #c0392b; --blue: #2c6e8a; --green: #4a7c59; --red: #b73229;
+  --border: #d4c5b2; --border-light: #e5d9c8;
+}
+[data-theme="dark"] {
+  --bg: #1a1410; --bg2: #241e18; --card: #2a2219; --card-hover: #30281e;
+  --text: #e5d9c8; --text2: #a08c70; --text3: #6b5742;
+  --accent: #d4754a; --blue: #5b9ec4; --green: #6b9e72; --red: #c0504a;
+  --border: #3d3020; --border-light: #2e2518;
+  --paper-texture: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(160,140,112,.03) 2px, rgba(160,140,112,.03) 4px);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{font-size:15px}
-body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100dvh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100dvh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:-1;opacity:.4;background:var(--paper-texture)}
 ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 
 #app{display:flex;min-height:100dvh}
 [v-cloak]{display:none !important}
 
-/* ── Sidebar ── */
-.sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border-light);display:flex;flex-direction:column;padding:24px 0;position:sticky;top:0;height:100dvh;flex-shrink:0}
-.sidebar-logo{padding:0 20px 24px;font-size:18px;font-weight:700;letter-spacing:-.3px;display:flex;align-items:center;gap:10px;color:var(--text)}
-.sidebar-logo .dot{width:8px;height:8px;background:var(--accent);border-radius:50%}
+/* ── Sidebar（书架风格） ── */
+.sidebar{width:220px;background:linear-gradient(180deg, #3d2b1f 0%, #4a3525 50%, #3d2b1f 100%);border-right:3px solid #2a1a0e;display:flex;flex-direction:column;padding:24px 0;position:sticky;top:0;height:100dvh;flex-shrink:0;color:#e5d9c8}
+.sidebar-logo{padding:0 20px 24px;font-size:18px;font-weight:700;letter-spacing:-.3px;display:flex;align-items:center;gap:10px;color:#f5e6d0}
+.sidebar-logo .dot{width:8px;height:8px;background:#c0392b;border-radius:50%}
 .sidebar-nav{flex:1;padding:0 12px}
-.sidebar-nav .nav-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:var(--radius-xs);font-size:14px;font-weight:500;color:var(--text2);cursor:pointer;margin-bottom:2px;transition:all .15s}
-.sidebar-nav .nav-item:hover{background:var(--card);color:var(--text)}
-.sidebar-nav .nav-item.active{background:var(--card);color:var(--accent)}
+.sidebar-nav .nav-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:var(--radius-xs);font-size:14px;font-weight:500;color:#b8a088;cursor:pointer;margin-bottom:2px;transition:all .15s;font-family:var(--font-ui)}
+.sidebar-nav .nav-item:hover{background:rgba(255,255,255,.08);color:#f5e6d0}
+.sidebar-nav .nav-item.active{background:rgba(192,57,43,.3);color:#f5e6d0;border-left:3px solid #c0392b}
 .sidebar-nav .nav-icon{font-size:17px;width:22px;text-align:center;opacity:.7}
 .sidebar-nav .nav-item.active .nav-icon{opacity:1}
-.sidebar-footer{padding:16px 20px 8px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:8px}
-.theme-toggle{width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font-size:15px;transition:all .15s;border:1px solid var(--border)}.theme-toggle:hover{background:var(--card);border-color:var(--text3)}
+.sidebar-footer{padding:16px 20px 8px;font-size:11px;color:#8b7355;display:flex;align-items:center;gap:8px;font-family:var(--font)}
+.theme-toggle{width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font-size:15px;transition:all .15s;border:1px solid #5a3d2b;color:#b8a088}.theme-toggle:hover{background:rgba(255,255,255,.1);border-color:#b8a088}
 
-/* ── Main ── */
+/* ── Main（书页风格） ── */
 .main{flex:1;max-width:860px;padding:32px 40px 80px;min-width:0}
 .main-header{margin-bottom:28px}
-.main-header h2{font-size:22px;font-weight:700;letter-spacing:-.3px;margin-bottom:6px}
+.main-header h2{font-size:22px;font-weight:700;letter-spacing:-.3px;margin-bottom:6px;font-family:var(--font);color:#3d2b1f}
 .main-header .sub{font-size:13px;color:var(--text2)}
 
 /* ── Buttons ── */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 18px;border-radius:var(--radius-xs);font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap;line-height:1.4}
-.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#e07b30}
-.btn-secondary{background:var(--border);color:var(--text)}.btn-secondary:hover{background:#3a4654}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 18px;border-radius:var(--radius-xs);font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap;line-height:1.4;font-family:var(--font-ui)}
+.btn-primary{background:#3d2b1f;color:#f5e6d0}.btn-primary:hover{background:#5a3d2b}
+.btn-secondary{background:var(--border);color:var(--text)}.btn-secondary:hover{background:#c4b5a2}
 .btn-ghost{background:transparent;color:var(--text2)}.btn-ghost:hover{background:var(--border);color:var(--text)}
 .btn-sm{padding:6px 12px;font-size:12px}
 .btn-xs{padding:4px 10px;font-size:11px}
 
 /* ── Form ── */
-input,textarea,select{width:100%;padding:10px 14px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;font-family:var(--font);outline:none;transition:border .15s,box-shadow .15s}
-input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(240,136,62,.15)}
+input,textarea,select{width:100%;padding:10px 14px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--card);color:var(--text);font-size:14px;font-family:var(--font-ui);outline:none;transition:border .15s,box-shadow .15s}
+input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(192,57,43,.1)}
 textarea{resize:vertical;min-height:90px;line-height:1.6}
 label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
 .form-group{margin-bottom:16px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
-/* ── Cards ── */
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:14px;transition:border .2s}
-.card:hover{border-color:var(--border)}
-.card-title{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:16px}
+/* ── Cards（书页卡片） ── */
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:14px;transition:border .2s,box-shadow .2s;box-shadow:0 1px 3px rgba(0,0,0,.04);position:relative}
+.card::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:linear-gradient(180deg, var(--accent), transparent 80%);border-radius:2px 0 0 2px;opacity:.5}
+.card:hover{border-color:#c4b5a2;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.card-title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:16px;font-family:var(--font)}
 
 /* ── Style Picker ── */
 .style-cat-title{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1.5px;margin:20px 0 10px;padding-left:2px;font-weight:600}
@@ -128,6 +138,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .shelf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
 .book-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:all .2s}
 .book-card:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--text3)}
+.book-delete{position:absolute;top:6px;right:6px;z-index:2;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:50%;border:none;background:rgba(0,0,0,.3);color:#fff;font-size:13px;cursor:pointer;opacity:0;transition:opacity .15s,background .15s}
+.book-card:hover .book-delete{opacity:1}
+.book-delete:hover{background:var(--red)}
 .book-cover{height:100px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:rgba(255,255,255,.1);letter-spacing:3px;position:relative}
 .book-cover::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 40%,var(--card) 100%)}
 .book-info{padding:14px 16px}
@@ -137,9 +150,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .progress-bar{flex:1;height:3px;background:var(--border-light);border-radius:2px;overflow:hidden}
 .progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .4s ease}
 .progress-text{font-size:10px;color:var(--text3);white-space:nowrap;font-variant-numeric:tabular-nums}
-.book-delete{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.4);color:#fff;border:none;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;z-index:2;line-height:1}
-.book-card:hover .book-delete{opacity:1}
-.book-delete:hover{background:var(--accent)}
 
 /* ── Tags/Badges ── */
 .tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500;background:rgba(240,136,62,.12);color:var(--accent)}
@@ -538,14 +548,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   </div>
   <!-- Sidebar -->
   <aside class="sidebar">
-    <div class="sidebar-logo"><span class="dot"></span>NovelGen</div>
+    <div class="sidebar-logo"><span class="dot"></span>墨·局</div>
     <nav class="sidebar-nav">
-      <div class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="nav-icon">📚</span>书架</div>
-      <div class="nav-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="nav-icon">✨</span>新建</div>
-      <div class="nav-item" :class="{active:currentView==='trends'}" @click="openTrends"><span class="nav-icon">🔥</span>爆火分析</div>
-      <div class="nav-item" :class="{active:currentView==='create'&&activeNovel}" @click="openOutline" v-if="activeNovel"><span class="nav-icon">📋</span>修改大纲</div>
-      <div class="nav-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="nav-icon">✍️</span>写作</div>
-      <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="nav-icon">↗</span>导出</div>
+      <div class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="nav-icon">📜</span>书架</div>
+      <div class="nav-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="nav-icon">🖋️</span>开卷</div>
+      <div class="nav-item" :class="{active:currentView==='trends'}" @click="openTrends"><span class="nav-icon">🔍</span>追风</div>
+      <div class="nav-item" :class="{active:currentView==='create'&&activeNovel}" @click="openOutline" v-if="activeNovel"><span class="nav-icon">📐</span>谋篇</div>
+      <div class="nav-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="nav-icon">✒️</span>落笔</div>
+      <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="nav-icon">📦</span>付梓</div>
     </nav>
     <div class="sidebar-footer">
       <div class="theme-toggle" @click="toggleTheme" :title="theme==='dark'?'切换浅色':'切换深色'">
@@ -579,11 +589,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       </div>
 
       <div v-else class="shelf-grid">
-        <div v-for="n in novels" :key="n.id" class="book-card" @click="openNovel(n)">
-          <div class="book-cover" :style="{background:coverGradient(n.id),position:'relative'}">
-            {{ n.title.slice(0,6) }}
-            <button class="book-delete" @click.stop="deleteNovel(n)" title="删除">✕</button>
-          </div>
+        <div v-for="n in novels" :key="n.id" class="book-card" style="position:relative" @click="openNovel(n)">
+          <button class="book-delete" @click.stop="deleteNovel(n)" title="删除此书">✕</button>
+          <div class="book-cover" :style="{background:coverGradient(n.id)}">{{ n.title.slice(0,6) }}</div>
           <div class="book-info">
             <h3>{{ n.title }}</h3>
             <div class="meta">
@@ -2382,6 +2390,17 @@ const app = createApp({
       } catch(e) { console.warn('Delete failed:', e); }
     }
 
+    async function deleteNovel(novel) {
+      if (!confirm(`永久删除「${novel.title}」？\n\n这将删除所有章节和大纲，不可恢复！`)) return;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(novel.id), { method:'DELETE' });
+        if (!r.ok) throw new Error(await r.text());
+        showToast('已删除', novel.title, '🗑️');
+        if (activeNovel.value?.id === novel.id) activeNovel.value = null;
+        await loadShelf();
+      } catch(e) { showToast('删除失败: ' + e.message, '', '⚠️'); }
+    }
+
     async function createThread() {
       if (!activeNovel.value) return;
       const name = prompt('新剧情线名称:');
@@ -3020,24 +3039,6 @@ const app = createApp({
       if (_shelfDebounce) return;
       _shelfDebounce = setTimeout(() => { _shelfDebounce=null; loadShelf(); }, 500);
     }
-    async function deleteNovel(novel) {
-      if (!confirm(`确定要删除《${novel.title}》吗？\n\n所有章节和设定将被永久删除，不可恢复。`)) return;
-      try {
-        const r = await fetch(API+'/api/novels/'+encodeURIComponent(novel.id), {method:'DELETE'});
-        if (r.ok) {
-          novels.value = novels.value.filter(n => n.id !== novel.id);
-          if (activeNovel.value && activeNovel.value.id === novel.id) {
-            activeNovel.value = null;
-            currentView.value = 'shelf';
-          }
-        } else {
-          const t = await r.text();
-          error.value = '删除失败: ' + (t||'未知错误');
-        }
-      } catch(e) {
-        error.value = '删除失败: ' + e.message;
-      }
-    }
     function loadNovelPlan() {
       // 从服务端强制重拉最新 plan（主角修改后确保前端同步）
       if (!activeNovel.value) return;
@@ -3617,7 +3618,7 @@ const app = createApp({
       openCreate,openWrite,openOutline,doCreate,openNovel,startWriting,
       openTrends,doTrendAnalyze,doBizarreQuick,doBizarreFull,createBizarreNovel,trendData,bizarreNovels,trendLoading,bizarreMode,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
-      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,deleteNovel,
+      toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
@@ -3649,7 +3650,7 @@ const app = createApp({
       timelineSvgWrap,zoomTimeline,startPanTimeline,doPanTimeline,endPanTimeline,
       // v2.5: 编辑器
       editState,quickDoing,startEdit,cancelEdit,saveEdit,hasEdit,
-      quickAction,deleteThread,createThread,createForeshadow,
+      quickAction,deleteThread,deleteNovel,createThread,createForeshadow,
       // v2.6: 画布
       canvasZoom,canvasPan,canvasWrap,canvasInner,
       canvasWidth,canvasHeight,canvasLaneH,canvasTickChapters,
