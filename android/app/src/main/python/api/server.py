@@ -39,11 +39,48 @@ log = logging.getLogger("api")
 app = FastAPI(title="NovelGenerator API", version="0.9.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS.split(",") if isinstance(CORS_ORIGINS, str) else CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Rate Limiting Middleware ──
+import time as _time
+from collections import defaultdict
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+_rate_limits: dict = defaultdict(list)  # {ip: [timestamps]}
+_RATE_WINDOW = 60  # 1 minute window
+_RATE_MAX_REQUESTS = int(os.getenv("RATE_LIMIT", "60"))  # 60 req/min per IP
+_RATE_GENERATE_MAX = int(os.getenv("RATE_LIMIT_GENERATE", "5"))  # 5 req/min for generate endpoints
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """简单的内存速率限制中间件"""
+    # 获取客户端 IP
+    client_ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    window_start = now - _RATE_WINDOW
+
+    # 清理过期记录
+    _rate_limits[client_ip] = [t for t in _rate_limits[client_ip] if t > window_start]
+
+    # 对 generate 端点使用更严格的限制
+    max_req = _RATE_GENERATE_MAX if "/generate" in request.url.path else _RATE_MAX_REQUESTS
+
+    if len(_rate_limits[client_ip]) >= max_req:
+        log.warning("速率限制触发: IP=%s, path=%s, count=%d", client_ip, request.url.path, len(_rate_limits[client_ip]))
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"请求过于频繁，请 {_RATE_WINDOW} 秒后再试", "retry_after": _RATE_WINDOW},
+        )
+
+    _rate_limits[client_ip].append(now)
+    return await call_next(request)
+
 
 engine = NovelEngine()
 
