@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NovelGenerator 架构评估报告 · 2026-07-31</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --border:#2d333b;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --green:#3fb950;
+    --yellow:#d29922; --red:#f85149; --purple:#bc8cff; --cyan:#39c5cf;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:"PingFang SC","Microsoft YaHei",-apple-system,sans-serif;line-height:1.7;padding:0 0 80px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  /* ── 头部 ── */
+  header{padding:56px 0 32px;border-bottom:1px solid var(--border);margin-bottom:40px}
+  .kicker{color:var(--accent);font-size:13px;letter-spacing:2px;font-weight:600;margin-bottom:12px}
+  h1{font-size:34px;font-weight:800;letter-spacing:.5px}
+  .sub{color:var(--muted);margin-top:10px;font-size:15px}
+  .meta{display:flex;gap:28px;margin-top:22px;flex-wrap:wrap}
+  .meta div{font-size:13px;color:var(--muted)}
+  .meta b{color:var(--text);font-weight:600}
+  /* ── 结论条 ── */
+  .verdict{display:flex;gap:24px;align-items:stretch;background:linear-gradient(135deg,#16222f 0%,#161b22 60%);border:1px solid var(--border);border-radius:14px;padding:28px;margin-bottom:48px;flex-wrap:wrap}
+  .score-box{text-align:center;padding-right:28px;border-right:1px solid var(--border);min-width:150px}
+  .score-num{font-size:56px;font-weight:800;color:var(--yellow);line-height:1}
+  .score-label{color:var(--muted);font-size:13px;margin-top:6px}
+  .verdict-text{flex:1;min-width:280px}
+  .verdict-text h2{font-size:19px;margin-bottom:10px;color:var(--accent)}
+  .verdict-text p{font-size:14.5px;color:#c9d1d9}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .tag{font-size:12px;padding:3px 12px;border-radius:20px;border:1px solid var(--border);color:var(--muted);background:var(--panel)}
+  .tag.g{color:var(--green);border-color:rgba(63,185,80,.35)}
+  .tag.r{color:var(--red);border-color:rgba(248,81,73,.35)}
+  /* ── 章节 ── */
+  section{margin-bottom:56px}
+  h2.sec{font-size:22px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:12px}
+  h2.sec .no{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:var(--accent);color:#0d1117;font-size:15px;font-weight:800;flex-shrink:0}
+  .sec-sub{color:var(--muted);font-size:13.5px;margin-bottom:22px;padding-left:46px}
+  /* ── 卡片 ── */
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px}
+  .card h3{font-size:15.5px;margin-bottom:10px;color:var(--accent)}
+  .card p,.card li{font-size:13.5px;color:#c9d1d9}
+  .card ul{padding-left:18px}
+  .card li{margin-bottom:6px}
+  .stat{text-align:center;padding:16px 10px}
+  .stat .v{font-size:30px;font-weight:800}
+  .stat .l{font-size:12.5px;color:var(--muted);margin-top:4px}
+  /* ── 表格 ── */
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+  th{text-align:left;color:var(--muted);font-weight:600;padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:9px 12px;border-bottom:1px solid rgba(45,51,59,.6);vertical-align:top}
+  tr:hover td{background:rgba(88,166,255,.04)}
+  .num{font-variant-numeric:tabular-nums;text-align:right}
+  /* ── 问题级别 ── */
+  .badge{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 10px;border-radius:6px;margin-right:6px}
+  .p0{background:rgba(248,81,73,.15);color:var(--red);border:1px solid rgba(248,81,73,.4)}
+  .p1{background:rgba(210,153,34,.12);color:var(--yellow);border:1px solid rgba(210,153,34,.4)}
+  .p2{background:rgba(88,166,255,.12);color:var(--accent);border:1px solid rgba(88,166,255,.4)}
+  /* ── 评分条 ── */
+  .score-row{display:flex;align-items:center;gap:14px;margin-bottom:13px}
+  .score-name{width:150px;font-size:13px;color:#c9d1d9;flex-shrink:0;text-align:right}
+  .score-bar{flex:1;height:14px;background:var(--panel2);border-radius:7px;overflow:hidden;position:relative}
+  .score-fill{height:100%;border-radius:7px;transition:width 1s ease}
+  .score-val{width:56px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+  .score-cat{font-size:11px;color:var(--muted);margin-top:2px}
+  /* ── 调用链 ── */
+  .chain{font-family:Consolas,"Courier New",monospace;font-size:12.5px;background:#0d1117;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;white-space:pre;color:#7ee787;line-height:1.75}
+  .chain .dim{color:#8b949e}.chain .warn{color:#d29922}.chain .hi{color:#58a6ff}
+  /* ── 路线图 ── */
+  .roadmap{border-left:2px solid var(--border);margin-left:10px;padding-left:26px}
+  .rm-item{position:relative;margin-bottom:26px}
+  .rm-item::before{content:"";position:absolute;left:-33px;top:6px;width:12px;height:12px;border-radius:50%;background:var(--accent)}
+  .rm-item.s::before{background:var(--yellow)}
+  .rm-item.l::before{background:var(--green)}
+  .rm-phase{font-size:12px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:4px}
+  .rm-item.s .rm-phase{color:var(--yellow)}
+  .rm-item.l .rm-phase{color:var(--green)}
+  .rm-title{font-size:15.5px;font-weight:700;margin-bottom:6px}
+  .rm-item p,.rm-item li{font-size:13px;color:var(--muted)}
+  .rm-item ul{padding-left:16px;margin-top:4px}
+  .rm-item li{margin-bottom:3px}
+  footer{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);color:var(--muted);font-size:12.5px;text-align:center}
+  .note{font-size:12px;color:var(--muted);margin-top:8px}
+  .flow{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:24px;overflow-x:auto}
+  .legend{display:flex;gap:18px;margin-top:12px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+  @media(max-width:640px){.score-name{width:110px;font-size:12px}.score-val{width:44px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">ARCHITECTURE REVIEW</div>
+  <h1>NovelGenerator 架构评估报告</h1>
+  <div class="sub">AI 小说生成器 · 全栈 monorepo（FastAPI + Vue 3 + Android/Chaquopy）架构合理性评估</div>
+  <div class="meta">
+    <div>评估日期 <b>2026-07-31</b></div>
+    <div>代码基线 <b>main @ 912d326</b></div>
+    <div>后端规模 <b>42 文件 / ~24,000 行</b></div>
+    <div>API 路由 <b>71 个</b></div>
+    <div>测试用例 <b>158+（本地部分跑不通）</b></div>
+  </div>
+</header>
+
+<!-- ═══════════ 结论 ═══════════ -->
+<div class="verdict">
+  <div class="score-box">
+    <div class="score-num">6.3</div>
+    <div class="score-label">综合架构评分 / 10</div>
+    <div class="note" style="text-align:center">定位：个人 AI 创作工具</div>
+  </div>
+  <div class="verdict-text">
+    <h2>核心结论：骨架合理，但已到「巨石化」拐点</h2>
+    <p>架构骨架是健康的 —— <b>多智能体编排 + 分层记忆 + 韧性客户端</b> 三层设计抓住了 AI 创作类应用的本质问题（上下文管理、失败降级、质量门控），23 个 Agent 职责清晰、技能模块低耦合。当前最主要的架构风险不在「层」而在「块」：<b>engine / server / 前端 index.html 三块巨石文件 + 双份 Python 副本靠人肉同步</b>，正在吃掉前 6 个版本迭代积累的可维护性红利。结论：<b>架构与当前个人工具定位匹配，可继续演进；但任何「团队化、商业化、多实例部署」的下一步动作前，必须优先处理巨石拆分与副本同步自动化</b>。</p>
+    <div class="tags">
+      <span class="tag g">✅ 多智能体编排合理</span>
+      <span class="tag g">✅ 分层记忆成熟</span>
+      <span class="tag g">✅ 韧性/降级设计突出</span>
+      <span class="tag r">⚠️ 三块巨石文件</span>
+      <span class="tag r">⚠️ 副本同步靠人肉</span>
+      <span class="tag r">⚠️ 测试无法本地跑全</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 一、架构总览 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">1</span>架构总览</h2>
+  <div class="sec-sub">四层纵向分层 + 三端横向部署。前端 / API / 编排 / 数据 各司其职，DeepSeek 为唯一外部依赖。</div>
+
+  <div class="flow">
+    <svg viewBox="0 0 1030 640" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#58a6ff"/>
+        </marker>
+      </defs>
+      <style>
+        .lbl{font-family:"PingFang SC","Microsoft YaHei",sans-serif}
+        .box{fill:#161b22;stroke:#2d333b;stroke-width:1.2;rx:10}
+        .box.hl{stroke:#58a6ff}
+        .t{fill:#e6edf3;font-size:13px;font-weight:600}
+        .ts{fill:#8b949e;font-size:10.5px}
+        .line{stroke:#58a6ff;stroke-width:1.4;marker-end:url(#arrow);fill:none}
+        .line.dim{stroke:#3d444d}
+        .lay{fill:#0d1117;stroke:#2d333b;stroke-width:1}
+      </style>
+
+      <!-- 前端层 -->
+      <rect class="lay" x="20" y="14" width="990" height="128" rx="12"/>
+      <text x="40" y="42" class="lbl" fill="#58a6ff" font-size="13" font-weight="700">前端层 · 三副本（web/ → backend/web + android/web）</text>
+      <rect class="box" x="40" y="54" width="180" height="64" rx="9"/>
+      <text x="130" y="84" class="lbl t" text-anchor="middle">Vue 3 SPA</text>
+      <text x="130" y="102" class="lbl ts" text-anchor="middle">index.html 3718 行 · 单文件</text>
+      <rect class="box" x="240" y="54" width="150" height="64" rx="9"/>
+      <text x="315" y="84" class="lbl t" text-anchor="middle">PWA</text>
+      <text x="315" y="102" class="lbl ts" text-anchor="middle">sw.js · manifest</text>
+      <rect class="box" x="410" y="54" width="170" height="64" rx="9"/>
+      <text x="495" y="84" class="lbl t" text-anchor="middle">视图：书架/开卷/追风</text>
+      <text x="495" y="102" class="lbl ts" text-anchor="middle">谋篇/落笔/付梓</text>
+      <rect class="box" x="600" y="54" width="180" height="64" rx="9"/>
+      <text x="690" y="84" class="lbl t" text-anchor="middle">SSE 流式渲染</text>
+      <text x="690" y="102" class="lbl ts" text-anchor="middle">fetch + ReadableStream</text>
+      <rect class="box" x="800" y="54" width="190" height="64" rx="9"/>
+      <text x="895" y="84" class="lbl t" text-anchor="middle">剧情图谱 5 子 Tab</text>
+      <text x="895" y="102" class="lbl ts" text-anchor="middle">SVG 可视化 · 章节回溯</text>
+
+      <!-- API 层 -->
+      <rect class="lay" x="20" y="166" width="990" height="110" rx="12"/>
+      <text x="40" y="194" class="lbl" fill="#58a6ff" font-size="13" font-weight="700">API 层 · FastAPI server.py（2048 行 · 71 路由 · 全局单例 engine）</text>
+      <rect class="box" x="40" y="204" width="130" height="52" rx="8"/>
+      <text x="105" y="230" class="lbl t" text-anchor="middle">创作 API</text>
+      <text x="105" y="246" class="lbl ts" text-anchor="middle">create/generate/batch</text>
+      <rect class="box" x="188" y="204" width="140" height="52" rx="8"/>
+      <text x="258" y="230" class="lbl t" text-anchor="middle">大纲/反馈 API</text>
+      <text x="258" y="246" class="lbl ts" text-anchor="middle">interactive/feedback</text>
+      <rect class="box" x="346" y="204" width="130" height="52" rx="8"/>
+      <text x="411" y="230" class="lbl t" text-anchor="middle">质量 API</text>
+      <text x="411" y="246" class="lbl ts" text-anchor="middle">logic/validate/quality</text>
+      <rect class="box" x="494" y="204" width="150" height="52" rx="8"/>
+      <text x="569" y="230" class="lbl t" text-anchor="middle">剧情图谱 API</text>
+      <text x="569" y="246" class="lbl ts" text-anchor="middle">storygraph/arcs</text>
+      <rect class="box" x="662" y="204" width="140" height="52" rx="8"/>
+      <text x="732" y="230" class="lbl t" text-anchor="middle">需求/风格 API</text>
+      <text x="732" y="246" class="lbl ts" text-anchor="middle">requirements/styles</text>
+      <rect class="box" x="820" y="204" width="170" height="52" rx="8"/>
+      <text x="905" y="230" class="lbl t" text-anchor="middle">XHS / 趋势 API</text>
+      <text x="905" y="246" class="lbl ts" text-anchor="middle">xiaohongshu/trends</text>
+
+      <!-- 编排层 -->
+      <rect class="lay" x="20" y="300" width="990" height="210" rx="12"/>
+      <text x="40" y="328" class="lbl" fill="#58a6ff" font-size="13" font-weight="700">编排层 · NovelEngine（2199 行 · 40+ 方法 · 依赖 26+ 模块）</text>
+      <rect class="box hl" x="360" y="338" width="300" height="56" rx="9"/>
+      <text x="510" y="362" class="lbl t" text-anchor="middle">NovelEngine（编排器）</text>
+      <text x="510" y="380" class="lbl ts" text-anchor="middle">create / generate / validate / export / interact</text>
+
+      <rect class="box" x="40" y="410" width="155" height="78" rx="8"/>
+      <text x="117" y="434" class="lbl t" text-anchor="middle">创作核心</text>
+      <text x="117" y="452" class="lbl ts" text-anchor="middle">Planner · Writer</text>
+      <text x="117" y="468" class="lbl ts" text-anchor="middle">BeatDecomposer</text>
+      <text x="117" y="482" class="lbl ts" text-anchor="middle">AtomicWriter · Assembler</text>
+
+      <rect class="box" x="215" y="410" width="155" height="78" rx="8"/>
+      <text x="292" y="434" class="lbl t" text-anchor="middle">拆解/监督</text>
+      <text x="292" y="452" class="lbl ts" text-anchor="middle">RequirementDecomposer</text>
+      <text x="292" y="468" class="lbl ts" text-anchor="middle">FeedbackDecomposer</text>
+      <text x="292" y="482" class="lbl ts" text-anchor="middle">RequirementSupervisor</text>
+
+      <rect class="box" x="540" y="410" width="155" height="78" rx="8"/>
+      <text x="617" y="434" class="lbl t" text-anchor="middle">质量门</text>
+      <text x="617" y="452" class="lbl ts" text-anchor="middle">PacingChecker · Humanizer</text>
+      <text x="617" y="468" class="lbl ts" text-anchor="middle">ConsistencyValidator</text>
+      <text x="617" y="482" class="lbl ts" text-anchor="middle">LogicSupervisor · AIDetector</text>
+
+      <rect class="box" x="715" y="410" width="155" height="78" rx="8"/>
+      <text x="792" y="434" class="lbl t" text-anchor="middle">剧情追踪</text>
+      <text x="792" y="452" class="lbl ts" text-anchor="middle">StoryGraph · ArcPlanner</text>
+      <text x="792" y="468" class="lbl ts" text-anchor="middle">AutoCalibrator</text>
+      <text x="792" y="482" class="lbl ts" text-anchor="middle">CharacterStateTracker</text>
+
+      <rect class="box" x="890" y="410" width="100" height="78" rx="8"/>
+      <text x="940" y="434" class="lbl t" text-anchor="middle">辅助</text>
+      <text x="940" y="452" class="lbl ts" text-anchor="middle">Embellisher</text>
+      <text x="940" y="468" class="lbl ts" text-anchor="middle">TwistDesigner</text>
+      <text x="940" y="482" class="lbl ts" text-anchor="middle">… 共 23 Agent</text>
+
+      <!-- 数据层 -->
+      <rect class="lay" x="20" y="534" width="990" height="92" rx="12"/>
+      <text x="40" y="562" class="lbl" fill="#58a6ff" font-size="13" font-weight="700">数据层 · 文件即数据库（novels/{title}/）· 无 DB 无缓存服务</text>
+      <rect class="box" x="40" y="572" width="210" height="42" rx="8"/>
+      <text x="145" y="592" class="lbl t" text-anchor="middle">SharedMemoryManager</text>
+      <text x="145" y="606" class="lbl ts" text-anchor="middle">统一缓存 TTL · 乐观锁 · 订阅</text>
+      <rect class="box" x="270" y="572" width="160" height="42" rx="8"/>
+      <text x="350" y="592" class="lbl t" text-anchor="middle">AtomicIO</text>
+      <text x="350" y="606" class="lbl ts" text-anchor="middle">原子写 · 损坏恢复</text>
+      <rect class="box" x="450" y="572" width="200" height="42" rx="8"/>
+      <text x="550" y="592" class="lbl t" text-anchor="middle">ResilientLLMClient</text>
+      <text x="550" y="606" class="lbl ts" text-anchor="middle">重试退避 · 断点续传</text>
+      <rect class="box" x="670" y="572" width="160" height="42" rx="8"/>
+      <text x="750" y="592" class="lbl t" text-anchor="middle">文件存储</text>
+      <text x="750" y="606" class="lbl ts" text-anchor="middle">plan/chapters/*.md</text>
+      <rect class="box" x="850" y="572" width="140" height="42" rx="8"/>
+      <text x="920" y="592" class="lbl t" text-anchor="middle">DeepSeek API</text>
+      <text x="920" y="606" class="lbl ts" text-anchor="middle">唯一外部依赖</text>
+    </svg>
+    <div class="legend">
+      <span><span class="dot" style="background:#161b22;border:1px solid #58a6ff"></span>核心层</span>
+      <span><span class="dot" style="background:#161b22;border:1px solid #2d333b"></span>支撑模块</span>
+      <span>共 40 个 core 模块 · 23 个 Agent · 71 个 API</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 二、分层与模块化 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">2</span>分层与模块化 — 骨架健康</h2>
+  <div class="sec-sub">核心结论：四层依赖方向基本单向、技能模块解耦良好；但编排层出现「上帝类」，API 层与前端层巨石化。</div>
+
+  <div class="grid g3">
+    <div class="card">
+      <h3>✅ 依赖方向清晰</h3>
+      <ul>
+        <li>API → Engine → 领域 Agent → SharedMemory → ResilientClient，逐层向下</li>
+        <li>19 个技能模块只依赖 resilient_client，扇入/扇出结构健康</li>
+        <li>reusable_client 隔离 LLM 细节（重试/退避/续传），上层完全无感</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>✅ 模块粒度合理</h3>
+      <ul>
+        <li>每个 Agent 一个文件、单一职责（Planner 管大纲、Writer 管正文、PacingChecker 管节奏）</li>
+        <li>新增 Agent = 新增文件 + engine 注入，扩展成本低（历史上已叠加到 23 个）</li>
+        <li>v2.x 迭代通过「加模块」而非「改核心」推进，架构韧性受益于此</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>⚠️ 编排层上帝类</h3>
+      <ul>
+        <li>engine.py 2199 行 / 40+ 方法 / 依赖 26+ 模块</li>
+        <li>导出 EPUB、POV 检测、角色宝典、锁管理等「非编排」逻辑都堆在 Engine</li>
+        <li>任何模块改动都要触碰 engine，回归面大</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>模块依赖实测（backend/core 内部 import 统计）</h3>
+    <table>
+      <tr><th>类型</th><th>模块</th><th>依赖数</th><th>说明</th></tr>
+      <tr><td>编排器</td><td>engine.py</td><td class="num">26+</td><td>上帝类：依赖几乎全部 core 模块</td></tr>
+      <tr><td>数据层</td><td>shared_memory.py</td><td class="num">3</td><td>atomic_io + resilient_client + <b style="color:#d29922">storygraph（反向依赖业务层）</b></td></tr>
+      <tr><td>LLM 抽象</td><td>resilient_client.py</td><td class="num">0</td><td>底层基础，无内部依赖</td></tr>
+      <tr><td>技能模块</td><td>embellisher / pacing_checker / logic_supervisor / …（19 个）</td><td class="num">1</td><td>仅依赖 resilient_client，高度解耦</td></tr>
+      <tr><td>创作核心</td><td>planner.py</td><td class="num">1</td><td>styles（风格系统）</td></tr>
+      <tr><td>创作核心</td><td>writer.py</td><td class="num">3</td><td>styles + humanizer + resilient_client</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ═══════════ 三、数据流 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">3</span>核心数据流 — 两遍式设计成熟</h2>
+  <div class="sec-sub">创作管线与写作管线均为「分阶段 + 强降级」设计，信息逐层沉淀到磁盘文件，可断点续跑。</div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>创作管线（create_novel_stream）</h3>
+      <div class="chain"><span class="dim"># Phase 0 需求拆解</span>
+灵感 → <span class="hi">RequirementDecomposer</span> → 12-25 条子任务
+<span class="dim"># Phase 1-3 大纲生成</span>
+→ <span class="hi">Planner.plan_stream</span>（世界观→角色→分卷→逐章）
+<span class="dim"># 落盘（原子写）</span>
+→ plan.json + character_bible.json
+→ storygraph.json + arcs + foreshadowing.json
+→ novel_state.json（进度状态）
+<span class="dim"># 失败策略</span>
+每个非核心步骤 try/except 降级 → <span class="warn">不阻断主线</span></div>
+    </div>
+    <div class="card">
+      <h3>写作管线（generate / atomic 双轨）</h3>
+      <div class="chain"><span class="dim"># 上下文组装（5 层）</span>
+shared_memory.build_writer_context
+（核心设定/桥接/摘要/状态/伏笔/大纲）
+<span class="dim"># 两遍式写作</span>
+① Writer 初稿（元指令提至 system）
+② 独立结尾生成（章末钩子保护）
+<span class="dim"># 质量门</span>
+PacingCheck → AI 检测 → Humanizer
+<span class="dim"># 原子化路径（v2.3 双轨）</span>
+Blueprint → BeatDecomposer → 逐 beat LLM
+→ BeatAssembler（去重/平滑/评估）
+<span class="dim"># 沉淀</span>
+chapter_XXXX.md + 状态/伏笔/图谱更新</div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <h3>双轨制说明（架构上需要正视）</h3>
+    <p>系统内存在<b>两条并行的章节生成路径</b>：普通 Writer 路径（1 次 LLM 调用整章）与原子化路径（5-7 次 LLM 调用逐 beat）。README 与 AUDIT_REPORT（P1-1）均指出两条路径产出质量差异大（普通路径趋同、原子路径连贯性差）。双轨并存导致：<b>同一功能两套实现、两套调参、两套 bug 面</b>。当前默认启用原子化，但普通路径代码并未移除 —— 建议尽快收敛为单一主路径。</p>
+  </div>
+</section>
+
+<!-- ═══════════ 四、多端架构 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">4</span>多端架构 — 三副本同步机制是双刃剑</h2>
+  <div class="sec-sub">PC Web（Render）+ Android APK（Chaquopy 内嵌 Python）+ XHS Worker（Docker）三端，共享同一套 core 代码。</div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>副本拓扑</h3>
+      <table>
+        <tr><th>代码</th><th>副本数</th><th>同步方式</th></tr>
+        <tr><td>core/*.py（40 文件）</td><td>2 份（backend + android）</td><td>tools/sync_android_core.py（人肉触发）</td></tr>
+        <tr><td>前端（index.html 等）</td><td>3 份（web + backend/web + android/web）</td><td>tools/sync_frontend.py（人肉触发）</td></tr>
+        <tr><td>api/server.py</td><td>2 份（平台差异版本）</td><td>各自维护（CORS/WEB_DIR 不同）</td></tr>
+      </table>
+      <p style="margin-top:10px"><b>当前一致性良好</b>：core 40 文件 md5 全等、前端三副本 md5 全等、server.py 仅 5 行平台差异。同步脚本设计专业（--check 模式 + 差异报告）。</p>
+    </div>
+    <div class="card">
+      <h3>风险：同步依赖人肉纪律</h3>
+      <ul>
+        <li><b>实测发现</b>：git 提交「CORS 锁定域名」只同步到了 Android 副本，<b>backend 主副本仍是 <span style="color:#f85149">allow_origins=["*"] + allow_credentials=True</span></b>——同一处 bug 修了 A 端漏了 B 端</li>
+        <li>CI（.github/workflows/ci.yml）只做语法检查 + 密钥扫描，<b>不校验三副本一致性</b>——不一致可以静默合入 main</li>
+        <li>Android 使用 Chaquopy 内嵌整套 Python（24,000 行）打包进 APK：包体积大、版本漂移风险高</li>
+        <li>替代方向：Android 改为「远程 API 客户端」或「core 子集裁剪」，但工程量大，现阶段维持副本+CI 校验是可接受方案</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 五、评分 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">5</span>维度评分</h2>
+  <div class="sec-sub">10 分制，按「当前定位（个人 AI 创作工具）+ 演进方向」双视角打分。</div>
+
+  <div class="card">
+    <div class="score-row"><div class="score-name">韧性 / 错误处理</div><div class="score-bar"><div class="score-fill" style="width:85%;background:linear-gradient(90deg,#1f6feb,#3fb950)"></div></div><div class="score-val" style="color:var(--green)">8.5</div></div>
+    <div class="score-row"><div class="score-name">数据流与状态管理</div><div class="score-bar"><div class="score-fill" style="width:75%;background:linear-gradient(90deg,#1f6feb,#3fb950)"></div></div><div class="score-val" style="color:var(--green)">7.5</div></div>
+    <div class="score-row"><div class="score-name">分层与模块化</div><div class="score-bar"><div class="score-fill" style="width:70%;background:linear-gradient(90deg,#1f6feb,#d29922)"></div></div><div class="score-val" style="color:var(--yellow)">7.0</div></div>
+    <div class="score-row"><div class="score-name">多端一致性机制</div><div class="score-bar"><div class="score-fill" style="width:70%;background:linear-gradient(90deg,#1f6feb,#d29922)"></div></div><div class="score-val" style="color:var(--yellow)">7.0</div></div>
+    <div class="score-row"><div class="score-name">依赖管理与耦合度</div><div class="score-bar"><div class="score-fill" style="width:65%;background:linear-gradient(90deg,#1f6feb,#d29922)"></div></div><div class="score-val" style="color:var(--yellow)">6.5</div></div>
+    <div class="score-row"><div class="score-name">部署与运维</div><div class="score-bar"><div class="score-fill" style="width:65%;background:linear-gradient(90deg,#1f6feb,#d29922)"></div></div><div class="score-val" style="color:var(--yellow)">6.5</div></div>
+    <div class="score-row"><div class="score-name">可维护性</div><div class="score-bar"><div class="score-fill" style="width:55%;background:linear-gradient(90deg,#d29922,#f85149)"></div></div><div class="score-val" style="color:var(--yellow)">5.5</div></div>
+    <div class="score-row"><div class="score-name">安全与配置</div><div class="score-bar"><div class="score-fill" style="width:50%;background:linear-gradient(90deg,#d29922,#f85149)"></div></div><div class="score-val" style="color:var(--yellow)">5.0</div></div>
+    <div class="score-row"><div class="score-name">前端架构</div><div class="score-bar"><div class="score-fill" style="width:45%;background:#f85149"></div></div><div class="score-val" style="color:var(--red)">4.5</div></div>
+    <div class="score-row"><div class="score-name">测试与质量保障</div><div class="score-bar"><div class="score-fill" style="width:45%;background:#f85149"></div></div><div class="score-val" style="color:var(--red)">4.5</div></div>
+    <p class="note" style="margin-top:14px">综合 6.3 / 10。三个最强项（韧性、记忆、分层）是项目能迭代到 v2.5x 的根基；四个短板（巨石文件 ×3、测试、安全配置）是下一步演进的主要约束。</p>
+  </div>
+</section>
+
+<!-- ═══════════ 六、问题清单 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">6</span>问题清单</h2>
+  <div class="sec-sub">按影响面与修复成本分级。P0 = 立即修，P1 = 1-2 周，P2 = 规划内。</div>
+
+  <div class="card">
+    <h3>🔴 P0 — 隐藏 bug 与一致性缺口</h3>
+    <table>
+      <tr><th style="width:70px">级别</th><th style="width:200px">问题</th><th>证据 / 影响</th></tr>
+      <tr><td><span class="badge p0">P0</span></td><td><b>死引用 NovelPlanner</b></td><td>server.py:1841 引用 <code>from core.planner import NovelPlanner</code>，该类在 backend 与 android 两个副本中<b>均不存在</b>（已 AST 验证）。<code>POST /api/trends/bizarre/create</code> 一旦走到该分支必然 500。端点为新功能，未被主流程覆盖 → 静默坏点。</td></tr>
+      <tr><td><span class="badge p0">P0</span></td><td><b>CI 不校验三副本一致性</b></td><td>ci.yml 仅 py_compile + 密钥扫描。已实测发生「CORS 修复只进 Android 副本」的漂移。不一致代码可无感合入 main，是<b>结构性隐患</b>而非一次性失误。</td></tr>
+      <tr><td><span class="badge p0">P0</span></td><td><b>测试套件本地跑不通</b></td><td>tests/test_suite.py 全量运行时在 TestPlannerStream 处卡死（超时 9 分钟无输出）。前 38 个测试全过（PlannerJSON/AtomicIO/Writer/Memory），asyncio 相关测试无法回归。已知还有 2 个预存失败。</td></tr>
+      <tr><td><span class="badge p0">P0</span></td><td><b>CORS 配置脱节</b></td><td>backend/server.py 硬编码 <code>allow_origins=["*"]</code> + <code>allow_credentials=True</code>（无效且危险组合），与 config.py 的 CORS_ORIGINS 完全脱节；Android 副本已改用配置。部署到 Render 后为开放跨域。</td></tr>
+    </table>
+
+    <h3 style="margin-top:22px">🟡 P1 — 架构演进阻碍</h3>
+    <table>
+      <tr><th style="width:70px">级别</th><th style="width:200px">问题</th><th>证据 / 影响</th></tr>
+      <tr><td><span class="badge p1">P1</span></td><td><b>engine.py 上帝类</b></td><td>2199 行 / 40+ 方法 / 依赖 26+ 模块。编排 + 具体实现（EPUB 导出、POV 检测、锁管理、角色宝典）混杂，单文件回归面过大。</td></tr>
+      <tr><td><span class="badge p1">P1</span></td><td><b>server.py 巨石文件</b></td><td>2048 行 / 71 路由无 APIRouter 分组、无依赖注入、无请求模型复用（dict 满天飞，git log 有「FastAPI body parsing」修复记录）。</td></tr>
+      <tr><td><span class="badge p1">P1</span></td><td><b>前端单文件巨石</b></td><td>index.html 3718 行 / 224 函数 / 86 个 ref 状态 / 无组件化 / 无构建链 / 无类型检查 / 手写视图切换（v-if）。改一处可能碰全局。</td></tr>
+      <tr><td><span class="badge p1">P1</span></td><td><b>进程内可变状态</b></td><td>engine._requirements 为内存 dict（代码注释自认「PENDING: needs DB migration for multi-process」）；rate limit 为内存 defaultdict。多 worker / 多进程部署即失效。</td></tr>
+      <tr><td><span class="badge p1">P1</span></td><td><b>双轨生成未收敛</b></td><td>普通 Writer 路径与原子化路径并存，AUDIT P1-1 已指出质量差异。两套路径两套 bug 面。</td></tr>
+      <tr><td><span class="badge p1">P1</span></td><td><b>async 中同步阻塞</b></td><td>planner.py _call_llm 使用 <code>time.sleep(attempt+1)</code>（同步退避）阻塞事件循环；大段同步 LLM 调用依赖 asyncio.to_thread 手工包裹。并发场景响应性差。</td></tr>
+    </table>
+
+    <h3 style="margin-top:22px">🟢 P2 — 完善项</h3>
+    <table>
+      <tr><th style="width:70px">级别</th><th style="width:200px">问题</th><th>说明</th></tr>
+      <tr><td><span class="badge p2">P2</span></td><td><b>文件锁遗留</b></td><td>章节生成锁 300s 僵尸锁兜底已在成功路径删除，但异常路径仍依赖超时回收；Windows 文件锁可靠性一般。AUDIT P1-6 建议的 threading.Lock 未落地。</td></tr>
+      <tr><td><span class="badge p2">P2</span></td><td><b>安全基线</b></td><td>API key 明文 .env、无鉴权、无内容审核接口（AUDIT Phase 4 已规划未落地）。本地工具可接受，公网部署前必须补。</td></tr>
+      <tr><td><span class="badge p2">P2</span></td><td><b>可观测性</b></td><td>仅 logging；无指标、无结构化日志、无失败率监控。生成成功率/耗时全靠用户体感。</td></tr>
+      <tr><td><span class="badge p2">P2</span></td><td><b>shared_memory → storygraph 反向依赖</b></td><td>数据层依赖业务模块，破坏分层方向。当前靠 try/except 兜底，属可容忍的架构债。</td></tr>
+      <tr><td><span class="badge p2">P2</span></td><td><b>版本注释堆叠</b></td><td>v2.x 演进直接堆代码：engine/writer 中大量「v2.x: xxx」注释与兼容参数，AUDIT 也多次指出「旧路径未移除」。</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ═══════════ 七、优势 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">7</span>值得保留的架构资产</h2>
+  <div class="sec-sub">以下设计经得起检验，后续重构时必须保留、不要破坏。</div>
+  <div class="grid g2">
+    <div class="card">
+      <h3>🛡️ 韧性优先的设计哲学</h3>
+      <ul>
+        <li><b>ResilientLLMClient</b>：重试/退避/断点续传，LLM 调用全部走统一抽象</li>
+        <li><b>四级 JSON 降级</b>：validate → repair → parse_partial → force_extract，LLM 输出畸形 JSON 也不会挂流程</li>
+        <li><b>非核心步骤全部 try/except 降级</b>：图谱初始化失败不阻断大纲生成</li>
+        <li><b>原子写入</b>（atomic_io）：损坏文件自动恢复，"章节 .md 在磁盘上就永不丢失"是正确原则</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🧠 分层记忆架构（L1/L2/L3）</h3>
+      <ul>
+        <li>核心设定 / 近期上下文 / 伏笔追踪三层隔离，prompt 组装按需拼接</li>
+        <li>SharedMemoryManager 统一缓存 + 乐观锁 + 订阅通知，接口一致性好</li>
+        <li>memory.py 薄包装层保持向后兼容，v2.1 迁移无破坏</li>
+        <li>渐进式摘要压缩（check_and_compress）控制长篇小说上下文膨胀</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🤖 多智能体职责划分</h3>
+      <ul>
+        <li>创作（Planner/Writer/Beat）、拆解（Requirement/Feedback）、质量（Pacing/Humanizer/Consistency）、追踪（StoryGraph/ArcPlanner）四类 Agent 边界清晰</li>
+        <li>新增能力 = 新增文件 + Engine 注入，历史已验证可扩展到 23 个</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🔧 同步工具工程化</h3>
+      <ul>
+        <li>sync_frontend.py / sync_android_core.py 支持 --check 模式，可作为 CI gate 直接接入</li>
+        <li>Android 平台差异（CORS、WEB_DIR）用 server.py 独立维护，core 保持 1:1</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 八、路线图 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">8</span>改进路线图</h2>
+  <div class="sec-sub">按「先止血、再拆墙、后升级」排序，每步都给出明确的完成判据。</div>
+  <div class="roadmap">
+    <div class="rm-item">
+      <div class="rm-phase">STEP 1 · 止血（1-2 天）</div>
+      <div class="rm-title">修掉三个静默坏点</div>
+      <ul>
+        <li>删除或实现 NovelPlanner 死引用（/api/trends/bizarre/create 返回 500 的根因）</li>
+        <li>backend/server.py 的 CORS 改为读取 config.CORS_ORIGINS（对齐 Android 副本）</li>
+        <li>定位 test_suite 卡死根因（TestPlannerStream 的 asyncio/同步退避问题），恢复本地全量回归</li>
+      </ul>
+    </div>
+    <div class="rm-item">
+      <div class="rm-phase">STEP 2 · CI 上锁（半天）</div>
+      <div class="rm-title">把副本一致性变成机器检查</div>
+      <ul>
+        <li>ci.yml 增加步骤：跑 sync_frontend.py --check + sync_android_core.py --check，不一致即 CI 失败</li>
+        <li>ci.yml 增加 pytest（至少 test_suite 前 38 项 + resilient 21 项）</li>
+        <li>判据：main 分支永远满足「三副本一致 + 核心测试绿」</li>
+      </ul>
+    </div>
+    <div class="rm-item">
+      <div class="rm-phase">STEP 3 · 拆巨石（1-2 周）</div>
+      <div class="rm-title">把三块巨石切成有边界的模块</div>
+      <ul>
+        <li><b>server.py</b>：按域拆 APIRouter（novels / outline / quality / storygraph / requirements / styles / xhs），每域一文件，共用请求模型</li>
+        <li><b>engine.py</b>：抽出导出（ExportService）、校验（ValidationService）、状态（GenerationCoordinator），Engine 只留编排</li>
+        <li><b>index.html</b>：先按视图拆为多文件（shelf.js / create.js / write.js / storygraph.js / export.js），用构建脚本拼接（不引入 Vite 也可），后续再升级组件化</li>
+      </ul>
+    </div>
+    <div class="rm-item">
+      <div class="rm-phase">STEP 4 · 状态与并发升级（规划期）</div>
+      <div class="rm-title">为多实例部署做准备</div>
+      <ul>
+        <li>_requirements 等进程内状态迁移 SQLite（代码注释已指明方向）</li>
+        <li>rate limit 换 Redis 或接受单 worker 部署约束（Render 免费版本为单实例，当前可接受）</li>
+        <li>文件锁换 threading.Lock + 跨进程语义（portalocker），去掉 300s 兜底依赖</li>
+        <li>生成路径收敛：原子化为主，普通路径降级为 fallback 或移除</li>
+      </ul>
+    </div>
+    <div class="rm-item l">
+      <div class="rm-phase">STEP 5 · 升级（商业化前置）</div>
+      <div class="rm-title">团队化 / 公网部署前必须项</div>
+      <ul>
+        <li>鉴权 + 内容审核 + API key 托管（AUDIT Phase 4 清单）</li>
+        <li>结构化日志 + 生成成功率/耗时指标</li>
+        <li>前端引入类型检查（TS 或 JSDoc）+ 组件化重构</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 附录 ═══════════ -->
+<section>
+  <h2 class="sec"><span class="no">9</span>附录 · 关键度量</h2>
+  <div class="sec-sub">本次评估实测数据（2026-07-31，main @ 912d326）。</div>
+  <div class="grid g3">
+    <div class="card stat"><div class="v" style="color:var(--accent)">24,043</div><div class="l">backend Python 总行数</div></div>
+    <div class="card stat"><div class="v" style="color:var(--accent)">40</div><div class="l">core 模块数（Android 1:1 同步）</div></div>
+    <div class="card stat"><div class="v" style="color:var(--accent)">71</div><div class="l">API 路由（全部在 server.py）</div></div>
+    <div class="card stat"><div class="v" style="color:var(--yellow)">3,718</div><div class="l">前端 index.html 行数（单文件）</div></div>
+    <div class="card stat"><div class="v" style="color:var(--yellow)">224 / 86</div><div class="l">前端函数数 / ref 状态数</div></div>
+    <div class="card stat"><div class="v" style="color:var(--red)">0</div><div class="l">本地上跑通的核心测试套件（卡死在 TestPlannerStream）</div></div>
+    <div class="card stat"><div class="v" style="color:var(--red)">38</div><div class="l">test_suite 前 38 项实测通过</div></div>
+    <div class="card stat"><div class="v" style="color:var(--green)">1:1</div><div class="l">backend/android core md5 一致性</div></div>
+    <div class="card stat"><div class="v" style="color:var(--green)">1:1</div><div class="l">前端三副本 md5 一致性</div></div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <h3>评估方法</h3>
+    <p>静态分析为主：目录结构与模块依赖图梳理 → 核心模块源码走读（engine/planner/writer/shared_memory/server/前端）→ 双副本 md5 一致性校验 → AST 检查 server 全部运行时 import 有效性 → 本地实测 pytest 运行 → git 历史与既有 AUDIT_REPORT 交叉核对。未做：压测、多进程实测、前端浏览器实测。</p>
+  </div>
+</section>
+
+<footer>
+  NovelGenerator 架构评估报告 · 2026-07-31 · 基于 main@912d326 代码基线<br>
+  本报告为架构合理性评估，与 AUDIT_REPORT.md（2026-07-28，质量/商用审计）互补
+</footer>
+
+</div>
+</body>
+</html>
