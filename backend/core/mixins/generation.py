@@ -981,7 +981,7 @@ class GenerationMixin:
             except Exception as e:
                 log.warning(f"StoryGraph update skipped: {e}")
 
-            # ── 方案A: 逻辑监督自动校验（自动修复P0违规）──
+            # ── 方案A: 一致性校验（ConsistencyValidator L1+L2 每章，P0 自动重写）──
             try:
                 # 获取前文章节
                 prev_chapters = {}
@@ -996,14 +996,14 @@ class GenerationMixin:
                 gs_path = os.path.join(novel_dir_gs, "global_state.json")
                 global_state = safe_read_json(gs_path, {}) if os.path.exists(gs_path) else {}
                 
-                # 执行校验
-                validation = self.logic_supervisor.validate_chapter(
+                # 执行校验（v2.3.5: 统一 ConsistencyValidator，L2 每章深检，含亲属关系检测）
+                validation = self.consistency_validator.validate_chapter(
                     chapter_text=full_text,
                     chapter_num=chapter_num,
                     plan=plan,
                     prev_chapters=prev_chapters,
                     global_state=global_state,
-                    run_deep=(chapter_num % 3 == 0),  # 每3章做一次深度校验
+                    run_deep=True,  # 每章 L2 语义校验（v2.3.5: 原每3章→每章）
                 )
                 
                 violations = validation.get("violations", [])
@@ -1011,7 +1011,7 @@ class GenerationMixin:
                     p0_count = sum(1 for v in violations if v.get("severity") == "P0")
                     score = validation.get("score", 100)
                     
-                    log.warning(f"LogicSupervisor: {len(violations)} violations "
+                    log.warning(f"ConsistencyValidator(atomic): {len(violations)} violations "
                                f"(P0:{p0_count}) score={score}")
                     
                     yield {"type": "consistency_check",
@@ -1020,7 +1020,7 @@ class GenerationMixin:
                     
                     # P0违规 ≥1 → 自动修复
                     if p0_count >= 1:
-                        fix_prompt = self.logic_supervisor.build_fix_prompt(violations)
+                        fix_prompt = self.consistency_validator.build_fix_prompt(violations)
                         log.info(f"Auto-fix triggered: {p0_count} P0 violations")
                         
                         # 构造修复上下文
@@ -1046,8 +1046,17 @@ class GenerationMixin:
                             self.memory.save_chapter(novel_id, chapter_num, formatted)
                             log.info(f"Auto-fix completed for chapter {chapter_num}")
                             yield {"type": "auto_fix", "applied": True, "violations_fixed": p0_count}
+
+                # P1 问题 → 注入下一章修正（与普通路径对齐）
+                p1_issues = [v.get("description", "") for v in violations if v.get("severity") == "P1"]
+                if p1_issues and not p0_count:
+                    state = self.memory.get_novel_state(novel_id)
+                    state["consistency_issues"] = state.get("consistency_issues", {})
+                    state["consistency_issues"][str(chapter_num)] = p1_issues[:5]
+                    self.memory.save_novel_state(novel_id, state)
+                    yield {"type": "consistency_warning", "chapter": chapter_num, "issues": p1_issues[:5]}
             except Exception as e:
-                log.warning(f"LogicSupervisor auto-validation skipped: {e}")
+                log.warning(f"Consistency auto-validation skipped: {e}")
 
             # ── 自动校准（每10章）──
             try:
