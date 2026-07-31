@@ -139,6 +139,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .book-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:all .2s}
 .book-card:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--text3)}
 .book-delete{position:absolute;top:6px;right:6px;z-index:2;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:50%;border:none;background:rgba(0,0,0,.3);color:#fff;font-size:13px;cursor:pointer;opacity:0;transition:opacity .15s,background .15s}
+.book-outline{position:absolute;top:6px;right:38px;z-index:2;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:50%;border:none;background:rgba(0,0,0,.3);color:#fff;font-size:13px;cursor:pointer;opacity:0;transition:opacity .15s,background .15s}
+.book-card:hover .book-outline{opacity:1}
+.book-outline:hover{background:var(--accent)}
 .book-card:hover .book-delete{opacity:1}
 .book-delete:hover{background:var(--red)}
 .book-cover{height:100px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:rgba(255,255,255,.1);letter-spacing:3px;position:relative}
@@ -563,7 +566,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <div class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="nav-icon">📜</span>书架</div>
       <div class="nav-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="nav-icon">🖋️</span>开卷</div>
       <div class="nav-item" :class="{active:currentView==='trends'}" @click="openTrends"><span class="nav-icon">🔍</span>追风</div>
-      <div class="nav-item" :class="{active:currentView==='create'&&activeNovel}" @click="openOutline" v-if="activeNovel"><span class="nav-icon">📐</span>谋篇</div>
       <div class="nav-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="nav-icon">✒️</span>落笔</div>
       <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="nav-icon">📦</span>付梓</div>
     </nav>
@@ -601,6 +603,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <div v-else class="shelf-grid">
         <div v-for="n in novels" :key="n.id" class="book-card" style="position:relative" @click="openNovel(n)">
           <button class="book-delete" @click.stop="deleteNovel(n)" title="删除此书">✕</button>
+          <button class="book-outline" @click.stop="openOutlineFor(n)" title="编辑大纲">📐</button>
           <div class="book-cover" :style="{background:coverGradient(n.id)}">{{ n.title.slice(0,6) }}</div>
           <div class="book-info">
             <h3>{{ n.title }}</h3>
@@ -1880,7 +1883,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   <nav class="bottom-nav">
     <div class="bn-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="bn-icon">📚</span>书架</div>
     <div class="bn-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="bn-icon">✨</span>新建</div>
-    <div class="bn-item" :class="{active:currentView==='create'&&activeNovel}" @click="openOutline" v-if="activeNovel"><span class="bn-icon">📋</span>修改大纲</div>
     <div class="bn-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="bn-icon">✍️</span>写作</div>
     <div class="bn-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="bn-icon">↗</span>导出</div>
     <div class="bn-item" @click="toggleTheme"><span class="bn-icon">{{ theme==='dark'?'☀️':'🌙' }}</span>主题</div>
@@ -3171,6 +3173,16 @@ const app = createApp({
       isBusy.value = false;
     }
     function openWrite() { if(isBusy.value) return; if(activeNovel.value) { currentView.value='write'; writing.activeTab='write'; _saveSession(); } }
+    function openOutlineFor(novel) {
+      // 书架 → 编辑大纲：选中该书并加载最新 plan 进入大纲预览
+      if(isBusy.value) return;
+      activeNovel.value = novel; error.value = '';
+      _saveSession();
+      fetch(API+'/api/novels/'+encodeURIComponent(novel.id))
+        .then(r=>r.json()).then(d=>{planResult.value=d.novel;})
+        .catch(()=>{});
+      currentView.value='create';
+    }
     function openOutline() {
       if(isBusy.value) return;
       if(!activeNovel.value) return;
@@ -3625,7 +3637,7 @@ const app = createApp({
       form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,shelfLoadFailed,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
-      openCreate,openWrite,openOutline,doCreate,openNovel,startWriting,
+      openCreate,openWrite,openOutline,openOutlineFor,doCreate,openNovel,startWriting,
       openTrends,doTrendAnalyze,doBizarreQuick,doBizarreFull,createBizarreNovel,trendData,bizarreNovels,trendLoading,bizarreMode,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
