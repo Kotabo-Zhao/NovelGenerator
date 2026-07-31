@@ -151,6 +151,16 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .4s ease}
 .progress-text{font-size:10px;color:var(--text3);white-space:nowrap;font-variant-numeric:tabular-nums}
 
+/* ── Skeleton Loading ── */
+@keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
+.skeleton{background:linear-gradient(90deg,var(--border-light) 25%,var(--border) 37%,var(--border-light) 63%);background-size:400px 100%;animation:shimmer 1.4s ease infinite;border-radius:4px}
+.skeleton-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:14px}
+.skeleton-cover{height:100px;width:100%;margin-bottom:12px}
+.skeleton-title{height:18px;width:60%;margin-bottom:8px}
+.skeleton-line{height:12px;width:80%;margin-bottom:6px}
+.skeleton-line.short{width:40%}
+.skeleton-progress{height:3px;width:100%;margin-top:12px;border-radius:2px}
+
 /* ── Tags/Badges ── */
 .tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500;background:rgba(240,136,62,.12);color:var(--accent)}
 .badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:.3px}
