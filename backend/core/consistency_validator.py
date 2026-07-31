@@ -663,12 +663,12 @@ class ConsistencyValidator:
             state_summary = json.dumps(global_state, ensure_ascii=False)[:500]
             context_parts.append(f"\n## 当前角色状态\n{state_summary}")
         
-        # 前文摘要（最近2章）
+        # 前文摘要（最近5章，v2.3.5: 2章→5章扩大校验视野，覆盖中程连续性）
         if prev_chapters:
-            prev_nums = sorted(prev_chapters.keys())[-2:]
+            prev_nums = sorted(prev_chapters.keys())[-5:]
             for pn in prev_nums:
                 prev_text = prev_chapters[pn]
-                context_parts.append(f"\n## 第{pn}章结尾(最后300字)\n{prev_text[-300:]}")
+                context_parts.append(f"\n## 第{pn}章(结尾300字)\n{prev_text[-300:]}")
 
         context = "\n\n".join(context_parts)
 
