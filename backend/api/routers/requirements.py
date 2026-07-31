@@ -61,7 +61,7 @@ async def update_requirements(novel_id: str, req: dict):
 @router.get("/api/novels/{novel_id}/requirements")
 async def get_requirements(novel_id: str):
     """获取当前需求列表"""
-    reqs = engine._requirements.get(novel_id, {})
+    reqs = engine._req_store.get(novel_id)
     if not reqs:
         raise HTTPException(status_code=404, detail="尚未拆解需求")
     return reqs
