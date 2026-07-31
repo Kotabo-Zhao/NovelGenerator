@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NovelGenerator 整体复盘与质量提升分析报告 · 2026-07-31</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --border:#2d333b;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --green:#3fb950;
+    --yellow:#d29922; --red:#f85149; --purple:#bc8cff; --cyan:#39c5cf;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:"PingFang SC","Microsoft YaHei",-apple-system,sans-serif;line-height:1.7;padding-bottom:80px}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 24px}
+  header{padding:52px 0 30px;border-bottom:1px solid var(--border);margin-bottom:38px}
+  .kicker{color:var(--accent);font-size:13px;letter-spacing:2px;font-weight:600;margin-bottom:12px}
+  h1{font-size:32px;font-weight:800}
+  .sub{color:var(--muted);margin-top:10px;font-size:14.5px}
+  .meta{display:flex;gap:24px;margin-top:20px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+  .meta b{color:var(--text)}
+  .verdict{display:flex;gap:24px;align-items:stretch;background:linear-gradient(135deg,#16222f,#161b22);border:1px solid var(--border);border-radius:14px;padding:26px;margin-bottom:44px;flex-wrap:wrap}
+  .score-box{text-align:center;padding-right:26px;border-right:1px solid var(--border);min-width:130px}
+  .score-num{font-size:52px;font-weight:800;color:var(--yellow);line-height:1}
+  .score-label{color:var(--muted);font-size:12.5px;margin-top:6px}
+  .verdict-text{flex:1;min-width:280px}
+  .verdict-text h2{font-size:18px;margin-bottom:10px;color:var(--accent)}
+  .verdict-text p{font-size:14px;color:#c9d1d9}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .tag{font-size:12px;padding:3px 12px;border-radius:20px;border:1px solid var(--border);color:var(--muted);background:var(--panel)}
+  .tag.g{color:var(--green);border-color:rgba(63,185,80,.35)}
+  .tag.r{color:var(--red);border-color:rgba(248,81,73,.35)}
+  .tag.y{color:var(--yellow);border-color:rgba(210,153,34,.35)}
+  section{margin-bottom:50px}
+  h2.sec{font-size:21px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:12px}
+  h2.sec .no{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:9px;background:var(--accent);color:#0d1117;font-size:14px;font-weight:800;flex-shrink:0}
+  .sec-sub{color:var(--muted);font-size:13px;margin-bottom:20px;padding-left:44px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:14px}
+  .card h3{font-size:15px;margin-bottom:10px;color:var(--accent)}
+  .card p,.card li{font-size:13.5px;color:#c9d1d9}
+  .card ul{padding-left:18px}
+  .card li{margin-bottom:6px}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+  table{width:100%;border-collapse:collapse;font-size:12.8px;margin-top:8px}
+  th{text-align:left;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:8px 10px;border-bottom:1px solid rgba(45,51,59,.6);vertical-align:top}
+  tr:hover td{background:rgba(88,166,255,.04)}
+  .ok{color:var(--green);font-weight:600}
+  .bad{color:var(--red);font-weight:600}
+  .warn{color:var(--yellow);font-weight:600}
+  .mono{font-family:Consolas,monospace;font-size:12px}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:6px;margin-right:5px}
+  .b-on{background:rgba(63,185,80,.14);color:var(--green);border:1px solid rgba(63,185,80,.4)}
+  .b-off{background:rgba(248,81,73,.12);color:var(--red);border:1px solid rgba(248,81,73,.4)}
+  .b-end{background:rgba(88,166,255,.12);color:var(--accent);border:1px solid rgba(88,166,255,.4)}
+  .b-dead{background:rgba(210,153,34,.12);color:var(--yellow);border:1px solid rgba(210,153,34,.4)}
+  .flow{background:#0d1117;border:1px solid var(--border);border-radius:10px;padding:14px 16px;font-family:Consolas,monospace;font-size:12.5px;white-space:pre;overflow-x:auto;color:#7ee787;line-height:1.8}
+  .dim{color:#8b949e}.w{color:#d29922}.hi{color:#58a6ff}.r{color:#f85149}
+  .roadmap{border-left:2px solid var(--border);margin-left:10px;padding-left:26px}
+  .rm-item{position:relative;margin-bottom:24px}
+  .rm-item::before{content:"";position:absolute;left:-33px;top:6px;width:12px;height:12px;border-radius:50%;background:var(--accent)}
+  .rm-item.s::before{background:var(--yellow)}
+  .rm-item.l::before{background:var(--green)}
+  .rm-phase{font-size:12px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:4px}
+  .rm-item.s .rm-phase{color:var(--yellow)}
+  .rm-item.l .rm-phase{color:var(--green)}
+  .rm-title{font-size:15px;font-weight:700;margin-bottom:6px}
+  .rm-item li{font-size:13px;color:var(--muted);margin-bottom:3px}
+  .rm-item ul{padding-left:16px}
+  footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;text-align:center}
+  .note{font-size:12px;color:var(--muted);margin-top:8px}
+  @media(max-width:640px){.score-box{border-right:none;border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">SYSTEM REVIEW · 2026-07-31</div>
+  <h1>NovelGenerator 整体复盘与质量提升分析报告</h1>
+  <div class="sub">架构合理性 · 客户需求匹配度 · 模块生效性保障 · 生成质量提升路径</div>
+  <div class="meta">
+    <div>代码基线 <b>main @ 4ead388</b></div>
+    <div>后端 <b>~26,000 行 / 46 模块</b></div>
+    <div>API <b>74 路由</b></div>
+    <div>测试 <b>99 通过</b></div>
+    <div>数据来源 <b>代码审计 + 实测生成 + 日志</b></div>
+  </div>
+</header>
+
+<div class="verdict">
+  <div class="score-box">
+    <div class="score-num">7.0</div>
+    <div class="score-label">总体设计合理性 / 10</div>
+    <div class="note" style="text-align:center">流程完整性高<br>模块有效性低</div>
+  </div>
+  <div class="verdict-text">
+    <h2>核心结论：流程架构是"完整"的，但存在"配置型组件"问题</h2>
+    <p>系统从<b>需求拆解 → 规划 → 写作 → 质量门 → 人设约束</b>的全流程设计合理，韧性机制（降级/重试/原子写）是亮点。但本次审计发现：<b>21 个初始化组件中，生成主链路实际只使用约 7 个</b>——1 个完全死代码（Embellisher），1 个初始化后从未被调用（ConsistencyValidator，且 engine 文档注释宣称它在主管线中）。这是典型的<b>"组件被创建了，但没有生效路径"</b>问题：系统像一台装配了 21 个零件的机器，但只有 7 个零件真正参与加工。客户需求匹配度方面，<b>流程覆盖完整，质量稳定性不足</b>（实测 60-70 分区间，缺反馈闭环与效果度量）。</p>
+    <div class="tags">
+      <span class="tag g">✅ 全流程覆盖</span>
+      <span class="tag g">✅ 韧性设计突出</span>
+      <span class="tag r">⚠️ 14/21 组件不在主链路</span>
+      <span class="tag r">⚠️ 文档宣称与实际管线脱节</span>
+      <span class="tag y">⚠️ 无质量反馈闭环</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 一、系统总览 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">1</span>系统总览与模块全景</h2>
+  <div class="sec-sub">21 个初始化组件按职责分为 6 组。深色 = 生成主链路实际生效，浅色 = 仅在特定端点/阶段使用。</div>
+
+  <div class="card">
+    <h3>分层架构</h3>
+    <div class="flow">前端 Vue 3 SPA (三副本) ──HTTP/SSE──▶ FastAPI (74 路由, 9 域 routers)
+        │
+        ▼
+NovelEngine (885行 + 6 Mixin) ──▶ 领域 Agent ×21 ──▶ SharedMemory (L1/L2/L3 记忆)
+        │                                              │
+        └── ResilientLLMClient (重试/退避/续传) ◀───── DeepSeek v4-flash</div>
+  </div>
+
+  <div class="card">
+    <h3>21 个组件 × 实际生效情况（本次审计实证）</h3>
+    <table>
+      <tr><th>组</th><th>组件</th><th>主链路调用</th><th>实际用途</th><th>状态</th></tr>
+      <tr><td rowspan="4">创作核心</td><td>Planner</td><td>—</td><td>创建流程：世界观/角色/大纲</td><td><span class="badge b-on">生效</span></td></tr>
+      <tr><td>Writer</td><td>4 处</td><td>两遍式章节正文</td><td><span class="badge b-on">主链路</span></td></tr>
+      <tr><td>AtomicWriter + BeatDecomposer + BeatAssembler</td><td>各 1 处</td><td>原子化生成（双轨之一）</td><td><span class="badge b-on">主链路*</span></td></tr>
+      <tr><td>Embellisher</td><td><b>0 处</b></td><td>—</td><td><span class="badge b-dead">死代码</span></td></tr>
+      <tr><td rowspan="4">质量</td><td>PacingChecker</td><td>局部实例化</td><td>质量门初筛（分数驱动重写）</td><td><span class="badge b-on">主链路</span></td></tr>
+      <tr><td>AIDetector + HumanRewriter</td><td>延迟导入</td><td>AI 痕迹检测 + 润色</td><td><span class="badge b-on">主链路</span></td></tr>
+      <tr><td>LogicSupervisor</td><td>2 处</td><td>章节逻辑检查</td><td><span class="badge b-on">主链路</span></td></tr>
+      <tr><td>ConsistencyValidator</td><td><b>0 处</b></td><td>—（docstring 宣称在主管线）</td><td><span class="badge b-off">未生效</span></td></tr>
+      <tr><td rowspan="4">剧情追踪</td><td>StoryGraph / ArcPlanner / AutoCalibrator</td><td>1-2 处</td><td>剧情图谱/弧/校准（章节后更新）</td><td><span class="badge b-on">主链路</span></td></tr>
+      <tr><td>CharacterStateTracker</td><td>延迟导入</td><td>角色状态更新（依赖 LLM 提取质量）</td><td><span class="badge b-on">主链路*</span></td></tr>
+      <tr><td>ChapterSummarizer</td><td>2 处</td><td>章节摘要（上下文传递）</td><td><span class="badge b-on">主链路</span></td></tr>
+      <tr><td>ForeshadowingDesigner</td><td>—</td><td>创建时全局伏笔规划</td><td><span class="badge b-on">生效</span></td></tr>
+      <tr><td rowspan="3">创作分析</td><td>OpeningOptimizer</td><td><b>0 处</b></td><td>仅 analyze-opening 端点</td><td><span class="badge b-end">端点级</span></td></tr>
+      <tr><td>TwistDesigner</td><td>1 处</td><td>反转设计（主链路+端点）</td><td><span class="badge b-on">主链路</span></td></tr>
+      <tr><td>ContextUpdater</td><td>4 处</td><td>角色状态注入 writer</td><td><span class="badge b-on">主链路</span></td></tr>
+      <tr><td rowspan="3">拆解/监督</td><td>RequirementDecomposer/Supervisor</td><td>—</td><td>创建时需求拆解 + 端点</td><td><span class="badge b-on">生效</span></td></tr>
+      <tr><td>FeedbackDecomposer + OutlineInteractive</td><td>—</td><td>大纲反馈迭代（端点）</td><td><span class="badge b-on">生效</span></td></tr>
+      <tr><td>CharacterProfiler</td><td>—</td><td>人设蒸馏（今天上线，注入 writer 上下文）</td><td><span class="badge b-on">生效</span></td></tr>
+      <tr><td rowspan="2">基础设施</td><td>SharedMemoryManager + RequirementsStore</td><td>全链路</td><td>记忆/原子写/SQLite</td><td><span class="badge b-on">生效</span></td></tr>
+      <tr><td>ResilientLLMClient</td><td>全链路</td><td>重试/退避/续传</td><td><span class="badge b-on">生效</span></td></tr>
+    </table>
+    <p class="note">* 原子化路径与普通 Writer 路径双轨并存（AUDIT P1-1 未收敛）；CharacterStateTracker 依赖 LLM 提取，AUDIT P1-4 指出"形同虚设"风险。</p>
+  </div>
+</section>
+
+<!-- ═══ 二、设计合理性 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">2</span>设计合理性评估</h2>
+  <div class="sec-sub">分三个层次：架构层合理 ✓ / 组件层有问题 ⚠ / 治理层缺失 ✗</div>
+  <div class="grid g2">
+    <div class="card">
+      <h3>✅ 架构层：合理</h3>
+      <ul>
+        <li><b>分层单向依赖</b>：API → Engine → Agent → 记忆 → LLM，依赖方向干净（重构后）</li>
+        <li><b>韧性设计是亮点</b>：四级 JSON 降级、重试退避、断线续传、原子写、僵尸锁兜底</li>
+        <li><b>记忆分层正确</b>：L1 设定 / L2 近期上下文 / L3 伏笔，摘要渐进压缩控制膨胀</li>
+        <li><b>新增能力成本低</b>：人设蒸馏今天从想法到上线约 2 小时（Mixin + Router + 前端）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>⚠️ 组件层：存在"配置型组件"</h3>
+      <ul>
+        <li><b>Embellisher 完全死代码</b>：初始化但全库零调用点，还挂在 docstring 的 Support 列表里</li>
+        <li><b>ConsistencyValidator 未生效</b>：engine docstring 宣称 "Planner → Writer → ConsistencyValidator → OpeningOptimizer → TwistDesigner" 管线，实际主线从未调用它——<b>文档与代码脱节</b></li>
+        <li><b>双轨生成未收敛</b>：普通/原子两套实现并存，各自调参，质量差异未度量</li>
+        <li><b>开局/反转等组件只在端点级生效</b>：主动分析能力没有反哺生成</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>❌ 治理层：效果不可度量</h3>
+      <ul>
+        <li><b>无模块级度量</b>：每个 Agent 的触发率/改善率/失败率没有指标——无法回答"质量门重写真的变好了吗"</li>
+        <li><b>无反馈闭环</b>：用户无法标记"这章写得好/差"，系统不会学习偏好（AUDIT P2-1）</li>
+        <li><b>质量基线缺失</b>：只有 AUDIT 一次性抽样（60-70 分），没有持续采样</li>
+        <li><b>测试只测"能跑"不测"效果"</b>：99 个测试验证模块行为，不验证生成质量</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 三、客户需求映射 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">3</span>客户需求匹配度</h2>
+  <div class="sec-sub">核心问题：这套系统能不能"真实反映客户（小说创作者）的需求"？逐项对照。</div>
+  <div class="card">
+    <table>
+      <tr><th style="width:160px">客户需求</th><th style="width:200px">系统对应能力</th><th>匹配评估</th></tr>
+      <tr>
+        <td><b>快速出稿</b></td>
+        <td>批量生成 + SSE 流式 + 断点续传</td>
+        <td><span class="ok">✅ 覆盖</span> 实测单章 3425 字/137s（含质量门重写）；批量 10 章约 25-40 分钟。速度受 v4-flash 模型制约，可接受但无预估剩余时间。</td>
+      </tr>
+      <tr>
+        <td><b>网文质量</b></td>
+        <td>质量门（PacingCheck→AI检测→Humanizer）</td>
+        <td><span class="warn">⚠️ 覆盖但薄弱</span> 质量门是规则初筛 + 一次重写，阈值粗糙（40 分重写/50 分跳过 Humanizer）；AUDIT 实测产出 60-70 分，"及格线"徘徊。</td>
+      </tr>
+      <tr>
+        <td><b>角色一致性</b></td>
+        <td>CharacterStateTracker + 人设蒸馏（今天上线）</td>
+        <td><span class="warn">⚠️ 正在补强</span> 状态追踪依赖 LLM 提取质量（AUDIT 判"形同虚设"）；人设蒸馏已注入 writer 上下文，是最直接的补强，但仅对已蒸馏角色生效。</td>
+      </tr>
+      <tr>
+        <td><b>剧情连贯性</b></td>
+        <td>桥接提取 + StoryGraph + 章节摘要 + 伏笔追踪</td>
+        <td><span class="ok">✅ 覆盖</span> 5 层上下文 + 桥接 + 摘要压缩，长篇连贯性的工程基础扎实；ConsistencyValidator 若激活可再加一道保险。</td>
+      </tr>
+      <tr>
+        <td><b>可控性（大纲/反馈）</b></td>
+        <td>需求拆解 → 大纲 → FeedbackDecomposer 迭代</td>
+        <td><span class="ok">✅ 覆盖且设计好</span> 需求拆解（P0-P2 优先级）+ 反馈语义拆解 + 交互式重生成，这是全系统设计最好的环节。</td>
+      </tr>
+      <tr>
+        <td><b>风格可控</b></td>
+        <td>40 套预设风格 + 自定义 + 指纹</td>
+        <td><span class="ok">✅ 覆盖</span> 风格系统深度足够（14 位作者风格研究）；指纹分析是加分项。</td>
+      </tr>
+      <tr>
+        <td><b>失败不丢稿</b></td>
+        <td>原子写入 + 增量保存 + state 修复 + 断点续传</td>
+        <td><span class="ok">✅ 覆盖且优秀</span> "章节 md 在磁盘上就永不丢失"原则 + 启动自检修复，实测验证。</td>
+      </tr>
+      <tr>
+        <td><b>质量反馈与改进</b></td>
+        <td>—</td>
+        <td><span class="bad">❌ 缺失</span> 没有 👍👎、没有"这章比上章差"的采集，系统不知道自己哪里写得不好。</td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>需求匹配结论</h3>
+    <p><b>流程需求全部覆盖（8/9）</b>，唯一硬缺口是反馈闭环。但"覆盖"不等于"有效"——质量门、状态追踪、一致性校验三个环节处于"有组件但效果未验证"状态，<b>真实客户感受到的质量 = 主链路上 7 个组件叠加的结果</b>，而非 21 个组件宣称的能力。</p>
+  </div>
+</section>
+
+<!-- ═══ 四、模块生效性保障 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">4</span>怎样确保每个模块都起到预期效果</h2>
+  <div class="sec-sub">三层保障机制：链路审计（发现问题）→ 行为测试（验证机制）→ 效果度量（量化贡献）。</div>
+  <div class="grid g2">
+    <div class="card">
+      <h3>第 1 层 · 调用链审计（已有基础，需制度化）</h3>
+      <ul>
+        <li>本报告已做一次全量审计：21 组件 × 主链路调用点</li>
+        <li><b>立即可做</b>：把"模块调用审计"做成 CI 检查——每个初始化组件必须有调用点，否则报警（防止再出现 Embellisher 式死代码）</li>
+        <li>修正 engine docstring 与实际管线不一致（ConsistencyValidator 要么激活、要么从文档移除）</li>
+        <li>激活或移除：ConsistencyValidator 建议<b>激活</b>到章节生成后（它 708 行代码不是白写的），Embellisher 建议<b>移除</b>或并入 Humanizer</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>第 2 层 · 行为测试（机制存在且正确）</h3>
+      <ul>
+        <li>现有 99 个测试覆盖"模块行为正确"，但**不覆盖"模块在主管线中被正确触发"**</li>
+        <li>新增集成测试：mock LLM 跑完整生成链路，断言每个主链路组件的调用次数与输入输出（如"质量门 score<40 时必须触发 writer 重写"）</li>
+        <li>为双轨生成加"产出对比测试"：同一章节普通/原子各生成 3 次，比较连贯性/多样性指标——数据驱动收敛决策</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>第 3 层 · 效果度量（每个模块的贡献可量化）</h3>
+      <ul>
+        <li><b>模块度量埋点</b>：每个 Agent 调用时记录 {触发次数, 输入分, 输出分, 耗时, 失败率}——quality gate 重写前后分数、Humanizer 前后 AI 检测分、人设约束注入前后的一致性评分</li>
+        <li><b>质量采样器</b>：每生成 5 章自动跑一次 8 维评估（EvaluationSystem 已有！），日志记录质量趋势</li>
+        <li><b>仪表板</b>：把 quality-dashboard API 扩展为"模块健康度"（哪个模块在干活、干得好不好）</li>
+        <li>核心判据：<b>任何模块连续 N 次"零触发"或"零改善"→ 自动告警</b></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 五、质量提升路径 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">5</span>生成质量提升路径</h2>
+  <div class="sec-sub">基于审计结论的五个抓手，按投入产出排序。</div>
+
+  <div class="card">
+    <h3>抓手 1 · 主链路补强（投入小，见效快）</h3>
+    <ul>
+      <li><b>激活 ConsistencyValidator</b>：章节生成后跑一致性校验，发现问题注入下一章修正指令（AUDIT P2-2 的路径，代码现成）</li>
+      <li><b>质量门阈值校准</b>：Humanizer 跳过阈值 50 → 70（AUDIT P1-2），重写接受条件从 "+5 分"改为 "+10 分或绝对分 ≥60"</li>
+      <li><b>删除 Embellisher</b>（或并入 Humanizer 管线），消除死代码认知负担</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>抓手 2 · 反馈闭环（需求缺口，客户价值最高）</h3>
+    <ul>
+      <li>每章加 👍👎 + 一句话理由（前端 + API，工作量半天）</li>
+      <li>反馈数据落 SQLite → 形成"偏好档案"（用户喜欢快节奏/细腻描写/少对话）</li>
+      <li>偏好注入 Writer system prompt 与质量门权重——系统开始"越写越懂你"</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>抓手 3 · 上下文预算管理（AUDIT P0-3，长篇小说瓶颈）</h3>
+    <ul>
+      <li>当前 7 层上下文到 50 章可能超 12,000 字符，挤占生成空间</li>
+      <li>实现分级截断：L1 全量保留，L2-L4 按章节号动态压缩，保证 ≥60% token 留给生成</li>
+      <li>人设约束段控制在 600 字内（当前实现已限 120 字/条 × 约 15 条）</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>抓手 4 · 人设蒸馏深化（今天上线的能力，值得吃透）</h3>
+    <ul>
+      <li>创建小说时<b>自动蒸馏主角 + 前 3 配角</b>（创建流程串行调用，+30s）</li>
+      <li>人设卡增加"关系行为模式"（对林墨 vs 对陌生人 vs 对敌人的行为差异）</li>
+      <li>防崩校验规则接入质量门：生成后检查是否违反角色反模式（如"顾尘长篇大论讲道理"）</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>抓手 5 · 双轨收敛与 A/B（消除质量方差）</h3>
+    <ul>
+      <li>用效果度量数据（抓手 3 第 2 层测试）决定保留普通路径还是原子路径</li>
+      <li>或引入 A/B：每章两版都生成，质量门选优（AUDIT P0-2 建议），用户可切换</li>
+      <li>收敛后单一管线，调参成本减半</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══ 六、路线图 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">6</span>建议路线图</h2>
+  <div class="sec-sub">按"先让已装的零件转起来，再装新零件"的顺序。</div>
+  <div class="roadmap">
+    <div class="rm-item">
+      <div class="rm-phase">STEP 1 · 主链路校准（1-2 天）</div>
+      <div class="rm-title">激活 ConsistencyValidator + 质量门阈值校准 + 移除死代码</div>
+      <ul>
+        <li>完成判据：质量门重写接受率、Humanizer 触发率有日志可查；docstring 与实际管线一致</li>
+      </ul>
+    </div>
+    <div class="rm-item">
+      <div class="rm-phase">STEP 2 · 效果度量上线（2-3 天）</div>
+      <div class="rm-title">模块埋点 + 质量采样器 + 仪表板</div>
+      <ul>
+        <li>完成判据：每个主链路组件都有触发率/改善率指标；连续零触发自动告警</li>
+      </ul>
+    </div>
+    <div class="rm-item">
+      <div class="rm-phase">STEP 3 · 反馈闭环（2-3 天）</div>
+      <div class="rm-title">👍👎 + 偏好档案 + 偏好注入</div>
+      <ul>
+        <li>完成判据：用户标记 ≥10 次后，生成内容出现可测量的偏好偏移</li>
+      </ul>
+    </div>
+    <div class="rm-item">
+      <div class="rm-phase">STEP 4 · 上下文预算 + 自动人设蒸馏（3-4 天）</div>
+      <div class="rm-title">长篇小说不崩 + 新书自带人设</div>
+      <ul>
+        <li>完成判据：50 章时 prompt ≤ 8,000 字符；新书创建自动生成主角+3 配角人设卡</li>
+      </ul>
+    </div>
+    <div class="rm-item l">
+      <div class="rm-phase">STEP 5 · 双轨收敛 + A/B（规划期）</div>
+      <div class="rm-title">数据驱动的管线收敛</div>
+      <ul>
+        <li>用 STEP 2 的度量数据做收敛决策；引入 A/B 选优作为长期质量机制</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 七、审计明细 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">7</span>附录 · 本次审计明细</h2>
+  <div class="sec-sub">2026-07-31 实证数据。</div>
+  <div class="card">
+    <table>
+      <tr><th>审计项</th><th>方法</th><th>结果</th></tr>
+      <tr><td>组件初始化</td><td>AST 解析 engine.__init__</td><td>21 个组件（Client/Profiler/Store 等基础设施除外）</td></tr>
+      <tr><td>主链路调用</td><td>grep generation.py 的 self.xxx 引用</td><td>writer 4 / context_updater 4 / logic_supervisor 2 / chapter_summarizer 2 / twist_designer 1 / atomic_writer 1 / beat_assembler 1；embellisher/consistency_validator/opening_optimizer/feedback_decomposer/outline_interactive/requirement_* 为 0</td></tr>
+      <tr><td>死代码确认</td><td>全库 grep Embellisher 调用点</td><td>仅 engine 初始化 + 模块自身，零调用点</td></tr>
+      <tr><td>文档-代码一致性</td><td>engine docstring vs 实际调用</td><td>docstring 宣称的 ConsistencyValidator/OpeningOptimizer 在主管线不存在</td></tr>
+      <tr><td>实测生成</td><td>真实 LLM 单章</td><td>3425 字 / 137s / 质量门触发 1 次重写（score 提升后接受）</td></tr>
+      <tr><td>人设蒸馏</td><td>真实 LLM</td><td>顾尘 22s：5 模型 / 8 启发式 / 7 DNA / 5 反模式 / 4 边界，writer 上下文注入验证通过</td></tr>
+      <tr><td>回归</td><td>pytest</td><td>99/99 通过</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  NovelGenerator 整体复盘报告 · 2026-07-31 · 基于 main @ 4ead388 · 与 architecture-review（架构）、AUDIT_REPORT（质量）互补
+</footer>
+
+</div>
+</body>
+</html>

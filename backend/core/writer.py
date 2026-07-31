@@ -47,6 +47,7 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。
 - 环境描写仅服务于冲突（密室、陷阱、战场），非冲突场景不写环境
 - 内心独白用动作替代。一整段的心理活动 → 删
 - 对话要推进剧情，闲聊删。连续6轮对话用动作打断
+- **对话占比硬约束（v2.3.5）**：本章对话占比 ≤ 35%（对话字数/总字数），连续对话不超过 4 轮就必须用动作/环境打断；每段对话必须推进剧情（揭示信息/升级冲突/改变关系），否则删
 - **每条信息只交代一次**。读者不傻，不需要从两个角度解释同一件事
 - **每段写完后问：这段删掉，读者对剧情的理解会减少吗？** 如果不会，删。这段推进了核心事件吗？如果没推进，删
 - **不要写角色在路上的过程、吃饭、睡觉、发呆、看风景**。除非这些行为本身推动了剧情
@@ -444,8 +445,8 @@ class Writer:
             h_result = humanize_text(final_text)
             log.info(f"Humanizer score: {h_result['score']}/100 ({h_result['total_issues']} issues)")
             
-            # 初稿 ≥2000字 且 评分 ≥50 → 跳过 Humanizer 重写（省一轮API）
-            if len(final_text) >= 2000 and h_result["score"] >= 50:
+            # 初稿 ≥2000字 且 评分 ≥70 → 跳过 Humanizer 重写（v2.3.5: 50→70 提高润色覆盖）
+            if len(final_text) >= 2000 and h_result["score"] >= 70:
                 log.info(f"Skipping Humanizer pass (score OK: {h_result['score']})")
             elif h_result["score"] < 70 and h_result["total_issues"] > 3:
                 log.info(f"Pass 3/3: Humanizer rewrite (score={h_result['score']})")

@@ -117,3 +117,30 @@ class CharacterProfileMixin:
             if lines:
                 parts.append(f"## 🎭 角色人设约束（{name}）\n" + "\n".join(lines))
         return "\n\n".join(parts)
+
+
+class FeedbackMixin:
+    """章节质量反馈闭环（v2.3.5）"""
+
+    def submit_chapter_feedback(self, novel_id: str, chapter_num: int,
+                                rating: int, reason: str = "") -> dict:
+        """提交章节反馈（rating: 1 赞 / -1 踩 / 0 中性）"""
+        ok = self.feedback_store.submit(novel_id, chapter_num, rating, reason)
+        if not ok:
+            return {"error": "反馈保存失败"}
+        return {"ok": True, "saved": True}
+
+    def get_feedback_summary(self, novel_id: str) -> dict:
+        """获取反馈汇总（列表 + 统计）"""
+        items = self.feedback_store.list(novel_id)
+        stats = {
+            "total": len(items),
+            "likes": sum(1 for i in items if i["rating"] == 1),
+            "dislikes": sum(1 for i in items if i["rating"] == -1),
+            "neutral": sum(1 for i in items if i["rating"] == 0),
+        }
+        return {"items": items[:50], "stats": stats}
+
+    def build_preference_instruction(self, novel_id: str) -> str:
+        """聚合反馈 → Writer 偏好指令（空串 = 无需注入）"""
+        return self.feedback_store.build_preference_instruction(novel_id)

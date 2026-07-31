@@ -776,6 +776,18 @@ class SharedMemoryManager:
 
         parts.append(outline_text)
 
+        # ── v2.3.5: 上一章一致性提醒注入（ConsistencyValidator 发现的问题）──
+        try:
+            _st = self.get_novel_state(novel_id)
+            _issues_map = _st.get("consistency_issues", {}) if isinstance(_st, dict) else {}
+            _prev_issues = _issues_map.get(str(chapter_num - 1), [])
+            if _prev_issues:
+                _nl = chr(10)
+                parts.append("## ⚠️ 上一章一致性提醒（本章写作必须修正）" + _nl
+                             + _nl.join(f"- {_i}" for _i in _prev_issues[:4]))
+        except Exception:
+            pass
+
         # ── v2.3.4: 角色人设约束注入（女娲框架蒸馏结果，仅本角色出场时生效）──
         try:
             _profiles_path = os.path.join(self.get_novel_dir(novel_id), "character_profiles.json")
@@ -867,7 +879,18 @@ class SharedMemoryManager:
         except Exception:
             pass
         
-        return "\n\n---\n\n".join(parts)
+        # ── v2.3.5: 上下文预算保护 — 总长超限时从尾部（低优先级段）截断 ──
+        _ctx = "\n\n---\n\n".join(parts)
+        _MAX_CTX = 9000  # 保留至少 60% token 给生成（AUDIT P0-3）
+        if len(_ctx) > _MAX_CTX:
+            _over = len(_ctx) - _MAX_CTX
+            # 从最后一个 section 开始逐段移除（保护 L1 核心设定在最前）
+            _ctx_parts = _ctx.split("\n\n---\n\n")
+            while len(_ctx_parts) > 3 and len("\n\n---\n\n".join(_ctx_parts)) > _MAX_CTX:
+                _ctx_parts.pop()
+            _ctx = "\n\n---\n\n".join(_ctx_parts)
+            log.warning(f"Writer context budget: truncated {_over} chars (kept {len(_ctx)})")
+        return _ctx
 
     def _build_validator_context(self, novel_id: str, kwargs: dict) -> str:
         """为 Validator 构建校验上下文"""

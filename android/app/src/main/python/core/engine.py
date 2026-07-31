@@ -19,7 +19,6 @@ except ImportError:
 from .planner import Planner
 from .writer import Writer
 from .shared_memory import SharedMemoryManager
-from .embellisher import Embellisher
 from .foreshadowing_designer import ForeshadowingDesigner
 from .context_updater import ContextUpdater
 from .pacing_checker import PacingChecker
@@ -53,15 +52,17 @@ from .mixins.validation import ValidationMixin
 from .mixins.analysis import AnalysisMixin
 from .mixins.requirements import RequirementsMixin
 from .mixins.export import ExportMixin
-from .mixins.character_profile import CharacterProfileMixin
+from .mixins.character_profile import CharacterProfileMixin, FeedbackMixin
 
 
 class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
-                  RequirementsMixin, ExportMixin, CharacterProfileMixin):
-    """小说创作引擎 — 多智能体架构:
-    Pipeline: Planner → Writer → ConsistencyValidator → OpeningOptimizer → TwistDesigner
-    Support: Embellisher → ContextUpdater → PacingChecker
-    Interactive: OutlineInteractive (反馈式大纲迭代)
+                  RequirementsMixin, ExportMixin, CharacterProfileMixin, FeedbackMixin):
+    """小说创作引擎 — 多智能体架构（2026-07-31 与实现对齐）:
+    Create:    RequirementDecomposer → Planner → StoryGraph/ArcPlanner → CharacterProfiler
+    Generate:  Writer(初稿+结尾) / AtomicWriter(逐beat) → PacingChecker质量门
+               → AIDetector/HumanRewriter → ConsistencyValidator(L1) → Summarizer → StoryGraph更新
+    Interactive: OutlineInteractive (反馈式大纲迭代) · CharacterProfiler (人设蒸馏)
+    Support:   ContextUpdater → LogicSupervisor → TwistDesigner
     """
 
     def __init__(self):
@@ -72,7 +73,6 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         self.model = config.DEEPSEEK_MODEL
         self.planner = Planner(self.client, self.model)
         self.writer = Writer(self.client, self.model)
-        self.embellisher = Embellisher(self.client, self.model)
         self.fd_designer = ForeshadowingDesigner(self.client, self.model)
         self.context_updater = ContextUpdater(self.client, self.model)
         self.pacing_checker = PacingChecker(self.client, self.model)
@@ -94,6 +94,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         # v2.3.4: 角色人设蒸馏（女娲框架移植）
         from .character_profiler import CharacterProfiler
         self.character_profiler = CharacterProfiler(self.client, self.model)
+        # v2.3.5: 反馈闭环（👍👎 偏好学习）
+        from .feedback_store import FeedbackStore
+        self.feedback_store = FeedbackStore(config.NOVELS_DIR)
         # v2.3.3: 需求拆解结果持久化（SQLite，多进程安全，替代原进程内 dict）
         from .requirements_store import RequirementsStore
         self._req_store = RequirementsStore(config.NOVELS_DIR)
@@ -421,7 +424,51 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 
                 log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)"
                         f" — requirements: {self._req_store.get(plan['title']).get('total_count', 0)} subtasks")
-            
+
+                # ── v2.3.5: 创建即蒸馏 — 完成前自动蒸馏所有出场角色（确保人设不崩）──
+                try:
+                    # 从大纲提取出场角色（主角优先，去重，上限 8 个）
+                    char_names = []
+                    bible = {}
+                    bible_path = os.path.join(novel_dir, "character_bible.json")
+                    if os.path.exists(bible_path):
+                        with open(bible_path, "r", encoding="utf-8") as _bf:
+                            bible = json.load(_bf) or {}
+                    protagonist = (bible.get("protagonist") or {}).get("name", "")
+                    if protagonist:
+                        char_names.append(protagonist)
+                    seen = set(char_names)
+                    for vol in (plan.get("outline", {}) or {}).get("volumes", []) or []:
+                        for ch in vol.get("chapters", []) or []:
+                            for c in ch.get("characters", []) or []:
+                                if c and c not in seen:
+                                    seen.add(c)
+                                    char_names.append(c)
+                    char_names = char_names[:8]
+                    if char_names:
+                        yield {"type": "progress", "phase": "character_profiling", "pct": 97,
+                               "label": f"正在蒸馏角色人设（0/{len(char_names)}）…"}
+                        wb = plan.get("worldbuilding") or {}
+                        wb_summary = (f"时代: {wb.get('era', '')}\n力量体系: {wb.get('power_system', '')}\n"
+                                      f"核心冲突: {wb.get('core_conflict', '')}")
+                        for _ci, _cn in enumerate(char_names):
+                            try:
+                                _result = await asyncio.to_thread(
+                                    self.distill_character_profile, plan["title"], _cn
+                                )
+                                if "error" in _result:
+                                    log.warning(f"Auto-distill {_cn}: {_result['error']}")
+                                else:
+                                    log.info(f"Auto-distilled profile: {_cn}")
+                            except Exception as _pe:
+                                log.warning(f"Auto-distill {_cn} failed: {_pe}")
+                            yield {"type": "progress", "phase": "character_profiling", "pct": 97,
+                                   "label": f"正在蒸馏角色人设（{_ci+1}/{len(char_names)}）：{_cn}…"}
+                        yield {"type": "progress", "phase": "character_profiling", "pct": 98,
+                               "label": f"角色人设就绪（{len(char_names)} 个角色）"}
+                except Exception as _pd_e:
+                    log.warning(f"Auto character profiling skipped: {_pd_e}")
+
             yield event
 
     async def regenerate_outline_stream(self, novel_id: str, feedback: str) -> AsyncIterator[dict]:

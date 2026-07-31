@@ -1148,6 +1148,18 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           <button class="btn btn-secondary" @click="copyChapter">复制</button>
         </div>
 
+        <!-- v2.3.5: 反馈闭环 👍👎 -->
+        <div v-if="writing.done" class="review-section" style="border-color:rgba(63,185,80,.25)">
+          <div class="rs-title">📊 这章写得怎么样？反馈会让我越写越懂你</div>
+          <div class="flex gap-8" style="margin-bottom:8px">
+            <button class="btn btn-xs" :class="chapterRating===1?'btn-primary':''" @click="chapterRating=chapterRating===1?0:1">👍 满意</button>
+            <button class="btn btn-xs" :class="chapterRating===-1?'btn-danger':''" @click="chapterRating=chapterRating===-1?0:-1">👎 不满意</button>
+            <input v-model="chapterReason" placeholder="一句话理由（可选）：节奏太快？对话太少？" style="flex:1;min-height:32px;font-size:13px" :disabled="!chapterRating">
+            <button class="btn btn-sm" @click="submitChapterFeedback" :disabled="!chapterRating">提交反馈</button>
+          </div>
+          <div v-if="chapterFeedbackDone" class="text-xs" style="color:var(--green)">✅ 已记录，感谢反馈！</div>
+        </div>
+
         <!-- 意见重生成 -->
         <div v-if="writing.done" class="review-section">
           <div class="rs-title">💬 对本章不满意？输入修改意见重新生成（大纲和结构不变）</div>
@@ -1452,6 +1464,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <div style="font-size:14px;font-weight:600;margin-bottom:6px">{{ name }}
                     <span class="text-xs color-text3" style="font-weight:400">上次出场 Ch{{ snap.last_chapter_appeared||0 }}</span>
                     <button class="btn btn-ghost btn-xs" @click.stop="startEdit('character',name)" style="float:right;font-size:10px" title="编辑角色">✏️</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="distillCharProfile(name)" style="float:right;margin-right:6px;font-size:10px" :disabled="charProfiling===name" title="用女娲框架蒸馏人设（心智模型/决策启发式/表达DNA/反模式）">🧬 蒸馏人设</button>
+                  </div>
+                  <div v-if="charProfiles[name]" class="text-xs mt-2" style="background:rgba(188,140,255,.08);border:1px solid rgba(188,140,255,.25);border-radius:8px;padding:8px">
+                    <div style="color:var(--purple);font-weight:600;margin-bottom:4px">🧬 已蒸馏人设 <span class="color-text3" style="font-weight:400">({{ (charProfiles[name].decision_heuristics||[]).length }}条决策 · {{ (charProfiles[name].expression_dna||[]).length }}条表达DNA)</span></div>
+                    <div v-for="m in (charProfiles[name].mental_models||[]).slice(0,3)" style="line-height:1.7">🔷 {{ m.name||m }}<span v-if="m.content" class="color-text3"> — {{ String(m.content).substring(0,40) }}</span></div>
                   </div>
                   <div v-if="snap.current_location" class="text-xs color-text2">📍 {{ snap.current_location }}</div>
                   <div v-if="snap.current_emotion" class="text-xs color-text2">😶 {{ snap.current_emotion }}</div>
@@ -2483,6 +2500,44 @@ const app = createApp({
     const selectedCount = computed(() => Object.values(exportSelected).filter(Boolean).length);
     const allSelected = computed(() => novels.value.length>0 && novels.value.every(n=>exportSelected[n.id]));
     const availableChapters = computed(() => activeNovel.value ? Array.from({length:activeNovel.value.state.total_chapters||20},(_,i)=>i+1) : []);
+    // ── v2.3.4: 角色人设蒸馏（女娲框架）──
+    const charProfiles = ref({});
+    const charProfiling = ref('');
+    async function distillCharProfile(name) {
+      if (!activeNovel.value) return;
+      if (charProfiling.value) { showToast('有蒸馏任务进行中，请等待'); return; }
+      charProfiling.value = name;
+      showToast('正在蒸馏「'+name+'」人设（约1-2分钟）…', '女娲造人', '🧬');
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/characters/'+encodeURIComponent(name)+'/profile',{method:'POST'});
+        const d = await r.json();
+        if (d.ok) {
+          const r2 = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/character-profiles');
+          const d2 = await r2.json();
+          if (d2.ok) charProfiles.value = d2.profiles || {};
+          showToast('「'+name+'」人设蒸馏完成', '', '✅');
+        } else {
+          showToast(d.detail || '蒸馏失败', '女娲造人', '⚠️');
+        }
+      } catch(e) { showToast('蒸馏失败: '+e.message, '', '❌'); }
+      charProfiling.value = '';
+    }
+    // ── v2.3.5: 章节反馈闭环 👍👎 ──
+    const chapterRating = ref(0);
+    const chapterReason = ref('');
+    const chapterFeedbackDone = ref(false);
+    async function submitChapterFeedback() {
+      if (!activeNovel.value || !chapterRating.value) return;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+writing.chapter+'/feedback',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({rating:chapterRating.value, reason:chapterReason.value})
+        });
+        const d = await r.json();
+        if (d.ok) { chapterFeedbackDone.value = true; setTimeout(()=>{chapterFeedbackDone.value=false; chapterRating.value=0; chapterReason.value='';}, 2500); }
+        else showToast(d.detail||'提交失败','反馈','⚠️');
+      } catch(e) { showToast('提交失败: '+e.message,'','❌'); }
+    }
     const currentOutline = computed(() => {
       if (!activeNovel.value||!planResult.value) return null;
       for (const vol of planResult.value.outline?.volumes||[]) for (const ch of vol.chapters||[]) if (ch.number===writing.chapter) return ch;
@@ -3675,7 +3730,7 @@ const app = createApp({
       loadStyleSeeds,loadStyleParams,applyParamStyle,
       // v2.3: 剧情图谱
       sgLoading,sgData,sgArcs,sgCalibration,
-      sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,
+      sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
       switchToStoryGraph,loadStoryGraph,
       sgSubTab,sgChapterFilter,sgThreadFilter,sgForeshadowFilter,

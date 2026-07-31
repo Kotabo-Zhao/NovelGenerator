@@ -37,7 +37,7 @@ from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, DEFAULT_CHAPTER_WORDS
 
 # 共享依赖：engine 单例 + log（见 deps.py）
 from .deps import engine, log
-from .routers import novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters
+from .routers import novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
@@ -198,7 +198,7 @@ async def health():
 
 # ── 业务路由挂载（2026-07-31 按域拆分）──
 
-for _router in (novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters):
+for _router in (novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback):
     app.include_router(_router.router)
 
 

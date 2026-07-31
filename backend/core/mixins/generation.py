@@ -525,6 +525,14 @@ class GenerationMixin:
             char_ctx = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
             if char_ctx:
                 context = context + "\n\n" + char_ctx
+
+            # v2.3.5: 注入用户偏好指令（反馈闭环，≥3 条反馈才生效）
+            try:
+                pref_ctx = self.build_preference_instruction(novel_id)
+                if pref_ctx:
+                    context = context + "\n\n" + pref_ctx
+            except Exception as pe:
+                log.warning(f"Preference injection skipped: {pe}")
                 log.info(f"Character state injected into writer context ({len(char_ctx)} chars)")
 
             # 方案C: 在弧高潮章自动注入反转设计
@@ -631,7 +639,7 @@ class GenerationMixin:
 
                     if retry_text and len(retry_text) > len(full_text) * 0.6:
                         qr2 = checker.quick_quality_check(retry_text, fast_food=is_fast_food)
-                        if qr2["score"] > qr["score"] + 5:
+                        if qr2["score"] > qr["score"] + 10 or qr2["score"] >= 60:
                             full_text = retry_text
                             quality_report = qr2
                             log.info(f"Quality gate retry PASSED: {qr['score']} → {qr2['score']}")
@@ -649,7 +657,7 @@ class GenerationMixin:
 
             # ── v2.27: Humanizer 移到质量门之后 — 用分数决定是否跑 ──
             ai_report = None
-            _quality_ok = quality_report and quality_report.get("score", 0) >= 50
+            _quality_ok = quality_report and quality_report.get("score", 0) >= 70  # v2.3.5: 50→70 提高润色覆盖
             if not _quality_ok:
                 yield {"type": "status", "message": "🎨 正在消除 AI 痕迹、润色文笔…"}
                 try:
@@ -782,6 +790,16 @@ class GenerationMixin:
             state["completed_chapters"] = sorted(completed)
             state["current_chapter"] = max(completed) if completed else 0
             state["total_words"] = state.get("total_words", 0) + len(full_text)
+
+            # 一致性校验用上下文（前文章节 + 全局状态）
+            prev_chapters_ctx = {}
+            for _pc in completed:
+                if _pc < chapter_num:
+                    _pc_text = self.get_chapter(novel_id, _pc)
+                    if _pc_text:
+                        prev_chapters_ctx[_pc] = _pc_text
+            _gs_path = os.path.join(novel_dir, "global_state.json")
+            gs_ctx = safe_read_json(_gs_path, {}) if os.path.exists(_gs_path) else {}
             
             # 保存 state（最多重试3次，每次验证）
             state_saved = False
@@ -811,6 +829,27 @@ class GenerationMixin:
 
             yield {"type": "status", "message": "💾 正在保存章节、更新伏笔与剧情图谱…"}
             log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
+
+            # ── v2.3.5: 一致性校验（ConsistencyValidator L1 规则引擎，毫秒级，不阻塞）──
+            try:
+                cv_result = self.consistency_validator.validate_chapter(
+                    chapter_text=full_text,
+                    chapter_num=chapter_num,
+                    plan=plan,
+                    prev_chapters=prev_chapters_ctx,
+                    global_state=gs_ctx,
+                    run_deep=False,
+                )
+                issues = [v.get("description", "") for v in cv_result.get("violations", [])
+                          if v.get("severity") in ("P0", "P1")]
+                if issues:
+                    state["consistency_issues"] = state.get("consistency_issues", {})
+                    state["consistency_issues"][str(chapter_num)] = issues[:5]
+                    self.memory.save_novel_state(novel_id, state)
+                    yield {"type": "consistency_warning", "chapter": chapter_num, "issues": issues[:5]}
+                    log.warning(f"Consistency issues Ch{chapter_num}: {len(issues)}")
+            except Exception as cv_e:
+                log.warning(f"Consistency check skipped: {cv_e}")
 
             # ── 完整度验证 ──
             from ..writer import _check_truncation, _dedup_continuation
