@@ -9,7 +9,7 @@ services:
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: DEEPSEEK_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
       - key: HOST
         value: 0.0.0.0
       - key: NOVELS_DIR
