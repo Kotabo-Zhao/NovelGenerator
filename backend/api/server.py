@@ -175,7 +175,8 @@ async def health():
                         with open(plan_f, 'r', encoding='utf-8') as f:
                             pd = json.load(f)
                         title = pd.get("title", d) if isinstance(pd, dict) else d
-                    except: pass
+                    except Exception as _e:
+                        log.warning("读取 plan.json 失败 %s: %s", plan_f, _e)
                 novel_list.append({"dir": d, "title": title, "has_plan": _os.path.exists(plan_f)})
     return {
         "status": "ok",
