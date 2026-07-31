@@ -979,7 +979,19 @@ class Planner:
                         for v in ch_result.values():
                             if isinstance(v, list): chapters = v; break
                 if not chapters:
-                    chapters = []
+                    # 防死循环: 解析不出章节时用模板填充，保证 batch_start 前进
+                    # （否则 batch_start += len([]) 恒为 0，while 循环永不退出）
+                    log.warning(f"Volume {vol_num} batch {batch_start}: no chapters parsed, using fallback templates")
+                    fallback_count += 1
+                    chapters = [
+                        {"number": batch_chapter_start + j, "title": f"第{batch_chapter_start+j}章",
+                         "summary": f"第{vol_num}卷第{batch_start+j+1}章核心剧情",
+                         "cause_from_prev": "开篇" if (batch_start + j) == 0 else f"承接第{batch_chapter_start+j-1}章",
+                         "bridge_to_next": f"引出第{batch_chapter_start+j+1}章",
+                         "emotion_curve": "平稳→起伏→悬念",
+                         "characters": ["主角"], "hook": "引导下一章", "target_words": chapter_words}
+                        for j in range(batch_n)
+                    ]
 
                 # 确保每个ch是dict + 编号正确
                 for j, ch in enumerate(chapters):

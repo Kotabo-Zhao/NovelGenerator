@@ -1050,7 +1050,7 @@ class NovelEngine:
                         state_saved = True
                         break
                 log.warning(f"State write verification failed for chapter {chapter_num}, retry {retry+1}/3")
-                time.sleep(0.1 * (retry + 1))
+                await asyncio.sleep(0.1 * (retry + 1))
             
             if not state_saved:
                 log.error(f"CRITICAL: Failed to persist state for chapter {chapter_num} after 3 retries!")

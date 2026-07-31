@@ -237,7 +237,7 @@ class ResilientLLMClient:
                     messages = self._build_resume_messages(
                         messages, full_text_collected
                     )
-                    time.sleep(wait)
+                    await asyncio.sleep(wait)
                 else:
                     log.error(f"LLM流式全部重连失败(已收{len(full_text_collected)}字): {e}")
                     _metrics.failed_calls += 1
@@ -249,7 +249,7 @@ class ResilientLLMClient:
                     wait = self._get_retry_after(e, attempt)
                     log.warning(f"LLM流式限流, 等待{wait:.1f}s: {e}")
                     last_error = e
-                    time.sleep(wait)
+                    await asyncio.sleep(wait)
                 else:
                     _metrics.failed_calls += 1
                     raise
