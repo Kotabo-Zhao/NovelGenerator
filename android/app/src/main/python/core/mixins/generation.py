@@ -830,24 +830,56 @@ class GenerationMixin:
             yield {"type": "status", "message": "💾 正在保存章节、更新伏笔与剧情图谱…"}
             log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
 
-            # ── v2.3.5: 一致性校验（ConsistencyValidator L1 规则引擎，毫秒级，不阻塞）──
+            # ── v2.3.5: 一致性校验（L1 规则 + L2 LLM 语义，P0 自动重写）──
             try:
+                yield {"type": "status", "message": "🔍 正在校验逻辑一致性（亲属关系/时空/设定）…"}
                 cv_result = self.consistency_validator.validate_chapter(
                     chapter_text=full_text,
                     chapter_num=chapter_num,
                     plan=plan,
                     prev_chapters=prev_chapters_ctx,
                     global_state=gs_ctx,
-                    run_deep=False,
+                    run_deep=True,
                 )
-                issues = [v.get("description", "") for v in cv_result.get("violations", [])
-                          if v.get("severity") in ("P0", "P1")]
-                if issues:
+                all_v = cv_result.get("violations", [])
+                p0_v = [v for v in all_v if v.get("severity") == "P0"]
+                p1_v = [v for v in all_v if v.get("severity") == "P1"]
+
+                # P0 致命错误 → 自动重写本章
+                if p0_v:
+                    yield {"type": "status", "message": f"🔧 检测到 {len(p0_v)} 处逻辑硬伤，正在自动重写…"}
+                    log.warning(f"P0 issues Ch{chapter_num}: {[v.get('description','')[:50] for v in p0_v[:3]]}")
+                    try:
+                        fix_prompt = self.consistency_validator.build_fix_prompt(p0_v + p1_v[:3])
+                        rewritten = ""
+                        _nl2 = chr(10) + chr(10)
+                        async for text in self.writer.write_stream(
+                            context=context + _nl2 + fix_prompt,
+                            genre=genre, style=style, target_words=target_words,
+                            writing_mode=writing_mode, chapter_outline=chapter_outline,
+                            skip_ending=True,
+                        ):
+                            rewritten += text
+                        if rewritten and len(rewritten) > len(full_text) * 0.6:
+                            full_text = rewritten
+                            self.memory.save_chapter(novel_id, chapter_num, full_text)
+                            self.memory.invalidate("state", novel_id)
+                            yield {"type": "consistency_fixed", "chapter": chapter_num,
+                                   "fixed": [v.get("description", "")[:80] for v in p0_v[:3]]}
+                            log.info(f"Ch{chapter_num} auto-rewritten for {len(p0_v)} P0 issues")
+                        else:
+                            log.warning(f"Rewrite for Ch{chapter_num} too short, keeping original")
+                    except Exception as rw_e:
+                        log.warning(f"Auto-rewrite failed: {rw_e}")
+
+                # P1 问题 → 注入下一章修正
+                if p1_v:
+                    issues = [v.get("description", "") for v in p1_v[:5]]
                     state["consistency_issues"] = state.get("consistency_issues", {})
-                    state["consistency_issues"][str(chapter_num)] = issues[:5]
+                    state["consistency_issues"][str(chapter_num)] = issues
                     self.memory.save_novel_state(novel_id, state)
-                    yield {"type": "consistency_warning", "chapter": chapter_num, "issues": issues[:5]}
-                    log.warning(f"Consistency issues Ch{chapter_num}: {len(issues)}")
+                    yield {"type": "consistency_warning", "chapter": chapter_num, "issues": issues}
+                    log.warning(f"Consistency P1 issues Ch{chapter_num}: {len(issues)}")
             except Exception as cv_e:
                 log.warning(f"Consistency check skipped: {cv_e}")
 
