@@ -1,4 +1,4 @@
-name: CI — Syntax & Security Check
+name: CI — Syntax, Consistency & Tests
 
 on:
   push:
@@ -17,27 +17,59 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install core dependencies
-        run: pip install fastapi openai pydantic
+      - name: Install dependencies
+        run: pip install fastapi openai pydantic pytest
 
-      - name: Syntax check (Python)
+      - name: Syntax check (Python, 全部副本含 android)
         run: |
-          find . -name "*.py" -not -path "./__pycache__/*" -not -path "./android/*" | while read f; do
-            python -m py_compile "$f" && echo "✅ $f" || echo "❌ $f"
+          find . -name "*.py" -not -path "*/__pycache__/*" -not -path "*/build/*" -not -path "*/.gradle/*" | while read f; do
+            python -m py_compile "$f" || { echo "❌ $f"; exit 1; }
           done
+          echo "✅ 全部 Python 文件语法通过"
 
       - name: Security — Check for hardcoded secrets
         run: |
           echo "=== Scanning for hardcoded API keys ==="
           if grep -rn "sk-[a-zA-Z0-9]\{20,\}" backend/ android/ 2>/dev/null; then
             echo "⚠️ WARNING: Potential hardcoded API keys found!"
-          else
-            echo "✅ No hardcoded API keys detected"
+            exit 1
           fi
+          echo "✅ No hardcoded API keys detected"
 
-      - name: Verify core imports
+      - name: Verify core imports (防死引用)
         run: |
-          cd backend || cd ..
-          python -c "
-          print('✅ NovelGenerator CI check passed')
-          " || echo "⚠️ Import check skipped (normal in CI)"
+          python - <<'EOF'
+          import ast, os, sys
+          missing = []
+          with open('backend/api/server.py', encoding='utf-8') as f:
+              tree = ast.parse(f.read())
+          for node in ast.walk(tree):
+              if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith('core'):
+                  modname = node.module.replace('core.', '').replace('.', '/')
+                  path = os.path.join('backend/core', modname + '.py')
+                  if not os.path.exists(path):
+                      missing.append(f'MISSING MODULE: {node.module}')
+                      continue
+                  with open(path, encoding='utf-8') as mf:
+                      src = mf.read()
+                  for alias in node.names:
+                      if alias.name == '*':
+                          continue
+                      if not (f'class {alias.name}' in src or f'def {alias.name}' in src or f'{alias.name} =' in src):
+                          missing.append(f'MISSING SYMBOL: {alias.name} in {node.module}')
+          if missing:
+              print('❌ Dead references found:')
+              for m in missing:
+                  print('   ', m)
+              sys.exit(1)
+          print('✅ All core imports resolve')
+          EOF
+
+      - name: Consistency — 前端三副本一致
+        run: python tools/sync_frontend.py --check
+
+      - name: Consistency — backend/android core 副本一致
+        run: python tools/sync_android_core.py --check
+
+      - name: Run core test suite (55 cases)
+        run: python -m pytest tests/test_suite.py -q --no-header
