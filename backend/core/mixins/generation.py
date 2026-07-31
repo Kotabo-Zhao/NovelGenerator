@@ -616,6 +616,7 @@ class GenerationMixin:
                     log.warning(f"Quality gate CRITICAL (score={qr['score']}): {issues_text}")
                     yield {"type": "quality_warning", "score": qr["score"], "issues": qr["issues"],
                            "message": f"📝 严重质量瑕疵（评分 {qr['score']}），自动续写优化..."}
+                    yield {"type": "status", "message": "✍️ 质量门未过，正在优化改写（约1分钟）…"}
 
                     # v2.49: 用 multi-turn history 续写修复，而不是从头重写
                     retry_text = ""
@@ -650,6 +651,7 @@ class GenerationMixin:
             ai_report = None
             _quality_ok = quality_report and quality_report.get("score", 0) >= 50
             if not _quality_ok:
+                yield {"type": "status", "message": "🎨 正在消除 AI 痕迹、润色文笔…"}
                 try:
                     from ..ai_detector import AIDetector, HumanRewriter, humanize_pipeline
                     detector = AIDetector(self.client, self.model)
@@ -807,6 +809,7 @@ class GenerationMixin:
                 except Exception as fe:
                     log.error(f"State fallback write also failed: {fe}")
 
+            yield {"type": "status", "message": "💾 正在保存章节、更新伏笔与剧情图谱…"}
             log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
 
             # ── 完整度验证 ──
@@ -1035,6 +1038,7 @@ class GenerationMixin:
             except Exception as e:
                 log.warning(f"Auto-compression skipped: {e}")
             
+            yield {"type": "status", "message": "💾 正在保存章节、更新伏笔与剧情图谱…"}
             yield {"type": "text", "content": "\n\n"}
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num}
 

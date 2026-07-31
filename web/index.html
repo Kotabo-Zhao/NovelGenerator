@@ -1111,6 +1111,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </div>
           <div v-if="loading.batch" style="margin-top:8px">
             <div class="batch-status"><div class="progress-bar" style="flex:1"><div class="progress-fill" :style="{width:batchProgress+'%'}"></div></div><span class="progress-text" style="margin-left:8px">{{ batchCurrent }}/{{ batchEnd }} ({{ batchProgress }}%)</span></div>
+            <div v-if="batchStatus" style="font-size:12px;color:var(--accent);margin-top:6px">{{ batchStatus }}</div>
             <div v-if="batchStreaming" class="batch-preview">{{ batchStreaming.slice(-300) }}</div>
           </div>
         </div>
@@ -2474,7 +2475,7 @@ const app = createApp({
       const maxEnd = (v||1) + 9;
       if (batchEnd.value > maxEnd) batchEnd.value = maxEnd;
     });
-    const batchProgress = ref(0); const batchCurrent = ref(0);
+    const batchProgress = ref(0); const batchCurrent = ref(0); const batchStatus = ref('');
     const exportProgress = ref(0);
 
     const genres = ['修仙','玄幻','都市','科幻','悬疑','历史','游戏','末日','无限流','武侠','民俗悬疑','规则怪谈','反套路修仙','赛博仙侠','经营建设','苟道流'];
@@ -3319,6 +3320,15 @@ const app = createApp({
             chapterProgress.value = 85;
             chapterProgressLabel.value = `${evt.verdict||''} · ${evt.overall_score||0}分`;
           }
+          else if(evt.type==='status'){
+            chapterProgressLabel.value = evt.message||'处理中…';
+          }
+          else if(evt.type==='quality_warning'){
+            chapterProgressLabel.value = evt.message||'质量优化中…';
+          }
+          else if(evt.type==='quality_retry'){
+            chapterProgressLabel.value = `✨ 优化完成：${evt.score_before}分 → ${evt.score_after}分`;
+          }
           else if(evt.type==='text'){
             writing.content+=evt.content; chapterProgress.value=Math.min(95, Math.round(writing.content.length/targetChars*100));
             chapterProgressLabel.value=`${writing.content.length}字`;
@@ -3420,6 +3430,13 @@ const app = createApp({
           if(evt.type==='progress'){
             writing.chapter=evt.chapter; writing.content=''; writing.done=false;
             batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100);
+            batchStatus.value='第'+evt.chapter+'章 生成中…';
+          }
+          else if(evt.type==='status'){
+            batchStatus.value = (evt.message||'').replace('💾 ','').replace('✍️ ','').replace('🎨 ','');
+          }
+          else if(evt.type==='quality_warning'){
+            batchStatus.value = '质量优化中…';
           }
           else if(evt.type==='text'){
             writing.content+=evt.content;
@@ -3647,7 +3664,7 @@ const app = createApp({
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
-      batchStart,batchEnd,batchProgress,batchCurrent,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
+      batchStart,batchEnd,batchProgress,batchCurrent,batchStatus,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
       // v2.50
       xhsMode,xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,xhsProgress,xhsPhase,xhsStreamText,doXhsCreate,loadXhsPresets,
