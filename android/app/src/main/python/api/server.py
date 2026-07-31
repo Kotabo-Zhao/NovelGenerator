@@ -59,24 +59,41 @@ app.add_middleware(
 _rate_limits: dict = defaultdict(list)  # {ip: [timestamps]}
 _RATE_WINDOW = 60  # 1 minute window
 _RATE_MAX_REQUESTS = int(os.getenv("RATE_LIMIT", "60"))  # 60 req/min per IP
-_RATE_GENERATE_MAX = int(os.getenv("RATE_LIMIT_GENERATE", "15"))  # 15 req/min for generate endpoints（生成单章60-90s，5/min在试错场景太严）
+# 生成端点是 SSE 长连接（单章 60-90s），用"并发连接数"而非"次数/min"限流：
+# 同一 IP 同时最多 N 个生成连接，连接释放即恢复，避免连点/刷新被窗口计数锁死
+_RATE_GENERATE_MAX_CONCURRENT = int(os.getenv("RATE_LIMIT_GENERATE_CONCURRENT", "3"))
+
+_generate_conns: dict = defaultdict(int)  # {ip: 当前并发生成连接数}
 
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    """简单的内存速率限制中间件"""
-    # 获取客户端 IP
+    """内存速率限制：普通端点按 60s 窗口计数，生成端点按并发连接数"""
     client_ip = request.client.host if request.client else "unknown"
+    is_generate = "/generate" in request.url.path
+
+    if is_generate:
+        # 生成端点：并发连接限流（连接结束即释放）
+        if _generate_conns[client_ip] >= _RATE_GENERATE_MAX_CONCURRENT:
+            log.warning("生成并发限制触发: IP=%s, path=%s, conns=%d",
+                        client_ip, request.url.path, _generate_conns[client_ip])
+            return JSONResponse(
+                status_code=429,
+                content={"detail": f"已有生成任务正在进行，请等待完成后再试（当前 {_generate_conns[client_ip]} 个并发）",
+                         "retry_after": 10},
+            )
+        _generate_conns[client_ip] += 1
+        try:
+            return await call_next(request)
+        finally:
+            _generate_conns[client_ip] = max(0, _generate_conns[client_ip] - 1)
+
+    # 普通端点：60 秒窗口计数
     now = _time.time()
     window_start = now - _RATE_WINDOW
-
-    # 清理过期记录
     _rate_limits[client_ip] = [t for t in _rate_limits[client_ip] if t > window_start]
 
-    # 对 generate 端点使用更严格的限制
-    max_req = _RATE_GENERATE_MAX if "/generate" in request.url.path else _RATE_MAX_REQUESTS
-
-    if len(_rate_limits[client_ip]) >= max_req:
+    if len(_rate_limits[client_ip]) >= _RATE_MAX_REQUESTS:
         log.warning("速率限制触发: IP=%s, path=%s, count=%d", client_ip, request.url.path, len(_rate_limits[client_ip]))
         return JSONResponse(
             status_code=429,
