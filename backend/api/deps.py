@@ -3,6 +3,8 @@
 server.py 拆分后，各域 router 从这里获取共享的 engine 实例与校验工具。
 Python 模块缓存保证 engine 只实例化一次。
 """
+import asyncio
+import json
 import logging
 import os
 import re
