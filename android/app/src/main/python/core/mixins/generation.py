@@ -214,6 +214,15 @@ class GenerationMixin:
             char_ctx3 = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
             if char_ctx3:
                 chapter_context = chapter_context + "\n\n" + char_ctx3
+
+            # v2.3.6: 注入流派黄金法则（与普通路径一致）
+            try:
+                from ..genre_playbooks import build_playbook_context
+                _pb_ctx = build_playbook_context(genre)
+                if _pb_ctx:
+                    chapter_context = chapter_context + "\n\n" + _pb_ctx
+            except Exception as _gpe:
+                log.warning(f"Playbook injection skipped (atomic): {_gpe}")
             
             # 用LLM生成300字叙事蓝图
             blueprint = ""
@@ -533,7 +542,16 @@ class GenerationMixin:
                     context = context + "\n\n" + pref_ctx
             except Exception as pe:
                 log.warning(f"Preference injection skipped: {pe}")
-                log.info(f"Character state injected into writer context ({len(char_ctx)} chars)")
+
+            # v2.3.6: 注入流派黄金法则（网文技法研究提炼）
+            try:
+                from ..genre_playbooks import build_playbook_context
+                pb_ctx = build_playbook_context(genre)
+                if pb_ctx:
+                    context = context + "\n\n" + pb_ctx
+            except Exception as gpe:
+                log.warning(f"Playbook injection skipped: {gpe}")
+            log.info(f"Character state injected into writer context ({len(char_ctx)} chars)")
 
             # 方案C: 在弧高潮章自动注入反转设计
             try:
