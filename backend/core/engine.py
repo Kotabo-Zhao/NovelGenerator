@@ -876,12 +876,3 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
 
 
 
-
-def _get_style_guide(style: str, genre: str) -> str:
-    """获取简化的风格指南（用于 AtomicWriter）"""
-    from .styles import get_style, build_style_prompt
-    try:
-        style_config = get_style(style)
-        return build_style_prompt(style_config)
-    except Exception:
-        return f"写作风格：{style}。题材：{genre}。"

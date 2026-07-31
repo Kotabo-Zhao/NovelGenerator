@@ -3,10 +3,24 @@
 由 tools/split_engine.py 从 engine.py 自动拆分。
 依赖 NovelEngine 提供的 self.client/self.model/self.memory 等属性。
 """
+import logging
+
+log = logging.getLogger(__name__)
+
 import asyncio
 import os
 import time
+# Allow importing from parent dir (works both as package and standalone)
+try:
+    from backend import config
+except ImportError:
+    import config
 from typing import AsyncGenerator, Optional, AsyncIterator
+from ..atomic_io import atomic_write_json, safe_read_json
+from ..beat_decomposer import BeatDecomposer, Beat
+from ..pacing_checker import PacingChecker
+from ..chapter_summarizer import check_and_compress
+from ..storygraph_interventions import analyze_and_inject
 
 
 
@@ -114,6 +128,18 @@ def _protect_ending_semantic(original: str, rewritten: str, ending_info: dict) -
     
     return rewritten
 
+
+
+
+# ===== _get_style_guide (从 engine.py 迁移) =====
+def _get_style_guide(style: str, genre: str) -> str:
+    """获取简化的风格指南（用于 AtomicWriter）"""
+    from ..styles import get_style, build_style_prompt
+    try:
+        style_config = get_style(style)
+        return build_style_prompt(style_config)
+    except Exception:
+        return f"写作风格：{style}。题材：{genre}。"
 
 
 class GenerationMixin:
@@ -239,7 +265,7 @@ class GenerationMixin:
             # 判断是否高潮章（检查 arcplan）
             is_climax = False
             try:
-                from .arcplanner import is_arc_climax
+                from ..arcplanner import is_arc_climax
                 sg_path = os.path.join(novel_dir, "storygraph.json")
                 if os.path.exists(sg_path):
                     sg_data = safe_read_json(sg_path)
@@ -331,7 +357,7 @@ class GenerationMixin:
                 before_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
                 full_text = normalize_chapter_paragraphs(full_text)
                 # v2.11: 确保结尾完整句子
-                from .writer import _ensure_complete_ending
+                from ..writer import _ensure_complete_ending
                 full_text = _ensure_complete_ending(full_text)
                 formatted = f"# 第{chapter_num}章 {chapter_outline.get('title', f'第{chapter_num}章')}\n\n{full_text}"
                 after_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
@@ -349,7 +375,7 @@ class GenerationMixin:
 
             # v2.42: 提取角色状态变化（原子路径）
             try:
-                from .character_state import CharacterStateTracker
+                from ..character_state import CharacterStateTracker
                 tracker = CharacterStateTracker(self.client, self.model, self.memory)
                 asyncio.ensure_future(tracker.update_from_chapter(
                     novel_id, chapter_num, full_text
@@ -358,7 +384,7 @@ class GenerationMixin:
                 log.warning(f"Character state extraction failed (non-fatal): {e}")
 
             # ── 完整度验证 ──
-            from .writer import _check_truncation, _dedup_continuation
+            from ..writer import _check_truncation, _dedup_continuation
             is_trunc, reason = _check_truncation(full_text, chapter_outline.get("target_words", 2000))
             if is_trunc:
                 log.warning(f"Atomic chapter {chapter_num} may be incomplete: {reason}")
@@ -411,7 +437,7 @@ class GenerationMixin:
             
             # 更新校验
             try:
-                from .storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
+                from ..storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
                 sg_path = os.path.join(novel_dir, "storygraph.json")
                 sg_data = safe_read_json(sg_path) or {}
                 sg = StoryGraph.from_dict(sg_data)
@@ -507,7 +533,7 @@ class GenerationMixin:
                 if os.path.exists(sg_path):
                     sg_data = safe_read_json(sg_path)
                     if sg_data and sg_data.get("arcs"):
-                        from .arcplanner import is_arc_climax
+                        from ..arcplanner import is_arc_climax
                         for arc in sg_data["arcs"]:
                             if is_arc_climax(arc, chapter_num):
                                 twist = self.twist_designer.design_chapter_twist(
@@ -625,7 +651,7 @@ class GenerationMixin:
             _quality_ok = quality_report and quality_report.get("score", 0) >= 50
             if not _quality_ok:
                 try:
-                    from .ai_detector import AIDetector, HumanRewriter, humanize_pipeline
+                    from ..ai_detector import AIDetector, HumanRewriter, humanize_pipeline
                     detector = AIDetector(self.client, self.model)
                     rewriter = HumanRewriter(self.client, self.model)
                     
@@ -656,7 +682,7 @@ class GenerationMixin:
                 log.info(f"AI Humanizer skipped: quality score={quality_report['score']}≥50, text already human-like")
 
             # ── v2.11: 确保结尾是完整句子 ──
-            from .writer import _ensure_complete_ending
+            from ..writer import _ensure_complete_ending
             original_len = len(full_text)
             full_text = _ensure_complete_ending(full_text)
             if len(full_text) != original_len:
@@ -722,7 +748,7 @@ class GenerationMixin:
 
             # v2.42: 提取角色状态变化
             try:
-                from .character_state import CharacterStateTracker
+                from ..character_state import CharacterStateTracker
                 tracker = CharacterStateTracker(self.client, self.model, self.memory)
                 asyncio.ensure_future(tracker.update_from_chapter(
                     novel_id, chapter_num, full_text
@@ -784,7 +810,7 @@ class GenerationMixin:
             log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
 
             # ── 完整度验证 ──
-            from .writer import _check_truncation, _dedup_continuation
+            from ..writer import _check_truncation, _dedup_continuation
             is_trunc, reason = _check_truncation(full_text, target_words)
             if is_trunc:
                 log.warning(f"Chapter {chapter_num} incomplete after Writer retries: {reason}. "
@@ -858,7 +884,7 @@ class GenerationMixin:
                 sg_path = os.path.join(novel_dir, "storygraph.json")
                 sg_data = safe_read_json(sg_path) or {}
                 
-                from .storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
+                from ..storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
                 sg = StoryGraph.from_dict(sg_data)
                 
                 # 用轻量模型提取
@@ -951,7 +977,7 @@ class GenerationMixin:
 
             # ── 自动校准（每10章）──
             try:
-                from .autocalibrator import should_calibrate, calibrate
+                from ..autocalibrator import should_calibrate, calibrate
                 if should_calibrate(chapter_num):
                     plan = self.get_novel(novel_id)
                     sg_data = safe_read_json(sg_path) or {}

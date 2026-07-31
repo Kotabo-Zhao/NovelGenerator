@@ -3,6 +3,10 @@
 由 tools/split_engine.py 从 engine.py 自动拆分。
 依赖 NovelEngine 提供的 self.client/self.model/self.memory 等属性。
 """
+import logging
+
+log = logging.getLogger(__name__)
+
 import os
 from typing import AsyncGenerator, Optional, AsyncIterator
 
