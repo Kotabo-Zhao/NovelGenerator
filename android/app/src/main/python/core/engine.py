@@ -333,7 +333,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         # ── v2.11: 创意种子注入（架构级随机性）──
         try:
             from .creative_seeds import create_seed_engine
-            seed_engine = create_seed_engine(self.memory.storage_dir)
+            seed_engine = create_seed_engine(self.memory.novels_dir)
             temp_id = hashlib.md5((inspiration or enhanced_input.get("title","") or "untitled").encode()).hexdigest()[:12]
             seed_text, seeds = seed_engine.inject_into_planning_context(
                 temp_id, creative_input.get("genre", ""), ""

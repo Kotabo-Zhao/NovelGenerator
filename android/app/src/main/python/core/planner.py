@@ -1145,9 +1145,9 @@ class Planner:
         
         # 重试策略：temp 递减 + 退避递增 + 最后一次用简化 prompt
         retry_plan = [
-            (0.8, 1, False),   # 第一次：正常温度，等1s
-            (0.4, 2, False),   # 第二次：低温度，等2s
-            (0.2, 3, True),    # 第三次：最低温 + 简化prompt兜底，等3s
+            (0.8, 2, False),   # 第一次：正常温度，等2s
+            (0.4, 5, False),   # 第二次：低温度，等5s（覆盖短时网络波动）
+            (0.2, 10, True),   # 第三次：最低温 + 简化prompt兜底，等10s
         ]
         
         last_error = None
