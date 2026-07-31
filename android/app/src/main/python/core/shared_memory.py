@@ -776,6 +776,52 @@ class SharedMemoryManager:
 
         parts.append(outline_text)
 
+        # ── v2.3.4: 角色人设约束注入（女娲框架蒸馏结果，仅本角色出场时生效）──
+        try:
+            _profiles_path = os.path.join(self.get_novel_dir(novel_id), "character_profiles.json")
+            if os.path.exists(_profiles_path):
+                with open(_profiles_path, "r", encoding="utf-8") as _pf:
+                    _profiles = json.load(_pf) or {}
+                _chars = chapter_outline.get("characters", [])
+                _rule_parts = []
+                for _cn in _chars:
+                    _prof = _profiles.get(_cn)
+                    if not _prof:
+                        continue
+                    _he = _prof.get("decision_heuristics", [])[:4]
+                    _dna = _prof.get("expression_dna", [])[:4]
+                    _anti = _prof.get("anti_patterns", [])[:3]
+                    _boundary = _prof.get("boundary", {}) or {}
+                    _rules = (_boundary.get("rules") or _boundary.get("anti_collapse_checks") or [])[:3]
+                    _lines = []
+                    if _he:
+                        _lines.append("**决策启发式**（出场必须遵守）：")
+                        for _h in _he:
+                            if isinstance(_h, dict):
+                                _lines.append(f"- {('' if str(_h.get('trigger', '')).startswith('当') else '当')}{_h.get('trigger', '')} → {_h.get('action', '')}"[:120])
+                            else:
+                                _lines.append(f"- {_h}"[:120])
+                    if _dna:
+                        _lines.append("**表达DNA**：")
+                        for _d in _dna:
+                            if isinstance(_d, dict):
+                                _lines.append(f"- {_d.get('name', '')}：{_d.get('example', '')}"[:120])
+                            else:
+                                _lines.append(f"- {_d}"[:120])
+                    if _anti:
+                        _lines.append("**反模式**（绝对禁止）：")
+                        for _a in _anti:
+                            _lines.append(f"- {_a.get('pattern', _a) if isinstance(_a, dict) else _a}"[:120])
+                    if _rules:
+                        _lines.append("**防崩校验**：")
+                        _lines += [f"- {_r}" for _r in _rules]
+                    if _lines:
+                        _rule_parts.append(f"## 🎭 角色人设约束（{_cn}）\n" + "\n".join(_lines))
+                if _rule_parts:
+                    parts.append("\n\n".join(_rule_parts))
+        except Exception as _e:
+            log.warning(f"Character rules injection skipped: {_e}")
+
         # ── v2.6: 对话密度告警 — 检测前几章是否对话过多 ──
         try:
             import re

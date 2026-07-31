@@ -9,4 +9,5 @@ server.py 按域拆分后的业务路由模块：
 - styles.py: 风格系统 / 种子 / 指纹
 - trends.py: 爆火分析 / 逆天生成
 - xhs.py: 小红书爆款短篇
+- characters.py: 角色人设蒸馏（女娲框架）
 """

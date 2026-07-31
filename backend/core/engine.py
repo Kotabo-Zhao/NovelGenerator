@@ -53,10 +53,11 @@ from .mixins.validation import ValidationMixin
 from .mixins.analysis import AnalysisMixin
 from .mixins.requirements import RequirementsMixin
 from .mixins.export import ExportMixin
+from .mixins.character_profile import CharacterProfileMixin
 
 
 class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
-                  RequirementsMixin, ExportMixin):
+                  RequirementsMixin, ExportMixin, CharacterProfileMixin):
     """小说创作引擎 — 多智能体架构:
     Pipeline: Planner → Writer → ConsistencyValidator → OpeningOptimizer → TwistDesigner
     Support: Embellisher → ContextUpdater → PacingChecker
@@ -90,6 +91,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         # v2.2: 需求拆解与监督系统
         self.requirement_decomposer = RequirementDecomposer(self.client, self.model)
         self.requirement_supervisor = RequirementSupervisor(self.client, self.model)
+        # v2.3.4: 角色人设蒸馏（女娲框架移植）
+        from .character_profiler import CharacterProfiler
+        self.character_profiler = CharacterProfiler(self.client, self.model)
         # v2.3.3: 需求拆解结果持久化（SQLite，多进程安全，替代原进程内 dict）
         from .requirements_store import RequirementsStore
         self._req_store = RequirementsStore(config.NOVELS_DIR)
