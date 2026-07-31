@@ -59,7 +59,7 @@ app.add_middleware(
 _rate_limits: dict = defaultdict(list)  # {ip: [timestamps]}
 _RATE_WINDOW = 60  # 1 minute window
 _RATE_MAX_REQUESTS = int(os.getenv("RATE_LIMIT", "60"))  # 60 req/min per IP
-_RATE_GENERATE_MAX = int(os.getenv("RATE_LIMIT_GENERATE", "5"))  # 5 req/min for generate endpoints
+_RATE_GENERATE_MAX = int(os.getenv("RATE_LIMIT_GENERATE", "15"))  # 15 req/min for generate endpoints（生成单章60-90s，5/min在试错场景太严）
 
 
 @app.middleware("http")

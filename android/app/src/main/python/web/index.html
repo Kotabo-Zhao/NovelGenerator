@@ -2016,7 +2016,11 @@ const app = createApp({
       if (!response.ok) {
         // 尝试读取错误详情
         let detail = '';
-        try { const err = await response.json(); detail = err.detail || err.message || ''; } catch(_) {}
+        let retryAfter = 0;
+        try { const err = await response.json(); detail = err.detail || err.message || ''; retryAfter = err.retry_after || 0; } catch(_) {}
+        if (response.status === 429) {
+          throw new Error(`请求过于频繁，请 ${retryAfter || 60} 秒后再试`);
+        }
         throw new Error(`服务器错误 (${response.status}): ${detail || response.statusText}`);
       }
       const reader = response.body.getReader();
