@@ -295,7 +295,7 @@ class SharedMemoryManager:
                 if isinstance(client, ResilientLLMClient):
                     resilient = client
                 else:
-                    resilient = ResilientLLMClient(client, model or "deepseek-chat")
+                    resilient = ResilientLLMClient(client, model or "deepseek-v4-flash")
             except ImportError:
                 resilient = None
             
@@ -310,7 +310,7 @@ class SharedMemoryManager:
                 )
             else:
                 response = client.chat.completions.create(
-                    model=model or "deepseek-chat",
+                    model=model or "deepseek-v4-flash",
                     messages=[
                         {"role": "system", "content": "你是一位小说编辑，擅长分析叙事结构和章节衔接。只输出JSON。"},
                         {"role": "user", "content": prompt},
