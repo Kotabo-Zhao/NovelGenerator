@@ -472,6 +472,28 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 except Exception as _pd_e:
                     log.warning(f"Auto character profiling skipped: {_pd_e}")
 
+                # ── v2.3.6: 生成角色声音卡（一次调用，全部角色语言指纹）并回写 bible ──
+                try:
+                    yield {"type": "progress", "phase": "character_voices", "pct": 99,
+                           "label": "正在设计角色声音卡…"}
+                    bible_path_v = os.path.join(novel_dir, "character_bible.json")
+                    if os.path.exists(bible_path_v):
+                        with open(bible_path_v, "r", encoding="utf-8") as _vf:
+                            _bible_v = json.load(_vf) or {}
+                        _voices_v = await asyncio.to_thread(
+                            self.character_voices.generate_all, _bible_v
+                        )
+                        if _voices_v:
+                            atomic_write_json(
+                                os.path.join(novel_dir, "character_voices.json"), _voices_v
+                            )
+                            self._merge_voices_into_bible(novel_id, _voices_v)
+                            log.info(f"Character voices generated: {len(_voices_v)} characters")
+                            yield {"type": "progress", "phase": "character_voices", "pct": 100,
+                                   "label": f"角色声音卡就绪（{len(_voices_v)} 个角色）"}
+                except Exception as _ve:
+                    log.warning(f"Character voices skipped: {_ve}")
+
             yield event
 
     async def regenerate_outline_stream(self, novel_id: str, feedback: str) -> AsyncIterator[dict]:

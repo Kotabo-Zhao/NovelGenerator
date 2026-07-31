@@ -55,3 +55,19 @@ async def get_character_profile(novel_id: str, char_name: str):
     if not profile:
         raise HTTPException(status_code=404, detail=f"「{char_name}」尚未蒸馏人设，请先 POST 蒸馏")
     return {"ok": True, "profile": profile}
+
+
+@router.post("/api/novels/{novel_id}/character-profiles/generate-all")
+async def generate_all_assets(novel_id: str):
+    """一键补全：为已有书批量蒸馏全部角色人设 + 生成声音卡，并回写人物宝典
+
+    旧书迁移用（创建即蒸馏上线前的书没有这些资产）。
+    阻塞式，约 1-3 分钟。
+    """
+    _validate_novel_id(novel_id)
+    import asyncio
+    result = await asyncio.to_thread(engine.generate_all_character_assets, novel_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {"ok": True, "result": result}
+

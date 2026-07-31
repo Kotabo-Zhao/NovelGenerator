@@ -55,7 +55,110 @@ class CharacterProfileMixin:
         log.info(f"Character profile distilled: {novel_id}/{char_name} "
                  f"({len(result.get('mental_models', []))} models, "
                  f"{len(result.get('decision_heuristics', []))} heuristics)")
+
+        # ── v2.3.6: 蒸馏成果回写 bible（人物宝典变厚，所有读 bible 的模块受益）──
+        try:
+            self._merge_profile_into_bible(novel_id, char_name, result)
+        except Exception as me:
+            log.warning(f"Profile merge into bible failed: {me}")
         return result
+
+    def _merge_profile_into_bible(self, novel_id: str, char_name: str, profile: dict):
+        """把蒸馏人设卡回写进 character_bible.json 的角色条目"""
+        bible_path = os.path.join(self.memory.get_novel_dir(novel_id), "character_bible.json")
+        if not os.path.exists(bible_path):
+            return
+        with open(bible_path, "r", encoding="utf-8") as f:
+            bible = json.load(f)
+
+        summary = {
+            "mental_models": profile.get("mental_models", []),
+            "decision_heuristics": profile.get("decision_heuristics", []),
+            "expression_dna": profile.get("expression_dna", []),
+            "anti_patterns": profile.get("anti_patterns", []),
+            "boundary": profile.get("boundary", {}),
+        }
+        updated = False
+        for group in ("protagonist", "supporting", "antagonist"):
+            items = bible.get(group)
+            if isinstance(items, dict):
+                if items.get("name") == char_name:
+                    items["character_profile"] = summary
+                    updated = True
+            elif isinstance(items, list):
+                for c in items:
+                    if isinstance(c, dict) and c.get("name") == char_name:
+                        c["character_profile"] = summary
+                        updated = True
+        if updated:
+            atomic_write_json(bible_path, bible)
+            log.info(f"Bible enhanced: {char_name} (profile merged)")
+
+    def _merge_voices_into_bible(self, novel_id: str, voices: dict):
+        """把角色声音卡回写进 character_bible.json 的角色条目"""
+        if not voices:
+            return
+        bible_path = os.path.join(self.memory.get_novel_dir(novel_id), "character_bible.json")
+        if not os.path.exists(bible_path):
+            return
+        with open(bible_path, "r", encoding="utf-8") as f:
+            bible = json.load(f)
+        updated = False
+        for group in ("protagonist", "supporting", "antagonist"):
+            items = bible.get(group)
+            if isinstance(items, dict):
+                if items.get("name") in voices:
+                    items["voice"] = voices[items["name"]]
+                    updated = True
+            elif isinstance(items, list):
+                for c in items:
+                    if isinstance(c, dict) and c.get("name") in voices:
+                        c["voice"] = voices[c["name"]]
+                        updated = True
+        if updated:
+            atomic_write_json(bible_path, bible)
+            log.info(f"Bible enhanced: voices merged ({len(voices)} chars)")
+
+    def generate_all_character_assets(self, novel_id: str) -> dict:
+        """一键生成已有书的全部角色资产（蒸馏+声音卡）并回写 bible
+
+        用于旧书补全：profile 未蒸馏的角色逐个蒸馏，然后生成声音卡。
+        阻塞式（约 1-3 分钟），返回汇总。
+        """
+        import asyncio
+        bible_path = os.path.join(self.memory.get_novel_dir(novel_id), "character_bible.json")
+        if not os.path.exists(bible_path):
+            return {"error": "人物宝典不存在"}
+        with open(bible_path, "r", encoding="utf-8") as f:
+            bible = json.load(f)
+
+        # 全部角色名（主角优先）
+        char_names = []
+        proto = (bible.get("protagonist") or {}).get("name", "")
+        if proto:
+            char_names.append(proto)
+        for group in ("supporting", "antagonist"):
+            for c in bible.get(group, []) or []:
+                if isinstance(c, dict) and c.get("name") and c["name"] not in char_names:
+                    char_names.append(c["name"])
+
+        results = {"distilled": [], "voices": {}}
+        existing = self.get_character_profiles(novel_id)
+        for name in char_names[:8]:
+            if name not in existing:
+                r = self.distill_character_profile(novel_id, name)
+                if "error" not in r:
+                    results["distilled"].append(name)
+                # 失败不阻塞
+
+        # 声音卡
+        voices = self.character_voices.generate_all(bible)
+        if voices:
+            voices_path = os.path.join(self.memory.get_novel_dir(novel_id), "character_voices.json")
+            atomic_write_json(voices_path, voices)
+            self._merge_voices_into_bible(novel_id, voices)
+            results["voices"] = {k: True for k in voices.keys()}
+        return results
 
     def get_character_profiles(self, novel_id: str) -> dict:
         """列出全部已蒸馏角色人设"""
