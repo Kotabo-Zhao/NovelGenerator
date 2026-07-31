@@ -12,8 +12,8 @@ def _log(msg):
         try:
             with open(_STATUS_FILE, "w") as f:
                 f.write(f"{int(time.time())}|{msg}")
-        except:
-            pass
+        except Exception:
+            pass  # 状态文件写入失败不影响启动流程
 
 
 def start_server(api_key, host, port, log_dir):
