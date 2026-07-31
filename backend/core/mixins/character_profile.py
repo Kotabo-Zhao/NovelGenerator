@@ -73,6 +73,17 @@ class CharacterProfileMixin:
         profiles = self.get_character_profiles(novel_id)
         return profiles.get(char_name, {})
 
+    def get_character_voices(self, novel_id: str) -> dict:
+        """获取角色声音卡（v2.3.6，无则返回空）"""
+        voices_path = os.path.join(self.memory.get_novel_dir(novel_id), "character_voices.json")
+        if not os.path.exists(voices_path):
+            return {}
+        try:
+            with open(voices_path, "r", encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception:
+            return {}
+
     def build_character_rules_context(self, novel_id: str, characters: list) -> str:
         """构建角色人设约束文本（Writer 上下文注入用）
 

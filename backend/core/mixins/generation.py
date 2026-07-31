@@ -223,6 +223,18 @@ class GenerationMixin:
                     chapter_context = chapter_context + "\n\n" + _pb_ctx
             except Exception as _gpe:
                 log.warning(f"Playbook injection skipped (atomic): {_gpe}")
+
+            # v2.3.6: 注入角色声音表（对话辨识度，解决角色同质化）
+            try:
+                from ..character_voices import build_voices_context
+                _vctx = build_voices_context(
+                    self.get_character_voices(novel_id),
+                    chapter_outline.get("characters", []) or None,
+                )
+                if _vctx:
+                    chapter_context = chapter_context + "\n\n" + _vctx
+            except Exception as _vce:
+                log.warning(f"Voices injection skipped (atomic): {_vce}")
             
             # 用LLM生成300字叙事蓝图
             blueprint = ""
@@ -551,6 +563,18 @@ class GenerationMixin:
                     context = context + "\n\n" + pb_ctx
             except Exception as gpe:
                 log.warning(f"Playbook injection skipped: {gpe}")
+
+            # v2.3.6: 注入角色声音表（对话辨识度，解决角色同质化）
+            try:
+                from ..character_voices import build_voices_context
+                vctx = build_voices_context(
+                    self.get_character_voices(novel_id),
+                    chapter_outline.get("characters", []) or None,
+                )
+                if vctx:
+                    context = context + "\n\n" + vctx
+            except Exception as vce:
+                log.warning(f"Voices injection skipped: {vce}")
             log.info(f"Character state injected into writer context ({len(char_ctx)} chars)")
 
             # 方案C: 在弧高潮章自动注入反转设计

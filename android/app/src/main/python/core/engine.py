@@ -97,6 +97,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         # v2.3.5: 反馈闭环（👍👎 偏好学习）
         from .feedback_store import FeedbackStore
         self.feedback_store = FeedbackStore(config.NOVELS_DIR)
+        # v2.3.6: 角色声音卡（解决角色同质化）
+        from .character_voices import CharacterVoices
+        self.character_voices = CharacterVoices(self.client, self.model)
         # v2.3.3: 需求拆解结果持久化（SQLite，多进程安全，替代原进程内 dict）
         from .requirements_store import RequirementsStore
         self._req_store = RequirementsStore(config.NOVELS_DIR)
