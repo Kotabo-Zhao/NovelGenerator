@@ -4,7 +4,7 @@ sync_android_core.py — NovelGenerator backend → android python 单向同步
 
 背景：NovelGenerator 后端在 backend/ 和 android/app/src/main/python/ 双份部署。
 2026-07-31 起同步范围扩展为:
-  - backend/core/*.py            → android python/core/   （核心逻辑，必须一致）
+  - backend/core/**/*.py            → android python/core/   （核心逻辑，必须一致，含子目录）
   - backend/api/{server,deps}.py + api/routers/*.py → android python/api/（API 层已统一拆分，同样必须一致）
 
 用法:
@@ -30,32 +30,45 @@ SYNC_PAIRS = [
 SKIP_NAMES = {"__pycache__", "server_runner.py", "__init__.py"}
 
 
+def walk_py(src: Path) -> dict:
+    """递归收集目录下所有 .py 文件（相对路径 → 绝对路径）"""
+    result = {}
+    for p in src.rglob("*.py"):
+        if "__pycache__" in p.parts:
+            continue
+        rel = p.relative_to(src)
+        if rel.name in SKIP_NAMES:
+            continue
+        result[str(rel)] = p
+    return result
+
+
 def sync_dir(src: Path, dst: Path, label: str, check_only: bool) -> tuple:
     if not src.is_dir():
         print(f"[ERROR] 源目录不存在: {src}")
         sys.exit(1)
-    dst.mkdir(parents=True, exist_ok=True)
 
-    changed, added, removed = [], [], []
-    src_files = {p.name for p in src.glob("*.py") if p.name not in SKIP_NAMES}
-    dst_files = {p.name for p in dst.glob("*.py") if p.name not in SKIP_NAMES}
+    src_files = walk_py(src)
+    dst_files = walk_py(dst) if dst.is_dir() else {}
 
-    # 新增文件
-    for name in sorted(src_files - dst_files):
-        added.append(name)
+    added, changed, removed = [], [], []
+    for rel in sorted(src_files.keys() - dst_files.keys()):
+        added.append(rel)
         if not check_only:
-            shutil.copy2(src / name, dst / name)
+            target = dst / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_files[rel], target)
 
-    # 变更文件
-    for name in sorted(src_files & dst_files):
-        if not filecmp.cmp(src / name, dst / name, shallow=False):
-            changed.append(name)
+    for rel in sorted(src_files.keys() & dst_files.keys()):
+        if not filecmp.cmp(src_files[rel], dst_files[rel], shallow=False):
+            changed.append(rel)
             if not check_only:
-                shutil.copy2(src / name, dst / name)
+                target = dst / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_files[rel], target)
 
-    # 多余文件（android 有但 backend 没有）
-    for name in sorted(dst_files - src_files):
-        removed.append(name)
+    for rel in sorted(dst_files.keys() - src_files.keys()):
+        removed.append(rel)
 
     print(f"\n[{label}] {src.name}/ → {dst.name}/")
     print(f"  新增 {len(added)}: {added or '无'}")
