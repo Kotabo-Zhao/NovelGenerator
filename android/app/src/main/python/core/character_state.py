@@ -36,6 +36,11 @@ EXTRACT_PROMPT = """你是一个角色状态追踪器。阅读以下章节正文
 2. 主角用「protagonist」键，其他角色用「other_characters」键
 3. 信息传播追踪：如果一个值得注意的事件（主角的成就/秘密）被新的角色知道了，或传播到了新的区域，记录到 information_spread
 4. 时间推进：估计本章经过了多少时间（分钟/小时/天）
+5. **永久状态追踪（P0 级，必须提取）**：本角色在本章新获得的「永久/长期状态」写入 persistent_changes——
+   包括但不限于：失明/断臂/毁容/中毒/诅咒/血脉觉醒/境界跌落的后遗症/被夺走的物品/不可逆的伤势。
+   若本章明确解除了某个已有永久状态（如伤势痊愈、诅咒解除），写入 persistent_resolved。
+   **永久状态 ≠ 临时状态**：打斗擦伤、短暂疲惫是临时状态，不要写入；
+   一眼失明、经脉尽断、寒毒入体这类跨章必须记住的才是永久状态。
 
 ## 当前已知状态（供参考）
 {current_state}
@@ -47,6 +52,8 @@ EXTRACT_PROMPT = """你是一个角色状态追踪器。阅读以下章节正文
 ```json
 {{
   "protagonist": {{
+    "persistent_changes": ["新获得的永久状态，如：左眼失明（毒针所致，无解）"],
+    "persistent_resolved": ["本章解除的永久状态，如：右臂旧伤已痊愈"],
     "identity_change": "新身份（如有）",
     "cultivation_change": {{"stage": "新境界", "new_ability": "新技能"}},
     "reputation_change": {{"event": "触发事件", "effect": "上升/下降", "new_level": "新声望等级名"}},
@@ -58,6 +65,8 @@ EXTRACT_PROMPT = """你是一个角色状态追踪器。阅读以下章节正文
   }},
   "other_characters": {{
     "角色名": {{
+      "persistent_changes": ["新获得的永久状态"],
+      "persistent_resolved": ["解除的永久状态"],
       "appeared": true,
       "identity": "身份",
       "location": "出现位置",
@@ -193,7 +202,8 @@ class CharacterStateTracker:
                 max_tokens=1500,
             )
 
-            extracted = json.loads(resp.choices[0].message.content.strip())
+            # v2.3.6: 容错解析（容忍 markdown 围栏/前后杂文本）
+            extracted = self._parse_state_json(resp.choices[0].message.content)
 
             # ── 合并更新 ──
 
@@ -233,6 +243,21 @@ class CharacterStateTracker:
                         proto.setdefault("relationships", {})[name] = rel
                 state["protagonist_state"] = proto
 
+            # ── v2.3.6: 永久状态账本（跨章必须记住的状态，合并去重 + 按解除移除）──
+            ps_book = state.get("persistent_status", {})
+            p_changes = p_update.get("persistent_changes", []) if p_update else []
+            p_resolved = p_update.get("persistent_resolved", []) if p_update else []
+            if p_changes or p_resolved:
+                name = proto.get("name", "主角")
+                existing = list(ps_book.get(name, []))
+                for c in p_changes:
+                    if c and c not in existing:
+                        existing.append(f"{c}（Ch{chapter_num}）")
+                for r in p_resolved:
+                    existing = [e for e in existing if not (r and (r in e or e.startswith(r)))]
+                ps_book[name] = existing
+                log.info(f"Persistent status updated: {name} -> {existing}")
+
             # 配角状态
             active = state.get("active_characters", {})
             others = extracted.get("other_characters", {})
@@ -253,6 +278,19 @@ class CharacterStateTracker:
                     char.setdefault("relationship_changes", []).append(
                         {"chapter": chapter_num, **rel}
                     )
+                # 配角永久状态入账本
+                o_changes = info.get("persistent_changes", []) or []
+                o_resolved = info.get("persistent_resolved", []) or []
+                if o_changes or o_resolved:
+                    existing = list(ps_book.get(name, []))
+                    for c in o_changes:
+                        if c and c not in existing:
+                            existing.append(f"{c}（Ch{chapter_num}）")
+                    for r in o_resolved:
+                        existing = [e for e in existing if not (r and (r in e or e.startswith(r)))]
+                    ps_book[name] = existing
+            if ps_book:
+                state["persistent_status"] = ps_book
             state["active_characters"] = active
 
             # 信息传播
@@ -297,6 +335,30 @@ class CharacterStateTracker:
             log.warning(f"State extraction JSON parse failed (non-fatal): {e}")
         except Exception as e:
             log.warning(f"State extraction failed (non-fatal): {e}")
+
+    @staticmethod
+    def _parse_state_json(content) -> dict:
+        """容错解析 LLM 输出（容忍 ```json 围栏/前后杂文本）"""
+        if not content:
+            return {}
+        text = str(content).strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                return json.loads(text[start:end + 1])
+            except json.JSONDecodeError:
+                return {}
+        return {}
 
     # ── 上下文构建 ──
 

@@ -296,6 +296,18 @@ class ContextUpdater:
             dead = [n for n, d in chars.items() if isinstance(d, dict) and d.get("health") == "已死亡"]
             if dead:
                 parts.append(f"\n💀 已死亡: {', '.join(dead)}")
+
+            # ── v2.3.6: 永久状态账本（跨章必须记住，写作时不可违反）──
+            ps_book = state.get("persistent_status", {})
+            if ps_book:
+                ps_lines = []
+                for pname, pstatus in ps_book.items():
+                    if pstatus:
+                        ps_lines.append(f"- {pname}: {'；'.join(str(x) for x in pstatus)}")
+                if ps_lines:
+                    parts.append("\n## 🔒 永久状态账本（跨章生效，本章不得违反！）")
+                    parts.append("> 以下状态是不可逆/长期状态，写作时角色行为必须与之相符。")
+                    parts.append("\n".join(ps_lines))
         
         # ── 时空位置 ──
         timeline = state.get("timeline", {})
