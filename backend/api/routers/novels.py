@@ -337,16 +337,32 @@ async def generate_batch(novel_id: str, req: dict):
         try:
             failed = []
             for ch_num in range(start, end + 1):
+                # v2.6: 流水线衔接 — 等上一章桥接任务落地（通常早已完成，0等待）
+                if ch_num > start:
+                    try:
+                        await engine.await_pending_bridge(novel_id, ch_num - 1)
+                    except Exception as bpe:
+                        log.warning(f"Bridge await failed (non-fatal): {bpe}")
+
                 # v2.14: 跳过已生成的章节（断点续传时）
+                # v2.6: 防御 — 带"生成中"标记的残章不算完成，必须重新生成
                 if resume and engine.memory.chapter_exists(novel_id, ch_num):
-                    yield f"data: {json.dumps({'type':'chapter_skipped','chapter':ch_num,'message':'已存在，跳过'}, ensure_ascii=False)}\n\n"
-                    continue
+                    _existing = ""
+                    try:
+                        _existing = engine.memory.read_chapter(novel_id, ch_num) or ""
+                    except Exception:
+                        _existing = ""
+                    if "生成中，尚未完成" in _existing or "<!-- 生成中" in _existing:
+                        log.warning(f"Ch{ch_num} is an incomplete draft, regenerating")
+                    else:
+                        yield f"data: {json.dumps({'type':'chapter_skipped','chapter':ch_num,'message':'已存在，跳过'}, ensure_ascii=False)}\n\n"
+                        continue
 
                 yield f"data: {json.dumps({'type':'progress','chapter':ch_num,'total':end,'start':start}, ensure_ascii=False)}\n\n"
                 chapter_error = None
                 try:
                     async for event in engine.generate_chapter_stream(
-                        novel_id, ch_num, writing_mode
+                        novel_id, ch_num, writing_mode, batch_mode=True  # v2.6: 批量模式（9次LLM→1-3次）
                     ):
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                         if event.get("type") == "error":
@@ -371,8 +387,9 @@ async def generate_batch(novel_id: str, req: dict):
             # v2.14: 保留检查点，允许用户后续续传
             yield f"data: {json.dumps({'type':'error','message':f'❌ 批量生成中断：{e}。已生成章节已保存，可使用"断点续传"恢复。'}, ensure_ascii=False)}\n\n"
 
+    # v2.6: 批量端点接入 SSE 心跳（5s ping，防止长生成连接被中间层掐断）
     return StreamingResponse(
-        event_stream(),
+        _sse_with_heartbeat(event_stream()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )

@@ -3405,54 +3405,76 @@ const app = createApp({
       const count = end - start + 1;
       if(count > 10) { reportError('批量生成上限为10章，请缩小范围'); return; }
       loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value=''; batchStreaming.value='';
-      const ctrl=new AbortController(); abortCtrl.value=ctrl;
       let failedChapters = [];
-      try {
-        const r=await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/generate/batch',{
-          method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({start_chapter:start,end_chapter:end,writing_mode:writingModeLiterary.value?'literary':'webnovel'}),
-          signal:ctrl.signal,
-        });
-        await readSSE(r, (evt) => {
-          if(evt.type==='progress'){
-            writing.chapter=evt.chapter; writing.content=''; writing.done=false;
-            batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100);
-            batchStatus.value='第'+evt.chapter+'章 生成中…';
+      // v2.6: 断线自动重连（最多重试2次，带 resume 从检查点续传）
+      const MAX_ATTEMPTS = 3;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        if(attempt > 0){
+          batchStatus.value = `⚠️ 连接中断，${attempt * 3} 秒后自动恢复…`;
+          await new Promise(r2 => setTimeout(r2, attempt * 3000));
+          if(!loading.batch) return; // 用户已点中断
+          batchStatus.value = '🔄 正在从断点恢复…';
+        }
+        const ctrl = new AbortController(); abortCtrl.value = ctrl;
+        try {
+          const r=await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/generate/batch',{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              start_chapter:start,end_chapter:end,
+              writing_mode:writingModeLiterary.value?'literary':'webnovel',
+              resume: attempt > 0,  // v2.6: 重连时启用断点续传（后端检查点自动跳过已完成章）
+            }),
+            signal:ctrl.signal,
+          });
+          await readSSE(r, (evt) => {
+            if(evt.type==='progress'){
+              writing.chapter=evt.chapter; writing.content=''; writing.done=false;
+              batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100);
+              batchStatus.value='第'+evt.chapter+'章 生成中…';
+            }
+            else if(evt.type==='status'){
+              batchStatus.value = (evt.message||'').replace('💾 ','').replace('✍️ ','').replace('🎨 ','');
+            }
+            else if(evt.type==='quality_warning'){
+              batchStatus.value = '质量优化中…';
+            }
+            else if(evt.type==='text'){
+              writing.content+=evt.content;
+              batchStreaming.value=(batchStreaming.value+evt.content).slice(-300);
+              nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
+            }
+            else if(evt.type==='chapter_done'){
+              writing.done=true;
+              const st=activeNovel.value.state;
+              if(!st.completed_chapters) st.completed_chapters=[];
+              if(!st.completed_chapters.includes(evt.chapter)) st.completed_chapters.push(evt.chapter);
+              st.completed_chapters.sort((a,b)=>a-b);
+              st.current_chapter=Math.max(...st.completed_chapters);
+              batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
+              batchStreaming.value=''; loadShelfDebounced();
+            }
+            else if(evt.type==='chapter_failed'){
+              failedChapters.push(evt.chapter);
+              batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
+              batchStreaming.value='';
+            }
+            else if(evt.type==='batch_done'){
+              batchCurrent.value=end; batchProgress.value=100;
+              if((evt.failed||[]).length>0) reportError(`${evt.failed.length}章失败: ${evt.failed.join(',')}`, '批量生成部分失败');
+            }
+            else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
+          });
+          selectChapter(end); loadShelfDebounced();
+          break; // 成功完成
+        } catch(e){
+          if(e.name==='AbortError') return; // 用户主动中断
+          if(attempt >= MAX_ATTEMPTS - 1){
+            error.value=e.message||'连接超时，已生成的部分已保存';
+            reportError('连接中断多次，已生成章节已保存。可点击"批量生成"继续（自动断点续传）', '批量中断');
           }
-          else if(evt.type==='status'){
-            batchStatus.value = (evt.message||'').replace('💾 ','').replace('✍️ ','').replace('🎨 ','');
-          }
-          else if(evt.type==='quality_warning'){
-            batchStatus.value = '质量优化中…';
-          }
-          else if(evt.type==='text'){
-            writing.content+=evt.content;
-            batchStreaming.value=(batchStreaming.value+evt.content).slice(-300);
-            nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
-          }
-          else if(evt.type==='chapter_done'){
-            writing.done=true;
-            const st=activeNovel.value.state;
-            if(!st.completed_chapters) st.completed_chapters=[];
-            if(!st.completed_chapters.includes(evt.chapter)) st.completed_chapters.push(evt.chapter);
-            st.completed_chapters.sort((a,b)=>a-b);
-            st.current_chapter=Math.max(...st.completed_chapters);
-            batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
-            batchStreaming.value=''; loadShelfDebounced();
-          }
-          else if(evt.type==='chapter_failed'){
-            failedChapters.push(evt.chapter);
-            batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
-            batchStreaming.value='';
-          }
-          else if(evt.type==='batch_done'){
-            batchCurrent.value=end; batchProgress.value=100;
-            if((evt.failed||[]).length>0) reportError(`${evt.failed.length}章失败: ${evt.failed.join(',')}`, '批量生成部分失败');
-          }
-          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
-        });
-        selectChapter(end); loadShelfDebounced();
-      } catch(e){ if(e.name!=='AbortError') error.value=e.message||'连接超时，已生成的部分已保存'; }
+          // 否则循环重试
+        }
+      }
       loading.batch=false; abortCtrl.value=null; batchStreaming.value='';
     }
 

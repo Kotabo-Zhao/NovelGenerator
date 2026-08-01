@@ -116,6 +116,28 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         except ImportError:
             self._resilient = self.client  # 降级用普通客户端
 
+        # v2.6: 批量流水线 — 后台桥接任务表 {(novel_id, chapter): asyncio.Future}
+        # 批量模式把桥接/storygraph/状态更新放后台，下一章启动前 await 上一章桥接即可
+        self._pending_bridges = {}
+
+    async def await_pending_bridge(self, novel_id: str, chapter_num: int, timeout: float = 90.0):
+        """批量流水线：等待某章后台桥接任务完成（下一章上下文依赖它）
+
+        桥接通常先于下一章主生成完成（几秒 vs 1-2分钟），几乎不增加等待。
+        """
+        key = (novel_id, chapter_num)
+        fut = self._pending_bridges.get(key)
+        if not fut:
+            return
+        try:
+            await asyncio.wait_for(fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            log.warning(f"Bridge task for Ch{chapter_num} timed out, continuing without it")
+        except Exception as e:
+            log.warning(f"Bridge task for Ch{chapter_num} failed (non-fatal): {e}")
+        finally:
+            self._pending_bridges.pop(key, None)
+
     # ── Phase 1: 规划 ──
 
     def create_novel(self, creative_input: dict) -> dict:

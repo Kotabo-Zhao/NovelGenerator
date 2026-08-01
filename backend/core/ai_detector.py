@@ -234,9 +234,14 @@ class HumanRewriter:
 
 def humanize_pipeline(text: str, detector: AIDetector, rewriter: HumanRewriter,
                       scene_desc: str = "", target_length: int = None,
-                      min_score_threshold: int = 30) -> dict:
+                      min_score_threshold: int = 30,
+                      skip_verify: bool = False) -> dict:
     """完整的人类化管线
-    
+
+    Args:
+        skip_verify: v2.6 批量模式 — 改写后跳过再检测（省1次LLM调用），
+                     用于批量生成场景（速度优先，检测+改写已足够）
+
     Returns:
         {"text": final_text, "ai_score_before": int, "ai_score_after": int, 
          "rewritten": bool, "detection": dict}
@@ -258,6 +263,16 @@ def humanize_pipeline(text: str, detector: AIDetector, rewriter: HumanRewriter,
     if not rewritten or len(rewritten) < len(text) * 0.3:
         return {"text": text, "ai_score_before": ai_score, "ai_score_after": ai_score,
                 "rewritten": False, "detection": detection, "error": "rewrite too short"}
+    
+    # v2.6: 批量模式跳过再检测（省 1 次 LLM 调用，改写结果直接采用）
+    if skip_verify:
+        return {
+            "text": rewritten,
+            "ai_score_before": ai_score,
+            "ai_score_after": ai_score,
+            "rewritten": True,
+            "detection": detection,
+        }
     
     # Step 3: 再检测
     detection2 = detector.detect(rewritten)

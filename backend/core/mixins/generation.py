@@ -306,7 +306,11 @@ class GenerationMixin:
             
             # ── v2.9 Phase 0: 生成章节蓝图 ──
             yield {"type": "status", "message": "生成章节蓝图..."}
-            
+
+            # 流派/风格提前定义（供 playbook/声音注入使用，v2.6: 修复 UnboundLocalError）
+            genre = plan.get("genre", "玄幻")
+            style = plan.get("style", "热血爽文")
+
             # 构建完整写作上下文（常规Writer用的五层上下文）
             chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
             
@@ -437,8 +441,7 @@ class GenerationMixin:
                    "functions": [b.function for b in beats]}
             
             # ── Phase 2: 逐 beat 独立生成 ──
-            style = plan.get("style", "热血爽文")
-            genre = plan.get("genre", "玄幻")
+            # (genre/style 已在 Phase 0 定义)
             style_guide = _get_style_guide(style, genre)
             
             # v2.3.1: 剧情图谱反哺 + 活人感注入
@@ -595,12 +598,17 @@ class GenerationMixin:
 
     async def generate_chapter_stream(
         self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel",
-        feedback: str = None,
+        feedback: str = None, batch_mode: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """流式生成章节 — 前端可实时显示打字效果
         
         Args:
             feedback: 用户修改意见（用于重生成，不改大纲结构）
+            batch_mode: v2.6 批量模式 — 速度优先：
+                - Humanizer 质量阈值 70→60，改写后跳过再检测（省1-2次LLM）
+                - 一致性校验只跑 L1 规则（省1次LLM）
+                - 桥接/ContextUpdater/storygraph 提取后台化（省3次关键路径LLM）
+                单章模式保持全量校验（质量优先）
         """
         # ── 并发锁：防止同一章被两个Tab同时生成 ──
         novel_dir = self.memory.get_novel_dir(novel_id)
@@ -662,6 +670,10 @@ class GenerationMixin:
             char_ctx = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
             if char_ctx:
                 context = context + "\n\n" + char_ctx
+
+            # 获取创作参数（提前定义，供 playbook/角色声音等注入使用）
+            genre = plan.get("genre", "玄幻")
+            style = plan.get("style", "热血爽文")
 
             # v2.3.5: 注入用户偏好指令（反馈闭环，≥3 条反馈才生效）
             try:
@@ -736,9 +748,7 @@ class GenerationMixin:
                     f"---\n\n{context}"
                 )
 
-            # 获取创作参数
-            genre = plan.get("genre", "玄幻")
-            style = plan.get("style", "热血爽文")
+            # 获取创作参数（genre/style 已在函数前部定义）
             target_words = chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS)
             # v2.7: 快餐模式字数自适应 — 2500字/章(短剧化节奏)
             if plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False):
@@ -815,7 +825,8 @@ class GenerationMixin:
 
             # ── v2.27: Humanizer 移到质量门之后 — 用分数决定是否跑 ──
             ai_report = None
-            _quality_ok = quality_report and quality_report.get("score", 0) >= 70  # v2.3.5: 50→70 提高润色覆盖
+            # v2.6: 批量模式阈值 70→60（更多章节直接通过，跳过 humanizer 2-3次LLM）
+            _quality_ok = quality_report and quality_report.get("score", 0) >= (60 if batch_mode else 70)  # v2.3.5: 50→70 提高润色覆盖
             if not _quality_ok:
                 yield {"type": "status", "message": "🎨 正在消除 AI 痕迹、润色文笔…"}
                 try:
@@ -829,7 +840,8 @@ class GenerationMixin:
                         humanize_pipeline, full_text, detector, rewriter,
                         scene_desc=chapter_summary,
                         target_length=target_words,
-                        min_score_threshold=40,
+                        min_score_threshold=(50 if batch_mode else 40),  # v2.6: 批量模式更宽松，AI味<50不改写
+                        skip_verify=batch_mode,  # v2.6: 批量模式跳过改写后再检测
                     )
                     if result["rewritten"]:
                         ai_report = result
@@ -925,18 +937,29 @@ class GenerationMixin:
                 log.warning(f"Character state extraction failed (non-fatal): {e}")
 
             # ── v2.10: 提取章节桥接数据 → 保证下章接续（v2.15: 使用韧性客户端）──
+            # v2.6: 批量模式后台化（流水线：下一章启动前 await_pending_bridge 衔接）
             try:
-                bridge = await asyncio.to_thread(
-                    self.memory.extract_bridge_from_chapter,
-                    full_text, chapter_num, chapter_outline,
-                    client=self._resilient, model=self.model,
-                )
-                if bridge:
-                    self.memory.save_bridge(novel_id, chapter_num, bridge)
-                    log.info(f"ChapterBridge saved for chapter {chapter_num}: "
-                            f"next_beat={bridge.get('next_beat','')[:60]}...")
+                def _extract_bridge():
+                    bridge = self.memory.extract_bridge_from_chapter(
+                        full_text, chapter_num, chapter_outline,
+                        client=self._resilient, model=self.model,
+                    )
+                    if bridge:
+                        self.memory.save_bridge(novel_id, chapter_num, bridge)
+                        log.info(f"ChapterBridge saved for chapter {chapter_num}: "
+                                f"next_beat={bridge.get('next_beat','')[:60]}...")
+                    else:
+                        log.warning(f"ChapterBridge extraction returned None for chapter {chapter_num}")
+                    return bridge
+
+                if batch_mode:
+                    _bkey = (novel_id, chapter_num)
+                    _btask = asyncio.ensure_future(asyncio.to_thread(_extract_bridge))
+                    self._pending_bridges[_bkey] = _btask
+                    # 任务完成后自动清理（防止未 await 时残留）
+                    _btask.add_done_callback(lambda _fut, _k=_bkey: self._pending_bridges.pop(_k, None))
                 else:
-                    log.warning(f"ChapterBridge extraction returned None for chapter {chapter_num}")
+                    _extract_bridge()
             except Exception as e:
                 log.warning(f"ChapterBridge extraction failed (non-fatal): {e}")
 
@@ -997,7 +1020,7 @@ class GenerationMixin:
                     plan=plan,
                     prev_chapters=prev_chapters_ctx,
                     global_state=gs_ctx,
-                    run_deep=True,
+                    run_deep=not batch_mode,  # v2.6: 批量模式只跑 L1 规则（省1次LLM），单章保持 L1+L2
                 )
                 all_v = cv_result.get("violations", [])
                 p0_v = [v for v in all_v if v.get("severity") == "P0"]
@@ -1104,45 +1127,57 @@ class GenerationMixin:
                     log.warning(f"Engine retry failed: {re}, keeping original")
 
             # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
+            # v2.6: 批量模式后台化（不阻塞正文流程）；单章模式保持同步
             try:
                 novel_dir = self.memory.get_novel_dir(novel_id)
                 state_path = os.path.join(novel_dir, "global_state.json")
                 current_state = {}
                 if os.path.exists(state_path):
                     current_state = safe_read_json(state_path)
-                
-                new_state = self.context_updater.update(novel_id, chapter_num, full_text, current_state)
-                atomic_write_json(state_path, new_state)
-                log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
+
+                def _ctx_update():
+                    new_state = self.context_updater.update(novel_id, chapter_num, full_text, current_state)
+                    atomic_write_json(state_path, new_state)
+                    log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
+
+                if batch_mode:
+                    asyncio.ensure_future(asyncio.to_thread(_ctx_update))
+                else:
+                    _ctx_update()
             except Exception as e:
                 log.warning(f"ContextUpdater skipped: {e}")
 
             # ── 自动更新剧情图谱（storygraph）──
+            # v2.6: 批量模式后台化（不阻塞正文流程）；单章模式保持同步
             try:
                 novel_dir = self.memory.get_novel_dir(novel_id)
                 sg_path = os.path.join(novel_dir, "storygraph.json")
                 sg_data = safe_read_json(sg_path) or {}
-                
+
                 from ..storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
-                sg = StoryGraph.from_dict(sg_data)
-                
-                # 用轻量模型提取
-                extract_result = extract_storygraph_from_chapter(
-                    chapter_text=full_text,
-                    current_graph=sg_data,
-                    chapter_num=chapter_num,
-                    chapter_outline=chapter_outline,
-                    client=self.client,
-                    model=self.model,  # 可换成更便宜的模型
-                )
-                
-                # 应用到图谱
-                apply_extraction(sg, extract_result, chapter_num)
-                
-                # 保存
-                atomic_write_json(sg_path, sg.to_dict())
-                self.memory.invalidate_all(novel_id)
-                log.info(f"StoryGraph updated after chapter {chapter_num}")
+
+                def _sg_update():
+                    sg = StoryGraph.from_dict(sg_data)
+                    # 用轻量模型提取
+                    extract_result = extract_storygraph_from_chapter(
+                        chapter_text=full_text,
+                        current_graph=sg_data,
+                        chapter_num=chapter_num,
+                        chapter_outline=chapter_outline,
+                        client=self.client,
+                        model=self.model,  # 可换成更便宜的模型
+                    )
+                    # 应用到图谱
+                    apply_extraction(sg, extract_result, chapter_num)
+                    # 保存
+                    atomic_write_json(sg_path, sg.to_dict())
+                    self.memory.invalidate_all(novel_id)
+                    log.info(f"StoryGraph updated after chapter {chapter_num}")
+
+                if batch_mode:
+                    asyncio.ensure_future(asyncio.to_thread(_sg_update))
+                else:
+                    _sg_update()
             except Exception as e:
                 log.warning(f"StoryGraph update skipped: {e}")
 
@@ -1162,14 +1197,18 @@ class GenerationMixin:
                 global_state = safe_read_json(gs_path, {}) if os.path.exists(gs_path) else {}
                 
                 # 执行校验（v2.3.5: 统一 ConsistencyValidator，L2 每章深检，含亲属关系检测）
-                validation = self.consistency_validator.validate_chapter(
-                    chapter_text=full_text,
-                    chapter_num=chapter_num,
-                    plan=plan,
-                    prev_chapters=prev_chapters,
-                    global_state=global_state,
-                    run_deep=True,  # 每章 L2 语义校验（v2.3.5: 原每3章→每章）
-                )
+                # v2.6: 批量模式跳过 — 前面 v2.3.5 校验已跑 L1 规则，避免重复校验白烧 LLM
+                if batch_mode:
+                    validation = {"violations": [], "score": 100, "warnings": []}
+                else:
+                    validation = self.consistency_validator.validate_chapter(
+                        chapter_text=full_text,
+                        chapter_num=chapter_num,
+                        plan=plan,
+                        prev_chapters=prev_chapters,
+                        global_state=global_state,
+                        run_deep=True,  # 每章 L2 语义校验（v2.3.5: 原每3章→每章）
+                    )
                 
                 violations = validation.get("violations", [])
                 if violations:
