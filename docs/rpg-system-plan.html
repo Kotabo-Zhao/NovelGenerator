@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>角色扮演养成系统 — 实施方案评估</title>
+<style>
+  :root{
+    --bg:#0d1117; --bg2:#161b22; --bg3:#1c2129; --line:#2d333b;
+    --text:#e6edf3; --text2:#8b949e; --gold:#d4af37; --gold2:#f0d77b;
+    --green:#3fb950; --red:#f85149; --blue:#58a6ff; --purple:#bc8cff;
+    --cyan:#39c5cf;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7;padding:32px 20px}
+  .wrap{max-width:980px;margin:0 auto}
+  h1{font-size:28px;font-weight:800;letter-spacing:1px;margin-bottom:6px}
+  h1 .sub{display:block;font-size:14px;color:var(--text2);font-weight:400;margin-top:8px}
+  h2{font-size:20px;margin:42px 0 14px;padding-left:12px;border-left:4px solid var(--gold);font-weight:700}
+  h3{font-size:15px;margin:22px 0 10px;color:var(--gold2)}
+  p{margin:8px 0;color:var(--text)}
+  .muted{color:var(--text2);font-size:13px}
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th{background:var(--bg3);color:var(--gold2);text-align:left;padding:9px 12px;font-weight:600;white-space:nowrap}
+  td{padding:8px 12px;border-top:1px solid var(--line);vertical-align:top}
+  tr:hover td{background:rgba(255,255,255,.02)}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:600;margin-right:6px}
+  .t-reuse{background:rgba(63,185,80,.15);color:var(--green)}
+  .t-new{background:rgba(248,81,73,.15);color:var(--red)}
+  .t-part{background:rgba(212,175,55,.15);color:var(--gold2)}
+  .pill{display:inline-block;background:var(--bg3);border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:12px;margin:3px 4px 3px 0;color:var(--text2)}
+  .pill b{color:var(--text)}
+  code{background:var(--bg3);border:1px solid var(--line);border-radius:5px;padding:1px 7px;font-size:12.5px;font-family:Consolas,monospace;color:var(--cyan)}
+  pre{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:12.5px;font-family:Consolas,monospace;line-height:1.6;margin:10px 0}
+  pre .k{color:var(--purple)} pre .s{color:var(--green)} pre .c{color:var(--text2)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .stat{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:16px;text-align:center}
+  .stat .num{font-size:30px;font-weight:800;color:var(--gold)}
+  .stat .lbl{font-size:12px;color:var(--text2);margin-top:4px}
+  .flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .fnode{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12.5px;white-space:nowrap}
+  .fnode.hl{border-color:var(--gold);color:var(--gold2)}
+  .farrow{color:var(--text2);font-size:14px}
+  .warn{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13.5px}
+  .ok{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13.5px}
+  .phase{border-left:3px solid var(--gold);padding-left:16px;margin:18px 0}
+  .phase h4{color:var(--gold2);font-size:14px;margin-bottom:6px}
+  .toc{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:16px 20px;font-size:13.5px}
+  .toc a{color:var(--blue);text-decoration:none;display:block;padding:3px 0}
+  .toc a:hover{color:var(--gold2)}
+  .foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);color:var(--text2);font-size:12px}
+  .bar{height:8px;border-radius:4px;background:var(--bg3);overflow:hidden;margin:6px 0}
+  .bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--gold),var(--gold2))}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>角色扮演养成系统 — 实施方案评估<span class="sub">NovelGenerator 内嵌子页面 · 2026-08-02 · 版本 v1 草案</span></h1>
+
+<div class="toc">
+  <strong>目录</strong>
+  <a href="#s1">1. 需求解读</a>
+  <a href="#s2">2. 现有资产盘点（复用率 60%+）</a>
+  <a href="#s3">3. 总体架构设计</a>
+  <a href="#s4">4. 数据模型（角色卡）</a>
+  <a href="#s5">5. 养成机制设计</a>
+  <a href="#s6">6. 对话流与更新管线</a>
+  <a href="#s7">7. 前端改造点</a>
+  <a href="#s8">8. 里程碑与工作量</a>
+  <a href="#s9">9. 风险与对策</a>
+  <a href="#s10">10. 成本估算</a>
+  <a href="#s11">11. 结论与建议</a>
+</div>
+
+<h2 id="s1">1. 需求解读</h2>
+<div class="card">
+<p><b>目标：</b>在现有 NovelGenerator App 内新增"角色扮演"子页面，用户与小说角色（或独立养成角色）进行多轮对话，系统通过对话持续更新<b>角色卡</b>，形成<b>养成</b>闭环。</p>
+<p><b>三个核心关键词：</b></p>
+<p>① <b>对话收集</b> — 多轮聊天界面，流式输出（复用现有 SSE 基建）；<br>
+② <b>角色卡更新</b> — 从对话中提炼"角色的了解、关系、性格发现"，增量写回角色卡；<br>
+③ <b>养成</b> — 亲密度数值化 + 关系阶段升级 + 记忆沉淀，让角色"越聊越懂你、越聊越熟"。</p>
+<p class="muted">区别于小说写作：写作是"单向生成长文本"，扮演是"双向多轮对话 + 玩家输入驱动角色状态变化"。这是全新的交互范式，但底层 LLM 管线、记忆层、角色一致性资产均可复用。</p>
+</div>
+
+<h2 id="s2">2. 现有资产盘点</h2>
+<div class="card">
+<table>
+<tr><th style="width:26%">现有资产</th><th style="width:14%">定位</th><th>复用方式</th><th style="width:14%">评估</th></tr>
+<tr><td><code>character_bible.json</code>（人物宝典）</td><td>角色基础设定</td><td>角色卡初始数据源：身份/性格/关系图谱</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>CharacterStateTracker</code></td><td>状态提取管线</td><td><b>养成更新管线的现成模板</b>：LLM 读文本→输出 JSON 变化→增量合并</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>CharacterVoices</code>（声音卡）</td><td>角色口吻一致性</td><td>对话扮演的核心约束——防止角色漂移</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>CharacterProfiler / distill</code></td><td>人设蒸馏</td><td>角色卡初始化（从大纲蒸馏出可养成角色）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>SharedMemoryManager</code></td><td>统一记忆层</td><td>新增 <code>character_rpg</code> 记忆类型（文件+缓存+乐观锁全继承）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>resilient_client</code></td><td>LLM 韧性网关</td><td>对话调用自动重试/限流/断线重连</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>readSSE + _sse_with_heartbeat</code></td><td>流式基建</td><td>对话流式输出零改造</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>chapter_summarizer</code></td><td>文本摘要</td><td>对话记忆压缩（每 50 轮→摘要，防上下文膨胀）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>FeedbackStore</code></td><td>偏好学习</td><td>对话 👍👎 反馈 → 角色行为偏好调整</td><td><span class="tag t-part">改造复用</span></td></tr>
+<tr><td>前端 <code>currentView</code> 视图体系</td><td>页面路由</td><td>新增 <code>currentView='rpg'</code> + 底部导航第 6 个 tab</td><td><span class="tag t-part">轻改造</span></td></tr>
+<tr><td>对话引擎（多轮聊天）</td><td>—</td><td>不存在，需新建：消息历史、用户输入注入、扮演提示词</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td>养成数值系统（亲密度/阶段）</td><td>—</td><td>不存在，需新建：数值模型 + 升级规则 + 事件系统</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td>角色卡 JSON 结构</td><td>—</td><td>不存在，需设计（见 §4）</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td>RPG API Router</td><td>—</td><td>不存在，需新建 <code>rpg.py</code>（对话/角色卡/重置/导出）</td><td><span class="tag t-new">新建</span></td></tr>
+</table>
+<p><b>复用评估：</b>核心资产（状态提取管线、声音卡、记忆层、流式基建）全部现成，<b>新增开发量集中在"对话交互 + 养成数值"两个领域</b>，总体复用率约 <b>60%</b>，预估增量开发量 <b>3-5 人日</b>。</p>
+</div>
+
+<h2 id="s3">3. 总体架构设计</h2>
+
+<svg viewBox="0 0 900 470" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;margin:14px 0">
+  <defs>
+    <linearGradient id="bgG" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1c2129"/><stop offset="1" stop-color="#161b22"/>
+    </linearGradient>
+    <linearGradient id="goldG" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#d4af37"/><stop offset="1" stop-color="#f0d77b"/>
+    </linearGradient>
+  </defs>
+  <!-- 前端 -->
+  <rect x="30" y="20" width="200" height="410" rx="12" fill="url(#bgG)" stroke="#2d333b"/>
+  <text x="130" y="46" text-anchor="middle" fill="#f0d77b" font-size="14" font-weight="bold">前端（Vue3 单页）</text>
+  <rect x="50" y="62" width="160" height="34" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="130" y="84" text-anchor="middle" fill="#e6edf3" font-size="12">书架 · 开卷 · 追风</text>
+  <rect x="50" y="104" width="160" height="34" rx="7" fill="#1c2129" stroke="#d4af37"/>
+  <text x="130" y="126" text-anchor="middle" fill="#f0d77b" font-size="12">🎭 角色扮演（新增）</text>
+  <rect x="50" y="146" width="160" height="34" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="130" y="168" text-anchor="middle" fill="#e6edf3" font-size="12">聊天窗 / 角色卡面板</text>
+  <rect x="50" y="188" width="160" height="34" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="130" y="210" text-anchor="middle" fill="#e6edf3" font-size="12">亲密度进度 / 阶段徽章</text>
+  <rect x="50" y="230" width="160" height="34" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="130" y="252" text-anchor="middle" fill="#e6edf3" font-size="12">记忆回溯 / 事件里程碑</text>
+  <rect x="50" y="272" width="160" height="54" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="130" y="294" text-anchor="middle" fill="#8b949e" font-size="11">SSE 流式对话</text>
+  <text x="130" y="312" text-anchor="middle" fill="#8b949e" font-size="11">（复用 readSSE+心跳）</text>
+  <!-- 后端 -->
+  <rect x="340" y="20" width="240" height="410" rx="12" fill="url(#bgG)" stroke="#2d333b"/>
+  <text x="460" y="46" text-anchor="middle" fill="#f0d77b" font-size="14" font-weight="bold">后端 FastAPI</text>
+  <rect x="360" y="62" width="200" height="40" rx="7" fill="#1c2129" stroke="#d4af37"/>
+  <text x="460" y="78" text-anchor="middle" fill="#f0d77b" font-size="12" font-weight="bold">rpg.py Router（新增）</text>
+  <text x="460" y="94" text-anchor="middle" fill="#8b949e" font-size="10.5">/chat /card /reset /export</text>
+  <rect x="360" y="116" width="200" height="40" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="460" y="132" text-anchor="middle" fill="#e6edf3" font-size="12">RpgService（新增）</text>
+  <text x="460" y="148" text-anchor="middle" fill="#8b949e" font-size="10.5">对话编排 · 养成判定</text>
+  <rect x="360" y="170" width="200" height="40" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="460" y="186" text-anchor="middle" fill="#e6edf3" font-size="12">CardUpdater（新增）</text>
+  <text x="460" y="202" text-anchor="middle" fill="#8b949e" font-size="10.5">对话→角色卡增量更新</text>
+  <rect x="360" y="224" width="200" height="40" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="460" y="240" text-anchor="middle" fill="#e6edf3" font-size="12">CharacterVoices（复用）</text>
+  <text x="460" y="256" text-anchor="middle" fill="#8b949e" font-size="10.5">口吻一致性约束</text>
+  <rect x="360" y="278" width="200" height="40" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="460" y="294" text-anchor="middle" fill="#e6edf3" font-size="12">resilient_client（复用）</text>
+  <text x="460" y="310" text-anchor="middle" fill="#8b949e" font-size="10.5">重试/限流/断线重连</text>
+  <rect x="360" y="332" width="200" height="40" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="460" y="348" text-anchor="middle" fill="#e6edf3" font-size="12">Summarizer（复用）</text>
+  <text x="460" y="364" text-anchor="middle" fill="#8b949e" font-size="10.5">对话记忆压缩</text>
+  <!-- 存储 -->
+  <rect x="690" y="20" width="180" height="410" rx="12" fill="url(#bgG)" stroke="#2d333b"/>
+  <text x="780" y="46" text-anchor="middle" fill="#f0d77b" font-size="14" font-weight="bold">存储</text>
+  <rect x="705" y="62" width="150" height="52" rx="7" fill="#1c2129" stroke="#d4af37"/>
+  <text x="780" y="84" text-anchor="middle" fill="#f0d77b" font-size="11.5" font-weight="bold">character_rpg.json</text>
+  <text x="780" y="102" text-anchor="middle" fill="#8b949e" font-size="10">角色卡（新增）</text>
+  <rect x="705" y="126" width="150" height="52" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="780" y="148" text-anchor="middle" fill="#e6edf3" font-size="11.5">chat_logs.jsonl</text>
+  <text x="780" y="166" text-anchor="middle" fill="#8b949e" font-size="10">对话原文（append-only）</text>
+  <rect x="705" y="190" width="150" height="52" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="780" y="212" text-anchor="middle" fill="#e6edf3" font-size="11.5">character_bible.json</text>
+  <text x="780" y="230" text-anchor="middle" fill="#8b949e" font-size="10">角色初始设定（复用）</text>
+  <rect x="705" y="254" width="150" height="52" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="780" y="276" text-anchor="middle" fill="#e6edf3" font-size="11.5">character_voices.json</text>
+  <text x="780" y="294" text-anchor="middle" fill="#8b949e" font-size="10">声音卡（复用）</text>
+  <rect x="705" y="318" width="150" height="52" rx="7" fill="#1c2129" stroke="#2d333b"/>
+  <text x="780" y="340" text-anchor="middle" fill="#e6edf3" font-size="11.5">rpg_summary.json</text>
+  <text x="780" y="358" text-anchor="middle" fill="#8b949e" font-size="10">对话摘要（新增）</text>
+  <!-- 连线 -->
+  <line x1="230" y1="300" x2="340" y2="300" stroke="#d4af37" stroke-width="2" stroke-dasharray="6,4"/>
+  <text x="285" y="290" text-anchor="middle" fill="#8b949e" font-size="10">SSE</text>
+  <line x1="560" y1="300" x2="690" y2="300" stroke="#3fb950" stroke-width="2"/>
+  <text x="625" y="290" text-anchor="middle" fill="#8b949e" font-size="10">读写</text>
+  <line x1="560" y1="352" x2="690" y2="352" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="625" y="342" text-anchor="middle" fill="#8b949e" font-size="10">读写</text>
+</svg>
+
+<div class="grid2">
+<div class="card">
+<h3>角色来源（两条路）</h3>
+<p><span class="pill"><b>A.</b> 从小说导入（主推）</span><br>
+书架选一本小说 → 从 <code>character_bible</code> 选角色 → 自动生成角色卡。<br>继承已有设定/声音/关系，与写作共用世界观。</p>
+<p><span class="pill"><b>B.</b> 独立养成角色</span><br>
+不依赖小说，创建时填 1 句话设定 → 蒸馏出角色卡。<br>v1 仅做方案 A，B 留 v2。</p>
+</div>
+<div class="card">
+<h3>对话上下文组装（成本控制）</h3>
+<div class="flow">
+<span class="fnode hl">角色卡</span><span class="farrow">+</span>
+<span class="fnode">声音卡</span><span class="farrow">+</span>
+<span class="fnode">关系摘要</span><span class="farrow">+</span>
+<span class="fnode">最近 12 轮</span>
+</div>
+<p>固定 ≈ 3-4k tokens/轮，成本可控。<br>每 50 轮触发一次摘要压缩（复用 Summarizer），旧对话归档。</p>
+</div>
+</div>
+
+<h2 id="s4">4. 数据模型（角色卡）</h2>
+<pre><span class="k">character_rpg.json</span>（每角色一份，增量更新，永不覆盖已有信息）
+{
+  <span class="s">"character"</span>: { <span class="s">"name"</span>: <span class="s">"苏晚"</span>, <span class="s">"source"</span>: <span class="s">"novel:夜火"</span>, <span class="s">"base_identity"</span>: <span class="s">"…来自bible"</span> },
+  <span class="s">"intimacy"</span>: {                    <span class="c">// 亲密度养成</span>
+    <span class="s">"value"</span>: <span class="s">42</span>,                    <span class="c">// 0-100</span>
+    <span class="s">"stage"</span>: <span class="s">"熟悉"</span>,                 <span class="c">// 陌生→相识→熟悉→亲密→特殊</span>
+    <span class="s">"history"</span>: [ {<span class="s">"at"</span>: <span class="s">"2026-08-02"</span>, <span class="s">"delta"</span>: +6, <span class="s">"why"</span>: <span class="s">"她主动讲了自己的过去"</span>} ]
+  },
+  <span class="s">"discovered"</span>: [                    <span class="c">// 性格发现（对话中提炼）</span>
+    { <span class="s">"trait"</span>: <span class="s">"外冷内热，害怕辜负"</span>, <span class="s">"evidence"</span>: <span class="s">"对话#23"</span> }
+  ],
+  <span class="s">"relationship"</span>: { <span class="s">"label"</span>: <span class="s">"重逢旧识"</span>, <span class="s">"notes"</span>: <span class="s">"她记得你十年前的习惯"</span> },
+  <span class="s">"memories"</span>: [                     <span class="c">// 记忆沉淀</span>
+    { <span class="s">"id"</span>: <span class="s">"m12"</span>, <span class="s">"what"</span>: <span class="s">"她讨厌下雨天"</span>, <span class="s">"from"</span>: <span class="s">"chat#45"</span>, <span class="s">"recallable"</span>: true }
+  ],
+  <span class="s">"milestones"</span>: [ <span class="s">"初次对话"</span>, <span class="s">"分享秘密"</span> ],
+  <span class="s">"meta"</span>: { <span class="s">"chat_count"</span>: 47, <span class="s">"last_updated"</span>: <span class="s">"…"</span>, <span class="s">"version"</span>: 12 }
+}</pre>
+<p class="muted">设计原则：<code>base_identity</code> 来自小说设定（不可变）；<code>discovered / memories / intimacy</code> 全部来自对话证据（可追溯、可回溯）。养成 = 证据驱动的增量累积，不是随机数值。</p>
+
+<h2 id="s5">5. 养成机制设计</h2>
+
+<div class="card">
+<h3>5.1 亲密度数值模型</h3>
+<table>
+<tr><th>阶段</th><th>数值区间</th><th>解锁内容</th><th>升级触发（示例规则）</th></tr>
+<tr><td>🤝 陌生</td><td>0-20</td><td>基础闲聊</td><td>完成 5 轮对话</td></tr>
+<tr><td>👋 相识</td><td>21-45</td><td>角色主动提问</td><td>用户分享个人信息 / 角色透露一个偏好</td></tr>
+<tr><td>❤️ 熟悉</td><td>46-70</td><td>记忆回溯（可引用早期对话）</td><td>角色主动讲述往事 / 用户表达关心</td></tr>
+<tr><td>💞 亲密</td><td>71-90</td><td>秘密解锁、专属称呼</td><td>角色分享秘密 / 共同经历事件</td></tr>
+<tr><td>⭐ 特殊</td><td>91-100</td><td>自定义关系标签、彩蛋</td><td>长期陪伴（≥300轮）+ 深度事件</td></tr>
+</table>
+<p class="muted">数值更新由 <b>LLM 判定 + 规则兜底</b>：每轮对话后，养成判定器输出 <code>{delta, reason}</code>（LLM 给建议值，规则层 clamp 到 [-2, +8]/轮，防止刷屏刷数值）。</p>
+</div>
+
+<div class="card">
+<h3>5.2 角色卡更新管线（核心创新点）</h3>
+<div class="flow">
+<span class="fnode">用户对话</span><span class="farrow">→</span>
+<span class="fnode">写入 chat_logs.jsonl</span><span class="farrow">→</span>
+<span class="fnode hl">累积 ≥10 轮 or 手动刷新</span><span class="farrow">→</span>
+<span class="fnode">CardUpdater（LLM）</span><span class="farrow">→</span>
+<span class="fnode">增量合并角色卡</span><span class="farrow">→</span>
+<span class="fnode">返回"角色卡已更新"通知</span>
+</div>
+<ul style="margin:8px 0 0 18px;font-size:13.5px">
+<li><b>触发方式：</b>自动（每 10 轮，后台异步，不阻塞聊天）+ 手动（角色卡面板"刷新"按钮）</li>
+<li><b>更新内容：</b>新发现的性格特质、记忆点、关系变化、亲密度判定依据</li>
+<li><b>一致性保证：</b>更新 prompt 只输出"变化"，合并器负责增量 merge；已存在的 trait 不覆盖只补充 evidence</li>
+<li><b>复用：</b>更新管线 = CharacterStateTracker 的"读文本→提取 JSON→合并"模式的对话版</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>5.3 扮演一致性（防角色漂移）</h3>
+<table>
+<tr><th>约束层</th><th>机制</th><th>来源</th></tr>
+<tr><td>口吻层</td><td>声音卡注入系统 prompt（语气/习惯用语/禁忌词）</td><td>CharacterVoices 复用</td></tr>
+<tr><td>人格层</td><td>角色卡 base_identity + discovered traits</td><td>新建 + bible 复用</td></tr>
+<tr><td>记忆层</td><td>memories 可被角色主动 recall（"你还记得…"）</td><td>新建</td></tr>
+<tr><td>扮演规则层</td><td>系统 prompt 强制：永远以角色第一人称，不替用户做决定，不跳出扮演</td><td>新建（对话专用 prompt）</td></tr>
+</table>
+</div>
+
+<h2 id="s6">6. 对话流与更新管线</h2>
+
+<h3>6.1 单轮对话时序</h3>
+<pre>用户发送 → POST /api/rpg/chat
+         ├─ 1. 追加用户消息到 chat_logs.jsonl
+         ├─ 2. 组装上下文（角色卡+声音卡+摘要+最近12轮）
+         ├─ 3. LLM 流式生成（resilient_client，SSE 推送）
+         ├─ 4. 流结束后追加角色回复到 jsonl
+         └─ 5. 后台任务（不阻塞）：
+              a. 养成判定器 → 亲密度 delta（LLM+规则）
+              b. 若对话数 %10==0 → CardUpdater 更新角色卡
+              c. 里程碑检测（首次/秘密/冲突等）</pre>
+
+<h3>6.2 关键 API 设计</h3>
+<table>
+<tr><th>端点</th><th>说明</th></tr>
+<tr><td><code>GET /api/rpg/novels/{id}/characters</code></td><td>可扮演角色列表（bible 角色 + 已有角色卡）</td></tr>
+<tr><td><code>POST /api/rpg/{novel}/{char}/chat</code></td><td>发送消息，SSE 流式返回角色回复</td></tr>
+<tr><td><code>GET /api/rpg/{novel}/{char}/card</code></td><td>角色卡详情（含亲密度/阶段/记忆/里程碑）</td></tr>
+<tr><td><code>POST /api/rpg/{novel}/{char}/refresh</code></td><td>手动触发角色卡更新（返回 diff 预览）</td></tr>
+<tr><td><code>POST /api/rpg/{novel}/{char}/reset</code></td><td>重置养成（保留 base_identity）</td></tr>
+<tr><td><code>GET /api/rpg/{novel}/{char}/history</code></td><td>历史对话分页（jsonl 读取）</td></tr>
+</table>
+
+<h2 id="s7">7. 前端改造点</h2>
+<div class="card">
+<table>
+<tr><th style="width:30%">改造点</th><th>内容</th></tr>
+<tr><td>底部导航</td><td>新增第 6 个 tab「🎭 角色」（现有 5 个：书架/开卷/追风/落笔/付梓）</td></tr>
+<tr><td>视图</td><td><code>currentView='rpg'</code> + 二级切换：角色选择列表 / 聊天窗 / 角色卡面板</td></tr>
+<tr><td>聊天 UI</td><td>气泡消息（复用写作预览样式）、流式渲染（复用 writing.content 模式）、快捷回复建议</td></tr>
+<tr><td>角色卡面板</td><td>亲密度进度条（金色）、阶段徽章、性格发现列表、记忆库、里程碑时间线</td></tr>
+<tr><td>通知</td><td>"角色卡已更新：苏晚新增性格发现 ×2"（Toast）</td></tr>
+<tr><td>状态持久化</td><td>当前扮演角色存入 sessionStorage（与现有 _saveSession 一致）</td></tr>
+</table>
+</div>
+
+<h2 id="s8">8. 里程碑与工作量</h2>
+
+<div class="phase">
+<h4>M1 — 跑通对话（0.5-1 人日）</h4>
+<p>rpg.py 最小路由 + chat 端点 + 前端聊天 UI + 上下文组装（角色卡最小版）。验收：能选角色、能流式对话、对话落盘。</p>
+</div>
+<div class="phase">
+<h4>M2 — 养成闭环（1.5-2 人日）</h4>
+<p>角色卡完整数据结构 + 养成判定器（亲密度/阶段/里程碑）+ CardUpdater 增量管线 + 角色卡面板 UI。验收：聊 10 轮后角色卡出现变化，亲密度进度可见。</p>
+</div>
+<div class="phase">
+<h4>M3 — 记忆与打磨（1-1.5 人日）</h4>
+<p>对话摘要压缩 + 记忆回溯（角色主动 recall）+ 重置/导出 + 移动端适配 + 测试回归 + 打包发版。</p>
+</div>
+
+<div class="card">
+<div class="bar"><i style="width:60%"></i></div>
+<p class="muted" style="margin:4px 0 0">总工作量约 <b>3-4.5 人日</b>（按全栈 1 人计算），其中 60% 是新增对话/养成领域，40% 是复用资产接线。</p>
+</div>
+
+<h2 id="s9">9. 风险与对策</h2>
+<table>
+<tr><th style="width:22%">风险</th><th style="width:34%">说明</th><th>对策</th></tr>
+<tr><td>上下文膨胀</td><td>对话无限累积，token 成本线性上涨</td><td>12 轮窗口 + 每 50 轮摘要压缩（Summarizer 复用）；上限 4k tokens/轮</td></tr>
+<tr><td>角色漂移</td><td>聊久了性格走样</td><td>四层约束（声音卡/角色卡/记忆/扮演规则）；CardUpdater 只增量不覆盖</td></tr>
+<tr><td>养成数值失衡</td><td>刷屏刷亲密度 / 判定不合理</td><td>LLM 建议 + 规则 clamp（-2~+8/轮）；阶段升级需多维度条件，非纯数值</td></tr>
+<tr><td>对话安全</td><td>用户诱导角色输出越界内容</td><td>对话系统 prompt 内置角色人格护栏（不脱离人设）；复用成熟题材尺度方案</td></tr>
+<tr><td>数据量</td><td>jsonl 无限增长</td><td>50 轮摘要归档后原文截断保留最近 200 轮；提供导出/清理</td></tr>
+<tr><td>多小说多角色</td><td>文件分散</td><td>统一 <code>novels/{id}/rpg/</code> 目录，SharedMemory 记忆类型注册</td></tr>
+</table>
+
+<h2 id="s10">10. 成本估算</h2>
+<div class="grid2">
+<div class="stat"><div class="num">~4k</div><div class="lbl">tokens / 对话轮（角色卡+摘要+12轮窗口）</div></div>
+<div class="stat"><div class="num">~0.04 元</div><div class="lbl">每轮对话成本（deepseek-v4-flash 计价）</div></div>
+</div>
+<div class="card">
+<p>养成更新（每 10 轮）：1 次判定 + 1 次卡更新 ≈ 3k tokens ≈ <b>0.03 元/10 轮</b>。</p>
+<p class="muted">日均 50 轮重度聊天 ≈ 2 元/天，与小说写作成本（每章 0.2-0.5 元）相比处于同一量级，可接受。</p>
+</div>
+
+<h2 id="s11">11. 语音能力评估（追加 2026-08-02）</h2>
+<div class="ok">
+<p><b>结论：有，且已实测通过 —— edge-tts 完全免费（零注册、零 API Key、无字符限制）。</b></p>
+<p>基于微软 Azure 神经语音引擎（Edge 浏览器同款），中文 10+ 音色，支持 <code>语速 rate</code> + <code>音调 pitch</code> 定制 —— <b>同一音色调 pitch 就能做出多个"角色声线"</b>，正好满足角色扮演的差异化需求。</p>
+</div>
+<table>
+<tr><th style="width:22%">方案</th><th style="width:30%">成本</th><th>评估</th></tr>
+<tr><td><b>edge-tts（主方案）</b></td><td><b>0 元</b>，无 key 无注册</td><td>实测：3 个差异化角色音色全部 <b>1.5s 生成成功</b>（52/38/34KB mp3）；偶发限速/网络抖动，加 2s 退避重试即稳；需联网</td></tr>
+<tr><td>Web Speech API（兜底）</td><td>0 元</td><td>Android WebView 内置系统 TTS，edge-tts 不可用时自动降级；音色单一（系统默认）</td></tr>
+<tr><td>CosyVoice / Fish Audio（v2 可选）</td><td>本地部署免费 / 注册送额度</td><td><b>音色克隆</b>：3 秒音频样本即可克隆专属声线，角色音色独一无二；需 GPU 或注册</td></tr>
+<tr><td>云服务（火山/讯飞/MiniMax）</td><td>免费额度（数千-数万字符）</td><td>质量高但需实名注册，额度用尽即收费；不必要</td></tr>
+</table>
+<h3>集成设计（v1）</h3>
+<div class="flow">
+<span class="fnode">角色回复完成</span><span class="farrow">→</span>
+<span class="fnode hl">角色卡 voice 配置</span><span class="fnode">(音色+语速+音调)</span><span class="farrow">→</span>
+<span class="fnode">edge-tts 生成 mp3</span><span class="farrow">→</span>
+<span class="fnode">磁盘缓存（文本 hash）</span><span class="farrow">→</span>
+<span class="fnode">前端播放</span>
+</div>
+<p class="muted">要点：① 角色卡增加 <code>voice</code> 字段（每个角色一套声线配置）；② 文本 hash 缓存，重复内容零成本；③ 失败 2 次自动降级 Web Speech API；④ 生成走后台线程，不阻塞聊天 UI。</p>
+<p><b>成本核算：</b>每轮回复语音 ≈ 0 元 + 40-80KB 流量。日均 50 轮对话 = 0 元。相比云 TTS（约 0.01-0.05 元/千字符），<b>年省近千元</b>。</p>
+
+<h2 id="s12">12. 结论与建议</h2>
+<div class="ok">
+<p><b>建议：做，且从 M1 直接做到 M2 再发版。</b>理由：</p>
+<p>① 复用率高（60%），3-4.5 人日即可出完整养成闭环，边际成本低；<br>
+② 与小说写作形成产品闭环——写好的角色可以"聊"，聊出来的关系可以反哺写作（角色卡 traits 可导出为写作参考），这是现有同类工具（如 Glow/星野）没有的差异化；<br>
+③ 架构上全部走既有模式（SSE/记忆层/状态提取管线），不引入新技术栈，风险低。</p>
+</div>
+<div class="warn">
+<p><b>建议的取舍（v1 范围控制）：</b>① 只做"从小说导入角色"，独立养成角色 v2 再上；② 亲密度分 5 阶段但升级规则先用规则兜底，LLM 判定持续调参；③ 秘密解锁/专属称呼这类"惊喜内容"放 M3，不阻塞主流程。</p>
+</div>
+
+<div class="foot">
+生成：波比 · 2026-08-02 · NovelGenerator docs/rpg-system-plan.html · 数据基于现有代码资产实测盘点
+</div>
+</div>
+</body>
+</html>

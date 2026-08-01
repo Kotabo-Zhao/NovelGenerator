@@ -1078,6 +1078,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div v-if="writing.done" class="flex gap-8 justify-center mt-24 mb-16">
           <button class="btn btn-primary" @click="nextChapter">下一章</button>
           <button class="btn btn-secondary" @click="copyChapter">复制</button>
+          <button class="btn btn-ghost" @click="speakChapter" :disabled="speaking">{{ speaking ? '🔊 朗读中…' : '🔊 朗读' }}</button>
         </div>
 
         <!-- v2.3.5: 反馈闭环 👍👎 -->
@@ -3344,6 +3345,49 @@ const app = createApp({
     function nextChapter() { const n=writing.chapter+1; if(n<=(activeNovel.value?.state.total_chapters||999)) selectChapter(n); }
     function copyChapter() { navigator.clipboard.writeText(writing.content); showToast('已复制到剪贴板', '操作成功', '✅'); }
 
+    // ── v2.5.2: 免费 TTS 朗读（edge-tts）──
+    // 主通道: 后端 /api/tts（微软神经语音，多音色可调）
+    // 降级: Web Speech API（Android 系统 TTS）
+    const speaking = ref(false);
+    let ttsAudio = null;
+    function stopSpeaking(){
+      if(ttsAudio){ ttsAudio.pause(); ttsAudio = null; }
+      if(window.speechSynthesis) speechSynthesis.cancel();
+      speaking.value = false;
+    }
+    async function speakChapter(){
+      const text = (writing.content || '').trim();
+      if(!text || speaking.value){ stopSpeaking(); return; }
+      speaking.value = true;
+      try{
+        const r = await fetch(API+'/api/tts', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text: text.slice(0, 1500), voice:'zh-CN-XiaoxiaoNeural', rate:'+0%', pitch:'+0Hz' }),
+        });
+        if(!r.ok) throw new Error('TTS '+r.status);
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        ttsAudio = new Audio(url);
+        ttsAudio.onended = () => { speaking.value = false; URL.revokeObjectURL(url); ttsAudio = null; };
+        ttsAudio.onerror = () => { speaking.value = false; URL.revokeObjectURL(url); ttsAudio = null; };
+        ttsAudio.play();
+      }catch(e){
+        // 降级: 系统 TTS
+        try{
+          if(window.speechSynthesis){
+            const u = new SpeechSynthesisUtterance(text.slice(0, 1500));
+            u.lang = 'zh-CN'; u.rate = 1.0;
+            u.onend = () => { speaking.value = false; };
+            u.onerror = () => { speaking.value = false; };
+            speechSynthesis.speak(u);
+            return;
+          }
+        }catch(_){}
+        speaking.value = false;
+        showToast('语音合成不可用（需联网）', '朗读失败', '⚠️');
+      }
+    }
+
     // ── v2.3: 剧情图谱 ──
     async function switchToStoryGraph() {
       if (!activeNovel.value || isBusy.value) return;
@@ -3669,7 +3713,7 @@ const app = createApp({
       pct,fmtWords,coverGradient,
       openCreate,openWrite,openOutline,openOutlineFor,doCreate,openNovel,startWriting,
       openTrends,doTrendAnalyze,doBizarreQuick,doBizarreFull,createBizarreNovel,trendData,bizarreNovels,trendLoading,bizarreMode,
-      selectChapter,doGenerateChapter,nextChapter,copyChapter,
+      selectChapter,doGenerateChapter,nextChapter,copyChapter,speakChapter,stopSpeaking,speaking,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
