@@ -216,9 +216,9 @@ class SharedMemoryManager:
         if not isinstance(bridges, dict):
             bridges = {}
         bridges[str(chapter_num)] = bridge_data
-        # 清理旧桥接（只保留最近5章，防止文件膨胀）
+        # 清理旧桥接（v2.4.5: 保留最近10章，便于审计早期桥接；原5章太激进）
         all_keys = sorted(int(k) for k in bridges.keys())
-        for old_key in all_keys[:-5]:
+        for old_key in all_keys[:-10]:
             bridges.pop(str(old_key), None)
         self.write("chapter_bridge", novel_id, bridges)
 
@@ -249,10 +249,12 @@ class SharedMemoryManager:
             log.warning("No LLM client for bridge extraction, using fallback")
             return self._fallback_bridge(chapter_text, chapter_num, chapter_outline)
 
-        # 只分析最后 1500 字（结尾部分最关键）
+        # 只分析最后 2000 字（结尾部分最关键）
         end_text = chapter_text[-2000:] if len(chapter_text) > 2000 else chapter_text
-        # 也取开头 200 字帮助理解全貌
+        # 也取开头 300 字帮助理解全貌
         opening_text = chapter_text[:300]
+        # v2.4.5: 中段关键状态扫描 — 防止"关键事件发生在章节中段"时被桥接漏掉
+        mid_states = self._extract_mid_chapter_states(chapter_text)
 
         prompt = f"""分析以下小说章节，提取结构化的"章节桥接数据"。
 
@@ -266,6 +268,9 @@ class SharedMemoryManager:
 
 ## 章节结尾（重点分析）
 {end_text}
+
+## 章节中段的关键状态变化（发生在结尾之前，但可能影响下一章）
+{mid_states if mid_states else "（无显著状态变化）"}
 
 ## 任务
 提取以下信息。**只输出 JSON，不要任何其他内容**：
@@ -285,7 +290,8 @@ class SharedMemoryManager:
 **重要**：
 - end_scene 要具体到"角色A在XX地点刚做了YY，正要ZZ"
 - next_beat 必须是 actionable 的指令，不是模糊的"继续推进"
-- character_states 只列出状态有变化的角色"""
+- character_states 只列出状态有变化的角色
+- **如果"章节中段的关键状态变化"里有持续的伤势/身体状态（如摔伤、磕破、流血、断骨），即使它发生在中段而不是结尾，也必须体现在 character_states 的 status 中**——因为下一章需要延续这些状态"""
 
         try:
             # v2.15: 使用韧性客户端（如果传入的是ResilientClient则直接用，否则包装）
@@ -333,6 +339,56 @@ class SharedMemoryManager:
         except Exception as e:
             log.warning(f"Bridge extraction failed for chapter {chapter_num}: {e}, using fallback")
             return self._fallback_bridge(chapter_text, chapter_num, chapter_outline)
+
+    def _extract_mid_chapter_states(self, chapter_text: str, max_items: int = 8) -> str:
+        """v2.4.5: 提取章节中段的关键状态变化句（供桥接提取补充）
+
+        问题：桥接提取只分析结尾 2000 字，若关键身体状态（摔伤/受伤/获得/
+        失去）发生在章节中段，会被漏掉 → 下一章无法延续。
+        解法：用关键词启发式从全文（排除结尾 2000 字）提取"状态句"，
+        连同结尾一起交给桥接 LLM 分析。
+
+        Args:
+            chapter_text: 章节全文
+            max_items: 最多返回多少条状态句
+
+        Returns:
+            状态句列表的字符串（每行一条），无显著状态时返回空字符串
+        """
+        import re
+        # 排除结尾 2000 字（那是重点分析区），扫描其余全文
+        scan_text = chapter_text[:-2000] if len(chapter_text) > 2000 else ""
+        if len(scan_text) < 50:
+            return ""
+
+        # 状态关键词：身体伤害 / 情绪冲击 / 获得失去 / 关系变化
+        state_kw = (
+            r'摔|磕|撞|流血|血|伤|破皮|擦伤|刮伤|扭|折|断|疼|痛|烧|烫|'
+            r'获得|得到|捡到|拿起|抢到|失去|丢掉|没了|消失|收下|戴上|拔出|'
+            r'哭|笑|震惊|震怒|惊恐|绝望|喜悦|悲愤|'
+            r'成为|晋升|突破|觉醒|签订|结盟|决裂|背叛'
+        )
+        sentences = re.split(r'[。！？\n]', scan_text)
+        hits = []
+        for s in sentences:
+            s = s.strip()
+            # 句子过短/过长都跳过（过长多半是场景描述而非状态）
+            if not (4 <= len(s) <= 80):
+                continue
+            # 跳过对话句（引号内多为闲聊，状态词不可靠），优先叙述句
+            if ('「' in s or '」' in s or '“' in s or '”' in s or s.startswith('"')):
+                continue
+            if re.search(state_kw, s):
+                # 去重（按前 12 字）
+                key = s[:12]
+                if key not in [h[0] for h in hits]:
+                    hits.append((key, s))
+            if len(hits) >= max_items:
+                break
+        if not hits:
+            return ""
+        # 按原顺序返回
+        return "\n".join(f"- {s}" for _, s in hits[:max_items])
 
     def _fallback_bridge(self, chapter_text: str, chapter_num: int, chapter_outline: dict) -> dict:
         """v2.24: 本地提取桥接 — 不依赖 LLM，从正文中直接抽取关键信息
@@ -607,6 +663,15 @@ class SharedMemoryManager:
                     log.info(f"Direct ending injected for chapter {chapter_num} (no bridge available)")
                 else:
                     parts.append(f"## 📖 上一章结尾原文（参考）\n\n{prev_ending}")
+                    # v2.4.5: 上一章中段的关键状态变化（桥接补充保险——防止
+                    # 关键事件发生在章节中段、不在结尾1000字内时被 writer 遗漏）
+                    mid_states = self._extract_mid_chapter_states(prev_content)
+                    if mid_states:
+                        parts.append(
+                            f"## 📌 上一章中段的关键状态（发生在结尾之前，本章需延续）\n{mid_states}\n\n"
+                            f"⚠️ 若这些状态在本章仍有影响（伤势未愈、物品未还、关系未解），本章必须延续或交代。"
+                        )
+                        log.info(f"Mid-chapter states injected for chapter {chapter_num} from Ch{prev_chapter}")
                 
                 # 上一章大纲钩子
                 for vol in plan.get("outline", {}).get("volumes", []):
