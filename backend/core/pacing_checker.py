@@ -240,12 +240,15 @@ class PacingChecker:
             has_hook = any(kw in last200 for kw in hook_keywords)
             if not has_hook: issues.append("快餐: 章末无钩子(最后200字缺少悬念词)"); score -= 25
         else:
-            if stats["dialogue_ratio"] > 50: issues.append(f"对话占比过高({stats['dialogue_ratio']}%)"); score -= 30
-            elif stats["dialogue_ratio"] > 40: issues.append(f"对话偏多({stats['dialogue_ratio']}%)"); score -= 15
-            if stats["water_dialogue_ratio"] > 20: issues.append(f"水对话过多({stats['water_dialogue_ratio']}%)"); score -= 20
-            if stats["max_consecutive_dialogue"] > 6: issues.append(f"连续对话{stats['max_consecutive_dialogue']}段"); score -= 15
-            if stats["action_ratio"] < 25: issues.append(f"动作不足({stats['action_ratio']}%)"); score -= 15
-            if stats["shuangdian_per_1000"] < 5: issues.append(f"爽点不足({stats['shuangdian_per_1000']}/千字)"); score -= 15
+            # v2.4.4: 非快餐模式阈值按文体弹性化
+            # 对话占比: >65% 才扣（对话流/剧本感文体常见 50%+）
+            if stats["dialogue_ratio"] > 65: issues.append(f"对话占比过高({stats['dialogue_ratio']}%)"); score -= 20
+            elif stats["dialogue_ratio"] > 55: issues.append(f"对话偏多({stats['dialogue_ratio']}%)"); score -= 10
+            if stats["water_dialogue_ratio"] > 25: issues.append(f"水对话过多({stats['water_dialogue_ratio']}%)"); score -= 15
+            if stats["max_consecutive_dialogue"] > 8: issues.append(f"连续对话{stats['max_consecutive_dialogue']}段"); score -= 10
+            if stats["action_ratio"] < 20: issues.append(f"动作不足({stats['action_ratio']}%)"); score -= 10
+            # v2.4.4: 非快餐模式移除爽点检查——爽点密度是快餐/爽文专属指标，
+            # 悬疑铺垫/种田/文学慢热文前期无爽点信号词，检查会导致误杀重写
             if stats["avg_sentence_len"] < 10 and stats["sentence_count"] > 30: issues.append(f"碎片化(均{stats['avg_sentence_len']}字)"); score -= 10
 
         # ── v2.3.7 活人感检测（v2.4.4: 按文体弹性，非快餐模式放宽阈值）──
