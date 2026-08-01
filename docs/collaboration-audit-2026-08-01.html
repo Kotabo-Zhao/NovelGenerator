@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NovelGenerator 模块协同审计报告 · 2026-08-01</title>
+<style>
+  :root{--bg:#f7f4ec;--card:#fff;--border:#e0dacb;--text:#23201a;--text2:#7c7566;--accent:#c0392b;--green:#5f7d55;--yellow:#a8843c;--red:#b23a2d}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;line-height:1.75;padding-bottom:80px}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 28px}
+  header{padding:56px 0 30px;border-bottom:1px solid var(--border);margin-bottom:36px}
+  .kicker{color:var(--accent);font-size:13px;letter-spacing:2px;font-weight:700;margin-bottom:10px}
+  h1{font-size:30px;font-weight:800;letter-spacing:1px}
+  .sub{color:var(--text2);margin-top:8px;font-size:14px}
+  .meta{display:flex;gap:24px;margin-top:18px;font-size:13px;color:var(--text2);flex-wrap:wrap}
+  .meta b{color:var(--text)}
+  .verdict{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:26px;margin-bottom:40px;box-shadow:0 1px 3px rgba(35,32,26,.04)}
+  .verdict h2{font-size:19px;margin-bottom:10px;color:var(--accent)}
+  .verdict p{font-size:14.5px;color:#4a443a}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .tag{font-size:12px;padding:3px 12px;border-radius:16px;border:1px solid var(--border);color:var(--text2);background:var(--bg)}
+  .tag.g{color:var(--green);border-color:rgba(95,125,85,.4)}
+  .tag.r{color:var(--red);border-color:rgba(178,58,45,.4)}
+  .tag.y{color:var(--yellow);border-color:rgba(168,132,60,.4)}
+  section{margin-bottom:44px}
+  h2.sec{font-size:21px;font-weight:800;margin-bottom:4px;display:flex;align-items:center;gap:10px}
+  h2.sec .no{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;font-size:14px;flex-shrink:0}
+  .sec-sub{color:var(--text2);font-size:13px;margin-bottom:18px;padding-left:40px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:12px}
+  .card h3{font-size:15px;margin-bottom:10px}
+  .card p,.card li{font-size:13.5px;color:#4a443a}
+  .card ul{padding-left:18px}
+  .card li{margin-bottom:5px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+  th{text-align:left;color:var(--text2);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:8px 10px;border-bottom:1px solid var(--border-light,var(--border));vertical-align:top}
+  .ok{color:var(--green);font-weight:700}
+  .warn{color:var(--yellow);font-weight:700}
+  .bad{color:var(--red);font-weight:700}
+  .flow{background:#1e1b21;border-radius:10px;padding:16px 18px;font-family:Consolas,monospace;font-size:12.5px;white-space:pre;overflow-x:auto;color:#7ee787;line-height:1.8}
+  .dim{color:#8b949e}.w{color:#d29922}.hi{color:#58a6ff}
+  .grid{display:grid;gap:12px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--border);color:var(--text2);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">MODULE COLLABORATION AUDIT</div>
+  <h1>NovelGenerator 模块协同审计报告</h1>
+  <div class="sub">全链路数据流验证 · 注入段协同 · 质量保障闭环 · 断点与风险</div>
+  <div class="meta">
+    <div>审计日期 <b>2026-08-01</b></div>
+    <div>基线 <b>main @ 2b7e8c2</b></div>
+    <div>方法 <b>代码审计 + 实测链路 + Playwright 巡检</b></div>
+    <div>范围 <b>46 模块 × 6 条协同链</b></div>
+  </div>
+</header>
+
+<div class="verdict">
+  <h2>核心结论：协同总体健康，四条主链路全部打通，发现 3 个真实断点</h2>
+  <p>与 7-31 复盘相比，模块协同发生了质变：ConsistencyValidator 从"从未调用"到双路径每章生效；人设/声音/流派/反馈四个新资产全部接入写作上下文；前端与 API 零脱节（Playwright 全视图巡检 0 JS 错误）。四条主链路（创建、写作、质量、反馈）经实测全部打通。仍存在 3 个断点：① 旧书缺"一键补全"前端入口（API 有、按钮无）；② 上下文预算保护在注入段追加前生效，长文时注入段可能把总长推过预算线；③ CharacterStateTracker 的提取质量仍无监控（AUDIT P1-4 遗留）。</p>
+  <div class="tags">
+    <span class="tag g">✅ 创建链路闭环</span>
+    <span class="tag g">✅ 写作注入协同</span>
+    <span class="tag g">✅ 质量门双校验</span>
+    <span class="tag g">✅ 反馈闭环生效</span>
+    <span class="tag r">⚠️ 3 个断点待修</span>
+  </div>
+</div>
+
+<!-- ═══ 一、创建链路 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">1</span>创建流程协同链</h2>
+  <div class="sec-sub">需求拆解 → 规划 → 宝典 → 蒸馏 → 声音卡 → 双回写，实测全通。</div>
+  <div class="flow">灵感 → RequirementDecomposer(23条子任务) → Planner.plan_stream(世界观/角色/卷/章)
+    ↓
+character_bible.json ←─ _save_character_bible（主角+配角+反派+关系图）
+    ↓
+StoryGraph + ArcPlanner + 伏笔规划（失败不阻断）
+    ↓
+[创建即蒸馏] 大纲提取角色(去重≤8) → 逐角色 distill_character_profile
+    → character_profiles.json + <span class="hi">回写 bible.character_profile</span>
+    ↓
+[角色声音卡] CharacterVoices.generate_all(一次调用~15s)
+    → character_voices.json + <span class="hi">回写 bible.voice</span>
+    ↓
+done → 书架就绪（bible 已"变厚"：基础9字段 + profile + voice）</div>
+  <div class="card">
+    <h3>验证结果</h3>
+    <table>
+      <tr><th>环节</th><th>产出</th><th>消费方</th><th>状态</th></tr>
+      <tr><td>需求拆解</td><td>requirements（SQLite）</td><td>规划 prompt 注入</td><td class="ok">✅ 实测 23 条</td></tr>
+      <tr><td>大纲规划</td><td>plan.json</td><td>写作上下文/校验</td><td class="ok">✅ 生成章节实测</td></tr>
+      <tr><td>人物宝典</td><td>character_bible.json</td><td>蒸馏输入/声音卡输入/写作</td><td class="ok">✅</td></tr>
+      <tr><td>人设蒸馏</td><td>profiles + bible 回写</td><td>写作上下文 🎭</td><td class="ok">✅ 港漫 6 角色 145s</td></tr>
+      <tr><td>声音卡</td><td>voices + bible 回写</td><td>写作上下文 🎙</td><td class="ok">✅ 6 角色 15s</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ 二、写作链路 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">2</span>写作上下文协同（8 段注入实测）</h2>
+  <div class="sec-sub">实测港漫求生 Ch2 完整组装：8650 字符 / 9000 预算线内。</div>
+  <div class="card">
+    <table>
+      <tr><th>注入段</th><th>来源</th><th>实测</th><th>说明</th></tr>
+      <tr><td>🔗 桥接指令</td><td>shared_memory 桥接</td><td class="ok">✅ 在</td><td>上章结尾→本章起点硬指令</td></tr>
+      <tr><td>📋 角色状态表</td><td>context_updater</td><td class="ok">✅ 在</td><td>位置/情绪/健康/目标 + 死亡清单</td></tr>
+      <tr><td>🔒 永久状态账本</td><td>context_updater</td><td class="warn">— 空态</td><td>生成章节后才有数据（合理）</td></tr>
+      <tr><td>⚠️ 一致性提醒</td><td>shared_memory</td><td class="ok">✅ 注入验证</td><td>P1 issues → 下一章（mock 实测）</td></tr>
+      <tr><td>🎭 人设约束</td><td>profiles</td><td class="ok">✅ 在</td><td>决策启发式/表达DNA/反模式</td></tr>
+      <tr><td>🎙 声音表</td><td>voices</td><td class="ok">✅ 在</td><td>口癖/称呼/句式/标志动作</td></tr>
+      <tr><td>📕 流派法则</td><td>genre_playbooks</td><td class="ok">✅ 在</td><td>通用铁律+流派技法</td></tr>
+      <tr><td>🧭 用户偏好</td><td>feedback.db</td><td class="warn">— 空态</td><td>≥3 条反馈才注入（实测阈值正确）</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>⚠️ 断点 1：预算保护与注入段顺序</h3>
+    <p>预算截断发生在 <b>build_writer_context 内部</b>（9000 字符线），而 🎭🎙📕🧭 四个注入段是在截断<b>之后</b>追加的——当前 Ch2 实测 8650 未超线，但<b>长篇小说后期（章节摘要累积）可能把总长推到 9000+</b>，注入段不受预算保护。建议：把预算检查移到完整组装后，或给注入段设独立上限。</p>
+  </div>
+</section>
+
+<!-- ═══ 三、质量保障链路 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">3</span>质量保障协同（三级防线）</h2>
+  <div class="sec-sub">生成 → 活人感质量门 → 语义一致性 → 两级自动重写，顺序合理无冲突。</div>
+  <div class="flow">初稿(writer/atomic) → text 流式输出
+    ↓
+① PacingChecker 质量门（本地规则: 节奏/AI味/对话比/<span class="hi">活人感三指标</span>）
+   score<40 → 续写重写（+10分或≥60才接受）
+    ↓
+② AIDetector/Humanizer（score<70 触发）
+    ↓
+③ ConsistencyValidator L1规则 + L2语义（每章, 视野5章, 含亲属检测）
+   P0 → build_fix_prompt 自动重写本章并覆盖保存
+   P1 → state.consistency_issues → <span class="hi">下一章 ⚠️ 注入</span>
+    ↓
+保存 → 摘要 → StoryGraph → 状态追踪(含永久状态账本) → 反馈区</div>
+  <div class="card">
+    <h3>协同验证</h3>
+    <table>
+      <tr><th>项</th><th>结果</th></tr>
+      <tr><td>双路径（普通+原子）覆盖</td><td class="ok">✅ validate_chapter ×2 / P0重写 ×2 / P1注入 ×6</td></tr>
+      <tr><td>活人感检测</td><td class="ok">✅ AI味文本 35 分 vs 活人感 65 分（实测）</td></tr>
+      <tr><td>亲属/远期矛盾</td><td class="ok">✅ 3-5 秒检出 P0（实测 6 类场景）</td></tr>
+      <tr><td>重写顺序</td><td class="ok">✅ 质量门重写 → Humanizer → 一致性重写（校验最后最准）</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ 四、反馈链路 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">4</span>反馈闭环协同</h2>
+  <div class="sec-sub">用户评价 → SQLite → 偏好聚合 → 写作注入。</div>
+  <div class="card">
+    <table>
+      <tr><th>环节</th><th>状态</th><th>实测</th></tr>
+      <tr><td>前端 👍👎 + 理由</td><td class="ok">✅</td><td>章节完成区（新 UI 保留）</td></tr>
+      <tr><td>API 提交/查询</td><td class="ok">✅</td><td>POST/GET 200（实测）</td></tr>
+      <tr><td>SQLite 存储</td><td class="ok">✅</td><td>同章覆盖策略</td></tr>
+      <tr><td>偏好指令注入</td><td class="ok">✅</td><td>≥3 条才注入（2 条实测为空，阈值正确）</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ 五、断点与风险 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">5</span>断点与风险清单</h2>
+  <div class="sec-sub">诚实清单：3 个真实断点 + 4 个依赖风险。</div>
+  <div class="grid g2">
+    <div class="card">
+      <h3>🔴 断点</h3>
+      <ul>
+        <li><b>1. 旧书补全无前端入口</b>：generate-all API 已上线（港漫已跑），但前端无按钮——旧书用户无法自助触发</li>
+        <li><b>2. 预算保护不覆盖注入段</b>：9000 字符截断在 🎭🎙📕🧭 追加之前，长文后期总长可能超限</li>
+        <li><b>3. 声音卡/人设无展示页</b>：bible 已"变厚"但前端角色 Tab 只显示图谱快照，蒸馏成果用户看不到全貌</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🟡 依赖风险</h3>
+      <ul>
+        <li><b>CharacterStateTracker 提取质量</b>：永久状态账本依赖 LLM 提取，无监控（AUDIT P1-4 遗留）</li>
+        <li><b>原子化 vs 普通双轨</b>：两套生成路径仍并存，调参/校验双份维护</li>
+        <li><b>本地代理依赖</b>：git 走 7890 代理，代理未运行即 push 失败（已多次踩坑）</li>
+        <li><b>前端无构建链</b>：单文件 22 万字符，改动风险集中（本轮已三次全量替换）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 六、总体评价 ═══ -->
+<section>
+  <h2 class="sec"><span class="no">6</span>总体评价与建议</h2>
+  <div class="card">
+    <h3>协同评分：8.0 / 10（较 7-31 的 7.0 提升）</h3>
+    <p style="margin-top:8px"><b>质变点</b>：① 校验模块从"装饰"变"主链路"（L1+L2+双路径+自动重写）② 五个写作资产（人设/声音/流派/偏好/一致性提醒）全部真实注入并实测验证 ③ 前端-API 零脱节（0 JS 错误）。</p>
+    <p style="margin-top:8px"><b>建议优先级</b>：1) 预算保护后移（半天）2) 旧书补全加前端按钮（半天）3) 前端新增"角色资产页"展示蒸馏+声音卡（1 天）4) 状态追踪质量采样器（1 天）。</p>
+  </div>
+</section>
+
+<footer>
+  NovelGenerator 模块协同审计 · 2026-08-01 · 基线 2b7e8c2 · 与 system-review(7-31) 互补
+</footer>
+
+</div>
+</body>
+</html>
