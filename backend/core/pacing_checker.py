@@ -248,17 +248,21 @@ class PacingChecker:
             if stats["shuangdian_per_1000"] < 5: issues.append(f"爽点不足({stats['shuangdian_per_1000']}/千字)"); score -= 15
             if stats["avg_sentence_len"] < 10 and stats["sentence_count"] > 30: issues.append(f"碎片化(均{stats['avg_sentence_len']}字)"); score -= 10
 
-        # ── v2.3.7 活人感检测（AI 味重灾区，所有模式生效）──
-        # 对话标签滥用：每千字 > 6 个"说道/笑道/冷冷道" = AI 腔
-        if stats["dialogue_tag_density"] > 6:
+        # ── v2.3.7 活人感检测（v2.4.4: 按文体弹性，非快餐模式放宽阈值）──
+        # 对话标签滥用：快餐 >6 / 常规 >9 个"说道/笑道/冷冷道" = AI 腔
+        _tag_th = 6 if fast_food else 9
+        _tag_th2 = 4 if fast_food else 7
+        if stats["dialogue_tag_density"] > _tag_th:
             issues.append(f"对话标签过多({stats['dialogue_tag_density']}/千字·说道/笑道类)"); score -= 20
-        elif stats["dialogue_tag_density"] > 4:
+        elif stats["dialogue_tag_density"] > _tag_th2:
             issues.append(f"对话标签偏多({stats['dialogue_tag_density']}/千字)"); score -= 10
-        # 情绪直接陈述：每千字 > 3 个"他感到/心中涌起/眼底闪过" = 解释式写作
-        if stats["emotion_statement_density"] > 3:
+        # 情绪直接陈述：快餐 >3 / 常规 >5（言情/心理流可放宽）
+        _emo_th = 3 if fast_food else 5
+        if stats["emotion_statement_density"] > _emo_th:
             issues.append(f"情绪直述过多({stats['emotion_statement_density']}/千字·他感到/涌起类)"); score -= 15
-        # 填充副词：每千字 > 12 个"缓缓/轻轻/微微/淡淡" = 面面俱到的 AI 描写
-        if stats["filler_desc_density"] > 12:
+        # 填充副词：快餐 >12 / 常规 >16（文艺/氛围流可放宽）
+        _fill_th = 12 if fast_food else 16
+        if stats["filler_desc_density"] > _fill_th:
             issues.append(f"填充描写词过多({stats['filler_desc_density']}/千字·缓缓/轻轻类)"); score -= 15
 
         passed = score >= 60
