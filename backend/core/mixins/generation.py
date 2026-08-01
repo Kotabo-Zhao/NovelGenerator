@@ -156,6 +156,106 @@ class GenerationMixin:
                     return ch
         return None
 
+    def build_requirements_instruction(self, novel_id: str, chapter_num: int,
+                                       plan: dict = None) -> str:
+        """v2.4.7: 将用户需求注入章节生成上下文
+
+        问题: 需求拆解在创建时执行、大纲阶段也注入了，但章节正文生成
+        (writer) 时需求完全丢失 → 用户感觉"生成结果没反映需求"。
+        修复: 从 RequirementsStore 读取需求，按章节范围过滤
+        (global/opening/ending)，只注入 P0/P1 与当前章节相关的条目，
+        压缩为轻量指令追加到 writer 上下文。
+
+        Args:
+            novel_id: 小说ID（目录名）
+            chapter_num: 当前章节号
+            plan: 已有 plan（用于解析 title 作为 req key，可空）
+
+        Returns:
+            需求指令文本（空字符串 = 无需求或读取失败）
+        """
+        try:
+            req_store = getattr(self, "_req_store", None)
+            if req_store is None:
+                return ""
+
+            # requirements.db 以 plan title 为 key；先解析 title
+            title = ""
+            if plan and plan.get("title"):
+                title = plan["title"]
+            if not title:
+                try:
+                    plan_data = self.memory.read("plan", novel_id)
+                    if isinstance(plan_data, dict):
+                        title = plan_data.get("title", "")
+                except Exception:
+                    pass
+            if not title:
+                return ""
+
+            reqs = req_store.get(title)
+            if not reqs:
+                return ""
+
+            subtasks = reqs.get("subtasks", [])
+            if not subtasks:
+                return ""
+
+            # 判断本章在全书的位置（用于 scope 过滤）
+            total = 0
+            if plan and plan.get("outline", {}).get("total_chapters"):
+                total = int(plan["outline"]["total_chapters"])
+            if not total:
+                try:
+                    total = int(plan_data.get("outline", {}).get("total_chapters", 0))
+                except Exception:
+                    total = 0
+            is_opening = chapter_num <= max(2, total // 10) if total else chapter_num <= 3
+            is_ending = chapter_num >= total - max(1, total // 10) if total else False
+
+            # 过滤：global 恒生效；opening 只在前 10% 章节；ending 只在最后 10%
+            active = []
+            for t in subtasks:
+                scope = t.get("scope", "global")
+                if scope == "opening" and not is_opening:
+                    continue
+                if scope == "ending" and not is_ending:
+                    continue
+                if t.get("status") == "resolved":
+                    continue
+                active.append(t)
+
+            if not active:
+                return ""
+
+            # 压缩为轻量指令：P0 全部 + P1 只留 title/must_include 关键信息
+            lines = ["## 🎯 用户需求（必须逐条满足，写入本章剧情）"]
+            for t in active[:20]:
+                pri = t.get("priority", "P1")
+                title_t = t.get("title", "")
+                must_inc = t.get("must_include", []) or []
+                desc = t.get("description", "") or ""
+                scope_label = {"opening": "【开篇】", "ending": "【结局】", "mid": "【中期】"}.get(
+                    t.get("scope", "global"), "")
+                if pri == "P0":
+                    line = f"- [P0]{scope_label}{title_t}"
+                    if must_inc:
+                        line += "：包含 " + "、".join(str(m)[:24] for m in must_inc[:3])
+                    lines.append(line)
+                elif len(lines) < 12:  # P1 限量，防止上下文膨胀
+                    line = f"- {scope_label}{title_t}"
+                    if must_inc:
+                        line += "（" + "、".join(str(m)[:18] for m in must_inc[:2]) + "）"
+                    lines.append(line)
+                del desc  # 描述不注入（大纲已体现），节省 token
+
+            text = "\n".join(lines)
+            log.info(f"Requirements injected for Ch{chapter_num}: {len(active)}/{len(subtasks)} active")
+            return text
+        except Exception as e:
+            log.warning(f"Requirements instruction build failed (non-fatal): {e}")
+            return ""
+
 
     async def atomic_generate_chapter_stream(
         self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel",
@@ -210,6 +310,14 @@ class GenerationMixin:
             # 构建完整写作上下文（常规Writer用的五层上下文）
             chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
             
+            # v2.4.7: 注入用户需求（章节正文此前完全丢失需求传导）
+            try:
+                _req_ctx = self.build_requirements_instruction(novel_id, chapter_num, plan)
+                if _req_ctx:
+                    chapter_context = chapter_context + "\n\n" + _req_ctx
+            except Exception as rce:
+                log.warning(f"Requirements injection skipped (non-fatal): {rce}")
+
             # v2.51: 注入角色当前状态
             char_ctx3 = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
             if char_ctx3:
@@ -541,6 +649,14 @@ class GenerationMixin:
 
             # 组装上下文
             context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+
+            # v2.4.7: 注入用户需求（章节正文此前完全丢失需求传导）
+            try:
+                req_ctx = self.build_requirements_instruction(novel_id, chapter_num, plan)
+                if req_ctx:
+                    context = context + "\n\n" + req_ctx
+            except Exception as rce:
+                log.warning(f"Requirements injection skipped (non-fatal): {rce}")
 
             # v2.51: 注入角色当前状态 — 写作前读取每个角色的位置/情绪/健康/目标
             char_ctx = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
@@ -936,6 +1052,13 @@ class GenerationMixin:
                 # v2.49: Engine-level retry — 从断点续写，不重写
                 try:
                     retry_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+                    # v2.4.7: 注入用户需求（重写/续写同样需要）
+                    try:
+                        _rreq = self.build_requirements_instruction(novel_id, chapter_num, plan)
+                        if _rreq:
+                            retry_context = retry_context + "\n\n" + _rreq
+                    except Exception as _rre:
+                        pass
                     # v2.51: 注入角色状态
                     char_ctx2 = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
                     if char_ctx2:
