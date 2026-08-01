@@ -450,6 +450,28 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .sg-subtab{padding:6px 10px;font-size:12px}
   .sg-relation-svg-wrap{height:380px}
   .sg-timeline-svg-wrap{height:340px}
+
+  /* ── v3.0: 互动模式 ── */
+  .interactive-shell{display:flex;flex-direction:column;gap:14px}
+  .interactive-story{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px 22px;min-height:280px;max-height:52vh;overflow-y:auto;line-height:1.85;font-size:15px}
+  .inter-narr{color:var(--text);margin:10px 0;text-indent:2em}
+  .inter-action{color:var(--text3);font-style:italic;margin:8px 0;text-indent:2em;font-size:14px}
+  .inter-line{margin:10px 0;display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+  .inter-speaker{color:#f778ba;font-weight:700;min-width:56px;white-space:nowrap}
+  .inter-dialogue{flex:1;color:var(--text)}
+  .inter-voice{font-size:11px;color:var(--text3);white-space:nowrap;align-self:center}
+  .inter-typing{color:var(--accent);animation:blink 1s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+  .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+  .interactive-facts{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .fact-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;flex-wrap:wrap}
+  .fact-badge{font-size:13px}
+  .fact-text{flex:1;color:var(--text)}
+  .fact-type{font-size:11px;color:var(--text3);background:var(--card);border-radius:4px;padding:1px 6px}
+  .fact-active{color:var(--accent)}
+  .fact-fulfilled{color:var(--green)}
+  .fact-expired{color:var(--text3)}
+  .fact-broken{color:var(--red)}
   .sg-relation-svg-wrap svg,.sg-timeline-svg-wrap svg{width:100%;height:100%}
 
   /* ── 导出列表 ── */
@@ -942,6 +964,77 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div class="sg-tabs">
           <button class="sg-tab" :class="{active:writing.activeTab==='write'}" @click="writing.activeTab='write'">✍️ 写作</button>
           <button class="sg-tab" :class="{active:writing.activeTab==='storygraph'}" @click="switchToStoryGraph">🔍 剧情图谱</button>
+          <button class="sg-tab" :class="{active:writing.activeTab==='interactive'}" @click="openInteractive">🎮 互动模式</button>
+        </div>
+
+        <!-- v3.0: 互动模式面板 -->
+        <div v-if="writing.activeTab==='interactive'" style="margin-top:14px">
+          <div v-if="interactive.loading" class="text-center" style="padding:40px 20px">
+            <div class="spinner" style="width:30px;height:30px"></div>
+            <p class="color-text2 mt-16 text-sm">{{ interactive.loadingMsg || '初始化互动世界…' }}</p>
+          </div>
+
+          <div v-else-if="interactive.error" class="empty" style="padding:40px 20px">
+            <div class="empty-icon">⚠️</div>
+            <h3>互动模式启动失败</h3>
+            <p>{{ interactive.error }}</p>
+            <button class="btn btn-primary mt-16" @click="openInteractive">🔄 重试</button>
+          </div>
+
+          <div v-else class="interactive-shell">
+            <!-- 状态栏 -->
+            <div class="flex justify-between items-center mb-12" style="flex-wrap:wrap;gap:8px">
+              <div class="text-sm">
+                <span class="badge badge-ok mr-8">场景 {{ interactive.state.scene_num||0 }}</span>
+                <span v-if="interactive.pendingNode" class="badge" style="background:rgba(212,175,55,.15);color:var(--gold)">💬 可对话</span>
+                <span v-else class="badge">📖 剧情中</span>
+              </div>
+              <div class="flex gap-6">
+                <button class="btn btn-xs btn-ghost" @click="interactiveRollback" :disabled="interactive.busy" title="回退到上一场景">↩ 回退</button>
+                <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
+              </div>
+            </div>
+
+            <!-- 叙事区（打字机） -->
+            <div class="interactive-story" ref="storyBox">
+              <template v-for="(blk, i) in interactive.blocks" :key="i">
+                <div v-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
+                <div v-else-if="blk.type==='action'" class="inter-action">{{ blk.content }}</div>
+                <div v-else class="inter-line">
+                  <span class="inter-speaker">{{ blk.speaker }}</span>
+                  <span class="inter-dialogue">{{ blk.content }}</span>
+                  <span class="inter-voice" v-if="interactive.voices[blk.speaker]">🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</span>
+                </div>
+              </template>
+              <div v-if="interactive.typing" class="inter-typing">▋</div>
+            </div>
+
+            <!-- 输入区 -->
+            <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
+              <div class="flex gap-6" style="align-items:center">
+                <input v-model="interactive.message" @keyup.enter="sendInteractiveChat"
+                       placeholder="说点什么…（可 @角色名 指定对象）" :disabled="interactive.busy"
+                       style="flex:1;min-height:38px;font-size:14px" />
+                <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||!interactive.message.trim()">💬 说</button>
+              </div>
+              <div class="flex gap-6 mt-8" style="justify-content:flex-end">
+                <button class="btn btn-xs" @click="interactive.forceChat=true;interactive.pendingNode=true" v-if="!interactive.pendingNode && !interactive.inChat">💬 我要说话</button>
+                <button class="btn btn-sm btn-primary" @click="continueInteractive" :disabled="interactive.busy">
+                  {{ interactive.pendingNode && !interactive.inChat ? '💬 进入对话' : '▶ 继续剧情' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- 你的影响（PACT facts） -->
+            <div class="interactive-facts" v-if="(interactive.state.facts||[]).length">
+              <div class="card-title" style="font-size:13px;margin-bottom:8px">🧠 你的影响</div>
+              <div v-for="f in interactive.state.facts" :key="f.id" class="fact-row">
+                <span class="fact-badge" :class="'fact-'+f.status">{{ f.status==='active'?'⏳':f.status==='fulfilled'?'✅':f.status==='expired'?'⌛':'💔' }}</span>
+                <span class="fact-text">{{ f.content }}</span>
+                <span class="fact-type muted">{{ f.type }}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- v2.3: 写作面板 -->
@@ -3396,6 +3489,235 @@ const app = createApp({
       sgChapterFilter.value = (activeNovel.value.state.completed_chapters||[]).length + 1;
       await loadStoryGraph();
     }
+
+    // ═══════ v3.0: 互动模式（AI Galgame）═══════
+    const interactive = reactive({
+      loading: false, loadingMsg: '', error: '',
+      state: { scene_num:0, facts:[], casts:{}, state:{relations:{}} },
+      blocks: [], typing: false, busy: false,
+      pendingNode: false, inChat: false, message: '',
+      voices: {},
+    });
+    let interactiveAbort = null;
+
+    function openInteractive() {
+      if (!activeNovel.value || isBusy.value) return;
+      writing.activeTab = 'interactive';
+      // 已有存档 → 直接加载；否则 start
+      interactive.loading = true; interactive.error = '';
+      interactive.loadingMsg = '正在加载互动世界…';
+      const id = encodeURIComponent(activeNovel.value.id);
+      fetch(API+'/api/novels/'+id+'/interactive/state')
+        .then(r => { if (r.status===404) throw {code:404}; return r.json(); })
+        .then(data => {
+          interactive.loading = false;
+          if (data.ok && data.state) {
+            interactive.state = data.state;
+            // 恢复已有场景块
+            interactive.blocks = [];
+            loadInteractiveVoices();
+            _scrollStory();
+          } else {
+            interactiveStart(id);
+          }
+        })
+        .catch(e => {
+          if (e && e.code===404) { interactiveStart(id); }
+          else { interactive.loading=false; interactive.error='加载失败: '+(e.message||e); }
+        });
+    }
+
+    async function interactiveStart(id) {
+      interactive.loading = true; interactive.loadingMsg = '正在创建互动世界（首次约 10-20s）…';
+      interactive.error = '';
+      try {
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/start', {method:'POST', body:'{}', headers:{'Content-Type':'application/json'}});
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        interactive.blocks = [];
+        await readSSE(r, (evt) => {
+          if (evt.type==='scene_chunk' && evt.content) {
+            interactive.typing = true;
+            _appendTyping(evt.content);
+          } else if (evt.type==='scene_end') {
+            interactive.typing = false;
+            interactive.blocks = evt.blocks || [];
+            _scrollStory();
+          } else if (evt.type==='node_check') {
+            interactive.pendingNode = evt.is_node;
+            interactive.inChat = false;
+            interactive.typing = false;
+          } else if (evt.type==='error') {
+            interactive.error = evt.message;
+          }
+        });
+        interactive.loading = false;
+        await loadInteractiveState();
+        await loadInteractiveVoices();
+        _scrollStory();
+      } catch(e) {
+        interactive.loading = false;
+        interactive.error = '互动模式启动失败: '+(e.message||e);
+      }
+    }
+
+    function _appendTyping(text) {
+      // 打字机：把流式文本暂存，scene_end 时统一解析为 blocks
+      if (interactive.blocks.length && interactive.blocks[interactive.blocks.length-1].type==='typing') {
+        interactive.blocks[interactive.blocks.length-1].content += text;
+      } else {
+        interactive.blocks.push({type:'typing', speaker:'', content:text});
+      }
+      _scrollStory();
+    }
+
+    function _scrollStory() {
+      nextTick(() => {
+        const box = document.querySelector('.interactive-story');
+        if (box) box.scrollTop = box.scrollHeight;
+      });
+    }
+
+    async function loadInteractiveState() {
+      if (!activeNovel.value) return;
+      const id = encodeURIComponent(activeNovel.value.id);
+      try {
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/state');
+        if (r.ok) {
+          const data = await r.json();
+          if (data.ok) {
+            interactive.state = data.state;
+            interactive.pendingNode = !!data.state.pending_node;
+          }
+        }
+      } catch(e) { console.warn('loadInteractiveState failed:', e); }
+    }
+
+    async function loadInteractiveVoices() {
+      if (!activeNovel.value) return;
+      const id = encodeURIComponent(activeNovel.value.id);
+      try {
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/voices');
+        if (r.ok) {
+          const data = await r.json();
+          if (data.ok) interactive.voices = data.voices || {};
+        }
+      } catch(e) { console.warn('loadInteractiveVoices failed:', e); }
+    }
+
+    async function sendInteractiveChat() {
+      if (!interactive.message.trim() || interactive.busy) return;
+      if (!activeNovel.value) return;
+      const id = encodeURIComponent(activeNovel.value.id);
+      const msg = interactive.message.trim();
+      interactive.message = '';
+      interactive.busy = true;
+      interactive.inChat = true;
+      // 玩家气泡
+      interactive.blocks.push({type:'player', speaker:'你', content: msg});
+      interactive.blocks.push({type:'typing', speaker:'', content:''});
+      _scrollStory();
+      try {
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/chat', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({message: msg}),
+        });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        await readSSE(r, (evt) => {
+          if (evt.type==='chat_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
+            else if (last && last.type==='chat' && last.speaker===evt.speaker) { last.content += evt.content; }
+            else interactive.blocks.push({type:'chat', speaker:evt.speaker, content:evt.content});
+            _scrollStory();
+          } else if (evt.type==='chat_end') {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
+            _scrollStory();
+          } else if (evt.type==='error') {
+            interactive.blocks.push({type:'error', speaker:'', content: evt.message});
+          }
+        });
+      } catch(e) {
+        interactive.blocks.push({type:'error', speaker:'', content:'对话失败: '+(e.message||e)});
+      }
+      interactive.busy = false;
+      _scrollStory();
+    }
+
+    async function continueInteractive() {
+      // 若 pendingNode 且还没对话过 → 直接进入对话（或已在对话中则 PACT 提取 + 下一场景）
+      if (!activeNovel.value || interactive.busy) return;
+      const id = encodeURIComponent(activeNovel.value.id);
+      interactive.busy = true;
+      try {
+        // 结束对话 → PACT 提取（无条件执行，提取本轮全部对话）
+        const endRes = await fetch(API+'/api/novels/'+id+'/interactive/end-chat', {
+          method:'POST', body:'{}', headers:{'Content-Type':'application/json'},
+        });
+        if (endRes.ok) {
+          const data = await endRes.json();
+          interactive.state = { ...interactive.state, facts: data.facts || interactive.state.facts };
+        }
+        // 推进场景
+        interactive.typing = true;
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/scene', {
+          method:'POST', body:'{}', headers:{'Content-Type':'application/json'},
+        });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        await readSSE(r, (evt) => {
+          if (evt.type==='scene_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') last.content += evt.content;
+            else interactive.blocks.push({type:'typing', speaker:'', content:evt.content});
+            _scrollStory();
+          } else if (evt.type==='scene_end') {
+            interactive.typing = false;
+            interactive.blocks = evt.blocks || [];
+            interactive.pendingNode = false;
+            _scrollStory();
+          } else if (evt.type==='node_check') {
+            interactive.pendingNode = evt.is_node;
+            interactive.inChat = false;
+          } else if (evt.type==='error') {
+            interactive.error = evt.message;
+          }
+        });
+        interactive.typing = false;
+        await loadInteractiveState();
+        await loadInteractiveVoices();
+        _scrollStory();
+      } catch(e) {
+        interactive.error = '推进失败: '+(e.message||e);
+      }
+      interactive.busy = false;
+    }
+
+    async function interactiveRollback() {
+      if (!activeNovel.value || interactive.busy) return;
+      const id = encodeURIComponent(activeNovel.value.id);
+      try {
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/rollback', {method:'POST', body:'{}', headers:{'Content-Type':'application/json'}});
+        if (r.ok) {
+          showToast && showToast('已回退到上一场景','回退成功','↩️');
+          await loadInteractiveState();
+        }
+      } catch(e) { console.warn('rollback failed:', e); }
+    }
+
+    async function interactiveRestart() {
+      if (!activeNovel.value || interactive.busy) return;
+      if (!confirm('重开互动模式？当前进度会备份，确定继续？')) return;
+      const id = encodeURIComponent(activeNovel.value.id);
+      try {
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/restart', {method:'POST', body:'{}', headers:{'Content-Type':'application/json'}});
+        if (r.ok) {
+          interactive.blocks = [];
+          interactive.state = { scene_num:0, facts:[], casts:{}, state:{relations:{}} };
+          interactiveStart(id);
+        }
+      } catch(e) { console.warn('restart failed:', e); }
+    }
+
     async function loadStoryGraph(chapterNum = 0) {
       if (!activeNovel.value) return;
       sgLoading.value = true;
@@ -3728,6 +4050,9 @@ const app = createApp({
       loadStyleSeeds,loadStyleParams,applyParamStyle,
       // v2.3: 剧情图谱
       sgLoading,sgData,sgArcs,sgCalibration,
+      // v3.0: 互动模式
+      interactive,openInteractive,sendInteractiveChat,continueInteractive,
+      interactiveRollback,interactiveRestart,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
       switchToStoryGraph,loadStoryGraph,

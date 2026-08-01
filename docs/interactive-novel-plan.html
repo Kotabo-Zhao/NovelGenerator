@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>互动小说模式（AI 驱动 Galgame）— 实施方案评估</title>
+<style>
+  :root{
+    --bg:#0d1117; --bg2:#161b22; --bg3:#1c2129; --line:#2d333b;
+    --text:#e6edf3; --text2:#8b949e; --gold:#d4af37; --gold2:#f0d77b;
+    --green:#3fb950; --red:#f85149; --blue:#58a6ff; --purple:#bc8cff;
+    --cyan:#39c5cf; --pink:#f778ba;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7;padding:32px 20px}
+  .wrap{max-width:1000px;margin:0 auto}
+  h1{font-size:28px;font-weight:800;letter-spacing:1px;margin-bottom:6px}
+  h1 .sub{display:block;font-size:14px;color:var(--text2);font-weight:400;margin-top:8px}
+  h2{font-size:20px;margin:42px 0 14px;padding-left:12px;border-left:4px solid var(--gold);font-weight:700}
+  h3{font-size:15px;margin:22px 0 10px;color:var(--gold2)}
+  p{margin:8px 0}
+  .muted{color:var(--text2);font-size:13px}
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th{background:var(--bg3);color:var(--gold2);text-align:left;padding:9px 12px;font-weight:600;white-space:nowrap}
+  td{padding:8px 12px;border-top:1px solid var(--line);vertical-align:top}
+  tr:hover td{background:rgba(255,255,255,.02)}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:600;margin-right:6px}
+  .t-reuse{background:rgba(63,185,80,.15);color:var(--green)}
+  .t-new{background:rgba(248,81,73,.15);color:var(--red)}
+  .t-part{background:rgba(212,175,55,.15);color:var(--gold2)}
+  .pill{display:inline-block;background:var(--bg3);border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:12px;margin:3px 4px 3px 0;color:var(--text2)}
+  .pill b{color:var(--text)}
+  code{background:var(--bg3);border:1px solid var(--line);border-radius:5px;padding:1px 7px;font-size:12.5px;font-family:Consolas,monospace;color:var(--cyan)}
+  pre{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:12.5px;font-family:Consolas,monospace;line-height:1.6;margin:10px 0}
+  pre .k{color:var(--purple)} pre .s{color:var(--green)} pre .c{color:var(--text2)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .stat{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:16px;text-align:center}
+  .stat .num{font-size:30px;font-weight:800;color:var(--gold)}
+  .stat .lbl{font-size:12px;color:var(--text2);margin-top:4px}
+  .flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .fnode{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12.5px;white-space:nowrap}
+  .fnode.hl{border-color:var(--gold);color:var(--gold2)}
+  .farrow{color:var(--text2);font-size:14px}
+  .warn{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13.5px}
+  .ok{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13.5px}
+  .phase{border-left:3px solid var(--gold);padding-left:16px;margin:18px 0}
+  .phase h4{color:var(--gold2);font-size:14px;margin-bottom:6px}
+  .toc{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:16px 20px;font-size:13.5px}
+  .toc a{color:var(--blue);text-decoration:none;display:block;padding:3px 0}
+  .toc a:hover{color:var(--gold2)}
+  .demo{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:14px 0;font-size:13.5px}
+  .demo .role{color:var(--pink);font-weight:700}
+  .demo .nar{color:var(--text2)}
+  .demo .user{color:var(--cyan);font-weight:600}
+  .demo .tag-line{display:inline-block;background:rgba(212,175,55,.12);color:var(--gold2);border-radius:4px;padding:0 6px;font-size:11.5px;margin-right:6px}
+  .demo .spk{display:inline-block;width:16px;color:var(--blue);font-size:12px}
+  .voice-row{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}
+  .voice-row .vname{width:120px;color:var(--gold2);font-weight:600}
+  .voice-row .bar{flex:1;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden}
+  .voice-row .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--pink));border-radius:4px}
+  .num-big{font-size:22px;font-weight:800;color:var(--gold)}
+  .ui-frame{background:var(--bg3);border:1px solid var(--line);border-radius:12px;padding:14px;font-size:12px;font-family:Consolas,monospace;color:var(--text2);white-space:pre;overflow-x:auto;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>互动小说模式 — 实施方案评估
+<span class="sub">AI 驱动 Galgame · 对话改变剧情走向 · 全程角色语音 · NovelGenerator 扩展方案 · 2026-08-02</span></h1>
+
+<div class="toc">
+  <a href="#s1">1. 一句话定位 & 核心体验</a>
+  <a href="#s2">2. 最终效果演示（用户视角完整流程）</a>
+  <a href="#s3">3. 与现有系统的复用关系</a>
+  <a href="#s4">4. 总体架构设计</a>
+  <a href="#s5">5. 核心机制：剧情引擎（对话驱动分支）</a>
+  <a href="#s6">6. 核心机制：对话系统</a>
+  <a href="#s7">7. 语音系统：人设→音色自动匹配 + 玩家自选</a>
+  <a href="#s8">8. 质量保障体系（五问五答）</a>
+  <a href="#s9">9. 数据模型（互动存档）</a>
+  <a href="#s10">10. API 设计</a>
+  <a href="#s11">11. 前端 UI 设计（Galgame 界面）</a>
+  <a href="#s12">12. 成本与性能</a>
+  <a href="#s13">13. Android 适配</a>
+  <a href="#s14">14. 分阶段实施计划</a>
+  <a href="#s15">15. 风险与对策</a>
+  <a href="#s16">16. 结论与建议</a>
+</div>
+
+<!-- ═══════════ 1 ═══════════ -->
+<h2 id="s1">1. 一句话定位 & 核心体验</h2>
+
+<div class="card">
+<p><b>互动小说 = 现有写作管线 + 对话引擎 + 角色语音</b>：用户用现有系统生成世界观与开头，剧情推进到<b>关键节点</b>时暂停，进入<b>与角色自由对话</b>环节；玩家的对话内容被实时写入<b>剧情状态</b>，决定后续走向。全程对话有<b>角色专属语音</b>（edge-tts 自动匹配音色，玩家可换）。</p>
+</div>
+
+<p><b>与传统 Galgame 的本质区别：</b>传统 Galgame 是"预写选项树"——制作方写好所有分支，玩家在有限选项里选；互动小说是<b>AI 实时生成分支</b>——没有预写剧本，玩家的每一句话都是分支输入，剧情每次游玩都不一样。</p>
+
+<div class="grid2">
+  <div class="card">
+    <h3>传统 Galgame</h3>
+    <p class="muted">选项树（预写）</p>
+    <div class="flow">
+      <span class="fnode">选项A</span><span class="farrow">→</span><span class="fnode">结局1</span>
+    </div>
+    <div class="flow">
+      <span class="fnode">选项B</span><span class="farrow">→</span><span class="fnode">结局2</span>
+    </div>
+    <p class="muted">分支数固定，写多少是多少；开发成本随分支指数级上升。</p>
+  </div>
+  <div class="card">
+    <h3>AI 互动小说（本次方案）</h3>
+    <p class="muted">状态流（实时生成）</p>
+    <div class="flow">
+      <span class="fnode">对话</span><span class="farrow">→</span><span class="fnode">状态更新</span><span class="farrow">→</span><span class="fnode hl">LLM 生成下一场景</span>
+    </div>
+    <p class="muted">剧情状态（关系值/flag/目标）随对话演化，生成器每次产出新内容——<b>分支无限，永不重复</b>。</p>
+  </div>
+</div>
+
+<h3>核心体验闭环</h3>
+<div class="flow">
+  <span class="fnode hl">生成世界观</span><span class="farrow">→</span>
+  <span class="fnode">自动写开场</span><span class="farrow">→</span>
+  <span class="fnode hl">关键节点</span><span class="farrow">→</span>
+  <span class="fnode">与角色对话（带语音）</span><span class="farrow">→</span>
+  <span class="fnode">剧情状态改写</span><span class="farrow">→</span>
+  <span class="fnode hl">生成下一场景</span><span class="farrow">→</span>
+  <span class="fnode">…循环…</span>
+</div>
+
+<div class="ok"><b>关键点：</b>用户明确要求"朗读系统不朗读正文，只在对话时生效"——叙事段落纯文字展示（打字机效果），<b>只有角色台词自动播语音</b>，旁白静默。语音 = 对话专属，这也符合 Galgame 的经典体验（BGM 下的语音对白）。</div>
+
+<!-- ═══════════ 2 ═══════════ -->
+<h2 id="s2">2. 最终效果演示（用户视角完整流程）</h2>
+
+<p>下面是一次完整游玩的实际观感模拟（假设用户生成了一本《长安夜行录》武侠探案世界观）：</p>
+
+<div class="demo">
+<p class="nar"><span class="tag-line">场景 3 · 旁白（无语音）</span>长安城灯火渐熄，你受命潜入「锦绣坊」打探绣衣使失踪的线索。坊内烛影摇红，一名戴白纱斗笠的女子正独自斟茶。</p>
+
+<p><span class="tag-line">关键节点触发</span><span class="tag-line" style="background:rgba(63,185,80,.15);color:var(--green)">🔊 语音自动开启</span></p>
+
+<p class="nar"><span class="spk">🎙</span><span class="role">苏晚</span>（女 · 声线: 温柔御姐 · Xiaoxiao 音色，玩家可点 🎙 更换）：
+「这位客官，深更半夜来我这锦绣坊，是买布，还是买消息？」</p>
+<p class="muted">（台词边输入边自动播放语音，玩家可点 🔊 重播）</p>
+
+<p><span class="tag-line">玩家对话</span><span class="user">你：</span>「我不是来买消息的。三天前失踪的绣衣使，最后一晚来过这里——我要知道他见过谁。」</p>
+
+<p class="nar"><span class="spk">🎙</span><span class="role">苏晚</span>：「呵……绣衣使？我这坊里夜夜客人不断，记性再好，也记不住每一张脸呀。」</p>
+
+<p><span class="tag-line">玩家对话</span><span class="user">你：</span>「（压低声音）我认得他左手的银环。你这里若是没有，我转身就走——但金吾卫的人明天就会来。」</p>
+
+<p class="nar"><span class="spk">🎙</span><span class="role">苏晚</span>：（指尖一顿，茶水溅出半滴）「……坐。消息可以谈，就看你拿什么换。」</p>
+
+<p><span class="tag-line">玩家对话</span><span class="user">你：</span>「我身上只有一锭碎银。不过——我可以替你办一件事，任何事。」</p>
+
+<p class="nar"><span class="tag-line">🔊 语音：苏晚 · Xiaoxiao</span><span class="role">苏晚</span>：「成交。后日亥时，城隍庙东墙下等我。」</p>
+
+<p><span class="tag-line">对话结束 · 点击「继续剧情」</span></p>
+
+<p class="nar"><span class="tag-line">场景 4 · 旁白（无语音）</span>你转身离开锦绣坊。身后的灯火一寸寸熄灭，而你知道——今夜之后，长安城里多了一个愿意替你做任何事的女人，也多了一笔还不起的债……</p>
+
+<p><span class="tag-line">状态面板更新</span><span class="muted">关系：苏晚 +18（泛泛之交 → 有所交易）；flag：已承诺替苏晚办一件事；目标更新：查绣衣使失踪案（线索：苏晚 → 城隍庙东墙）</span></p>
+</div>
+
+<div class="ok"><b>体验要点：</b>① 叙事是"小说"（旁白优美、无语音）；② 关键时刻自动切对话（语音自动匹配人设）；③ 玩家说什么真的会改变剧情（说"威胁"与说"示好"走向完全不同）；④ 关系值/flag 可见，养成感强；⑤ 每一局的剧情都是新的，可反复重开。</div>
+
+<!-- ═══════════ 3 ═══════════ -->
+<h2 id="s3">3. 与现有系统的复用关系</h2>
+
+<table>
+<tr><th>现有资产</th><th>现状</th><th>互动小说中的用途</th><th>结论</th></tr>
+<tr><td><code>character_bible.json</code>（人物宝典）</td><td>✅ 已实现</td><td>互动角色的初始设定源：身份/性格/关系</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>CharacterProfiler / distill_character_profile</code>（人设蒸馏）</td><td>✅ 已实现</td><td>角色卡初始化（心智模型/表达DNA），对话扮演的核心人格约束</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>CharacterVoices</code>（声音卡）</td><td>✅ 已实现</td><td>角色口吻一致性（口头禅/句式/情绪表达），防角色漂移</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>/api/tts</code>（edge-tts 语音）</td><td>✅ 已实现</td><td>对话台词合成，voice/rate/pitch 三参数差异化声线</td><td><span class="tag t-part">扩展</span></td></tr>
+<tr><td><code>resilient_client</code>（LLM 韧性网关）</td><td>✅ 已实现</td><td>对话/剧情生成自动重试、限流、断线重连</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>readSSE + _sse_with_heartbeat</code>（流式基建）</td><td>✅ 已实现</td><td>场景生成 & 对话流式输出，零改造</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>chapter_summarizer</code>（摘要压缩）</td><td>✅ 已实现</td><td>剧情状态滚动压缩（防上下文膨胀）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>shared_memory / memory.py</code>（统一记忆层）</td><td>✅ 已实现</td><td>互动存档读写（乐观锁/缓存）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><b>对话引擎（多轮聊天）</b></td><td>❌ 未开发</td><td>玩家↔角色多轮对话、扮演提示词</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td><b>剧情引擎（场景生成/关键节点/状态流）</b></td><td>❌ 未开发</td><td>互动小说核心：场景推进 + 对话驱动分支</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td><b>人设→音色映射</b></td><td>❌ 未开发</td><td>角色性别/年龄/性格 → edge-tts 音色自动选择</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td><b>互动 UI（Galgame 界面）</b></td><td>❌ 未开发</td><td>对话气泡/状态面板/语音播放控制</td><td><span class="tag t-new">新建</span></td></tr>
+</table>
+
+<p><b>复用率评估：</b>底层资产（人设蒸馏、声音卡、TTS、流式、记忆）全部现成，<b>新增量集中在"对话引擎 + 剧情引擎 + 音色映射 + UI"四个领域</b>，总体复用率约 <b>55%</b>，预估增量开发 <b>6-9 人日</b>（含 Android 适配与联调）。</p>
+
+<div class="warn"><b>重要提醒：</b>上轮评估的「角色扮演养成系统」尚未编码——它需要的<b>对话引擎</b>正是本次互动小说的核心组件。<b>本次方案将对话引擎作为公共模块一次开发，两个功能（角色扮演养成 + 互动小说）同时受益</b>，避免重复建设。</div>
+
+<!-- ═══════════ 4 ═══════════ -->
+<h2 id="s4">4. 总体架构设计</h2>
+
+<svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" style="width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:12px;margin:12px 0">
+  <!-- 前端 -->
+  <rect x="30" y="30" width="280" height="120" rx="10" fill="#161b22" stroke="#d4af37" stroke-width="1.5"/>
+  <text x="170" y="58" text-anchor="middle" fill="#f0d77b" font-size="14" font-weight="bold">前端 · Galgame 界面（Vue3 SFC）</text>
+  <text x="170" y="84" text-anchor="middle" fill="#8b949e" font-size="11">叙事字幕（打字机）｜对话气泡</text>
+  <text x="170" y="102" text-anchor="middle" fill="#8b949e" font-size="11">🎙 语音播放/重播/换音色</text>
+  <text x="170" y="120" text-anchor="middle" fill="#8b949e" font-size="11">剧情状态面板｜继续剧情按钮</text>
+  <text x="170" y="140" text-anchor="middle" fill="#8b949e" font-size="10.5">复用 readSSE + 心跳断线重连</text>
+
+  <!-- 中间层 -->
+  <rect x="360" y="30" width="250" height="120" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="485" y="58" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="bold">互动小说 API Router</text>
+  <text x="485" y="82" text-anchor="middle" fill="#8b949e" font-size="11">/start /scene /chat /end-chat</text>
+  <text x="485" y="100" text-anchor="middle" fill="#8b949e" font-size="11">/state /voices /restart</text>
+  <text x="485" y="122" text-anchor="middle" fill="#8b949e" font-size="10.5">SSE 流式 + 心跳</text>
+
+  <!-- 后端引擎 -->
+  <rect x="660" y="30" width="270" height="220" rx="10" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
+  <text x="795" y="56" text-anchor="middle" fill="#bc8cff" font-size="13" font-weight="bold">交互引擎（新建核心）</text>
+  <text x="795" y="82" text-anchor="middle" fill="#e6edf3" font-size="11">🎬 剧情引擎 StoryDirector</text>
+  <text x="795" y="100" text-anchor="middle" fill="#8b949e" font-size="10">关键节点检测 · 场景生成 · 状态演化</text>
+  <text x="795" y="124" text-anchor="middle" fill="#e6edf3" font-size="11">💬 对话引擎 DialogueEngine</text>
+  <text x="795" y="142" text-anchor="middle" fill="#8b949e" font-size="10">多轮对话 · 角色卡注入 · 记忆压缩</text>
+  <text x="795" y="166" text-anchor="middle" fill="#e6edf3" font-size="11">🎙 语音导演 VoiceDirector</text>
+  <text x="795" y="184" text-anchor="middle" fill="#8b949e" font-size="10">人设→音色映射 · 玩家覆盖 · 预合成</text>
+  <text x="795" y="208" text-anchor="middle" fill="#e6edf3" font-size="11">📦 互动存档 InteractStore</text>
+  <text x="795" y="226" text-anchor="middle" fill="#8b949e" font-size="10">场景链 · 剧情状态 · 对话历史</text>
+
+  <!-- 底层复用 -->
+  <rect x="360" y="280" width="570" height="150" rx="10" fill="#161b22" stroke="#58a6ff" stroke-width="1.2" stroke-dasharray="5,4"/>
+  <text x="645" y="306" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="bold">现有系统复用层（零改造）</text>
+  <text x="420" y="334" text-anchor="middle" fill="#e6edf3" font-size="11">CharacterProfiler 人设蒸馏</text>
+  <text x="660" y="334" text-anchor="middle" fill="#e6edf3" font-size="11">CharacterVoices 声音卡</text>
+  <text x="860" y="334" text-anchor="middle" fill="#e6edf3" font-size="11">character_bible</text>
+  <text x="420" y="360" text-anchor="middle" fill="#e6edf3" font-size="11">/api/tts edge-tts</text>
+  <text x="660" y="360" text-anchor="middle" fill="#e6edf3" font-size="11">ResilientLLMClient</text>
+  <text x="860" y="360" text-anchor="middle" fill="#e6edf3" font-size="11">Summarizer 压缩</text>
+  <text x="420" y="386" text-anchor="middle" fill="#e6edf3" font-size="11">SharedMemory 记忆层</text>
+  <text x="660" y="386" text-anchor="middle" fill="#e6edf3" font-size="11">writer.py 叙事风格</text>
+  <text x="860" y="386" text-anchor="middle" fill="#e6edf3" font-size="11">genre_playbooks</text>
+
+  <!-- 数据 -->
+  <rect x="360" y="460" width="570" height="80" rx="10" fill="#161b22" stroke="#d4af37" stroke-width="1.2"/>
+  <text x="645" y="484" text-anchor="middle" fill="#f0d77b" font-size="12" font-weight="bold">数据存储（novels/{id}/interactive/）</text>
+  <text x="430" y="512" text-anchor="middle" fill="#8b949e" font-size="11">interactive_state.json 剧情状态</text>
+  <text x="660" y="512" text-anchor="middle" fill="#8b949e" font-size="11">scene_logs.jsonl 场景链</text>
+  <text x="860" y="512" text-anchor="middle" fill="#8b949e" font-size="11">voice_overrides.json 玩家音色</text>
+
+  <!-- 连线 -->
+  <line x1="310" y1="90" x2="360" y2="90" stroke="#d4af37" stroke-width="1.5"/>
+  <line x1="610" y1="90" x2="660" y2="90" stroke="#d4af37" stroke-width="1.5"/>
+  <line x1="795" y1="250" x2="795" y2="280" stroke="#58a6ff" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <line x1="645" y1="430" x2="645" y2="460" stroke="#d4af37" stroke-width="1.2"/>
+</svg>
+
+<h3>两条生成链路</h3>
+<div class="flow">
+  <span class="fnode hl">场景生成链路</span><span class="farrow">→</span>
+  <span class="fnode">State + 前情摘要 + 用户对话要点</span><span class="farrow">→</span>
+  <span class="fnode">LLM 生成叙事段落 + 台词</span><span class="farrow">→</span>
+  <span class="fnode">SSE 流式 → 前端打字机</span>
+</div>
+<div class="flow">
+  <span class="fnode hl">对话链路</span><span class="farrow">→</span>
+  <span class="fnode">用户输入</span><span class="farrow">→</span>
+  <span class="fnode">角色卡 + 声音卡 + 剧情状态</span><span class="farrow">→</span>
+  <span class="fnode">LLM 扮演回复（SSE）</span><span class="farrow">→</span>
+  <span class="fnode">台词落盘 → 异步预合成语音</span><span class="farrow">→</span>
+  <span class="fnode">播放 🎙</span>
+</div>
+
+<!-- ═══════════ 5 ═══════════ -->
+<h2 id="s5">5. 核心机制：剧情引擎（对话驱动分支）</h2>
+
+<h3>5.1 场景状态机</h3>
+<div class="flow">
+  <span class="fnode">SCENE 生成</span><span class="farrow">→</span>
+  <span class="fnode hl">NODE 关键节点检测</span><span class="farrow">→</span>
+  <span class="fnode">CHAT 自由对话</span><span class="farrow">→</span>
+  <span class="fnode">PACT 回扣</span><span class="farrow">→</span>
+  <span class="fnode">SCENE 下一场景…</span>
+</div>
+
+<table>
+<tr><th>状态</th><th>触发时机</th><th>行为</th></tr>
+<tr><td><code>SCENE</code></td><td>开场 / 对话结束后</td><td>LLM 生成 300-600 字叙事段落（旁白 + 角色台词），流式输出</td></tr>
+<tr><td><code>NODE</code></td><td>每段 SCENE 完成后</td><td>LLM 判定（或规则兜底：每 2 段必出）是否为关键节点 → 是则进入 CHAT</td></tr>
+<tr><td><code>CHAT</code></td><td>关键节点</td><td>进入对话模式，玩家与在场角色自由对话（无轮数上限）</td></tr>
+<tr><td><code>PACT</code></td><td>玩家点「继续剧情」</td><td>PACT 提取：对话 → 剧情事实（承诺/行动/秘密，逐条带来源）+ 关系值/目标变更，写回剧情状态（§5.3）</td></tr>
+</table>
+
+<h3>5.2 关键节点检测（NODE 判定）— 三重保障，确保"该停时必停、不该停不乱停"</h3>
+<p><b>问题：</b>LLM 自由判定不可靠——可能该进入对话时忘了停，也可能无事发生却频繁打断。<b>方案：规则预筛 + LLM 精判 + 玩家主动权</b>三层叠加，任何一层都能兜住另外两层的失误。</p>
+
+<div class="flow">
+  <span class="fnode hl">① 规则预筛（零成本）</span><span class="farrow">→</span>
+  <span class="fnode">② LLM 精判（只对候选）</span><span class="farrow">→</span>
+  <span class="fnode">③ 玩家主动介入（最终兜底）</span>
+</div>
+
+<table>
+<tr><th>层</th><th>机制</th><th>兜住什么</th></tr>
+<tr><td><b>① 规则预筛</b></td><td>硬规则无条件触发：开场第 1 段必触发；连续 2 段无对话必触发；场景中出现新角色/新冲突关键词（LLM 场景输出自带结构标签）必触发；玩家已进入对话则跳过</td><td>LLM 判定失效（返回异常/超时/乱答）时，节奏下限依然保证——每 2 段必有互动</td></tr>
+<tr><td><b>② LLM 精判</b></td><td>只对未命中硬规则的场景调用轻量判定：<code>{"is_node": bool, "chars": [...], "suggested_rounds": 1-8, "confidence": 0-1}</code>；<b>confidence&lt;0.4 且距上次对话&lt;2 段 → 不触发</b>（防止频繁打断）</td><td>规则误伤（为对话而对话的注水场景）——LLM 判断"这里真值得聊"才放行</td></tr>
+<tr><td><b>③ 玩家主动权</b></td><td>任何时刻（场景播放中/结束后）都有<b>「💬 我要说话」</b>按钮 → 立即进入对话模式；对话中随时可<b>「▶ 继续剧情」</b>提前退出</td><td>系统误判的最后兜底——玩家想聊永远能聊，不想聊永远能走</td></tr>
+</table>
+
+<p class="muted">成本：规则预筛命中率通常 40-60%，LLM 精判调用次数减半；三层任意一层通过即可进入对话。</p>
+
+<h3>5.3 对话如何真实作用到剧情 — PACT 因果闭环（核心创新点）</h3>
+
+<p><b>问题：</b>早期方案只做"MERGE 提取状态"（关系值/flag），存在三个致命漏洞：<b>① 提取不可靠</b>——玩家说的承诺可能被 LLM 漏提；<b>② 注入≠生效</b>——状态写进 state.json 了，下一段生成时 LLM 可能无视；<b>③ 玩家不可见</b>——关系值变了，剧情里却没体现，玩家感觉"说了等于白说"。</p>
+
+<p><b>方案：PACT 因果闭环</b>——提取剧情事实 → 事实生命周期 → 双通道注入 → 回扣验证 → 玩家可见，五环节层层咬合：</p>
+
+<div class="flow">
+  <span class="fnode hl">① PACT 提取</span><span class="farrow">→</span>
+  <span class="fnode">② 事实生命周期</span><span class="farrow">→</span>
+  <span class="fnode">③ 双通道注入</span><span class="farrow">→</span>
+  <span class="fnode">④ 回扣验证</span><span class="farrow">→</span>
+  <span class="fnode">⑤ 玩家可见</span>
+</div>
+
+<h3 style="margin-top:16px">① PACT 提取器（对话结束，1 次 LLM 调用）</h3>
+<p>不是简单提取关系值，而是从整段对话提取<b>结构化剧情事实</b>，每条带来源（对话轮次）与重要性：</p>
+
+<pre><span class="c">// PACT 提取输出（示例，替代原 MERGE）</span>
+{
+  <span class="s">"facts"</span>: [
+    { <span class="s">"type"</span>: <span class="s">"promise"</span>,   <span class="s">"subject"</span>: <span class="s">"player"</span>, <span class="s">"target"</span>: <span class="s">"苏晚"</span>,
+      <span class="s">"content"</span>: <span class="s">"答应替苏晚办一件事"</span>, <span class="s">"severity"</span>: <span class="s">"high"</span>, <span class="s">"source_chat"</span>: <span class="s">12</span> },
+    { <span class="s">"type"</span>: <span class="s">"action"</span>,    <span class="s">"subject"</span>: <span class="s">"player"</span>, <span class="s">"target"</span>: <span class="s">"苏晚"</span>,
+      <span class="s">"content"</span>: <span class="s">"威胁要用金吾卫压她"</span>, <span class="s">"severity"</span>: <span class="s">"medium"</span>, <span class="s">"source_chat"</span>: <span class="s">9</span> },
+    { <span class="s">"type"</span>: <span class="s">"secret"</span>,    <span class="s">"subject"</span>: <span class="s">"苏晚"</span>, <span class="s">"target"</span>: <span class="s">"player"</span>,
+      <span class="s">"content"</span>: <span class="s">"苏晚透露绣衣使是被人灭口的"</span>, <span class="s">"severity"</span>: <span class="s">"high"</span>, <span class="s">"source_chat"</span>: <span class="s">15</span> }
+  ],
+  <span class="s">"relations"</span>: { <span class="s">"苏晚"</span>: <span class="s">"+18"</span> },
+  <span class="s">"objective_update"</span>: <span class="s">"城隍庙东墙（后日亥时）"</span>,
+  <span class="s">"tone"</span>: <span class="s">"试探/交易"</span>
+}</pre>
+
+<p class="muted">PACT = Promise（承诺）/ Action（行动）/ Change（关系变化）/ Trust（秘密信任）。提取 prompt 硬约束：<b>玩家明确说过的话必须逐条提取，不得遗漏；空泛客套（"改天请你喝茶"）标记 low severity，不强制回扣。</b></p>
+
+<h3>② 事实生命周期（本地逻辑，零成本）</h3>
+<table>
+<tr><th>状态</th><th>含义</th><th>流转</th></tr>
+<tr><td><code>active</code></td><td>已提取、待兑现/待体现</td><td>默认初始态；携带 <code>due_scene</code>（应回扣场景号）</td></tr>
+<tr><td><code>fulfilled</code></td><td>剧情中已兑现/已呼应</td><td>回扣验证通过 → 标记，附 evidence（第几段兑现）</td></tr>
+<tr><td><code>expired</code></td><td>承诺超期未兑现</td><td>超过 due_scene 仍 active → 触发剧情后果（角色失望/关系下降），再标记</td></tr>
+<tr><td><code>broken</code></td><td>玩家违约（后续对话推翻承诺）</td><td>新对话检测到矛盾 → 标记，角色态度转变的依据</td></tr>
+</table>
+
+<h3>③ 双通道注入（每段场景生成）</h3>
+<ul>
+  <li><b>显式通道（硬挂钩）</b>：active facts 以"待兑现事项"结构化注入生成 prompt，并要求<b>「本段必须自然回扣至少 1 个 active fact」</b>——承诺被兑现/被提及/被利用，行动产生后果，秘密被利用或泄露</li>
+  <li><b>隐式通道（软影响）</b>：facts 进入角色行为决策——玩家威胁过苏晚 → 苏晚对玩家戒备 + 说话带刺；玩家守约 → 苏晚态度回暖。关系值只是"结果指标"，facts 才是"原因"</li>
+</ul>
+
+<h3>④ 回扣验证器（并入目标锚定检查，不增调用）</h3>
+<p>场景生成后，目标锚定检查<b>同时校验</b>："本段是否体现了至少一个 active fact？未体现 → 附修正指令重写 1 次；连续 2 段零回扣 → 强制插入一段'回扣场景'（调度器指定兑现哪个事实）。"<b>事实 vs 关系值 vs 场景原文三方一致才算闭环。</b></p>
+
+<h3>⑤ 玩家可见（UI 反馈闭环）</h3>
+<ul>
+  <li>状态面板分两栏：「剧情状态」（目标/flags/关系） + <b>「你的影响」</b>（facts 列表，带状态徽章：⏳ 待兑现 / ✅ 已兑现 / 💔 已破裂）</li>
+  <li>剧情中角色提到玩家之前说的话时，前端<b>高亮该句并标注「🔗 呼应你之前说过的」</b>——玩家直观看到"我的话在生效"</li>
+  <li>承诺兑现瞬间弹出提示：「✅ 你答应苏晚的事，兑现了」</li>
+</ul>
+
+<div class="ok"><b>为什么这样设计：</b>① 分支无限——事实是连续积累的，LLM 每次生成都是新剧情；② 成本线性——只存 facts 不存分支树，上下文固定 3-4k tokens；③ <b>玩家自由度最大且说话算数</b>——说什么都有效、且能被看见有效，而不是从 3 个选项里选完就忘。因果闭环四问：<b>提取了没漏？注入了没无视？回扣了没验证？验证了没让玩家看见？</b></div>
+
+<h3>5.4 场景生成 Prompt 组装</h3>
+<pre>system: 你是互动小说导演（风格注入：genre_playbooks + 小说 style）
+user:
+  剧情状态: {关系值/目标/地点}
+  待兑现事实（active facts）: {PACT 输出，硬挂钩：本段必须回扣至少 1 个}
+  前情摘要: {Summarizer 压缩的最近场景}
+  出场角色卡: {苏晚的人设卡摘要}
+  角色声音表: {CharacterVoices 声音卡}
+  → 输出叙事段落 + 角色台词（标注说话人）</pre>
+
+<p class="muted">固定 ≈ 3-4k tokens/轮，成本可控。每 5 个场景触发一次摘要压缩。</p>
+
+<h3>5.5 剧情走向不偏移 — 目标锚定 + 状态校验 + 熔断回拉</h3>
+<p><b>问题：</b>LLM 多轮生成会"忘目标"——写着写着主线丢了、flag 被无视、关系值前后矛盾。<b>方案：三管齐下。</b></p>
+
+<table>
+<tr><th>机制</th><th>实现</th><th>兜住什么</th></tr>
+<tr><td><b>目标锚定（每段）</b></td><td>场景生成 prompt 注入 <code>objective</code> + 最近 3 个 flag 的硬约束：「本段剧情必须推进或回扣当前目标，不可开无关新线」；生成完成后做一次<b>轻量回扣检查</b>（LLM 判断：本段是否推进目标？未推进则附带修正指令重写一次）</td><td>主线漂移、剧情注水、flag 遗失</td></tr>
+<tr><td><b>状态校验器（每 3 段）</b></td><td>复用 <code>consistency_validator</code> 思路：LLM 对比「最近 3 段场景原文 vs state.json」，输出<b>矛盾点列表</b>（角色立场反转无铺垫/地点时间线冲突/关系值不匹配）→ 矛盾点作为修正指令注入下一段生成</td><td>累积矛盾（第 10 段的设定忘了第 3 段）</td></tr>
+<tr><td><b>偏离熔断（连续 2 次校验不过）</b></td><td>触发「剧情回拉」：LLM 生成一段 <b>自洽解释/回调段落</b>（如"他忽然想起城隍庙的约定，调转马头"），并同步修正 state.json 中过期条目</td><td>严重偏线——不让错误剧情继续滚雪球</td></tr>
+<tr><td><b>存档快照（每段生成前）</b></td><td>每段场景开始前自动备份 state.json 到 <code>checkpoints/</code>（保留最近 10 份），前端提供「↩ 回退到上一场景」</td><td>兜底：即使校验没拦住，玩家可手动回退</td></tr>
+</table>
+
+<div class="ok"><b>节奏设计：</b>目标锚定 = 每段都做（0.5 次 LLM 轻调用）；状态校验 = 每 3 段做一次（约 1 次调用）；熔断 = 罕见路径。平均每场景新增 ≈0.8 次轻量 LLM 调用，成本增加 <b>15%</b> 换主线不飘。</div>
+
+<!-- ═══════════ 6 ═══════════ -->
+<h2 id="s6">6. 核心机制：对话系统</h2>
+
+<div class="card">
+<p><b>对话引擎 = 本次新建的公共模块</b>，同时服务「互动小说」和「角色扮演养成」两个功能。</p>
+</div>
+
+<h3>6.1 对话上下文组装（成本控制）</h3>
+<div class="flow">
+  <span class="fnode hl">角色卡（蒸馏）</span><span class="farrow">+</span>
+  <span class="fnode">声音卡</span><span class="farrow">+</span>
+  <span class="fnode">剧情状态摘要</span><span class="farrow">+</span>
+  <span class="fnode">最近 10 轮消息</span><span class="farrow">=</span>
+  <span class="fnode">≈3-4k tokens/轮</span>
+</div>
+
+<ul>
+  <li>每 50 轮触发摘要压缩（复用 <code>chapter_summarizer</code>），旧对话归档到 <code>chat_logs.jsonl</code>（append-only，可回溯）</li>
+  <li>对话采用 SSE 流式（复用 <code>_sse_with_heartbeat</code>），打字机效果 + 心跳保活</li>
+  <li>角色扮演 System Prompt 约束：忠于人设卡、禁 OOC、按声音卡说话</li>
+  <li>玩家输入自由文本（可含动作描写，如"（压低声音）…"）</li>
+</ul>
+
+<h3>6.2 对话中的多角色处理</h3>
+<p>关键节点可能有多位角色在场。方案：<b>单轮对话锁定"当前交流对象"</b>——玩家发消息时若 @角色名（如"@苏晚 你说呢"）或剧情指定，则切换交流对象；LLM 输出时若需第三方插话，允许一次回复中带多段 <code>[角色名]: 台词</code>（前端按角色分气泡 + 各自语音）。</p>
+
+<h3>6.3 角色人设不崩 — 四道防线</h3>
+<p><b>问题：</b>对话多轮后角色容易 OOC（Out of Character）——说话变味、性格漂移、与设定矛盾。<b>方案：四道防线逐层拦截。</b></p>
+
+<div class="flow">
+  <span class="fnode hl">① 人设卡三明治</span><span class="farrow">→</span>
+  <span class="fnode">② 动态行为档案</span><span class="farrow">→</span>
+  <span class="fnode">③ OOC 实时校验</span><span class="farrow">→</span>
+  <span class="fnode">④ 玩家标记纠正</span>
+</div>
+
+<table>
+<tr><th>防线</th><th>实现</th><th>兜住什么</th></tr>
+<tr><td><b>① 人设卡三明治（每轮都注入）</b></td><td>对话 prompt = 人设卡（心智模型/决策启发式/表达DNA/反模式/边界）+ 声音卡（口头禅/句式/情绪表现）+ 剧情状态，三层包裹。尤其利用女娲框架的<b>「反模式」字段</b>：显式列出"这个角色绝不会做的事/绝不会说的话"作为硬禁止</td><td>基础 OOC——性格底色错位、说话不像本人</td></tr>
+<tr><td><b>② 动态行为档案（每 20 轮）</b></td><td>生成"角色行为档案"：从最近 20 轮对话提炼该角色<b>表现出的具体行为倾向</b>（"对玩家从戒备转为信任，开始主动分享秘密"）——替代原始聊天记录进入上下文，比静态人设卡更贴当前关系阶段</td><td>长期对话的角色漂移（20 轮后行为惯性丢失）</td></tr>
+<tr><td><b>③ OOC 实时校验（每 10 轮抽检）</b></td><td>复用 <code>humanize_pipeline</code> 的检测器思路：一次轻量 LLM 调用检查最近 10 轮台词是否符合人设卡 + 行为档案，返回违规台词列表 + 原因 → 违规台词<b>打回重写 1 次</b>（带原因），仍不过则保留并标记给玩家</td><td>漏网之鱼——单句台词明显出戏</td></tr>
+<tr><td><b>④ 玩家标记纠正（人工闭环）</b></td><td>对话气泡旁「⚠️ 人设崩了？」按钮 → 记录该台词 + 玩家理由 → 写入角色卡<b>修正记录</b>，后续对话注入「此角色曾被指出 X 问题，注意避免」</td><td>AI 校验的盲区——玩家主观觉得不对劲的，AI 未必判得出</td></tr>
+</table>
+
+<div class="ok"><b>成本核算：</b>人设三明治 ≈ 0 成本（复用已有卡）；行为档案 20 轮 1 次调用（约 1.5k tokens）；OOC 抽检 10 轮 1 次调用；玩家标记零成本。<b>单轮对话平均成本增幅 &lt;10%</b>，换来的是角色从"不崩"到"越聊越像活人"。</div>
+
+<!-- ═══════════ 7 ═══════════ -->
+<h2 id="s7">7. 语音系统：人设→音色自动匹配 + 玩家自选</h2>
+
+<h3>7.1 人设→音色自动映射（VoiceDirector）</h3>
+<p>基于角色卡（性别/年龄/性格/身份）自动分配 edge-tts 音色 + 语速音调微调，<b>生成声音卡时同步产出</b>（LLM 推荐 + 规则兜底）：</p>
+
+<table>
+<tr><th>角色特征</th><th>推荐音色</th><th>语速/音调微调</th><th>听感</th></tr>
+<tr><td>温柔女性（默认）</td><td><code>zh-CN-XiaoxiaoNeural</code></td><td>+0% / +0Hz</td><td>温暖知性</td></tr>
+<tr><td>活泼少女</td><td><code>zh-CN-XiaoyiNeural</code></td><td>+10% / +20Hz</td><td>轻快俏皮</td></tr>
+<tr><td>可爱萝莉</td><td><code>zh-CN-XiaomengNeural</code></td><td>+15% / +30Hz</td><td>萌软甜美</td></tr>
+<tr><td>成熟御姐</td><td><code>zh-CN-XiaomoNeural</code></td><td>-5% / -10Hz</td><td>沉稳魅惑</td></tr>
+<tr><td>清冷仙子</td><td><code>zh-CN-XiaoxuanNeural</code></td><td>-10% / -20Hz</td><td>空灵疏离</td></tr>
+<tr><td>阳光青年（默认）</td><td><code>zh-CN-YunxiNeural</code></td><td>+0% / +0Hz</td><td>清爽温和</td></tr>
+<tr><td>少年</td><td><code>zh-CN-YunxiaNeural</code></td><td>+10% / +20Hz</td><td>清亮稚气</td></tr>
+<tr><td>沉稳大叔</td><td><code>zh-CN-YunjianNeural</code></td><td>-15% / -25Hz</td><td>浑厚低沉</td></tr>
+<tr><td>邪魅反派</td><td><code>zh-CN-YunyeNeural</code></td><td>-10% / -15Hz</td><td>低沉磁性</td></tr>
+<tr><td>旁白（不播放）</td><td>—</td><td>—</td><td>纯文字</td></tr>
+</table>
+
+<div class="flow">
+  <span class="fnode">声音卡生成（LLM）</span><span class="farrow">→</span>
+  <span class="fnode">输出推荐音色字段</span><span class="farrow">→</span>
+  <span class="fnode">规则校验/兜底（性别年龄）</span><span class="farrow">→</span>
+  <span class="fnode hl">角色声线配置 voice_overrides.json</span>
+</div>
+
+<h3>7.2 玩家自选音色（覆盖机制）</h3>
+<ul>
+  <li>每个对话气泡右侧 <b>🎙 按钮</b> → 弹出音色选择器（中文音色列表 + 试听按钮 + 语速/音调滑杆）</li>
+  <li>玩家的选择写入 <code>voice_overrides.json</code>（角色维度），此后该角色所有台词用玩家音色</li>
+  <li>可一键「恢复默认」（回到人设自动匹配）</li>
+</ul>
+
+<h3>7.3 播放策略（体验关键）</h3>
+<table>
+<tr><th>策略</th><th>实现</th><th>效果</th></tr>
+<tr><td><b>预合成流水线</b></td><td>台词落盘后立即异步请求 <code>/api/tts</code>（不等用户点击），TTS 磁盘缓存命中时 13ms 返回</td><td>几乎无感延迟</td></tr>
+<tr><td><b>自动播放</b></td><td>新台词到达且未播放时自动播（用户可全局静音）</td><td>"全程语音"的沉浸感</td></tr>
+<tr><td><b>重播</b></td><td>气泡上 🔊 按钮重播该句</td><td>听不清可回放</td></tr>
+<tr><td><b>打断策略</b></td><td>新台词到达时，若上一句未播完则淡出打断（避免堆积）</td><td>节奏自然</td></tr>
+<tr><td><b>降级</b></td><td><code>/api/tts</code> 503 → 自动切 Web Speech API（系统语音）</td><td>断网也能出声</td></tr>
+<tr><td><b>旁白静默</b></td><td>叙事段落不合成语音（按用户要求，朗读只对话题生效）</td><td>省成本 + 符合需求</td></tr>
+</table>
+
+<div class="ok"><b>成本：</b>对话台词通常 20-60 字，单次 TTS 首次约 2s 合成、52KB MP3，缓存后 13ms。一场完整对话（10-20 句台词）约 <b>0.5-1MB 流量</b>，缓存机制保证重复内容零成本。</div>
+
+<!-- ═══════════ 8 ═══════════ -->
+<h2 id="s8">8. 质量保障体系（五问五答）</h2>
+
+<div class="card">
+<p><b>本节回答五个"怎么保证"：</b>① 暂停节点合适；② 剧情走向不偏移；③ 角色人设不崩；④ 内容不出 bug；⑤ <b>对话内容真实有效作用到剧情</b>。前三个的机制分别在 §5.2 / §5.5 / §6.3 详述，第五问的 PACT 因果闭环在 §5.3 详述，本节汇总为一个<b>端到端质量护栏总览</b> + 第④问的完整工程防御清单 + 第⑤问的因果一致性护栏。</p>
+</div>
+
+<h3>8.1 端到端质量护栏总览</h3>
+
+<svg viewBox="0 0 960 430" xmlns="http://www.w3.org/2000/svg" style="width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:12px;margin:12px 0">
+  <!-- 流程主线 -->
+  <rect x="30" y="150" width="150" height="44" rx="8" fill="#161b22" stroke="#d4af37" stroke-width="1.5"/>
+  <text x="105" y="177" text-anchor="middle" fill="#f0d77b" font-size="12" font-weight="bold">SCENE 生成</text>
+  <line x1="180" y1="172" x2="220" y2="172" stroke="#8b949e" stroke-width="1.5"/>
+  <rect x="220" y="150" width="150" height="44" rx="8" fill="#161b22" stroke="#d4af37" stroke-width="1.5"/>
+  <text x="295" y="177" text-anchor="middle" fill="#f0d77b" font-size="12" font-weight="bold">目标锚定§5.5</text>
+  <line x1="370" y1="172" x2="410" y2="172" stroke="#8b949e" stroke-width="1.5"/>
+  <rect x="410" y="150" width="150" height="44" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="485" y="177" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="bold">NODE 判定§5.2</text>
+  <line x1="560" y1="172" x2="600" y2="172" stroke="#8b949e" stroke-width="1.5"/>
+  <rect x="600" y="150" width="150" height="44" rx="8" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
+  <text x="675" y="177" text-anchor="middle" fill="#bc8cff" font-size="12" font-weight="bold">CHAT 对话§6.3</text>
+  <line x1="750" y1="172" x2="790" y2="172" stroke="#8b949e" stroke-width="1.5"/>
+  <rect x="790" y="150" width="140" height="44" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="860" y="177" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="bold">PACT 回扣</text>
+
+  <!-- 护栏标注 -->
+  <rect x="30" y="40" width="300" height="66" rx="8" fill="#161b22" stroke="#f85149" stroke-width="1.2"/>
+  <text x="180" y="64" text-anchor="middle" fill="#f85149" font-size="12" font-weight="bold">护栏 A：内容格式（§8.2）</text>
+  <text x="180" y="84" text-anchor="middle" fill="#8b949e" font-size="10.5">标记语言硬约束 · schema 校验 · 重试/降级</text>
+  <line x1="180" y1="106" x2="180" y2="150" stroke="#f85149" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <rect x="630" y="40" width="300" height="66" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.2"/>
+  <text x="780" y="64" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="bold">护栏 B：状态机与超时（§8.3）</text>
+  <text x="780" y="84" text-anchor="middle" fill="#8b949e" font-size="10.5">每步超时熔断 · 强制出口 · 断线恢复</text>
+  <line x1="780" y1="106" x2="780" y2="150" stroke="#58a6ff" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <rect x="30" y="280" width="300" height="66" rx="8" fill="#161b22" stroke="#d4af37" stroke-width="1.2"/>
+  <text x="180" y="304" text-anchor="middle" fill="#d4af37" font-size="12" font-weight="bold">护栏 C：存档与回退（§8.4）</text>
+  <text x="180" y="324" text-anchor="middle" fill="#8b949e" font-size="10.5">原子写 · 快照回退 · 日志重放修复</text>
+  <line x1="180" y1="280" x2="180" y2="236" stroke="#d4af37" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <rect x="630" y="280" width="300" height="66" rx="8" fill="#161b22" stroke="#bc8cff" stroke-width="1.2"/>
+  <text x="780" y="304" text-anchor="middle" fill="#bc8cff" font-size="12" font-weight="bold">护栏 D：测试压测（§8.5）</text>
+  <text x="780" y="324" text-anchor="middle" fill="#8b949e" font-size="10.5">预置极端剧本 · 自动化回归</text>
+  <line x1="780" y1="280" x2="780" y2="236" stroke="#bc8cff" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <!-- 玩家兜底 -->
+  <rect x="290" y="360" width="380" height="46" rx="10" fill="rgba(63,185,80,.08)" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="480" y="382" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="bold">终极护栏：玩家可控</text>
+  <text x="480" y="398" text-anchor="middle" fill="#8b949e" font-size="10.5">「我要说话」随时介入 ·「回退一步」随时反悔 ·「人设崩了」随时举报</text>
+  <line x1="480" y1="360" x2="480" y2="330" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="4,3"/>
+</svg>
+
+<h3>8.2 护栏 A：内容格式硬约束（防"生成垃圾")</h3>
+<ul>
+  <li><b>标记语言而非自由 JSON</b>：场景/对话输出统一用轻量标记（<code>【旁白】…</code> / <code>【苏晚】…</code> / <code>【动作】…</code>），比 JSON 更抗 LLM 格式漂移，解析失败率低一个数量级</li>
+  <li><b>schema 校验</b>：解析后校验必填字段（说话人/正文），缺字段用默认值兜底（缺说话人 → 归入旁白），<b>解析失败自动重试 1 次</b>（复用 ResilientLLMClient 重试）</li>
+  <li><b>降级链</b>：LLM 返回空/异常 → 重试 → 仍失败则生成固定兜底文本（"…远处传来更鼓声，故事还在继续"），绝不抛 500</li>
+  <li><b>输入校验</b>：玩家输入限长（500 字）、非法字符过滤、空输入拦截</li>
+</ul>
+
+<h3>8.3 护栏 B：状态机与超时（防卡死/防断线）</h3>
+<table>
+<tr><th>场景</th><th>熔断策略</th></tr>
+<tr><td>场景生成超时</td><td>120s 超时 → 中止并返回已生成部分（半截场景也能渲染）+ 提示重试</td></tr>
+<tr><td>节点判定失败</td><td>规则兜底（连续 2 段必触发），绝不阻塞主流程</td></tr>
+<tr><td>对话卡住</td><td>单轮 60s 超时 → 流式结束并显示「角色还在思考…可再试一次」；「▶ 继续剧情」<b>任何时候可用</b>，可强制退出对话进入 PACT 提取</td></tr>
+<tr><td>断线重连</td><td>SSE 心跳（5s ping，沿用批量生成方案）+ 前端自动重连 2 次 → 重连后 <code>GET /state</code> 恢复渲染（状态在服务端，不丢进度）</td></tr>
+<tr><td>并发限流</td><td>互动模式限 2 并发/用户（LLM 调用排队），触发 429 时前端提示稍等而非报错</td></tr>
+</table>
+
+<h3>8.4 护栏 C：存档与回退（防数据损坏）</h3>
+<ul>
+  <li><b>原子写</b>：state.json 写入用"临时文件 + rename"（复用记忆层乐观锁），崩溃不会写坏一半</li>
+  <li><b>快照回退</b>：每段场景生成前自动快照（保留 10 份），前端「↩ 回退一步」= 恢复上一快照</li>
+  <li><b>日志重放修复</b>：state.json 校验失败（schema 损坏）→ 从 <code>scene_logs.jsonl</code>（append-only 场景原文）重放重建状态，存档永不丢失</li>
+  <li><b>语音缓存清理</b>：tts_cache 7 天 TTL 自动过期（已有），超限（如 &gt;500MB）按最旧清理</li>
+</ul>
+
+<h3>8.5 护栏 D：测试压测（上线前必过）</h3>
+<p>预置 <b>6 组极端剧本</b>自动化回归（Phase 1 交付前跑通）：</p>
+<table>
+<tr><th>剧本</th><th>验证点</th></tr>
+<tr><td>全程不对话</td><td>规则兜底强制节点出现；连续 10 段剧情主线仍推进（目标锚定生效）</td></tr>
+<tr><td>全程狂对话（每节点聊 20+ 轮）</td><td>50 轮摘要压缩正确；对话不崩、剧情能继续；成本不失控</td></tr>
+<tr><td>恶意输入（超长/乱码/空消息/刷 @）</td><td>输入校验拦截；不抛 500；流程不死</td></tr>
+<tr><td>断网重连（场景中途断）</td><td>心跳断线 → 前端重连 → /state 恢复，进度不丢</td></tr>
+<tr><td>快速重开 ×3</td><td>restart 清理干净，旧存档备份完整，无残留状态</td></tr>
+<tr><td><b>对话因果闭环（新增）</b></td><td>玩家许下 3 个承诺 → 后续 10 段剧情：3 个承诺<b>全部被回扣或标记破裂</b>（无一遗漏）；玩家违约 → 角色态度可感知变化；状态面板「你的影响」显示正确徽章</td></tr>
+</table>
+
+<h3>8.6 护栏 E：对话→剧情因果一致性（第五问专属）</h3>
+<p>针对"对话内容真实有效作用到剧情"，在 PACT 闭环（§5.3）之上再加三道运行时护栏：</p>
+<table>
+<tr><th>护栏</th><th>实现</th><th>兜住什么</th></tr>
+<tr><td><b>提取完整性</b></td><td>PACT 提取 prompt 含反例约束：<b>「玩家的明确承诺/行动/透露的信息必须逐条提取，一条都不能漏；宁可多提 low severity 项」</b>；提取后做一次 <b>round-trip 校验</b>（轻量：把 facts 摘要给 LLM，问"对话中还有没有重要事实没被提取"，防漏网）</td><td>提取遗漏——说了话但没进入剧情状态</td></tr>
+<tr><td><b>注入可见性</b></td><td>active facts 在生成 prompt 中置于<b>「必回扣」专区</b>（独立于普通上下文），LLM 输出后由回扣验证器确认"本段提到哪个 fact"；验证器结果回写 fact 的 <code>evidence</code> 字段</td><td>注入被无视——状态里有但生成时当不存在</td></tr>
+<tr><td><b>玩家可感知</b></td><td>「你的影响」面板 + 台词高亮「🔗 呼应」标注 + 兑现/破裂推送（§5.3 ⑤）——<b>生效与否玩家一眼可见，任何环节失效都会以"玩家发现"形式暴露</b></td><td>黑盒失效——玩家以为系统没听到自己说话</td></tr>
+</table>
+
+<div class="ok"><b>质量保障成本汇总：</b>内容格式 + 超时 + 存档 + 测试 ≈ 1.5-2 人日（Phase 1 内），运行时 LLM 成本增幅约 <b>20-25%</b>（目标锚定+回扣验证 0.8 次 + PACT 提取 1 次/对话 + OOC 抽检 0.1 次 + 校验 0.3 次/场景），换来的是<b>五问全部有明确兜底</b>——尤其是第五问：<b>说了的话必被提取、必被注入、必被回扣、必被玩家看见</b>。</div>
+
+<!-- ═══════════ 9 ═══════════ -->
+<h2 id="s9">9. 数据模型（互动存档）</h2>
+
+<pre>novels/{novel_id}/interactive/
+├── state.json          <span class="c"># 剧情状态（核心，原子写）</span>
+├── scene_logs.jsonl    <span class="c"># 场景链（append-only，可重放重建）</span>
+├── chat_logs.jsonl     <span class="c"># 对话原文（append-only）</span>
+├── voice_overrides.json <span class="c"># 玩家音色覆盖</span>
+└── checkpoints/        <span class="c"># state 快照 ×10（每段生成前自动备份）</span></pre>
+
+<pre>{
+  <span class="s">"novel_id"</span>: <span class="s">"..."</span>, <span class="s">"title"</span>: <span class="s">"长安夜行录"</span>,
+  <span class="s">"scene_num"</span>: <span class="s">12</span>, <span class="s">"updated_at"</span>: <span class="s">"..."</span>,
+  <span class="s">"summary"</span>: <span class="s">"前情摘要（滚动压缩）"</span>,
+  <span class="s">"state"</span>: {
+    <span class="s">"location"</span>: <span class="s">"锦绣坊"</span>,
+    <span class="s">"objective"</span>: <span class="s">"查绣衣使失踪案 → 城隍庙东墙"</span>,
+    <span class="s">"flags"</span>: [<span class="s">"已结识苏晚"</span>, <span class="s">"已承诺替苏晚办一件事"</span>],
+    <span class="s">"relations"</span>: { <span class="s">"苏晚"</span>: <span class="s">"62"</span>, <span class="s">"陈舵主"</span>: <span class="s">"35"</span> },
+    <span class="s">"inventory"</span>: [<span class="s">"密信"</span>]
+  },
+  <span class="s">"facts"</span>: [   <span class="c">// PACT 提取的剧情事实（对话→剧情的因果纽带）</span>
+    { <span class="s">"id"</span>: <span class="s">"f3"</span>, <span class="s">"type"</span>: <span class="s">"promise"</span>, <span class="s">"content"</span>: <span class="s">"替苏晚办一件事"</span>,
+      <span class="s">"status"</span>: <span class="s">"active"</span>, <span class="s">"due_scene"</span>: <span class="s">7</span>, <span class="s">"evidence"</span>: [] }
+  ],
+  <span class="s">"casts"</span>: {   <span class="c">// 出场角色（懒加载：用到才蒸馏人设卡）</span>
+    <span class="s">"苏晚"</span>: { <span class="s">"profile"</span>: <span class="s">"{...人设卡...}"</span>, <span class="s">"voice"</span>: <span class="s">"zh-CN-XiaomoNeural"</span> }
+  },
+  <span class="s">"recent_scenes"</span>: [<span class="s">"...最近 1-2 段场景原文（上下文窗口）"</span>],
+  <span class="s">"recent_chat"</span>: [<span class="s">"...最近 10 轮对话"</span>]
+}</pre>
+
+<!-- ═══════════ 10 ═══════════ -->
+<h2 id="s10">10. API 设计</h2>
+
+<table>
+<tr><th>接口</th><th>方法/路径</th><th>说明</th></tr>
+<tr><td><code>进入互动模式</code></td><td><code>POST /api/novels/{id}/interactive/start</code></td><td>初始化 state.json（从 bible 取角色，生成开场场景，SSE）</td></tr>
+<tr><td><code>推进剧情</code></td><td><code>POST /api/novels/{id}/interactive/scene</code></td><td>生成下一场景（SSE，body 携带可选的对话要点）</td></tr>
+<tr><td><code>关键节点判定</code></td><td><code>POST /api/novels/{id}/interactive/scene/advance</code></td><td>场景完成后判定是否进入对话（SSE，返回 is_node）</td></tr>
+<tr><td><code>对话</code></td><td><code>POST /api/novels/{id}/interactive/chat</code></td><td>多轮对话（SSE，body: 玩家消息 + @角色），响应带角色名 → 前端自动语音</td></tr>
+<tr><td><code>结束对话</code></td><td><code>POST /api/novels/{id}/interactive/end-chat</code></td><td>PACT 提取：对话 → 剧情事实（facts）+ 状态变更，返回更新后的 state</td></tr>
+<tr><td><code>剧情状态</code></td><td><code>GET /api/novels/{id}/interactive/state</code></td><td>读取当前存档（断线重连/刷新恢复）</td></tr>
+<tr><td><code>音色配置</code></td><td><code>GET/PUT /api/novels/{id}/interactive/voices</code></td><td>读取/覆盖角色音色（玩家自选）</td></tr>
+<tr><td><code>重开</code></td><td><code>POST /api/novels/{id}/interactive/restart</code></td><td>重置互动存档（保留旧存档备份）</td></tr>
+<tr><td><code>语音（已有）</code></td><td><code>POST /api/tts</code></td><td>台词合成，voice/rate/pitch 直接复用</td></tr>
+</table>
+
+<div class="card"><p><b>实现位置：</b>新建 <code>backend/api/routers/interactive.py</code> + <code>backend/core/interactive/</code> 包（story_director.py / dialogue_engine.py / voice_director.py / interact_store.py），engine.py 挂载入口。SSE 全部走 <code>_sse_with_heartbeat</code>（沿用批量生成的断线重连经验）。</p></div>
+
+<!-- ═══════════ 11 ═══════════ -->
+<h2 id="s11">11. 前端 UI 设计（Galgame 界面）</h2>
+
+<p>书架 → 小说详情新增<b>「🎮 互动模式」</b>入口，进入独立页面（复用现有 view 切换机制）。</p>
+
+<div class="ui-frame">┌──────────────────────────────────────────┐
+│ 🎮 长安夜行录 · 互动模式         [退出存档]  │
+│ ┌──────────────────────────────────────┐  │
+│ │                                      │  │
+│ │        （角色立绘占位区，v1 无图）       │  │
+│ │                                      │  │
+│ ├──────────────────────────────────────┤  │
+│ │ 苏晚  🎙 Xiaomo  🔊             [换音色]│  │
+│ │ 「这位客官，深更半夜来我这锦绣坊，       │  │
+│ │   是买布，还是买消息？」                │  │
+│ │  ── 旁白 ── 你转身离开…（无语音）      │  │
+│ ├──────────────────────────────────────┤  │
+│ │ [输入你的回应……  (可@苏晚)]  [发送]     │  │
+│ │                    [▶ 继续剧情]        │  │
+│ ├──────────────────────────────────────┤  │
+│ │ 剧情状态: 目标🔍绣衣使 | 苏晚 ♥62      │  │
+│ │ flags: 已承诺替苏晚办一件事             │  │
+│ └──────────────────────────────────────┘  │
+└──────────────────────────────────────────┘</div>
+
+<h3>组件清单</h3>
+<table>
+<tr><th>组件</th><th>功能</th><th>复用度</th></tr>
+<tr><td>叙事字幕区</td><td>打字机效果，纯文字（无语音）</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td>对话气泡</td><td>角色名 + 台词 + 🔊 重播 + 🎙 换音色 + 自动语音播放</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td>音色选择器</td><td>音色列表 + 试听 + 语速/音调滑杆 + 恢复默认</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td>状态面板</td><td>目标/关系值/flags/道具（养成反馈感）</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td>对话输入框</td><td>自由文本 + @角色 切换交流对象</td><td><span class="tag t-new">新建</span></td></tr>
+<tr><td>SSE 读取</td><td>流式渲染 + 心跳 + 断线重连（2 次）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td>语音播放器</td><td>Audio 播放 + 打断 + 降级 Web Speech API</td><td><span class="tag t-reuse">改造复用</span></td></tr>
+</table>
+
+<!-- ═══════════ 12 ═══════════ -->
+<h2 id="s12">12. 成本与性能</h2>
+
+<div class="grid2">
+  <div class="stat"><div class="num">7-11</div><div class="lbl">LLM 调用 / 场景（场景1+目标锚定/回扣验证1+节点0.5+对话2-5+PACT提取1+校验0.3+OOC抽检0.1）</div></div>
+  <div class="stat"><div class="num">≈8-15s</div><div class="lbl">场景推进延迟（LLM 生成 + 流式，校验走后台）</div></div>
+  <div class="stat"><div class="num">2-6</div><div class="lbl">TTS 合成 / 场景（台词数）</div></div>
+  <div class="stat"><div class="num">0.5-1MB</div><div class="lbl">语音流量 / 完整对话（缓存命中后近零）</div></div>
+</div>
+
+<table>
+<tr><th>项</th><th>说明</th></tr>
+<tr><td>单场景 token</td><td>输入 3-4k + 输出 0.8-1.5k ≈ 5-6k tokens/场景（含质量保障调用，DeepSeek 成本约 ¥0.001-0.002）</td></tr>
+<tr><td>语音成本</td><td>edge-tts 完全免费（微软 Edge 同源），零 API Key</td></tr>
+<tr><td>质量保障开销</td><td>目标锚定（每段 0.8 次轻调用）+ 状态校验（每 3 段 1 次）+ OOC 抽检（每 10 轮 1 次）≈ <b>LLM 成本 +20-25%</b>，换主线不飘 + 人设不崩</td></tr>
+<tr><td>并发</td><td>互动模式单用户低频请求，现有 60 req/min 限流无压力；对话流式复用现有 SSE 心跳；限 2 并发/用户防 LLM 排队堆积</td></tr>
+<tr><td>存储</td><td>单存档 <b>&lt; 1MB</b>（scene/chat logs + 10 份快照 <b>&lt; 5MB</b>），可长期保留</td></tr>
+</table>
+
+<!-- ═══════════ 13 ═══════════ -->
+<h2 id="s13">13. Android 适配</h2>
+
+<ul>
+  <li><code>edge-tts</code> 已打入 APK（v2.5.2 已验证：edge_tts 23 文件 + aiohttp 79 文件入包）<span class="tag t-reuse">零改动</span></li>
+  <li>语音播放：前端 HTML5 Audio 在 Android WebView 正常（需在 <code>onShow</code>/用户手势后触发首次播放——<b>自动播放策略注意</b>：首句由用户点「开始互动」触发，天然满足手势要求）</li>
+  <li>Web Speech API 降级在 Android WebView 部分机型不可用 → 降级策略为「静默 + 显示 🔊 可点重播」</li>
+  <li>前端同步双拷贝（根 <code>web/</code> + <code>backend/web/</code>）+ 重新打包 APK（沿用 v2.5.2 流程）</li>
+</ul>
+
+<!-- ═══════════ 14 ═══════════ -->
+<h2 id="s14">14. 分阶段实施计划</h2>
+
+<div class="phase">
+  <h4>Phase 1 — 核心可玩（4.5-5.5 人日）</h4>
+  <p>① 对话引擎（DialogueEngine + 角色卡注入 + chat_logs + OOC 抽检）→ ② 剧情引擎（StoryDirector 场景生成 + 目标锚定 + 节点检测三层保障 + <b>PACT 因果闭环</b>：事实提取/生命周期/双通道注入/回扣验证）→ ③ 互动 API Router + 存档（原子写 + 快照）→ ④ 前端基础界面（字幕 + 对话 + 输入框 + 我要说话/继续剧情 + 「你的影响」面板）→ ⑤ <b>质量护栏 A/B/C/E + 6 组压力剧本测试</b></p>
+  <p class="muted">交付：PC 端可完整游玩一局（纯文本版），五问保障机制全部就位——尤其是"说话算数"的因果闭环。</p>
+</div>
+
+<div class="phase">
+  <h4>Phase 2 — 语音完整化（1.5-2 人日）</h4>
+  <p>① VoiceDirector 人设→音色映射 → ② 预合成流水线 + 自动播放/重播/打断 → ③ 音色选择器（玩家自选 + 试听 + 恢复默认）→ ④ 状态面板 UI + 玩家标记（人设崩了/回退一步）</p>
+  <p class="muted">交付：全程对话语音（人设匹配 + 玩家自选），PC 端体验完整。</p>
+</div>
+
+<div class="phase">
+  <h4>Phase 3 — 打磨与 Android（2 人日）</h4>
+  <p>① Android 端联调（自动播放手势/音质/断线重连）→ ② 角色扮演养成系统接入同一对话引擎 → ③ 语音缓存清理策略 → ④ 重新打包 APK</p>
+  <p class="muted">交付：双端上线，互动小说 + 角色扮演双功能就绪。</p>
+</div>
+
+<p><b>总工作量：7.5-9 人日</b>（一人全职约 2 周）。</p>
+
+<!-- ═══════════ 15 ═══════════ -->
+<h2 id="s15">15. 风险与对策</h2>
+
+<table>
+<tr><th>风险</th><th>等级</th><th>对策</th></tr>
+<tr><td>剧情发散失控（LLM 忘了前情）</td><td><span class="tag t-part">中</span></td><td>目标锚定（每段回扣检查）+ 状态校验器（每 3 段矛盾扫描）+ 偏离熔断（回调段落）+ 快照回退（§5.5）</td></tr>
+<tr><td>关键节点该停不停 / 乱停</td><td><span class="tag t-part">中</span></td><td>三层保障：规则预筛兜节奏下限 + LLM 精判防注水 + 玩家「我要说话/继续剧情」完全兜底（§5.2）</td></tr>
+<tr><td>角色 OOC / 台词同质</td><td><span class="tag t-part">中</span></td><td>四道防线：人设卡三明治（含反模式禁止项）+ 动态行为档案 + OOC 抽检打回 + 玩家标记纠正（§6.3）</td></tr>
+<tr><td>语音延迟破坏沉浸感</td><td><span class="tag t-part">中</span></td><td>预合成流水线 + 磁盘缓存（实测 13ms 命中）+ 台词短（20-60 字 2s 合成）；极端情况降级静默重播</td></tr>
+<tr><td>对话轮数失控（用户无限聊）</td><td><span class="tag t-reuse">低</span></td><td>无上限但每轮成本仅 ~1.5k tokens；50 轮摘要压缩防膨胀；「继续剧情」随时可点</td></tr>
+<tr><td>Android WebView 自动播放限制</td><td><span class="tag t-part">中</span></td><td>首句由用户点击触发；后续播放延续同一手势上下文；失败显示 🔊 手动播放</td></tr>
+<tr><td>对话内容没作用到剧情（提取遗漏/注入被无视）</td><td><span class="tag t-part">中</span></td><td>PACT 因果闭环五环节：结构化提取（防漏）+ 事实生命周期（active→fulfilled/expired/broken）+ 双通道注入（硬挂钩必回扣）+ 回扣验证器（三方一致）+ 玩家可见（面板/高亮/推送），任何环节失效都会暴露给玩家（§5.3 / §8.6）</td></tr>
+<tr><td>互动存档损坏</td><td><span class="tag t-reuse">低</span></td><td>原子写（tmp+rename）+ 每段快照（保留 10 份）+ scene_logs 重放重建，存档永不丢失（§8.4）</td></tr>
+<tr><td>质量保障增加 LLM 成本</td><td><span class="tag t-reuse">低</span></td><td>全部用轻量调用（几百 token）+ 规则预筛减少 LLM 判定次数，总增幅 ~20-25%，每场景仍不到 ¥0.002</td></tr>
+</table>
+
+<!-- ═══════════ 16 ═══════════ -->
+<h2 id="s16">16. 结论与建议</h2>
+
+<div class="card">
+<p><b>结论：方案可行，且与现有系统契合度极高。</b>互动小说模式本质上是把已有的三块资产（人设蒸馏、声音卡、免费 TTS）拼成一个新的交互范式——从"AI 帮你写小说"升级为"AI 陪你演小说"。</p>
+
+<p><b>关于五个"怎么保证"的最终答案：</b></p>
+<ul>
+  <li><b>暂停节点合适</b> → 规则预筛（保节奏下限）+ LLM 精判（防注水）+ 玩家主动介入（完全兜底），三层叠加，任何一层失误都不影响体验；</li>
+  <li><b>剧情不偏移</b> → 目标锚定每段回扣 + 状态校验器扫矛盾 + 偏离熔断回调 + 快照回退，主线漂移有 4 道拦截；</li>
+  <li><b>人设不崩</b> → 人设卡三明治（含反模式禁止项）+ 动态行为档案 + OOC 抽检打回 + 玩家标记纠正，OOC 有 4 道防线；</li>
+  <li><b>内容不出 bug</b> → 标记语言硬约束 + 超时熔断 + 原子写/快照/日志重放 + 6 组压力剧本测试，工程防御 4 类护栏全覆盖；</li>
+  <li><b>对话真实作用到剧情</b> → PACT 因果闭环：结构化提取（承诺/行动/秘密逐条不遗漏）→ 事实生命周期（待兑现/已兑现/破裂）→ 双通道注入（硬挂钩必回扣 + 软影响角色态度）→ 回扣验证（三方一致才闭环）→ 玩家可见（面板/高亮/推送）——<b>说了的话必被提取、必被注入、必被回扣、必被看见</b>。</li>
+</ul>
+
+<p><b>建议：</b></p>
+<ul>
+  <li><b>先做 Phase 1 文本版验证手感</b>——对话驱动分支的"剧情味"是否成立，一个周末即可验证，再投入语音打磨；</li>
+  <li><b>质量保障机制必须进 Phase 1</b>——五问的保障不是"上线后优化"，而是架构的一部分（目标锚定/节点三层保障/OOC 防线/PACT 因果闭环都在 Phase 1 内实现）；</li>
+  <li><b>对话引擎独立成公共模块</b>——一次开发，互动小说 + 角色扮演养成双功能受益，避免将来重复建设；</li>
+  <li><b>语音按用户要求只对话题生效</b>——旁白静默既符合需求又省一半 TTS 调用；</li>
+  <li>音色映射先做<b>规则版</b>（性别/年龄 → 音色表），LLM 推荐版作为 Phase 2 增强——规则版 0 成本且已覆盖 90% 场景。</li>
+</ul>
+
+<p class="muted">技术栈全部基于已验证组件（DeepSeek + edge-tts + SSE + Vue3），无新技术风险。预估总投入 7.5-9 人日（含质量保障），两周末可完成全功能。</p>
+</div>
+
+</div>
+</body>
+</html>
