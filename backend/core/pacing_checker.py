@@ -179,6 +179,13 @@ class PacingChecker:
             "max_consecutive_dialogue": max_consecutive,
             "action_ratio": action_ratio,
             "shuangdian_per_1000": shuangdian_per_1000,
+            # v2.3.7 活人感检测
+            "dialogue_tag_density": round(
+                len(re.findall(r'说道|笑道|答道|问道|喝道|喊道|说道|冷冷道|淡淡道|沉声道|哼道|叹道|低声道|冷声|柔声|厉声|平静道|开口道|接口道|接过话|说道|开口', text)) / max(len(text), 1) * 1000, 1),
+            "emotion_statement_density": round(
+                len(re.findall(r'他感到|她感到|心中涌起|内心充满|心里升起|只觉得|莫名地|突然觉得|感到一阵|一股.*涌上|眼中闪过一丝|眼底闪过一丝|心里一沉|心头一紧', text)) / max(len(text), 1) * 1000, 1),
+            "filler_desc_density": round(
+                len(re.findall(r'缓缓|轻轻|微微|静静|默默|淡淡|悄悄|慢慢', text)) / max(len(text), 1) * 1000, 1),
         }
 
     def build_pacing_prompt(self, result: dict) -> str:
@@ -240,6 +247,19 @@ class PacingChecker:
             if stats["action_ratio"] < 25: issues.append(f"动作不足({stats['action_ratio']}%)"); score -= 15
             if stats["shuangdian_per_1000"] < 5: issues.append(f"爽点不足({stats['shuangdian_per_1000']}/千字)"); score -= 15
             if stats["avg_sentence_len"] < 10 and stats["sentence_count"] > 30: issues.append(f"碎片化(均{stats['avg_sentence_len']}字)"); score -= 10
-        
+
+        # ── v2.3.7 活人感检测（AI 味重灾区，所有模式生效）──
+        # 对话标签滥用：每千字 > 6 个"说道/笑道/冷冷道" = AI 腔
+        if stats["dialogue_tag_density"] > 6:
+            issues.append(f"对话标签过多({stats['dialogue_tag_density']}/千字·说道/笑道类)"); score -= 20
+        elif stats["dialogue_tag_density"] > 4:
+            issues.append(f"对话标签偏多({stats['dialogue_tag_density']}/千字)"); score -= 10
+        # 情绪直接陈述：每千字 > 3 个"他感到/心中涌起/眼底闪过" = 解释式写作
+        if stats["emotion_statement_density"] > 3:
+            issues.append(f"情绪直述过多({stats['emotion_statement_density']}/千字·他感到/涌起类)"); score -= 15
+        # 填充副词：每千字 > 12 个"缓缓/轻轻/微微/淡淡" = 面面俱到的 AI 描写
+        if stats["filler_desc_density"] > 12:
+            issues.append(f"填充描写词过多({stats['filler_desc_density']}/千字·缓缓/轻轻类)"); score -= 15
+
         passed = score >= 60
         return {"pass": passed, "issues": issues, "score": score, "stats": stats}
