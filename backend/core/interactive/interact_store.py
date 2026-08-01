@@ -307,6 +307,30 @@ class InteractStore:
         except Exception as e:
             log.warning(f"restart backup failed: {e}")
             return False
+        # 3) 只保留最近 3 份备份（清理更旧的，文件级删除避免 safe-delete 钩子）
+        try:
+            backups = sorted(
+                [os.path.join(novel_dir, d) for d in os.listdir(novel_dir)
+                 if d.startswith("interactive-backup-")],
+                key=lambda p: os.path.getmtime(p), reverse=True)
+            for old in backups[3:]:
+                for root, dirs, files in os.walk(old, topdown=False):
+                    for f in files:
+                        try:
+                            os.remove(os.path.join(root, f))
+                        except OSError:
+                            pass
+                    for dd in dirs:
+                        try:
+                            os.rmdir(os.path.join(root, dd))
+                        except OSError:
+                            pass
+                try:
+                    os.rmdir(old)
+                except OSError:
+                    pass
+        except Exception as e:
+            log.warning(f"restart old-backup cleanup failed: {e}")
         self._dir_cache.pop(novel_id, None)
         self._state_cache.pop(novel_id, None)
         return True
