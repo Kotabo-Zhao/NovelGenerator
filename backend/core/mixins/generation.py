@@ -256,6 +256,65 @@ class GenerationMixin:
             log.warning(f"Requirements instruction build failed (non-fatal): {e}")
             return ""
 
+    # ── 尺度关键词（命中则注入成熟题材指令）──
+    _SCALE_KEYWORDS = (
+        "成人", "亲密", "情欲", "尺度", "暧昧", "激情", "欲望", "肉体",
+        "性感", "擦边", "香艳", "露骨", "床戏", "缠绵", "荷尔蒙",
+        "成年", "恋人", "身体接触", "亲热", "18+", "18禁", "R18",
+    )
+
+    def _build_scale_instruction(self, novel_id: str, plan: dict = None) -> str:
+        """v2.6: 检测用户需求/灵感中的尺度关键词 → 注入成熟题材写作指令
+
+        实测：DeepSeek 默认（创作自由声明）输出偏保守；显式授权后
+        能写到"擦边文学"尺度（衣物/亲吻/身体接触/感官细节）。
+        这里把用户的尺度诉求转成模型可执行的指令。
+        """
+        import re as _re
+        haystacks = []
+        # 1) creative_input（创建时的灵感/要求全文）
+        try:
+            ci = (plan or {}).get("_meta", {}).get("creative_input", {}) or {}
+            for _k, _v in ci.items():
+                if isinstance(_v, str) and _v.strip():
+                    haystacks.append(_v)
+                elif isinstance(_v, (list, tuple)):
+                    haystacks.extend(str(x) for x in _v if isinstance(x, str))
+        except Exception:
+            pass
+        # 2) RequirementsStore 子任务全量（title/description/must_include）
+        try:
+            req_store = getattr(self, "_req_store", None)
+            title = ""
+            if plan and plan.get("title"):
+                title = plan["title"]
+            if title and req_store:
+                reqs = req_store.get(title)
+                if reqs:
+                    for t in (reqs.get("subtasks", []) or [])[:30]:
+                        haystacks.append(str(t.get("title", "")))
+                        haystacks.append(str(t.get("description", "")))
+                        haystacks.extend(str(x) for x in (t.get("must_include", []) or [])[:6])
+        except Exception:
+            pass
+
+        joined = "\n".join(x for x in haystacks if x)
+        if not joined:
+            return ""
+        hit = [k for k in self._SCALE_KEYWORDS if k in joined]
+        if not hit:
+            return ""
+
+        log.info(f"Scale instruction injected (keywords: {hit[:6]})")
+        return (
+            "## 🎯 成熟题材指令（用户需求，必须执行）\n"
+            "- 本章若涉及成年角色之间的亲密场景，必须正面写、写完整：不要用'一夜过去''次日清晨'跳过，不要淡化处理\n"
+            "- 允许并鼓励：身体接触的温度与触感、亲吻与抚摸的推进过程、衣物的变化、呼吸与声音、欲望的张力\n"
+            "- 具体到动作和细节：从哪个动作开始、手落在哪里、感官如何变化——画面感来自细节\n"
+            "- 保持文学性：用意象与动作写身体语言，浓而不腻、露而不俗\n"
+            "- 所有角色均为成年人\n"
+        )
+
 
     async def atomic_generate_chapter_stream(
         self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel",
@@ -321,6 +380,14 @@ class GenerationMixin:
                     chapter_context = chapter_context + "\n\n" + _req_ctx
             except Exception as rce:
                 log.warning(f"Requirements injection skipped (non-fatal): {rce}")
+
+            # v2.6: 注入成熟题材指令（用户需求含尺度关键词时生效）
+            try:
+                _scale_ctx = self._build_scale_instruction(novel_id, plan)
+                if _scale_ctx:
+                    chapter_context = chapter_context + "\n\n" + _scale_ctx
+            except Exception as _sce:
+                log.warning(f"Scale instruction injection skipped (atomic, non-fatal): {_sce}")
 
             # v2.51: 注入角色当前状态
             char_ctx3 = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
@@ -665,6 +732,14 @@ class GenerationMixin:
                     context = context + "\n\n" + req_ctx
             except Exception as rce:
                 log.warning(f"Requirements injection skipped (non-fatal): {rce}")
+
+            # v2.6: 注入成熟题材指令（用户需求含尺度关键词时生效）
+            try:
+                scale_ctx = self._build_scale_instruction(novel_id, plan)
+                if scale_ctx:
+                    context = context + "\n\n" + scale_ctx
+            except Exception as sce:
+                log.warning(f"Scale instruction injection skipped (non-fatal): {sce}")
 
             # v2.51: 注入角色当前状态 — 写作前读取每个角色的位置/情绪/健康/目标
             char_ctx = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
