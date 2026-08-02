@@ -386,21 +386,6 @@ BEAT_SYSTEM = """你是互动小说的剧情拆解师。把本章目标拆解为
 输出 JSON: {{"beats": [{{"id": 1, "desc": "事件描述"}}, ...]}}
 只输出 JSON。"""
 
-# ── v3.5.49: 角色行为边界——生成前约束"绝不做的行为"，防行为脱离人设 ──
-BOUNDARY_SYSTEM = """你是角色行为约束师。根据角色人设，提取该角色【绝不会做出的行为】（行为级，不是台词级）。
-
-规则：
-1. 输出 3 条，每条一句话（5-20 字），聚焦"以这个角色的性格/身份/原则，绝对做不出的事"
-2. 必须与角色人设强相关（来自其身份、性格、价值观、过往经历），禁止空泛套话
-3. 示例："当众向敌人示弱"、"背叛结拜兄弟"、"在公开场合失态痛哭"、"承认自己用肮脏手段"
-4. 边界要具体到可判断：LLM 生成场景时能据此否决违规行为
-
-角色人设:
-{profile}
-
-输出 JSON: {{"boundaries": ["绝不做的行为1", "绝不做的行为2", "绝不做的行为3"]}}
-只输出 JSON。"""
-
 HOOK_VERIFY_SYSTEM = """你是互动小说钩子核对器。判断读者与角色的对话中，议程（Agenda）的"推进开关"（hooks）是否已被触发。
 
 判断标准：
@@ -899,25 +884,40 @@ class StoryDirector:
         if not _whitelist and casts:
             _whitelist = {n: c for n, c in casts.items() if not (c or {}).get("temp")}
         if _whitelist:
-            parts.append("在场角色人设（说话必须符合）:")
+            parts.append("在场角色人设（v3.5.50 全维度——行为准则/说话风格/绝对底线，必须严格遵守）:")
             for name, c in _whitelist.items():
                 if name == player_name:
                     parts.append(f"- {name}（主角，由读者扮演——不要替 TA 写台词，TA 的言行由读者决定）")
                     continue
                 prof = c.get("profile", {})
-                brief = []
+                # v3.5.50: 全维度消费角色蒸馏——行为规则（决策启发式）是人设
+                # 的核心，之前只注入台词碎片（dna+anti 各2条）导致行为脱人设
+                segs = []
+                heur = prof.get("decision_heuristics", [])[:2]
+                for h in heur:
+                    if isinstance(h, dict):
+                        _tr = str(h.get("trigger", ""))[:30]
+                        if _tr.startswith("当"):
+                            _tr = _tr[1:]
+                        _ac = str(h.get("action", ""))[:50]
+                        segs.append(f"当{_tr}→{_ac}")
+                    else:
+                        segs.append(str(h)[:80])
                 dna = prof.get("expression_dna", [])[:2]
                 for d in dna:
-                    brief.append(str(d.get("name", d))[:60] if isinstance(d, dict) else str(d)[:60])
-                anti = prof.get("anti_patterns", [])[:2]
+                    if isinstance(d, dict):
+                        segs.append(f"风格[{d.get('name', '')}:{str(d.get('example', ''))[:30]}]")
+                    else:
+                        segs.append(f"风格[{str(d)[:40]}]")
+                anti = prof.get("anti_patterns", [])[:3]
                 for a in anti:
-                    brief.append(f"禁:{a.get('pattern', a) if isinstance(a, dict) else a}"[:60])
-                # v3.5.49: 行为边界（P0）——角色绝不会做的行为，生成前硬约束
-                bounds = prof.get("boundaries") or []
-                if bounds:
-                    brief.append("行为边界(绝不会做出):" + "、".join(str(b)[:24] for b in bounds[:3]))
-                if brief:
-                    parts.append(f"- {name}: {'；'.join(brief)}")
+                    segs.append(f"绝不[{a.get('pattern', a) if isinstance(a, dict) else a}"[:60] + "]")
+                boundary = prof.get("boundary", {}) or {}
+                rules = (boundary.get("rules") or boundary.get("anti_collapse_checks") or [])[:1]
+                for r in rules:
+                    segs.append(f"底线[{str(r)[:60]}]")
+                if segs:
+                    parts.append(f"- {name}: " + "；".join(segs))
         return "\n".join(parts)
 
     # ── 开场背景介绍（v3.5.13：玩家打开互动模式先知道"我是谁/在哪/要做什么"）──
@@ -1781,49 +1781,8 @@ class StoryDirector:
                 if prof and "error" not in prof:
                     casts.setdefault(name, {})["profile"] = prof
                     changed = True
-                    # v3.5.49: 异步提取角色行为边界（人设级"绝不做的行为"，
-                    # 场景生成前注入——行为前置约束，防角色做出违背人设的事）
-                    try:
-                        enqueue_background(self._attach_char_boundaries, novel_id, name)
-                    except Exception:
-                        pass
             except Exception:
                 pass
         if changed:
             state["casts"] = casts
             self.store.save_state(novel_id, state)
-
-    def _attach_char_boundaries(self, novel_id: str, char_name: str):
-        """v3.5.49: 从角色人设提取行为边界（后台，一次 LLM 调用，结果缓存）"""
-        try:
-            state = self.store.load_state(novel_id)
-            if not state:
-                return
-            casts = state.get("casts") or {}
-            c = casts.get(char_name) or {}
-            prof = c.get("profile") or {}
-            if prof.get("boundaries"):
-                return  # 已提取过
-            _brief = []
-            if prof.get("identity"):
-                _brief.append(f"身份: {str(prof['identity'])[:100]}")
-            if prof.get("personality_brief"):
-                _brief.append(f"性格: {str(prof['personality_brief'])[:150]}")
-            _dna = prof.get("expression_dna") or []
-            for _d in _dna[:3]:
-                _brief.append(f"特质: {str(_d.get('name', _d) if isinstance(_d, dict) else _d)[:80]}")
-            if not _brief:
-                return
-            raw = self._llm(BOUNDARY_SYSTEM.format(profile="\n".join(_brief)),
-                            "请提取该角色的行为边界。", temperature=0.3, max_tokens=300)
-            import re as _re4
-            m = _re4.search(r"\{.*\}", raw or "", _re4.S)
-            data = json.loads(m.group(0)) if m else {}
-            bounds = [str(b)[:30] for b in (data.get("boundaries") or [])[:3] if str(b).strip()]
-            if bounds:
-                prof["boundaries"] = bounds
-                state["casts"][char_name]["profile"] = prof
-                self.store.save_state(novel_id, state)
-                log.info(f"boundaries for {char_name}: {bounds}")
-        except Exception as e:
-            log.warning(f"attach_boundaries failed: {type(e).__name__}: {str(e)[:80]}")
