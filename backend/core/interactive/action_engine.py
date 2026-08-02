@@ -42,14 +42,15 @@ _ACTION_VERBS = (
     "掏出|拿出|交出|交给|递上|接过|放回|收起|捡起|穿上|脱下|戴上|摘下|"
     "答应|拒绝|同意|接受|成交|收下|归还|签字|画押|发誓|承诺|威胁|示好|坦白|隐瞒|"
     "倒茶|斟酒|敬酒|服药|喝下|吃下|使用|启动|按下|拉下|搬开|踢开|"
-    "回家|回府|回宫|回房|握住|拉起|抱住|亲吻|拥抱|搂住|走|走开"
+    "回家|回府|回宫|回房|握住|拉起|抱住|亲吻|拥抱|搂住|走|走开|杀(?:死|了|掉|人|害)?"
 )
 
 # 高置信行动词（允许"好，上车"前缀 + "你/他/了"后缀）
 HIGH_CONF_ACTION_RE = re.compile(
-    r"^(?:(?:我|咱|咱们|我们|人家)?(?:这就|现在|马上|要|想|打算)?|(?:好|行|嗯|成|好的)?[，,、\s]*|(?:把|向|对|朝)[\u4e00-\u9fff]{1,6})?(?:"
+    r"^(?:(?:我|咱|咱们|我们|人家)?(?:这就|现在|马上|要|想|打算)?|(?:好|行|嗯|成|好的)?[，,、\s]*|(?:别|别想|别要)?|(?:把|向|对|朝)[\u4e00-\u9fff]{1,6})?(?:"
     + _ACTION_VERBS
     + r")(?:了|吧|你|他|她|下|下去|进来|进去|出来|出去|过来|过去|一下|走|门|给(?:你|他|她)?|"
+    r"这[\u4e00-\u9fff]{0,4}|那[\u4e00-\u9fff]{0,4}|"
     r"走了进去|走进去|走了进来|走进来|走了出去|走出去|走了出来|走出来|走了过去|走过去|"
     r"了(?:走(?:进去|出来|过去|过来)?)?)?[。！!]?$"
 )
@@ -59,6 +60,25 @@ LOW_CONF_ACTION_RE = re.compile(r"^(?:好|行|可以|好的|行吧|好吧|嗯|�
 
 # 裸行动词（"上车" 两个字本身）
 NAKED_ACTION_RE = re.compile(r"^(?:上车|下车|进去|出来|走吧|开门|推门|跟上|坐下|过来|等等|停下|住手|别动|放手|松手|给|拿来|走开|退下|成交)[。！!]?$")
+
+# ── 行动护栏（v3.4.1 Guardrails）──
+
+# 超现实拦截词（规则层硬拦截：本世界不存在的能力/物品）
+UNREALISTIC_RE = re.compile(
+    r"瞬移|穿越|时空|时间倒流|平行宇宙|隐身|隐形|飞天|飞行|腾云|御剑|复活|起死回生|"
+    r"点石成金|凭空|无中生有|一百万|一个亿|一千万|神器|无敌|金刚不坏|读心|隔空取物|"
+    r"千里之外|长生不老|不死之身|召唤神龙|核弹|原子弹|ufo|UFO|光速|超能力|"
+    r"飞(?:上|到|向|在)?天|炸(?:了|掉|毁)?(?:整[个座]|全)?(?:城|楼|山|村|镇|屋|房|桥|船)"
+)
+
+# 高破坏性行动（杀/毁关键角色与关键物品——通常不会得逞，除非剧情允许）
+DESTRUCTIVE_RE = re.compile(
+    r"杀(?:死|了|掉|人)?|宰了|灭口|毁(?:了|掉)?|烧(?:了|掉|毁)?|撕(?:了|掉|毁)?|"
+    r"摔碎|砸碎|砍(?:死|掉|伤)?|刺(?:死|掉|伤)?|毒(?:死|掉|杀)?|掐死|勒死|枪毙"
+)
+
+# 凭空获得类（防"我获得了一百万"状态污染）
+UNREAL_GAIN_RE = re.compile(r"(?:获得|得到|赚到|捡到|赢来)(?:了|到)?(?:一百[万两]|一千[万两]|一亿|一个亿|万两黄金|绝世武功|神功|内力大增|修为大涨)")
 
 ACTION_DETECT_SYSTEM = """你是互动小说行动识别器。判断读者刚输入的内容是"剧情行动"还是"普通对话"。
 
@@ -77,6 +97,12 @@ ACTION_DETECT_SYSTEM = """你是互动小说行动识别器。判断读者刚输
 4. 读者明确说"我要…/我想…" + 具体动作 → 行动
 5. 不确定时 is_action=false（宁可是对话，不打断体验）
 
+【行动边界（必须遵守）】：
+- 行动必须在本小说世界观内可行：世界观里没有的能力/物品/地点，行动就是"尝试但做不到"
+- 关键角色（主角/重要配角/反派）不可能被读者一句话杀死或重伤——他们的命运由剧情推进决定；读者可"出手尝试"，结果通常是被拦下/失手/悬念
+- 读者不能凭空获得巨额财富/绝世能力（可以"索要/抢夺/寻找"，结果由剧情决定）
+- 违背主线 ≠ 越界：读者可以拒绝、背叛、逃跑——这是剧情分支，正常识别为行动
+
 输出 JSON:
 {"is_action": true/false, "type": "move/interact/accept/refuse/use/combat/leave/other",
  "summary": "一句话描述读者做了什么",
@@ -93,6 +119,11 @@ ACTION_SCENE_SYSTEM = """你是互动小说即时行动导演。读者刚刚执�
 3. 行动改变了场景（离开/进入新地点）→ 给新地点一笔环境描写
 4. 保持小说文笔与世界观风格，不要机械描述
 5. 若【角色名】给了反应台词，该台词要符合角色人设
+
+【行动结果的三条铁律】：
+1. **行动可能失败**：考虑读者实力、在场角色、关系值、剧情阶段——行动可以部分成功或失败（对方躲开/被拦下/自己犹豫/时机不对）。失败也是剧情，不是系统限制
+2. **关键角色不可被秒杀**：读者试图杀死/重伤主角、重要配角、反派 → 行动结果必须被拦下/失手/出现变数（有人挡刀、对方早有防备、读者下不了手），留下悬念，除非剧情已到决战
+3. **超现实尝试**：读者尝试本世界不存在的事（飞行/瞬移/凭空变出东西）→ 结果是无果的尝试（纹丝不动/被嘲笑/尴尬收场），并让在场角色对此有符合人设的反应
 
 只输出标记语言文本，不要解释。"""
 
@@ -184,8 +215,16 @@ class ActionEngine:
     def detect_action(self, user_input: str, state: dict) -> Optional[dict]:
         """识别玩家输入是否行动。返回行动意图 dict 或 None（普通对话/判定失败）。
 
-        返回: {type, summary, state_updates, end_chat, reason, forced}
+        返回: {type, summary, state_updates, end_chat, reason, forced, blocked?}
+        - blocked=True：超现实/凭空获得——规则层拦截，结果场景按"尝试无果"生成
         """
+        # v3.4.1 护栏：规则层硬拦截（超现实/凭空获得——零成本，不走 LLM）
+        if UNREALISTIC_RE.search(user_input) or UNREAL_GAIN_RE.search(user_input):
+            return {
+                "type": "unrealistic", "summary": f"读者试图：{user_input[:40]}",
+                "state_updates": {}, "end_chat": False,
+                "reason": "超现实/凭空获得，本世界不可行", "forced": True, "blocked": True,
+            }
         pre = rule_prescreen(user_input)
         if not pre["candidate"]:
             return None
@@ -198,9 +237,12 @@ class ActionEngine:
             for i, h in enumerate(hooks)
         ) or "（无）"
         chars = list(state.get("casts", {}).keys())
+        # v3.4.1：注入世界观边界 + 关键角色保护
+        wb = str(state.get("worldbuilding_brief", ""))[:400]
         user = (
             f"当前地点: {s.get('location', '') or '（未定）'}\n"
             f"主线目标: {s.get('objective', '') or '（未定）'}\n"
+            f"世界观边界: {wb or '（无，按现实世界逻辑）'}\n"
             f"在场角色: {', '.join(chars) or '（无）'}\n"
             f"对话议程推进开关:\n{hook_lines}\n"
             f"预筛: {pre['hint']}（forced={pre['forced']}）\n"
@@ -237,36 +279,66 @@ class ActionEngine:
 
     # ── 行动执行：更新状态 ──
     def apply_action(self, novel_id: str, action: dict) -> dict:
-        """把行动结果写回 state（location/flags/inventory/relations）"""
+        """把行动结果写回 state（location/flags/inventory/relations）
+
+        v3.4.1 护栏：状态变更 sanity check——location 只随移动类行动改、
+        物品只随物品类行动改、flags 限量、relations clamp。
+        """
+        if action.get("blocked"):
+            # 超现实/凭空获得：不更新剧情状态，只记录尝试痕迹（结果场景按"无果"生成）
+            state = self.store.load_state(novel_id) or {}
+            if state:
+                state["last_action"] = {
+                    "type": action.get("type", "unrealistic"),
+                    "summary": action.get("summary", ""),
+                    "blocked": True,
+                    "ts": time.strftime("%H:%M:%S"),
+                }
+                self.store.save_state(novel_id, state)
+            return {"changed": [], "state": state}
         state = self.store.load_state(novel_id)
         if state is None:
             return {}
-        su = action.get("state_updates") or {}
+        su = dict(action.get("state_updates") or {})
+        a_type = action.get("type", "other")
         s = state.setdefault("state", {})
         changed = []
+        # 护栏 1：location 只允许 move/leave/interact 类行动修改
         if su.get("location"):
-            old = s.get("location", "")
-            if old != su["location"]:
-                s["location"] = su["location"]
-                changed.append(f"地点: {old or '?'} → {su['location']}")
+            if a_type in ("move", "leave", "interact", "combat"):
+                old = s.get("location", "")
+                if old != su["location"]:
+                    s["location"] = su["location"]
+                    changed.append(f"地点: {old or '?'} → {su['location']}")
+            else:
+                su["location"] = ""  # 其他类型行动不许改地点
+        # 护栏 2：flags 限量（单次 ≤3，总量 ≤20）
+        flags = s.setdefault("flags", [])
         for f in su.get("flags", []):
-            if f and f not in s.setdefault("flags", []):
-                s["flags"].append(f)
+            if f and f not in flags and len(flags) < 20:
+                flags.append(f)
                 changed.append(f"flag: {f}")
-        inv = s.setdefault("inventory", [])
-        for item in su.get("inventory", []):
-            if item and item not in inv:
-                inv.append(item)
-                changed.append(f"物品: {item}")
+        # 护栏 3：物品只随 use/interact/accept/combat 类行动变化
+        if a_type in ("use", "interact", "accept", "combat", "other"):
+            inv = s.setdefault("inventory", [])
+            for item in su.get("inventory", []):
+                if item and item not in inv and len(inv) < 30:
+                    inv.append(item)
+                    changed.append(f"物品: {item}")
+        # 护栏 4：relations 数值 clamp 0-100（字符串描述保留）
         rel_map = s.setdefault("relations", {})
         for k, v in (su.get("relations") or {}).items():
             if k and k != "player":
-                rel_map[k] = v
+                if isinstance(v, (int, float)):
+                    rel_map[k] = max(0, min(100, int(v)))
+                else:
+                    rel_map[k] = str(v)[:60]
                 changed.append(f"关系[{k}]: {v}")
         # 记录最近一次行动（PACT/场景生成可感知）
         state["last_action"] = {
             "type": action.get("type", "other"),
             "summary": action.get("summary", ""),
+            "blocked": bool(action.get("blocked")),
             "ts": time.strftime("%H:%M:%S"),
         }
         self.store.save_state(novel_id, state)

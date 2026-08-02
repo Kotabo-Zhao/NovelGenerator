@@ -278,7 +278,8 @@ class DialogueEngine:
         action = self.action.detect_action(clean_input, state)
         if action:
             yield {"type": "action_detect", "action_type": action.get("type", "other"),
-                   "summary": action.get("summary", ""), "end_chat": action.get("end_chat", False)}
+                   "summary": action.get("summary", ""), "end_chat": action.get("end_chat", False),
+                   "blocked": bool(action.get("blocked"))}
             applied = self.action.apply_action(novel_id, action)
             changed = applied.get("changed", [])
             # 行动结果场景（流式，1-3 句）

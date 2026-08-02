@@ -3868,9 +3868,12 @@ const app = createApp({
             interactive.driftNote = '';
           } else if (evt.type==='action_detect') {
             // v3.4: 玩家行动被识别 → 即时推进剧情（对话即剧情）
+            // v3.4.1: blocked=true → 超现实尝试，结果按"无果"生成
             const last = interactive.blocks[interactive.blocks.length-1];
             if (last && last.type==='typing') interactive.blocks.pop();
-            interactive.blocks.push({type:'action_desc', speaker:'你', content:'〔'+evt.summary+'〕'});
+            const prefix = evt.blocked ? '（尝试，但做不到）' : '〔';
+            const suffix = evt.blocked ? '' : '〕';
+            interactive.blocks.push({type:'action_desc', speaker:'你', content: prefix+evt.summary+suffix});
             interactive.blocks.push({type:'typing', speaker:'', content:''});
             _scrollStory();
           } else if (evt.type==='action_chunk' && evt.content) {
