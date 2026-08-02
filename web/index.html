@@ -1301,8 +1301,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
 
             <!-- v3.5.2: 主动对话入口（任何时刻可发起对话，修复互斥 bug） -->
-            <div v-if="!interactive.pendingNode && !interactive.inChat && !interactive.typing" style="display:flex;justify-content:center;margin-top:2px">
-              <button class="btn btn-sm btn-ghost" @click="interactive.forceChat=true;interactive.pendingNode=true" :disabled="interactive.busy"
+            <div v-if="!interactive.busy && !interactive.pendingNode && !interactive.inChat && !interactive.typing" style="display:flex;justify-content:center;margin-top:2px">
+              <button class="btn btn-sm btn-ghost" @click="interactive.forceChat=true;interactive.pendingNode=true"
                       title="任何时候都可以主动找角色说话" style="border:1px dashed rgba(212,175,55,.5);color:var(--gold)">
                 💬 我要说话
               </button>
@@ -1324,13 +1324,22 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </button>
             </div>
 
+            <!-- v3.5.45: 可操作状态提示——任何时刻明确当前能否操作 -->
+            <div v-if="interactive.busy || interactive.typing || interactive.pendingNode || interactive.inChat"
+                 style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px">
+              <span v-if="interactive.busy" style="color:#d9bc7a">⏳ 正在生成，请稍候…</span>
+              <span v-else-if="interactive.typing" style="color:#d9bc7a">📢 剧情播放中…</span>
+              <span v-else style="color:#3fb950">💬 可以回应（输入或点建议选项）</span>
+            </div>
+
             <!-- 输入区 -->
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
                 <input v-model="interactive.message" @keyup.enter="sendInteractiveChat"
-                       placeholder="说点什么，或直接行动：上车 / 推门 / 答应他 / 离开…（可 @角色名）" :disabled="interactive.busy"
+                       :placeholder="interactive.busy || interactive.typing ? '⏳ 正在生成，请稍候…' : '说点什么，或直接行动：上车 / 推门 / 答应他 / 离开…（可 @角色名）'"
+                       :disabled="interactive.busy || interactive.typing"
                        style="flex:1;min-height:38px;font-size:14px" />
-                <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||!String(interactive.message||'').trim()">💬 说</button>
+                <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||interactive.typing||!String(interactive.message||'').trim()">💬 说</button>
               </div>
               <div class="flex gap-6 mt-8" style="justify-content:flex-end">
                 <button class="btn btn-sm btn-primary" @click="continueInteractive" :disabled="interactive.busy">
@@ -4291,7 +4300,7 @@ const app = createApp({
     }
 
     async function sendInteractiveChat(prefill) {
-      if (interactive.busy) return;
+      if (interactive.busy || interactive.typing) return;  // v3.5.45: 生成/播放中禁操作
       if (!activeNovel.value) return;
       if (prefill !== undefined && prefill !== null && prefill !== '') {
         interactive.message = String(prefill);        // v3.5.44: 强制字符串，防类型污染
