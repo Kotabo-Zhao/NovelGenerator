@@ -105,18 +105,21 @@ ACTION_DETECT_SYSTEM = """你是互动小说行动识别器。判断读者刚输
 4. 读者明确说"我要…/我想…" + 具体动作 → 行动
 5. 不确定时 is_action=false（宁可是对话，不打断体验）
 
-【行动边界（必须遵守）】：
-- 行动必须在本小说世界观内可行：世界观里没有的能力/物品/地点，行动就是"尝试但做不到"
-- 关键角色（主角/重要配角/反派）不可能被读者一句话杀死或重伤——他们的命运由剧情推进决定；读者可"出手尝试"，结果通常是被拦下/失手/悬念
+【行动边界（必须遵守，v3.5.23 改为 LLM 裁决）】：
+- 越界判断要【结合本小说世界观】：修真/玄幻/奇幻世界里的飞行、瞬移、御剑、
+  法术可能是正常能力（不越界）；现实/都市/历史世界里这些才越界
+- 关键角色（主角/重要配角/反派）不可能被读者一句话杀死或重伤——他们的命运由剧情
+  推进决定；读者可"出手尝试"，结果通常是被拦下/失手/悬念
 - 读者不能凭空获得巨额财富/绝世能力（可以"索要/抢夺/寻找"，结果由剧情决定）
 - 违背主线 ≠ 越界：读者可以拒绝、背叛、逃跑——这是剧情分支，正常识别为行动
+- blocked=true 仅当行动【确定违反世界观且无合理解释】时输出
 
 输出 JSON:
 {"is_action": true/false, "type": "move/interact/accept/refuse/use/combat/leave/other",
  "summary": "一句话描述读者做了什么",
  "state_updates": {"location": "新地点或空", "flags": ["新flag或空"], "inventory": ["物品变化或空"],
                    "relations": {"角色名": "关系变化描述或空"}},
- "end_chat": false, "reason": "一句话依据"}
+ "end_chat": false, "blocked": false, "reason": "一句话依据"}
 只输出 JSON。"""
 
 ACTION_SCENE_SYSTEM = """你是互动小说即时行动导演。读者刚刚执行了一个剧情行动，你需要生成行动的结果场景。
@@ -159,12 +162,12 @@ def _parse_json(content: str) -> Optional[dict]:
 
 
 def rule_prescreen(user_input: str) -> Optional[dict]:
-    """规则预筛：命中高置信 → 直接判定为行动；命中低置信 → 需要 LLM 精判；未命中 → 对话
+    """规则预筛（v3.5.23：只做【成本门卫】+【LLM 失败兜底】，不做判断）
 
     返回: {"candidate": True/False, "forced": True/False, "hint": "预筛依据"}
-    - forced=True：必为行动（括号动作/高置信词）
-    - candidate=True：疑似行动（低置信词），LLM 精判
-    - candidate=False：普通对话，零成本跳过
+    - candidate=True：值得花一次轻量 LLM 调用精判
+    - candidate=False：大概率对话（简短/无行动特征），零成本跳过——判断权仍在 LLM
+    - forced=True：LLM 不可用时的兜底默认（仅 LLM 失败时生效，不否决 LLM 结论）
     """
     text = user_input.strip()
     if not text:
@@ -178,6 +181,10 @@ def rule_prescreen(user_input: str) -> Optional[dict]:
         return {"candidate": True, "forced": False, "hint": "句首行动动词，需精判"}
     if LOW_CONF_ACTION_RE.match(text):
         return {"candidate": True, "forced": False, "hint": "低置信回应词，需精判"}
+    # v3.5.23: 第一人称主语即值得 LLM 判断——行动/对话都可能，
+    # "我虽然不舍，但还是把玉佩递了回去"这类长句行动不被动词表漏判
+    if re.match(r"^(?:我|咱|咱们|我们|人家)", text):
+        return {"candidate": True, "forced": False, "hint": "第一人称陈述，需精判"}
     return {"candidate": False, "forced": False, "hint": "普通对话"}
 
 
@@ -251,17 +258,16 @@ class ActionEngine:
         返回: {type, summary, state_updates, end_chat, reason, forced, blocked?}
         - blocked=True：超现实/凭空获得——规则层拦截，结果场景按"尝试无果"生成
         """
-        # v3.4.1 护栏：规则层硬拦截（超现实/凭空获得——零成本，不走 LLM）
+        # v3.5.23: 护栏改 LLM 判断（世界观自适应）——硬编码词表只作【兜底】，
+        # AI 可用时绝不直接拦截：修真世界观里"御剑飞行/瞬移"可能完全合理，
+        # 一刀切会让小说死板。正则命中仅作为 prompt 提示让 LLM 结合世界观裁决。
+        guard_hint = ""
         if UNREALISTIC_RE.search(user_input) or UNREAL_GAIN_RE.search(user_input):
-            return {
-                "type": "unrealistic", "summary": f"读者试图：{user_input[:40]}",
-                "state_updates": {}, "end_chat": False,
-                "reason": "超现实/凭空获得，本世界不可行", "forced": True, "blocked": True,
-            }
+            guard_hint = ("⚠ 预筛提示：输入含疑似超现实/凭空获得词汇"
+                          "（瞬移/飞行/凭空造物/巨额财富等），请结合世界观判断是否越界")
         pre = rule_prescreen(user_input)
         if not pre["candidate"]:
             return None
-        # 强制行动（括号动作/高置信词）也要 LLM 提取状态——但可以给强提示
         s = state.get("state", {})
         agenda = state.get("agenda") or {}
         hooks = agenda.get("hooks", []) or []
@@ -278,17 +284,33 @@ class ActionEngine:
             f"世界观边界: {wb or '（无，按现实世界逻辑）'}\n"
             f"在场角色: {', '.join(chars) or '（无）'}\n"
             f"对话议程推进开关:\n{hook_lines}\n"
-            f"预筛: {pre['hint']}（forced={pre['forced']}）\n"
-            f"读者输入: {user_input[:200]}\n"
+            f"预筛: {pre['hint']}\n"
+            + (guard_hint + "\n" if guard_hint else "")
+            + f"读者输入: {user_input[:200]}\n"
             f"请识别这是否是剧情行动。"
         )
         raw = self._llm(ACTION_DETECT_SYSTEM, user, temperature=0.2, max_tokens=400)
         result = _parse_json(raw) if raw else None
         if not isinstance(result, dict):
+            # LLM 不可用/解析失败 → 规则兜底（护栏优先，防状态污染）
+            if guard_hint:
+                return {
+                    "type": "unrealistic", "summary": f"读者试图：{user_input[:40]}",
+                    "state_updates": {}, "end_chat": False,
+                    "reason": "超现实/凭空获得（LLM 不可用，规则兜底）",
+                    "forced": True, "blocked": True,
+                }
+            if pre.get("forced"):
+                return {
+                    "type": "other", "summary": user_input[:60],
+                    "state_updates": {}, "end_chat": False,
+                    "reason": "LLM 不可用，规则兜底", "forced": True,
+                }
             return None
         is_action = bool(result.get("is_action"))
-        # 预筛强制行动时，即使 LLM 犹豫也按行动处理（LLM 负责状态提取）
-        if not is_action and not pre["forced"]:
+        blocked = bool(result.get("blocked", False))
+        # v3.5.23: LLM 结论为准——规则不再否决 LLM（forced 只用于 LLM 失败时兜底）
+        if not is_action:
             return None
         action = {
             "type": str(result.get("type", "other"))[:20] or "other",
@@ -297,6 +319,7 @@ class ActionEngine:
             "end_chat": bool(result.get("end_chat", False)),
             "reason": str(result.get("reason", ""))[:100],
             "forced": pre["forced"],
+            "blocked": blocked,
         }
         # 规范化 state_updates
         su = action["state_updates"]
