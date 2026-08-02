@@ -18,7 +18,8 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install fastapi openai pydantic pytest
+        # v3.5.23: 补 python-dotenv（server.py import dotenv，缺则测试收集失败）
+        run: pip install fastapi openai pydantic pytest python-dotenv
 
       - name: Syntax check (Python, 全部副本含 android)
         run: |
