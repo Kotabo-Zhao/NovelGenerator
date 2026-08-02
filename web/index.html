@@ -1046,7 +1046,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                     <div v-if="blk.type!=='player'" style="font-size:11px;color:var(--accent);margin-bottom:2px;opacity:.85">{{ blk.speaker }}</div>
                     <span class="inter-dialogue">{{ blk.content }}</span>
                     <div style="display:flex;gap:8px;align-items:center;margin-top:4px" v-if="blk.type==='dialogue'||blk.type==='chat'">
-                      <span class="inter-voice" v-if="interactive.voices[blk.speaker]">🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</span>
+                      <span class="inter-voice" v-if="interactive.voices[blk.speaker]">
+                        <template v-if="interactive.realVoiceMap[blk.speaker]">🎙 {{ realVoiceName(interactive.realVoiceMap[blk.speaker]) }}</template>
+                        <template v-else>🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</template>
+                      </span>
                       <span class="inter-actions">
                         <button class="voice-btn" @click="speakLine(blk, i)" :title="interactive.speakingLine===i?'停止':'播放语音'">{{ interactive.speakingLine===i?'⏹':'🔊' }}</button>
                         <button class="voice-btn" @click="openVoicePicker(blk.speaker)" title="更换音色">🎙</button>
@@ -1092,8 +1095,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   </button>
                 </div>
                 <div class="text-xs muted" style="margin-top:6px">
-                  <span v-if="interactive.realVoiceMap[interactive.voicePicker]" style="color:var(--gold)">✓ 已选真人音色（合成时克隆此人声音，不再是 AI 腔）</span>
-                  <span v-else>选一个真人音色，该角色说话就带"人味"（可随时换回电子音色）</span>
+                  <span v-if="interactive.realVoiceMap[interactive.voicePicker]" style="color:var(--gold)">✓ 当前角色使用真人音色「{{ realVoiceName(interactive.realVoiceMap[interactive.voicePicker]) }}」——自动走情感引擎，无需开 🎭 开关</span>
+                  <span v-else>选一个真人音色，该角色说话就带"人味"（选了自动生效，与上方电子音色二选一）</span>
+                  <button v-if="interactive.realVoiceMap[interactive.voicePicker]" class="btn btn-xs btn-ghost" style="margin-left:8px" @click="clearRealVoice">↩ 恢复电子音色</button>
                 </div>
               </div>
             </div>
@@ -3646,14 +3650,16 @@ const app = createApp({
       const voice = v.voice || 'zh-CN-XiaoxiaoNeural';
       const rate = v.rate || '+0%';
       const pitch = v.pitch || '+0Hz';
+      // v3.5.4 融合：真人音色优先（选了真人音色 → 自动走情感引擎，无需手动开情感开关）
+      const realVoice = interactive.realVoiceMap[blk.speaker] || '';
+      const useEmotion = interactive.emotionAvailable && (realVoice || interactive.emotionVoice);
       try{
-        // v3.5: 情感引擎开启且可用 → IndexTTS 情感合成（角色音色+情感），失败降级 edge
-        if(interactive.emotionVoice && interactive.emotionAvailable){
+        if(useEmotion){
           const er = await fetch(API+'/api/tts/emotion', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ text, char_name: blk.speaker||'角色',
               emotion: interactive.emotion||'平静', voice, rate, pitch,
-              real_voice: interactive.realVoiceMap[blk.speaker] || '' }),
+              real_voice: realVoice }),
           });
           if(er.ok){
             const blob = await er.blob();
@@ -3874,11 +3880,20 @@ const app = createApp({
       _scrollStory();
     }
 
-    // v3.5.1: 设置角色的真人音色（持久化）
+    // v3.5.1: 设置角色的真人音色（持久化）；v3.5.4 融合：选真人音色自动生效
     function setRealVoice(voiceId) {
       if (!interactive.voicePicker) return;
       interactive.realVoiceMap[interactive.voicePicker] = voiceId;
       try { localStorage.setItem('interactiveRealVoice', JSON.stringify(interactive.realVoiceMap)); } catch(e) {}
+    }
+    function clearRealVoice() {
+      if (!interactive.voicePicker) return;
+      delete interactive.realVoiceMap[interactive.voicePicker];
+      try { localStorage.setItem('interactiveRealVoice', JSON.stringify(interactive.realVoiceMap)); } catch(e) {}
+    }
+    function realVoiceName(vid) {
+      const rv = interactive.realVoices.find(x => x.id === vid);
+      return rv ? (rv.id.replace('voice_','V') + '·' + rv.style.split('，')[0]) : vid;
     }
 
     // v3.5: 后台预合成（台词到达立即合成入缓存，点击播放时秒回）
@@ -3886,8 +3901,11 @@ const app = createApp({
     let _prewarming = false;
     function prewarmVoice(text, speaker) {
       if (!text || !speaker || speaker === '你') return;
-      if (!interactive.emotionVoice || !interactive.emotionAvailable) return;
-      _prewarmQueue.push({ text, speaker });
+      // v3.5.4: 真人音色优先自动生效；否则仅情感开关开启时预热
+      const realVoice = interactive.realVoiceMap[speaker] || '';
+      if (!interactive.emotionAvailable) return;
+      if (!realVoice && !interactive.emotionVoice) return;
+      _prewarmQueue.push({ text, speaker, realVoice });
       if (!_prewarming) _prewarmQueueRun();
     }
     async function _prewarmQueueRun() {
@@ -3901,7 +3919,7 @@ const app = createApp({
             body: JSON.stringify({ text: cleanLineForTTS(item.text), char_name: item.speaker,
               emotion: interactive.emotion||'平静', voice: v.voice||'zh-CN-XiaoxiaoNeural',
               rate: v.rate||'+0%', pitch: v.pitch||'+0Hz',
-              real_voice: interactive.realVoiceMap[item.speaker] || '' }),
+              real_voice: item.realVoice }),
           });
         } catch(e) { /* 预合成失败静默，播放时降级 */ }
       }
@@ -4477,8 +4495,8 @@ const app = createApp({
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
       speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,previewVoice,
-      // v3.5.1: 真人音色
-      setRealVoice,
+      // v3.5.1: 真人音色（v3.5.4 融合：与 edge 音色统一决策树）
+      setRealVoice,clearRealVoice,realVoiceName,
       // v3.5: 角色头像徽章配色
       avatarStyle,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
