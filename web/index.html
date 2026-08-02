@@ -455,7 +455,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
   /* ── v3.0: 互动模式（v3.5 Galgame 风格 UI）── */
   .interactive-shell{display:flex;flex-direction:column;gap:14px}
-  .interactive-story{background:linear-gradient(180deg,var(--bg2) 0%,#12151c 100%);border:1px solid var(--border);border-radius:18px;padding:24px 26px 30px;min-height:300px;max-height:54vh;overflow-y:auto;line-height:1.9;font-size:15px;position:relative}
+  .interactive-story{background:linear-gradient(180deg,var(--bg2) 0%,#12151c 100%);border:1px solid var(--border);border-radius:18px;padding:24px 26px 30px;min-height:300px;max-height:63vh;overflow-y:auto;line-height:1.9;font-size:15px;position:relative}
   .interactive-story::-webkit-scrollbar{width:6px}
   .interactive-story::-webkit-scrollbar-thumb{background:rgba(212,175,55,.25);border-radius:3px}
   /* 旁白：居中衬线，小说感 */
@@ -511,7 +511,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .inter-intro-head{display:flex;justify-content:space-between;align-items:center;color:#d9bc7a}
   .inter-intro-body{margin-top:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi","SimSun",serif;font-size:14px;line-height:2;letter-spacing:.5px;padding:4px 6px;border-top:1px dashed rgba(212,175,55,.15);animation:interRise .5s ease both}
   .inter-intro.intro-collapsed{padding:8px 16px}
-  .player-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px;position:sticky;top:0;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.22)}
+  .player-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;position:sticky;top:0;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.22);transition:padding .2s}
+  /* v3.5.14: 折叠态——紧凑单行，不占对话框空间 */
+  .player-status-card.ps-collapsed{padding:8px 14px}
+  .ps-fold-btn{font-size:11px;color:var(--text3);flex-shrink:0;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:6px;padding:2px 8px;cursor:pointer;transition:all .2s}
+  .ps-fold-btn:hover{color:var(--gold);border-color:rgba(212,175,55,.4)}
+  .ps-head-loc{color:var(--accent);opacity:.85}
+  .ps-head-rel{color:#d4af37}
+  .ps-head-fact{color:#8fd3a8}
   .player-status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;margin-top:4px}
   .ps-cell{display:flex;align-items:baseline;gap:8px;min-width:0;border-radius:6px;padding:2px 4px;transition:background .3s}
   .ps-cell.ps-flash{background:rgba(212,175,55,.14);animation:psFlash 1.8s ease}
@@ -1045,29 +1052,33 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <div class="inter-intro-body" v-if="interactive.introOpen">{{ interactive.intro }}</div>
             </div>
 
-            <!-- v3.5.5: 玩家角色状态卡（我是谁/在哪/要做什么/关系） -->
-            <div class="player-status-card">
-              <div class="flex justify-between items-center mb-8" style="flex-wrap:wrap;gap:8px">
-                <div style="display:flex;align-items:center;gap:10px">
-                  <div class="inter-avatar" style="width:38px;height:38px;font-size:15px"
+            <!-- v3.5.14: 玩家状态卡（头部常驻摘要，内容可折叠——默认收起省空间） -->
+            <div class="player-status-card" :class="{'ps-collapsed': !interactive.statusOpen}">
+              <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:8px">
+                <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer" @click="interactive.statusOpen=!interactive.statusOpen">
+                  <div class="inter-avatar" style="width:34px;height:34px;font-size:14px;flex-shrink:0"
                        :style="avatarStyle(interactive.state.player_char ? interactive.state.player_char.name : '你')">
                     {{ (interactive.state.player_char ? interactive.state.player_char.name : '你').slice(0,1) }}
                   </div>
-                  <div>
-                    <div style="font-weight:600;font-size:14px;color:var(--text)">
+                  <div style="min-width:0">
+                    <div style="font-weight:600;font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                       {{ interactive.state.player_char ? interactive.state.player_char.name : '读者' }}
-                      <span class="muted" style="font-weight:400;font-size:12px" v-if="interactive.state.player_char && interactive.state.player_char.identity">
-                        · {{ interactive.state.player_char.identity }}
+                      <span class="muted" style="font-weight:400;font-size:11.5px" v-if="interactive.state.player_char && interactive.state.player_char.identity">
+                        · {{ interactive.state.player_char.identity.slice(0,18) }}{{ interactive.state.player_char.identity.length > 18 ? '…' : '' }}
                       </span>
                     </div>
-                    <div class="text-xs muted">场景 {{ interactive.state.scene_num||0 }}
+                    <div class="text-xs muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">场景 {{ interactive.state.scene_num||0 }}
                       <span v-if="interactive.pendingNode" style="color:var(--gold)"> · 💬 可对话</span>
                       <span v-else-if="interactive.autoStopped" style="color:var(--gold)" title="连续推进已暂停，输入或点继续可恢复"> · ⏸ 已暂停</span>
                       <span v-else> · 📖 剧情中</span>
+                      <span v-if="!interactive.statusOpen && interactive.state.state && interactive.state.state.location" class="ps-head-loc"> · 📍 {{ interactive.state.state.location.slice(0,16) }}{{ interactive.state.state.location.length > 16 ? '…' : '' }}</span>
+                      <span v-if="!interactive.statusOpen && relCount" class="ps-head-rel"> · 💞 {{ relCount }}人</span>
+                      <span v-if="!interactive.statusOpen && activeFacts.length" class="ps-head-fact"> · ⏳ {{ activeFacts.length }}</span>
                     </div>
                   </div>
+                  <span class="ps-fold-btn" style="margin-left:auto">{{ interactive.statusOpen ? '▾ 收起' : '▸ 展开' }}</span>
                 </div>
-                <div class="flex gap-6">
+                <div class="flex gap-6" style="flex-wrap:wrap">
                   <button class="btn btn-xs" :class="interactive.autoPlay?'btn-primary':''" @click="interactive.autoPlay=!interactive.autoPlay; cancelAuto()" title="剧情自动流：行动/对话后剧情自动衔接，只在需要你决策时停下">⏵ {{ interactive.autoPlay?'自动':'手动' }}</button>
                   <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
                   <span v-if="interactive.emotionAvailable" style="display:flex;gap:6px;align-items:center">
@@ -1080,9 +1091,9 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
                 </div>
               </div>
-              <!-- v3.5.9: 剧情状态总览（一眼把握：在哪/要做什么/谁什么态度/承诺了什么/刚发生什么） -->
-              <!-- 第一行：地点/进展/在场 -->
-              <div class="player-status-grid">
+              <!-- v3.5.9: 剧情状态总览（可折叠内容区） -->
+              <template v-if="interactive.statusOpen">
+              <div class="player-status-grid" style="margin-top:10px">
                 <div class="ps-cell" :class="{'ps-flash': statusFlash.scene_num}" v-if="interactive.state.state && interactive.state.state.location || statusFlash.scene_num">
                   <span class="ps-label">📍 地点</span>
                   <span class="ps-val">{{ interactive.state.state && interactive.state.state.location || '（未定）' }}</span>
@@ -1133,6 +1144,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   </span>
                 </span>
               </div>
+              </template>
             </div>
 
             <!-- v3.3: 对话轨道提示（跑偏/自然收尾/钩子核对） -->
@@ -3733,6 +3745,8 @@ const app = createApp({
       // v3.5.13: 开场背景介绍
       intro: '',              // 故事背景（start 时生成）
       introOpen: true,        // 背景卡默认展开（首次进入先看背景）
+      // v3.5.14: 状态卡折叠（默认收起省空间，头部显示摘要，展开看全量）
+      statusOpen: false,
     });
     // v3.5.5: 玩家状态卡计算属性
     const relCount = computed(() => {
