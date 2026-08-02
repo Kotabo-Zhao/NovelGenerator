@@ -41,26 +41,39 @@ INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式
 只输出章节正文，不要输出标题以外的任何解释。"""
 
 # ── v3.5.37: 主角状态卡提取（后台，场景后更新——LLM 结构化识别主角当前状态）──
-PLAYER_STATE_SYSTEM = """你是互动小说状态追踪器。根据最新场景更新主角的状态卡。
+PLAYER_STATE_SYSTEM = """你是互动小说的【世界状态追踪器】。根据最新场景，更新主角状态卡 + 全体在场 NPC 状态卡 + 角色间关系矩阵。
 
-状态卡是固定的结构化字段，供后续生成准确识别主角当前状态（防地点/时间/物品错乱）：
+三者都是固定结构化字段，供后续生成完整识别当前世界状态（防地点/时间/关系/立场错乱）。
 
-当前状态卡（旧）:
+当前主角状态卡（旧）:
 {old_state}
+
+当前 NPC 状态卡（旧）:
+{old_cast_states}
+
+当前关系矩阵（旧）:
+{old_relations}
 
 最新场景:
 {scene_text}
 
-请更新状态卡，只输出 JSON（不要解释）:
-{{"location": "主角当前精确位置（如：陆氏集团28层，陆廷深办公室门口）",
+请输出 JSON（不要解释）:
+{{"player": {{"location": "主角当前精确位置（如：陆氏集团28层，陆廷深办公室门口）",
   "time": "当前时间段（清晨/上午/正午/下午/傍晚/夜晚/深夜）",
   "with": ["当前与主角同行的角色名（没有则空数组）"],
   "holding": ["主角随身携带的重要物品（没有则空数组）"],
   "condition": "身体状况（健康/轻伤/重伤/醉酒/疲惫/发烧等，没有异常则健康）",
   "disguise": "当前身份（默认用本名；若主角伪装成他人则填伪装身份名）",
   "money": "随身钱财（充裕/够用/拮据/身无分文，或'一笔现金'等）",
-  "situation": "主角当前处境一句话（正在做什么/刚发生了什么）"}}
-规则：location 必须精确到场景级（不是城市名）；未发生的地点/时间变化保持旧值；场景中明确的变化必须更新。"""
+  "situation": "主角当前处境一句话（正在做什么/刚发生了什么）"}},
+  "casts": {{"角色名": {{"location": "该角色当前所在位置（与主角同场景则同位置）",
+    "mood": "当前情绪（冷静/愤怒/心虚/欣喜/戒备…）",
+    "stance": "对主角的态度（敌视/缓和/合作/暧昧/怀疑…）",
+    "knows": ["该角色当前知道的关键信息（秘密/真相/计划，不知道就不列）"],
+    "condition": "身体状况（健康/受伤/醉酒…）",
+    "agenda": "该角色当前想达成什么（一句话）"}}}},
+  "relations": {{"A与B": "关系描述（如：顾衍之与林佳期——利益同盟，互相提防）"}}}}
+规则：location 精确到场景级；未变化保持旧值；场景中明确的变化必须更新；只更新场景中出场的角色；关系矩阵覆盖重要角色之间（主角与 NPC、NPC 与 NPC）。"""
 
 # ── v3.5.40: 建议选项生成（Galgame 式真两难）──
 SUGGESTION_SYSTEM = """你是互动小说的选项设计师。为读者生成 3 个建议回应选项。
@@ -332,34 +345,61 @@ class StoryDirector:
             return ""
 
     def _extract_player_state(self, novel_id: str, scene_text: str):
-        """v3.5.37: 场景后（后台）提取主角状态卡——location 精确化/时间/同行/物品/处境"""
+        """v3.5.37/43: 场景后（后台）提取【世界状态】——主角状态卡 + NPC 状态卡 + 关系矩阵"""
         try:
             st = self.store.load_state(novel_id) or {}
             old_ps = st.get("player_state") or {}
+            old_cs = st.get("cast_states") or {}
+            old_rel = st.get("npc_relations") or {}
             user = PLAYER_STATE_SYSTEM.format(
                 old_state=old_ps or {},
-                scene_text=str(scene_text)[:1500],
+                old_cast_states=old_cs or {},
+                old_relations=old_rel or {},
+                scene_text=str(scene_text)[:1600],
             )
-            raw = self._llm(PLAYER_STATE_SYSTEM, user, temperature=0.2, max_tokens=400)
+            raw = self._llm(PLAYER_STATE_SYSTEM, user, temperature=0.2, max_tokens=700)
             import re as _re
-            m = _re.search(r"\{.*?\}", raw or "", _re.S)
+            # v3.5.43: 贪婪匹配整个 JSON 对象（嵌套结构用非贪婪会截断在第一个 }）
+            m = _re.search(r"\{.*\}", raw or "", _re.S)
             if not m:
                 return
-            ps = json.loads(m.group(0))
-            if not isinstance(ps, dict):
+            data = json.loads(m.group(0))
+            if not isinstance(data, dict):
                 return
+            # ── 主角状态卡 ──
+            ps = data.get("player") or {}
             clean = {
                 "location": str(ps.get("location", old_ps.get("location", "")))[:80],
                 "time": str(ps.get("time", old_ps.get("time", "")))[:20],
                 "with": [str(x)[:20] for x in (ps.get("with") or [])][:4],
                 "holding": [str(x)[:30] for x in (ps.get("holding") or [])][:5],
                 "situation": str(ps.get("situation", old_ps.get("situation", "")))[:120],
-                # v3.5.38: 身体状况/当前身份/随身钱财
                 "condition": str(ps.get("condition", old_ps.get("condition", "健康")))[:20],
                 "disguise": str(ps.get("disguise", old_ps.get("disguise", "")))[:30],
                 "money": str(ps.get("money", old_ps.get("money", "")))[:30],
             }
             st["player_state"] = clean
+            # ── v3.5.43: NPC 状态卡（行为驱动更新，LLM 完整了解所有角色状态）──
+            cs = data.get("casts") or {}
+            clean_cs = {}
+            for name, c in cs.items():
+                if not isinstance(c, dict):
+                    continue
+                clean_cs[str(name)[:20]] = {
+                    "location": str(c.get("location", ""))[:60],
+                    "mood": str(c.get("mood", ""))[:20],
+                    "stance": str(c.get("stance", ""))[:30],
+                    "knows": [str(k)[:50] for k in (c.get("knows") or [])][:4],
+                    "condition": str(c.get("condition", "健康"))[:20],
+                    "agenda": str(c.get("agenda", ""))[:60],
+                }
+            if clean_cs:
+                st["cast_states"] = clean_cs
+            # ── v3.5.43: NPC↔NPC 关系矩阵（防止 AI 搞错角色间恩怨）──
+            rel = data.get("relations") or {}
+            clean_rel = {str(k)[:40]: str(v)[:60] for k, v in rel.items() if isinstance(k, str)}
+            if clean_rel:
+                st["npc_relations"] = clean_rel
             self.store.save_state(novel_id, st)
         except Exception as e:
             log.warning(f"player_state extract failed: {type(e).__name__}: {str(e)[:80]}")
@@ -524,6 +564,21 @@ class StoryDirector:
                          f"物品[{','.join(ps.get('holding') or []) or '无'}] "
                          f"身体[{ps.get('condition', '健康')}] 身份[{ps.get('disguise', '本名') or '本名'}] "
                          f"钱[{ps.get('money', '') or '未定'}] 处境[{ps.get('situation', '')}]")
+        # v3.5.43: NPC 状态卡（行为驱动——每个角色当前在哪/情绪/立场/知道什么/想干什么）
+        cs = state.get("cast_states") or {}
+        if cs:
+            _cs_lines = []
+            for _n, _c in cs.items():
+                _cs_lines.append(f"{_n}[位置{_c.get('location', '')} 情绪{_c.get('mood', '')} "
+                                 f"立场{_c.get('stance', '')} 身体{_c.get('condition', '健康')} "
+                                 f"知道[{','.join(_c.get('knows') or []) or '无'}] "
+                                 f"想[{_c.get('agenda', '')}]]")
+            parts.append("NPC 状态卡（以此为准——角色行为/台词必须符合其状态）:\n" + "\n".join(_cs_lines))
+        # v3.5.43: 角色间关系矩阵（防止 AI 搞错 NPC 之间的恩怨）
+        nr = state.get("npc_relations") or {}
+        if nr:
+            parts.append("角色间关系（以此为准）: " + "；".join(
+                f"{k}→{v}" for k, v in list(nr.items())[:6]))
         if s.get("objective"):
             parts.append(f"主线目标（必须推进）: {s['objective']}")
         if s.get("flags"):
