@@ -5,7 +5,7 @@
  *     auto-cleanup old caches on activate
  */
 
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
 const VENDOR_CACHE = `novel-vendor-v${CACHE_VERSION}`;
 const APP_CACHE = `novel-app-v${CACHE_VERSION}`;
 const CHAPTER_CACHE = `novel-chapters-v${CACHE_VERSION}`;

@@ -104,6 +104,17 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 binding.progressBar.visibility = View.GONE
                 binding.swipeRefresh.isRefreshing = false  // v2.27: 修复下拉刷新动画停不下来
+                // v2.5.38: 彻底禁用 Service Worker——SW 缓存独立于 HTTP 缓存，
+                // LOAD_NO_CACHE 管不到它（覆盖安装仍可能用旧页面）
+                binding.webView.evaluateJavascript(
+                    "if ('serviceWorker' in navigator) {" +
+                    "navigator.serviceWorker.getRegistrations().then(rs => {" +
+                    "if (rs.length) { Promise.all(rs.map(r => r.unregister())).then(() => {" +
+                    "caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k))))" +
+                    ".then(() => { if (location.pathname === '/') location.reload(); })" +
+                    "}); }" +
+                    "});" +
+                    "}", null)
             }
             override fun onReceivedError(view: WebView?, req: WebResourceRequest?, err: WebResourceError?) {
                 binding.swipeRefresh.isRefreshing = false  // 错误时也停止刷新动画
