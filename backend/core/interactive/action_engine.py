@@ -187,6 +187,10 @@ def _state_snapshot(state: dict) -> dict:
     rel = {}
     for k, v in (s.get("relations") or {}).items():
         rel[str(k)[:12]] = v if isinstance(v, (int, float)) else str(v)[:20]
+    # v3.5.9: 事件时间线（状态卡"刚发生的事"）
+    events = [{"ts": e.get("ts", ""), "type": e.get("type", "event"),
+               "summary": str(e.get("summary", ""))[:50]}
+              for e in (state.get("events") or [])[-4:]]
     return {
         "scene_num": state.get("scene_num", 0),
         "location": s.get("location", "") or "",
@@ -195,6 +199,7 @@ def _state_snapshot(state: dict) -> dict:
         "flags": [str(f)[:40] for f in (s.get("flags") or [])[-4:]],
         "facts_count": len([f for f in state.get("facts", []) if f.get("status") == "active"]),
         "last_action": (state.get("last_action") or {}).get("summary", "")[:60],
+        "events": events,
     }
 
 
@@ -369,6 +374,24 @@ class ActionEngine:
             "blocked": bool(action.get("blocked")),
             "ts": time.strftime("%H:%M:%S"),
         }
+        # v3.5.9: 行动沉淀为角色记忆 + 事件时间线（行动真实留在角色记忆里）
+        if not action.get("blocked"):
+            from .char_memory import add_event, add_memory
+            summary = action.get("summary", "")[:60]
+            add_event(state, summary or f"{action.get('type', '行动')}", "action")
+            # 关系变化 → 对应角色记忆
+            for k, v in (su.get("relations") or {}).items():
+                if k and k != "player" and k in (state.get("casts") or {}):
+                    add_memory(state, k, "attitude",
+                               f"读者对你做了行动：{summary or '…'}（你对他的态度因此变化）",
+                               source="action")
+            # location 变化 → 全体在场角色记忆
+            if changed and any(c.startswith("地点") for c in changed):
+                loc = s.get("location", "")
+                for name in (state.get("casts") or {}):
+                    add_memory(state, name, "event",
+                               f"读者去了{loc or '新的地方'}",
+                               source="action")
         self.store.save_state(novel_id, state)
         return {"changed": changed, "state": state}
 

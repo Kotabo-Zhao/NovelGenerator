@@ -195,6 +195,11 @@ class DialogueEngine:
             parts.append("读者对你做过的事（你要有相应态度）:")
             for f in facts[:4]:
                 parts.append(f"- [{f.get('type')}] {f.get('content')}")
+        # v3.5.9: 角色专属记忆（你记得的事——你的视角，其他角色的秘密你不知道）
+        from .char_memory import memory_brief
+        mem_brief = memory_brief(state, target_char, 8)
+        if mem_brief:
+            parts.append("## " + mem_brief)
         if s.get("objective"):
             parts.append(f"当前主线: {s['objective']}")
 

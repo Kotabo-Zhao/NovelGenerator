@@ -507,6 +507,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   @keyframes psFlash{0%{background:rgba(212,175,55,.28)}100%{background:rgba(212,175,55,.14)}}
   .ps-label{font-size:11.5px;color:var(--text3);flex-shrink:0;width:52px}
   .ps-val{font-size:12.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* v3.5.9: 关系明细 / 承诺清单 / 事件时间线 */
+  .ps-rel-wrap{display:flex;flex-wrap:wrap;gap:4px 10px;white-space:normal}
+  .ps-rel-item{display:inline-flex;align-items:baseline;gap:3px;background:rgba(226,75,74,.06);border:1px solid rgba(226,75,74,.14);border-radius:6px;padding:1px 7px;font-size:12px}
+  .ps-rel-name{color:var(--text2)}
+  .ps-rel-heart{font-weight:600}
+  .ps-fact-item{display:inline-block;margin:1px 6px 1px 0;padding:1px 8px;border-radius:6px;font-size:12px;background:rgba(212,175,55,.08);border:1px dashed rgba(212,175,55,.32);color:#d9bc7a}
+  .ps-event-item{display:block;font-size:12px;color:var(--text3);margin:1px 0;line-height:1.5}
+  .ps-event-ts{color:var(--accent);opacity:.7;margin-right:5px;font-size:11px}
   @media(max-width:760px){.player-status-grid{grid-template-columns:1fr}}
   .sg-relation-svg-wrap svg,.sg-timeline-svg-wrap svg{width:100%;height:100%}
 
@@ -1052,19 +1060,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
                 </div>
               </div>
-              <!-- 剧情进展 + 角色状态（v3.5.8: 实时更新 + 变化高亮） -->
+              <!-- v3.5.9: 剧情状态总览（一眼把握：在哪/要做什么/谁什么态度/承诺了什么/刚发生什么） -->
+              <!-- 第一行：地点/进展/在场 -->
               <div class="player-status-grid">
                 <div class="ps-cell" :class="{'ps-flash': statusFlash.scene_num}" v-if="interactive.state.state && interactive.state.state.location || statusFlash.scene_num">
                   <span class="ps-label">📍 地点</span>
                   <span class="ps-val">{{ interactive.state.state && interactive.state.state.location || '（未定）' }}</span>
-                </div>
-                <div class="ps-cell" :class="{'ps-flash': statusFlash.relations}" v-if="relCount || statusFlash.relations">
-                  <span class="ps-label">💞 关系</span>
-                  <span class="ps-val">
-                    <span v-for="(rv, rn) in interactive.state.state.relations" :key="rn" style="margin-right:10px">
-                      {{ rn }}<span :style="{color: rv>=60?'#e24b4a':(rv>=30?'#d4af37':'#888780')}">♥{{ rv }}</span>
-                    </span>
-                  </span>
                 </div>
                 <div class="ps-cell" :class="{'ps-flash': statusFlash.flags}" v-if="(interactive.state.state && interactive.state.state.flags || []).length || statusFlash.flags">
                   <span class="ps-label">🏷 进展</span>
@@ -1079,10 +1080,38 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   </span>
                 </div>
               </div>
-              <!-- v3.5.8: 目标始终显示（章节目的实时可见） -->
+              <!-- 目标（章节目的，常驻完整显示） -->
               <div class="ps-cell" style="margin-top:6px;padding:2px 4px" v-if="interactive.state.state && interactive.state.state.objective">
                 <span class="ps-label">🎯 目标</span>
                 <span class="ps-val" style="white-space:normal;line-height:1.5">{{ interactive.state.state.objective }}</span>
+              </div>
+              <!-- 关系明细（谁 + 态度值，实时更新高亮） -->
+              <div class="ps-cell ps-relations" :class="{'ps-flash': statusFlash.relations}" v-if="relCount">
+                <span class="ps-label">💞 关系</span>
+                <span class="ps-val ps-rel-wrap">
+                  <span v-for="(rv, rn) in interactive.state.state.relations" :key="rn" class="ps-rel-item" :title="rn + ' 对你的态度'">
+                    <span class="ps-rel-name">{{ rn }}</span>
+                    <span class="ps-rel-heart" :style="{color: rv>=60?'#e24b4a':(rv>=30?'#d4af37':'#888780')}">♥{{ rv }}</span>
+                  </span>
+                </span>
+              </div>
+              <!-- 承诺清单（你答应过的事，⏳ 待兑现高亮） -->
+              <div class="ps-cell" v-if="activeFacts.length">
+                <span class="ps-label">⏳ 承诺</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.6">
+                  <span v-for="f in activeFacts" :key="f.id" class="ps-fact-item" :title="'待兑现：' + f.content">
+                    {{ f.content.length > 34 ? f.content.slice(0, 34) + '…' : f.content }}
+                  </span>
+                </span>
+              </div>
+              <!-- 刚发生的事（事件时间线，保持剧情连续性感知） -->
+              <div class="ps-cell" :class="{'ps-flash': statusFlash.events}" v-if="(interactive.state.events||[]).length">
+                <span class="ps-label">📌 刚发生</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.6">
+                  <span v-for="(e, ei) in interactive.state.events.slice(-3).reverse()" :key="ei" class="ps-event-item">
+                    <span class="ps-event-ts">{{ e.ts }}</span> {{ e.summary }}
+                  </span>
+                </span>
               </div>
             </div>
 
@@ -3694,6 +3723,10 @@ const app = createApp({
       }).slice(0, 6);
     });
     const playerName = computed(() => (interactive.state.player_char || {}).name || '你');
+    // v3.5.9: 待兑现承诺（active facts，状态卡显眼展示）
+    const activeFacts = computed(() => {
+      return (interactive.state.facts || []).filter(f => f.status === 'active').slice(-4).reverse();
+    });
     let interactiveAbort = null;
     let interactiveAudio = null;   // 当前播放的 Audio
 
@@ -4181,12 +4214,15 @@ const app = createApp({
       if (snap.objective) st.state.objective = snap.objective;
       if (snap.relations) st.state.relations = snap.relations;
       if (snap.flags) st.state.flags = snap.flags;
+      // v3.5.9: 事件时间线（状态卡"刚发生的事"）
+      if (snap.events) st.events = snap.events;
       // 变化高亮（1.8s 后熄灭）
       const flash = {};
       if (snap.location && snap.location !== old.location) flash.location = true;
       if (snap.relations && JSON.stringify(snap.relations) !== old.relations) flash.relations = true;
       if (snap.flags && JSON.stringify(snap.flags) !== old.flags) flash.flags = true;
       if (snap.scene_num != null && snap.scene_num !== old.scene_num) flash.scene_num = true;
+      if (snap.events && JSON.stringify(snap.events) !== JSON.stringify(st.events)) flash.events = true;
       Object.keys(flash).forEach(k => statusFlash[k] = true);
       if (Object.keys(flash).length) {
         setTimeout(() => { Object.keys(flash).forEach(k => statusFlash[k] = false); }, 1800);
@@ -4699,6 +4735,8 @@ const app = createApp({
       setRealVoice,clearRealVoice,realVoiceName,
       // v3.5.5: 玩家状态卡
       relCount,presentChars,playerName,
+      // v3.5.9: 承诺清单
+      activeFacts,
       // v3.5: 角色头像徽章配色
       avatarStyle,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,

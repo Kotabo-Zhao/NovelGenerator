@@ -253,6 +253,11 @@ class StoryDirector:
             parts.append("刚结束的对话（本段可自然承接其中情绪/未尽话题，但不要复述）:")
             for line in chat_lines[-4:]:
                 parts.append(f"- {line}")
+        # v3.5.9: 事件时间线（刚发生的事——保持剧情连续性）
+        from .char_memory import events_brief
+        ev_brief = events_brief(state, 5)
+        if ev_brief:
+            parts.append(f"最近发生的事（承接时间线，不要时间倒流）: {ev_brief}")
         # 角色卡
         casts = state.get("casts", {})
         if casts:
@@ -600,6 +605,24 @@ class StoryDirector:
         # objective 更新
         if result.get("objective_update"):
             state["state"]["objective"] = result["objective_update"]
+        # v3.5.9: 对话沉淀为角色记忆——PACT facts 同步进目标角色的专属记忆
+        from .char_memory import add_event, add_memory
+        for f in state.get("facts", []):
+            target = f.get("target") or ""
+            if not target or target == "player":
+                continue
+            tag = {"promise": "承诺", "threat": "威胁", "request": "请求",
+                   "secret": "秘密", "info": "告知", "break": "违约"}.get(
+                str(f.get("type", "")), "约定")
+            add_memory(state, target, "promise",
+                       f"读者{tag}了你：{f.get('content', '')}",
+                       source="pact")
+        # 关系变化 → 事件时间线
+        if result.get("relations"):
+            rel_changed = [f"{k} ♥{v}" for k, v in result.get("relations", {}).items()
+                           if isinstance(k, str) and "-" not in k and k in (state.get("casts") or {})]
+            if rel_changed:
+                add_event(state, "关系变化: " + "、".join(rel_changed[:3]), "relation")
         state["_last_chat_scene"] = state.get("scene_num", 0)
         self.store.save_state(novel_id, state)
         return result
