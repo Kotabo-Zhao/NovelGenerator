@@ -311,6 +311,21 @@ async def interactive_end_chat(novel_id: str):
         state.pop("agenda", None)
         state.pop("drift_note", None)
         _store.save_state(novel_id, state)
+    # v3.5.39: 对话后后台更新主角状态卡（situation/with/condition 随对话变化——
+    # 谈崩了/承诺了/关系变了都要反映，等下一场景才更新太慢）
+    try:
+        _transcript = "\n".join(
+            f"{h.get('speaker', h.get('role', ''))}: {str(h.get('content', ''))[:100]}"
+            for h in chat_entries[-10:])
+        if _transcript:
+            import threading
+            threading.Thread(
+                target=_story._extract_player_state,
+                args=(novel_id, "本轮对话：\n" + _transcript),
+                daemon=True,
+            ).start()
+    except Exception as e:
+        log.warning(f"post-chat player_state update failed: {e}")
     return {
         "ok": True,
         "facts": state.get("facts", [])[-10:],
