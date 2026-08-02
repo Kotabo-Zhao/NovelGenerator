@@ -66,6 +66,10 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
     台词/行动只能由读者输入决定，你替 TA 说话就是破坏角色扮演。若主角需要反应，
     用旁白写 TA 的心声/身体反应（如"你心中冷笑，面上不露分毫"），而不是台词。
     输出中不得出现以主角名标注的台词行。
+11. v3.5.21 空间与时间连续性（P0 级）：前情摘要包含上一场景结尾（谁在场/谁刚
+    离开/去了哪里/时间点）。本场景必须严格遵守——已离开的角色不能立即出现在
+    现场（除非有新剧情交代其返回）；时间只能向前流动；地点的变化必须有过渡。
+    若上一场景角色"推门离去"，本场景他不在场，除非剧情明确安排他回来。
 只输出标记语言文本，不要输出解释。"""
 
 INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份详尽的开场背景介绍（500-700 字），
@@ -459,9 +463,15 @@ class StoryDirector:
 
         # 更新状态：场景号、摘要、最近场景
         state["scene_num"] = scene_num
-        state["summary"] = scene_text[:300]
+        # v3.5.21: 前情摘要改"开头+结尾"双段——开头交代情境、结尾保留空间/人物状态
+        # （原只取开头 300 字：角色"出门/离开"发生在场景结尾时会被截断丢失，
+        #  下一场景不知情 → 出现"已出门又回到椅子上"的空间矛盾）
+        _head = scene_text[:150].strip()
+        _tail = scene_text[-260:].strip()
+        _summary = (_head + "……" + _tail) if len(scene_text) > 420 else scene_text[:300]
+        state["summary"] = _summary
         recent = state.get("recent_scenes", [])
-        recent.append(scene_text[:300])
+        recent.append(_summary)
         state["recent_scenes"] = recent[-3:]
         # v3.3.1: missing hooks 只影响本段场景，用后即清（软约束不过期悬挂）
         state.pop("pending_missing_hooks", None)
