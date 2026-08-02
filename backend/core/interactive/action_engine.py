@@ -250,6 +250,13 @@ class ActionEngine:
 
     async def _llm_stream(self, system: str, user: str,
                           temperature: float = 0.8) -> AsyncIterator[str]:
+        # v3.5.47: 主流程 LLM 活跃标志——后台任务让路（防并发限流变慢）
+        try:
+            from .story_director import set_main_flow
+        except Exception:
+            set_main_flow = None
+        if set_main_flow:
+            set_main_flow(True)
         try:
             async for chunk in self._resilient.create_stream(
                 messages=[
@@ -263,6 +270,9 @@ class ActionEngine:
         except Exception as e:
             log.warning(f"ActionEngine stream failed: {type(e).__name__}: {str(e)[:120]}")
             yield ""
+        finally:
+            if set_main_flow:
+                set_main_flow(False)
 
     # ── 行动识别 ──
     def detect_action(self, user_input: str, state: dict) -> Optional[dict]:

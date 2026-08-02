@@ -132,6 +132,100 @@ def compute_present(state: dict) -> tuple:
     return sorted(present), sorted(away)
 
 
+# ── v3.5.47: 后台任务串行队列——防止后台 LLM 与主流程并发抢 API 导致限流变慢 ──
+# 背景：每次场景生成后，后台要做状态提取(2 次 LLM)+章节回流(1 次大 LLM)。
+# 原来每个场景直接起线程 → 快速推进时 N 个线程并发打 LLM → 429 限流 →
+# sleep 重试 → "剧情越深生成越慢"。
+# 方案：单 worker 串行执行（同一时刻最多 1 个后台 LLM）；主流程生成时让路
+# （用户操作优先，后台任务等待最多 90s）。
+import queue as _bgqueue
+import threading as _bthread
+
+_bg_queue = _bgqueue.Queue(maxsize=4)
+_bg_worker_started = False
+_bg_worker_lock = _bthread.Lock()
+main_flow_active = False  # 主流程（场景/对话/行动生成）活跃标志——后台任务须让路
+
+
+def set_main_flow(v: bool):
+    """v3.5.47: 设置主流程活跃标志（场景/对话/行动生成期间 True）——
+    后台串行 worker 在 main_flow_active 时让路，用户操作优先不抢 LLM"""
+    global main_flow_active
+    main_flow_active = v
+
+
+def _bg_worker_loop():
+    while True:
+        try:
+            fn, args, critical = _bg_queue.get(timeout=5)
+        except _bgqueue.Empty:
+            continue
+        try:
+            waited = 0
+            while main_flow_active and waited < 90:
+                time.sleep(1)
+                waited += 1
+            fn(*args)
+        except Exception as e:
+            log.warning(f"bg task failed: {type(e).__name__}: {str(e)[:80]}")
+        finally:
+            _bg_queue.task_done()
+
+
+def enqueue_background(fn, *args, critical: bool = False):
+    """后台任务入队：单 worker 串行执行，主流程优先。
+
+    critical=True（如章节回流）：队列满时丢弃最旧的非关键任务腾位，绝不丢。
+    critical=False（如状态提取）：队列满直接丢弃（最新场景的状态会覆盖旧的，
+    丢无妨——保持场景流不被阻塞）。
+    """
+    global _bg_worker_started
+    if not _bg_worker_started:
+        with _bg_worker_lock:
+            if not _bg_worker_started:
+                _bthread.Thread(target=_bg_worker_loop, daemon=True).start()
+                _bg_worker_started = True
+    if critical:
+        # 队列满 → 先丢一个非关键任务腾位
+        if _bg_queue.full():
+            try:
+                _drop_one_non_critical()
+            except Exception:
+                pass
+    try:
+        _bg_queue.put_nowait((fn, args, critical))
+    except _bgqueue.Full:
+        if critical:
+            # 实在放不下（全是关键任务）→ 起临时线程，保证不丢
+            try:
+                _bthread.Thread(target=fn, args=args, daemon=True).start()
+            except Exception:
+                log.warning("bg critical task dropped!")
+        # 非关键任务满时静默丢弃（状态提取可丢）
+
+
+def _drop_one_non_critical():
+    """丢弃队列中最早的非关键任务（FIFO 顺序扫描）"""
+    items = []
+    try:
+        while not _bg_queue.empty():
+            items.append(_bg_queue.get_nowait())
+    except _bgqueue.Empty:
+        pass
+    kept = []
+    dropped = False
+    for it in items:
+        if not dropped and not it[2]:
+            dropped = True  # 丢第一个非关键
+            continue
+        kept.append(it)
+    for it in kept:
+        try:
+            _bg_queue.put_nowait(it)
+        except _bgqueue.Full:
+            break  # 极端情况，剩余丢弃（可丢任务优先）
+
+
 # ── v3.5.40: 建议选项生成（Galgame 式真两难）──
 SUGGESTION_SYSTEM = """你是互动小说的选项设计师。为读者生成 3 个建议回应选项。
 
@@ -592,6 +686,9 @@ class StoryDirector:
 
     async def _llm_stream(self, system: str, user: str,
                           temperature: float = 0.8, max_tokens: int = 2500) -> AsyncIterator[str]:
+        # v3.5.47: 主流程 LLM 活跃标志——后台任务（状态提取/章节回流）让路，
+        # 防止并发打 API 触发限流导致生成变慢
+        set_main_flow(True)
         try:
             async for chunk in self._resilient.create_stream(
                 messages=[
@@ -605,6 +702,8 @@ class StoryDirector:
         except Exception as e:
             log.warning(f"StoryDirector stream failed: {type(e).__name__}: {str(e)[:120]}")
             yield ""  # 空 chunk，让前端感知结束
+        finally:
+            set_main_flow(False)
 
     # ── 上下文组装 ──
     def _build_scene_prompt(self, state: dict, summary: str) -> str:
@@ -906,13 +1005,9 @@ class StoryDirector:
         except Exception as e:
             log.warning(f"advance_outline failed: {e}")
         # v3.5.22: 复用小说模式逻辑引擎（后台，不阻塞场景流）——
-        # 角色状态更新 + L1 矛盾检查
+        # 角色状态更新 + L1 矛盾检查（v3.5.47: 走串行队列，不与主流程抢 LLM）
         try:
-            import threading
-            threading.Thread(
-                target=self._post_scene_logic_check,
-                args=(novel_id, scene_num, scene_text, blocks),
-                daemon=True).start()
+            enqueue_background(self._post_scene_logic_check, novel_id, scene_num, scene_text, blocks)
         except Exception:
             pass
 
@@ -1394,14 +1489,14 @@ class StoryDirector:
             done_idx = idx
             scene_start = int(op.get("scene_start", 1) or 1)
             try:
-                import threading
-                threading.Thread(
-                    target=self._sync_chapter_from_interactive,
-                    args=(novel_id, done_idx, scene_start, state.get("scene_num", 0) or 0),
-                    daemon=True,
-                ).start()
+                # v3.5.47: 章节回流走关键任务队列（串行执行 + 主流程让路，不丢）
+                enqueue_background(
+                    self._sync_chapter_from_interactive,
+                    novel_id, done_idx, scene_start, state.get("scene_num", 0) or 0,
+                    critical=True,
+                )
             except Exception as e:
-                log.warning(f"chapter sync thread failed: {e}")
+                log.warning(f"chapter sync enqueue failed: {e}")
             if idx < len(chs) - 1:
                 idx += 1
                 cnt = 0
