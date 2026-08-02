@@ -178,6 +178,20 @@ async def interactive_start(novel_id: str):
     except Exception as e:
         log.warning(f"outline load failed: {e}")
 
+    # v3.5.34: 文风继承——每次 start 从小说风格配置生成风格描述
+    # （文笔/语气/对话/反套路），注入互动全部生成路径，保证与小说文风一致
+    try:
+        from core.planner import get_style, build_style_prompt
+        _st3 = _store.load_state(novel_id) or {}
+        _sn = _st3.get("style", "") or ""
+        if _sn:
+            _sb = build_style_prompt(get_style(_sn))
+            if _sb:
+                _st3["style_brief"] = _sb[:600]
+                _store.save_state(novel_id, _st3)
+    except Exception as e:
+        log.warning(f"style_brief failed: {e}")
+
     async def event_stream():
         # 挂载出场角色人设（异步后台，不阻塞开场）
         try:

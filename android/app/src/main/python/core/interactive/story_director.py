@@ -397,6 +397,10 @@ class StoryDirector:
         s = state.get("state", {})
         parts = []
         parts.append(f"## 小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
+        # v3.5.34: 文风要求（来自小说风格配置——文笔/语气/对话风格必须符合）
+        _sb = state.get("style_brief") or ""
+        if _sb:
+            parts.append("## 文风要求（必须严格遵守）:\n" + _sb[:400])
         # v3.5.12: 玩家角色扮演——读者化身是主角，场景以 TA 视角写（代入感核心）
         pc = state.get("player_char") or {}
         if pc.get("name"):

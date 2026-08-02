@@ -115,6 +115,10 @@ class DialogueEngine:
     def _build_chat_prompt(self, state: dict, target_char: str,
                            history: list, last_action: Optional[dict] = None) -> str:
         parts = []
+        # v3.5.34: 文风要求（来自小说风格配置——对话风格/语气必须符合）
+        _sb = state.get("style_brief") or ""
+        if _sb:
+            parts.append("## 文风要求（对话语气/用语必须符合）:\n" + _sb[:300])
         # v3.5.27: 当前环境（对话发生在哪——角色对环境有感知，玩家也知道身在何处）
         s = state.get("state", {}) or {}
         loc = s.get("location", "") or ""
