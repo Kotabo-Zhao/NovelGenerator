@@ -757,6 +757,18 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </span>
         </div>
         
+        <!-- v3.5.26: 创意加成开关（默认关——忠实执行用户需求，不加私货） -->
+        <div class="flex items-center gap-8 mt-8" style="font-size:13px;color:var(--text2)">
+          <label class="toggle-switch">
+            <input type="checkbox" v-model="form.creativeEnhance">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>
+            <span v-if="form.creativeEnhance">🎲 创意加成 <span style="opacity:.55">— 允许AI注入反套路脑洞（随机创意约束）</span></span>
+            <span v-else style="opacity:.55">🎲 创意加成 <span style="opacity:.4">— 默认关：严格按你的需求写，不加任何私货</span></span>
+          </span>
+        </div>
+
         <!-- 快餐模式 -->
         <div class="flex items-center gap-8 mt-6" v-if="!form.normalPacing">
           <label class="toggle">
@@ -2385,7 +2397,7 @@ const app = createApp({
       }
     }
 
-    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false });
+    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false, creativeEnhance:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false, xhs:false });
     
     // v2.50: XHS 短篇模式
@@ -3571,7 +3583,7 @@ const app = createApp({
       createProgress.value=0; createPhase.value='start'; createPhaseLabel.value='准备中…';
       decomposeSummary.value=null;
       try {
-        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames, normal_pacing:form.normalPacing, fast_food:form.fastFood})});
+        const r=await fetch(API+'/api/novels/create-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form, natural_names:form.naturalNames, normal_pacing:form.normalPacing, fast_food:form.fastFood, creative_enhance:form.creativeEnhance})});
         await readSSE(r, (evt) => {
           if(evt.type==='progress'){ createPhase.value=evt.phase; createPhaseLabel.value=evt.label; createProgress.value=evt.pct; }
           // v2.2: 需求拆解完成

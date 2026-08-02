@@ -26,6 +26,7 @@ class CreateNovelRequest(BaseModel):
     natural_names: bool = True  # 自然命名，去AI味
     normal_pacing: bool = False  # v2.2: 默认快节奏
     fast_food: bool = False  # v2.7: 快餐模式
+    creative_enhance: bool = False  # v3.5.26: 创意加成（默认关——忠实执行用户需求，不加私货）
 
 
 class GenerateChapterRequest(BaseModel):
