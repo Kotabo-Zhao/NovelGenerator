@@ -1,16 +1,17 @@
-"""EmotionTTS — 本地情感语音引擎（IndexTTS-2，RTX 5070，免费离线）
+"""EmotionTTS — 本地情感语音引擎（CosyVoice2-0.5B，RTX 5070，免费离线）
 
-**为什么是 IndexTTS-2**：音色与情感完全解耦（GRL 梯度反转分离 speaker_emb / emotion_emb）——
-角色一个音色参考音频，情感独立切换（平静/愤怒/悲伤/喜悦/紧张/冷漠 6 档），
-实测情感传达 93%、三层情绪递进"压抑→蓄力→爆发"。
+**v3.5.6: 引擎从 IndexTTS-2 切换到 CosyVoice2-0.5B**
+- 显存 2.4GB（IndexTTS 6.5GB+，12GB 卡 OOM 的根因）→ 不再 OOM、不再崩溃
+- 加载 ~9s（IndexTTS 110s）；合成 13-18s/句（IndexTTS 17-30s + 并发必挂）
+- 真人音色 → zero_shot 克隆（人味）；情感 → instruct2 指令文本
 
 **进程架构**：模型跑在独立子进程（emotion_server.py，indextts venv 的 python 启动，
 HTTP :8791 常驻）——依赖完全隔离（torch/CUDA 不进后端），后端仅 HTTP 调用。
 后端进程重启不丢模型（子进程保活：检测断开自动重启）。
 
 - 角色音色参考：edge-tts 合成该角色 15s 台词 → ref_audio（首次使用时生成，磁盘缓存）
-- 情感参考：内置 6 档情感参考音频（v1 edge-tts 强情绪文本占位，后续可换真实情感音频）
-- 合成缓存：text+char+emotion hash → wav 磁盘缓存（7 天 TTL）
+- 真人音色库：11 个真人参考音频（官方 Demo Space）→ 克隆有"人味"
+- 合成缓存：text+char+emotion+real_voice hash → wav 磁盘缓存（7 天 TTL）
 - 不可用降级：子进程未启动/失败 → 503 → 前端降级 edge-tts
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +41,10 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 SERVER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "emotion_server.py")
 CACHE_DIR = os.path.join(_BASE_DIR, "data", "tts_cache", "emotion")
 CACHE_TTL = 7 * 24 * 3600
+
+# v3.5.6: 客户端合成锁——并发请求（预合成+播放同时）在客户端排队，避免并发 HTTP
+# 连接在引擎侧排队时的连接问题（曾出现第 3 个并发请求 503 且未达引擎）
+_CLIENT_LOCK = threading.Lock()
 
 
 class EmotionTTSUnavailable(Exception):
@@ -153,13 +159,15 @@ class EmotionTTS:
                     pass
         # 调子进程（未启动则拉起；失败一次后直接降级，不阻塞主流程）
         try:
-            self._spawn()
-            if not self._wait_ready():
-                raise EmotionTTSUnavailable("子进程超时未就绪")
-            data = self._request("/synthesize", {
-                "text": text[:500], "char_name": char_name, "emotion": emotion,
-                "voice": voice, "rate": rate, "pitch": pitch, "real_voice": real_voice,
-            })
+            # v3.5.6: 客户端锁串行化（引擎端也有锁；双锁保证并发排队不丢请求）
+            with _CLIENT_LOCK:
+                self._spawn()
+                if not self._wait_ready():
+                    raise EmotionTTSUnavailable("子进程超时未就绪")
+                data = self._request("/synthesize", {
+                    "text": text[:500], "char_name": char_name, "emotion": emotion,
+                    "voice": voice, "rate": rate, "pitch": pitch, "real_voice": real_voice,
+                }, timeout=180.0)
         except EmotionTTSUnavailable:
             raise
         except Exception as e:

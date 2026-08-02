@@ -1,11 +1,17 @@
-"""EmotionTTS 子进程服务 — IndexTTS-2 情感语音引擎（独立进程，HTTP :8791）
+"""EmotionTTS 子进程服务 — CosyVoice2 情感语音引擎（独立进程，HTTP :8791）
 
 由后端 EmotionTTS 自动拉起，跑在 indextts venv（torch/CUDA 与后端隔离）。
-首次启动加载模型 20-40s，之后常驻。
+首次启动加载模型 ~10s，之后常驻。
+
+v3.5.6: 引擎从 IndexTTS-2 切换到 CosyVoice2-0.5B
+- 显存 2.4GB（IndexTTS-2 6.5GB+，12GB 卡 OOM 的根因）
+- 加载 9s（IndexTTS-2 110s）
+- 真人克隆 7-12s/句（IndexTTS-2 17-30s，且并发必挂）
+- 真人音色 → inference_zero_shot 克隆；情感 → inference_instruct2 指令
 
 端点：
 GET  /status        → {"ready": bool, "model": str}
-POST /synthesize    → wav bytes（body: text/char_name/emotion/voice/rate/pitch）
+POST /synthesize    → wav bytes（body: text/char_name/emotion/voice/rate/pitch/real_voice）
 
 用法：python emotion_server.py [port]
 """
@@ -13,34 +19,47 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import logging
 import os
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [emotion-tts] %(message)s")
 log = logging.getLogger("emotion_server")
 
+# v3.5.5: 全局推理锁——模型单实例非线程安全，并发推理会互相污染缓存/状态
+# （预合成+播放并发 → 偶发失败）。锁内串行化，排队而非并行。
+_INFER_LOCK = threading.Lock()
+
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# index-tts 源码目录（Claw/index-tts，未 pip 安装时直接走源码）
-_INDEXTTS_SRC = os.path.normpath(os.path.join(_BASE_DIR, "..", "..", "index-tts"))
-if os.path.isdir(os.path.join(_INDEXTTS_SRC, "indextts")) and _INDEXTTS_SRC not in sys.path:
-    sys.path.insert(0, _INDEXTTS_SRC)
+# cosyvoice 源码目录（Claw/cosyvoice_tmp，未 pip 安装时直接走源码）
+_COSY_SRC = os.path.normpath(os.path.join(_BASE_DIR, "..", "..", "cosyvoice_tmp"))
+if os.path.isdir(os.path.join(_COSY_SRC, "cosyvoice")):
+    if _COSY_SRC not in sys.path:
+        sys.path.insert(0, _COSY_SRC)
+    _MATCHA_DIR = os.path.join(_COSY_SRC, "third_party", "matcha")
+    if os.path.isdir(_MATCHA_DIR) and _MATCHA_DIR not in sys.path:
+        sys.path.insert(0, _MATCHA_DIR)
 
-MODEL_ROOT = os.environ.get("INDEXTTS_MODEL_ROOT", "").strip() or os.path.normpath(
-    os.path.join(_INDEXTTS_SRC, "models", "index-tts-v2"))
+MODEL_ROOT = os.environ.get("COSYVOICE_MODEL_ROOT", "").strip() or os.path.normpath(
+    os.path.join(_COSY_SRC, "pretrained_models", "CosyVoice2-0.5B"))
 
-# 情感 → 情感文本提示（use_emo_text 模式：qwen_emo 从文本检测情感向量）
+# 情感 → 情感指令文本（instruct2 模式）
 EMOTION_TEXT_PROMPTS = {
-    "平静": None,  # 无情感参考 → 角色自身中性情感
-    "愤怒": "他压抑着怒火，一字一顿地说道",
-    "悲伤": "她的声音有些哽咽，带着哭腔",
-    "喜悦": "她眉眼弯弯，语气轻快地说",
-    "紧张": "他声音发紧，带着明显的不安",
-    "冷漠": "她语气冰冷，不带一丝感情",
+    "平静": None,  # 无情感指令 → 零样本克隆（角色自身声音特质）
+    "愤怒": "用愤怒的语气，声音颤抖地说",
+    "悲伤": "用悲伤哽咽的语气，带着哭腔说",
+    "喜悦": "用喜悦轻快的语气，眉眼弯弯地说",
+    "紧张": "用紧张不安的语气，声音发紧地说",
+    "冷漠": "用冷漠平淡的语气，不带一丝感情地说",
 }
+
+# zero_shot 参考文本（CosyVoice2 需要 prompt_text；真人音色无真实文本，用占位）
+ZERO_SHOT_REF_TEXT = "嗯，我在听。你说吧。"
 
 REF_DIR = os.path.join(_BASE_DIR, "data", "tts_refs")
 VOICES_DIR = os.path.join(REF_DIR, "voices")
@@ -75,6 +94,27 @@ _model = None
 _model_error = ""
 
 
+def _patch_audio_backend():
+    """torchaudio 2.11 已移除 soundfile 后端（只支持 torchcodec）→ 重写 load_wav"""
+    import torch
+    import torchaudio
+    import soundfile as sf
+
+    def load_wav_sf(wav, target_sr, min_sr=16000):
+        data, sample_rate = sf.read(wav, dtype="float32")
+        speech = torch.from_numpy(data)
+        if speech.dim() > 1:
+            speech = speech.mean(dim=1)
+        speech = speech.unsqueeze(0)
+        if sample_rate != target_sr:
+            assert sample_rate >= min_sr
+            speech = torchaudio.transforms.Resample(sample_rate, target_sr)(speech)
+        return speech
+
+    from cosyvoice.utils import file_utils
+    file_utils.load_wav = load_wav_sf
+
+
 def _load_model():
     global _model, _model_error
     if _model is not None or _model_error:
@@ -86,15 +126,14 @@ def _load_model():
             _model_error = "无可用 CUDA GPU"
             log.warning(_model_error)
             return
-        from indextts.infer_v2 import IndexTTS2
-        cfg = os.path.join(MODEL_ROOT, "config.yaml")
-        if not os.path.exists(cfg):
-            _model_error = f"模型目录缺失: {MODEL_ROOT}（config.yaml 不存在，需先下载模型）"
+        if not os.path.exists(os.path.join(MODEL_ROOT, "llm.pt")):
+            _model_error = f"模型目录缺失: {MODEL_ROOT}（llm.pt 不存在，需先下载 CosyVoice2-0.5B）"
             log.warning(_model_error)
             return
-        _model = IndexTTS2(cfg_path=cfg, model_dir=MODEL_ROOT,
-                           device="cuda", use_fp16=True)
-        log.info(f"IndexTTS2 模型加载完成 ({time.time()-t0:.1f}s)")
+        _patch_audio_backend()
+        from cosyvoice.cli.cosyvoice import CosyVoice2
+        _model = CosyVoice2(MODEL_ROOT, load_jit=False, load_trt=False, fp16=True)
+        log.info(f"CosyVoice2 模型加载完成 ({time.time()-t0:.1f}s)")
     except Exception as e:
         _model_error = f"{type(e).__name__}: {str(e)[:150]}"
         log.warning(f"模型加载失败: {_model_error}")
@@ -134,7 +173,23 @@ def _synthesize(text: str, char_name: str, emotion: str,
     """IndexTTS2 合成：角色音色 spk_audio_prompt + 情感文本提示（qwen_emo）→ wav bytes
 
     real_voice 指定时用真人音色库参考音频（人味），否则用 edge-tts 合成角色参考。
+    v3.5.5: 全局锁串行化（模型非线程安全）+ OOM 容错（清缓存重试一次）。
     """
+    with _INFER_LOCK:
+        try:
+            return _synthesize_locked(text, char_name, emotion, voice, rate, pitch, real_voice)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower() or "cuda" in str(e).lower() and "memory" in str(e).lower():
+                log.warning("CUDA OOM，清缓存后重试一次…")
+                import torch
+                torch.cuda.empty_cache()
+                time.sleep(1)
+                return _synthesize_locked(text, char_name, emotion, voice, rate, pitch, real_voice)
+            raise
+
+
+def _synthesize_locked(text: str, char_name: str, emotion: str,
+                       voice: str, rate: str, pitch: str, real_voice: str = "") -> bytes:
     _load_model()
     if _model is None:
         raise RuntimeError(_model_error or "模型未加载")
@@ -148,27 +203,22 @@ def _synthesize(text: str, char_name: str, emotion: str,
         if not ref:
             raise RuntimeError(f"角色参考音频缺失: {char_name}")
     emo_text = EMOTION_TEXT_PROMPTS.get(emotion)
-    # 返回 (sampling_rate, wav_data int16 numpy)；output_path=None 走内存返回
-    result = _model.infer(
-        spk_audio_prompt=ref,
-        text=text,
-        output_path=None,
-        use_emo_text=emo_text is not None,
-        emo_text=emo_text or text,
-        temperature=0.3,
-        top_k=30,
-        interval_silence=200,
-    )
-    if result is None:
-        raise RuntimeError("IndexTTS2 返回空结果")
-    sr, wav = result
-    import io
+    if emo_text:
+        # 情感指令模式：真人音色/角色音色 + 情感文本（instruct2）
+        chunks = [j["tts_speech"] for j in _model.inference_instruct2(
+            text, emo_text, ref, stream=False)]
+    else:
+        # 平静：零样本克隆参考音频（人味）
+        chunks = [j["tts_speech"] for j in _model.inference_zero_shot(
+            text, ZERO_SHOT_REF_TEXT, ref, stream=False)]
+    if not chunks:
+        raise RuntimeError("CosyVoice2 返回空结果")
+    import torch
     import numpy as np
-    wav = np.asarray(wav)
-    if wav.dtype != np.int16:
-        wav = np.clip(wav * 32767, -32768, 32767).astype(np.int16)
+    wav = torch.cat(chunks, dim=1).squeeze(0).cpu().numpy()
+    wav = np.clip(wav * 32767, -32768, 32767).astype(np.int16)
     buf = io.BytesIO()
-    _write_wav(buf, int(sr), wav)
+    _write_wav(buf, 24000, wav)
     return buf.getvalue()
 
 
@@ -239,9 +289,24 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8791
     log.info(f"EmotionTTS server listening on {port} (model: {MODEL_ROOT})")
-    # 预热：后台加载模型（首个请求到达时可能已在加载）
+    # 预热：后台加载模型 + 跑一次 dummy 合成（触发 cuDNN autotune，首次请求不再慢）
     import threading
-    threading.Thread(target=_load_model, daemon=True).start()
+
+    def _warmup():
+        try:
+            _load_model()
+            if _model is not None:
+                ref = os.path.join(VOICES_DIR, "voice_11.wav")
+                if os.path.exists(ref):
+                    t0 = time.time()
+                    for _ in _model.inference_zero_shot(
+                            "嗯，我知道了。", ZERO_SHOT_REF_TEXT, ref, stream=False):
+                        pass
+                    log.info(f"预热完成 ({time.time()-t0:.1f}s)")
+        except Exception as e:
+            log.warning(f"预热失败（不影响使用）: {type(e).__name__}: {str(e)[:100]}")
+
+    threading.Thread(target=_warmup, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.serve_forever()
 
