@@ -196,6 +196,7 @@ class DialogueEngine:
             exit_c = (agenda.get("exit") or {}).get("condition", "")
             if exit_c:
                 parts.append(f"收尾条件: {exit_c[:80]}")
+            parts.append("收尾策略: 收尾条件达成后，在合适时机主动自然收尾（告别/约定/转移话题），不必等读者操作；若读者明显想继续聊，可再回应 1-2 轮再收尾")
         # 离题拉回提示（drift 轻校验发现跑偏后注入）
         drift_note = state.get("drift_note")
         if drift_note:
@@ -316,6 +317,15 @@ class DialogueEngine:
                 self.store.save_state(novel_id, state)
             yield {"type": "drift_check", "on_track": bool(drift.get("on_track")) if drift else True,
                    "reason": str(drift.get("drift_reason", "")) if drift else ""}
+            # v3.3.1: 自然收尾检测——超过最少轮数且对话在轨道上 → 提示可收尾
+            if drift is not None and drift.get("on_track", True):
+                agenda = state.get("agenda") or {}
+                ex = agenda.get("exit") or {}
+                min_rounds = ex.get("min_rounds", 3)
+                if chat_count >= min_rounds:
+                    yield {"type": "natural_end",
+                           "message": "对话目标已达成，可以继续剧情了",
+                           "chat_rounds": chat_count}
 
         yield {"type": "done"}
 

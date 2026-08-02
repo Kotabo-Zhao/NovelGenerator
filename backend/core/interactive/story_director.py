@@ -220,6 +220,12 @@ class StoryDirector:
             parts.append("待兑现事实（本段必须自然回扣至少 1 个）:")
             for f in facts[:6]:
                 parts.append(f"- [{f.get('type')}] {f.get('content')}")
+        # v3.3.1: 上一场对话未达成的目标（missing hooks）——软约束：后果显现/角色惦记
+        missing = state.get("pending_missing_hooks") or []
+        if missing:
+            parts.append("上一场对话未谈成的事（本段剧情可让其后顾显现，或角色主动提起追问）:")
+            for m in missing[:3]:
+                parts.append(f"- {str(m)[:60]}")
         if summary:
             parts.append(f"前情摘要: {summary[:600]}")
         # 角色卡
@@ -292,6 +298,8 @@ class StoryDirector:
         recent = state.get("recent_scenes", [])
         recent.append(scene_text[:300])
         state["recent_scenes"] = recent[-3:]
+        # v3.3.1: missing hooks 只影响本段场景，用后即清（软约束不过期悬挂）
+        state.pop("pending_missing_hooks", None)
         # 在场角色（从台词块提取）
         speakers = {b["speaker"] for b in blocks if b["type"] == "dialogue"}
         casts = state.get("casts", {})

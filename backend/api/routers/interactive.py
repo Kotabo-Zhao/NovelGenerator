@@ -74,8 +74,15 @@ async def interactive_start(novel_id: str):
         st["casts"] = casts
         # v3.2: 世界观注入（重开后剧情必须贴合本小说设定）
         wb = ctx.get("worldbuilding") or {}
-        st["state"]["location"] = wb.get("starting_location") or wb.get("geography", "")[:60] or ""
-        st["state"]["objective"] = wb.get("core_conflict", "") or "踏上你的旅程"
+        # v3.3.1: geography 可能是 str/dict/list，统一转字符串（修复 start 500）
+        _geo = wb.get("geography", "")
+        if isinstance(_geo, (dict, list)):
+            _geo = json.dumps(_geo, ensure_ascii=False)
+        st["state"]["location"] = wb.get("starting_location") or str(_geo)[:60] or ""
+        core_conflict = wb.get("core_conflict", "")
+        if isinstance(core_conflict, (dict, list)):
+            core_conflict = json.dumps(core_conflict, ensure_ascii=False)
+        st["state"]["objective"] = str(core_conflict) or "踏上你的旅程"
         wb_brief = []
         for k in ("era", "geography", "power_system", "core_conflict", "factions"):
             v = wb.get(k)
@@ -161,6 +168,10 @@ async def interactive_end_chat(novel_id: str):
     hooks_result = {}
     if agenda:
         hooks_result = await asyncio.to_thread(_story.verify_hooks, novel_id, agenda)
+        # v3.3.1: missing hooks 回流——未达成的对话目标写入 state，
+        # 下一段场景生成时作为"未兑现的因果"软约束（后果显现/角色惦记）
+        if hooks_result.get("missing"):
+            state["pending_missing_hooks"] = hooks_result["missing"][:3]
     # 核对完成后清除议程（本轮对话的轨道使命结束，下一节点重新生成）
     if agenda:
         state.pop("agenda", None)
