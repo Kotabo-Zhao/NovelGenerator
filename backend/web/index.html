@@ -42,8 +42,8 @@ window.addEventListener('error', function(e) {
   --radius: 8px; --radius-sm: 6px; --radius-xs: 4px;
   --shadow: 0 1px 2px rgba(35,32,26,.04);
   --shadow-lg: 0 2px 6px rgba(35,32,26,.06), 0 12px 32px rgba(35,32,26,.08);
-  --font: 'KaiTi','STKaiti','Kaiti SC','Noto Serif SC','Songti SC','SimSun',serif;
-  --font-ui: -apple-system,'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;
+  --font: 'Kaiti SC','KaiTi','STKaiti','Noto Serif SC','Noto Serif CJK SC','Source Han Serif SC','Songti SC','SimSun',serif;
+  --font-ui: -apple-system,'PingFang SC','Microsoft YaHei','Noto Sans SC','Noto Sans CJK SC','Source Han Sans SC','Segoe UI',sans-serif;
   --font-mono: 'SF Mono','JetBrains Mono','Consolas',monospace;
   --ease: cubic-bezier(.4,0,.2,1);
 }
@@ -186,7 +186,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .chapter-outline .co-title{font-size:14px;font-weight:600;margin-bottom:4px;font-family:var(--font);letter-spacing:1px}
 .chapter-outline .co-summary{font-size:12px;color:var(--text2);line-height:1.6}
 .chapter-outline .co-meta{font-size:10px;color:var(--text3);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap}
-.chapter-content{font-size:16px;line-height:2.05;color:var(--text);white-space:pre-wrap;padding:0 0 40px;font-family:'PingFang SC','Noto Serif SC','Songti SC','SimSun',serif}
+.chapter-content{font-size:16px;line-height:2.05;color:var(--text);white-space:pre-wrap;padding:0 0 40px;font-family:'PingFang SC','Microsoft YaHei','Noto Serif SC','Noto Serif CJK SC','Songti SC','SimSun',serif}
 .chapter-content p{margin:0 0 1.2em;text-indent:2em}
 .chapter-empty{text-align:center;padding:60px 20px;color:var(--text3)}
 .chapter-empty .ce-icon{font-size:48px;margin-bottom:12px;opacity:.3}
@@ -459,7 +459,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .interactive-story::-webkit-scrollbar{width:6px}
   .interactive-story::-webkit-scrollbar-thumb{background:rgba(212,175,55,.25);border-radius:3px}
   /* 旁白：居中衬线，小说感 */
-  .inter-narr{color:#c9c2b4;margin:16px 30px;text-align:center;font-family:"STKaiti","KaiTi","SimSun",serif;font-size:14.5px;letter-spacing:.5px;animation:interRise .5s ease both}
+  .inter-narr{color:#c9c2b4;margin:16px 30px;text-align:center;font-family:"STKaiti","KaiTi","Noto Serif SC","Noto Serif CJK SC","SimSun",serif;font-size:14.5px;letter-spacing:.5px;animation:interRise .5s ease both}
   /* v3.5.10: 场景分隔线（历史流定位） */
   .inter-scene-div{color:#6b6458;font-size:11.5px;text-align:center;margin:22px 0 6px;letter-spacing:3px;position:relative}
   .inter-scene-div::before,.inter-scene-div::after{content:"";position:absolute;top:50%;width:28%;height:1px;background:rgba(255,255,255,.07)}
@@ -487,7 +487,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   @keyframes interPlaying{0%,100%{box-shadow:0 0 0 1px rgba(212,175,55,.25)}50%{box-shadow:0 0 0 1px rgba(212,175,55,.55),0 0 22px rgba(212,175,55,.2)}}
   /* 行动块：左侧金边 + 淡金底 */
   .inter-action-desc{display:flex;align-items:center;gap:8px;margin:14px 18px;padding:8px 16px;border-left:3px solid var(--gold);background:rgba(212,175,55,.06);border-radius:8px;color:#d9bc7a;font-size:13.5px;animation:interRise .45s ease both}
-  .inter-action-result{margin:14px 30px;padding:12px 18px;border-left:3px solid var(--gold);background:rgba(212,175,55,.04);border-radius:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi",serif;font-size:14px;text-align:center;animation:interRise .5s ease both}
+  .inter-action-result{margin:14px 30px;padding:12px 18px;border-left:3px solid var(--gold);background:rgba(212,175,55,.04);border-radius:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi","Noto Serif SC","Noto Serif CJK SC",serif;font-size:14px;text-align:center;animation:interRise .5s ease both}
   /* v3.5.8: 状态变化系统提示（对话流内，绿色轻提示） */
   .inter-sys-change{color:#8fd3a8;font-size:12.5px;margin:6px 30px;text-align:center;background:rgba(63,185,80,.07);border:1px solid rgba(63,185,80,.22);border-radius:6px;padding:4px 10px;animation:interRise .4s ease both;letter-spacing:.3px}
   /* 轨道提示条 */
@@ -522,7 +522,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .inter-intro{background:linear-gradient(180deg,rgba(212,175,55,.06),rgba(212,175,55,.02));border:1px solid rgba(212,175,55,.28);border-radius:14px;padding:10px 16px;cursor:pointer;transition:border-color .2s}
   .inter-intro:hover{border-color:rgba(212,175,55,.5)}
   .inter-intro-head{display:flex;justify-content:space-between;align-items:center;color:#d9bc7a}
-  .inter-intro-body{margin-top:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi","SimSun",serif;font-size:14px;line-height:2;letter-spacing:.5px;padding:4px 6px;border-top:1px dashed rgba(212,175,55,.15);animation:interRise .5s ease both}
+  .inter-intro-body{margin-top:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi","Noto Serif SC","Noto Serif CJK SC","SimSun",serif;font-size:14px;line-height:2;letter-spacing:.5px;padding:4px 6px;border-top:1px dashed rgba(212,175,55,.15);animation:interRise .5s ease both}
   .inter-intro.intro-collapsed{padding:8px 16px}
   .player-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;position:sticky;top:0;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.22);transition:padding .2s}
   /* v3.5.14: 折叠态——紧凑单行，不占对话框空间 */
