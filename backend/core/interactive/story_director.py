@@ -460,6 +460,11 @@ class StoryDirector:
         - 玩家主动权兜底：「我要说话」按钮随时可发起
         """
         chars = self._scene_chars(blocks)
+        # v3.5.17: 场景纯旁白（v3.5.12 后"你"视角开场可能无 NPC 台词）→
+        # 用在场角色兜底，保证开场节点必有对话对象
+        if not chars:
+            player_name = (state.get("player_char") or {}).get("name", "")
+            chars = [n for n in (state.get("casts") or {}) if n != player_name][:3]
         if not chars:
             return False, [], 0, "无在场角色"
         # 规则 1：开场第 1 段必触发（首次体验，优先于其他规则）

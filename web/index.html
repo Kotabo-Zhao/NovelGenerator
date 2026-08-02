@@ -530,7 +530,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .ps-rel-item{display:inline-flex;align-items:baseline;gap:3px;background:rgba(226,75,74,.06);border:1px solid rgba(226,75,74,.14);border-radius:6px;padding:1px 7px;font-size:12px}
   .ps-rel-name{color:var(--text2)}
   .ps-rel-heart{font-weight:600}
-  .ps-fact-item{display:inline-block;margin:1px 6px 1px 0;padding:1px 8px;border-radius:6px;font-size:12px;background:rgba(212,175,55,.08);border:1px dashed rgba(212,175,55,.32);color:#d9bc7a}
+  /* v3.5.17: 关系态度描述（字符串值时展示） */
+  .ps-rel-desc{color:var(--text3);font-size:11px;opacity:.85}
+  .ps-fact-item{display:inline-block;margin:2px 6px 2px 0;padding:1px 8px;border-radius:6px;font-size:12px;background:rgba(212,175,55,.08);border:1px dashed rgba(212,175,55,.32);color:#d9bc7a}
+  .ps-fact-item.fact-fulfilled{background:rgba(63,185,80,.08);border-color:rgba(63,185,80,.32);color:#8fd3a8}
+  .ps-fact-item.fact-expired{background:rgba(136,135,128,.08);border-color:rgba(136,135,128,.3);color:#888780}
+  .ps-fact-item.fact-broken{background:rgba(248,81,73,.08);border-color:rgba(248,81,73,.35);color:#f85149}
+  .fact-badge-mini{margin-right:3px}
   .ps-event-item{display:block;font-size:12px;color:var(--text3);margin:1px 0;line-height:1.5}
   .ps-event-ts{color:var(--accent);opacity:.7;margin-right:5px;font-size:11px}
   @media(max-width:760px){.player-status-grid{grid-template-columns:1fr}}
@@ -1094,9 +1100,15 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
                 </div>
               </div>
-              <!-- v3.5.9: 剧情状态总览（可折叠内容区） -->
+              <!-- v3.5.17: 剧情状态总览（展开态详情版：性格/关系态度/承诺状态/时间线/上一步） -->
               <template v-if="interactive.statusOpen">
-              <div class="player-status-grid" style="margin-top:10px">
+              <!-- 主角性格（展开时补充） -->
+              <div class="ps-cell" v-if="interactive.state.player_char && interactive.state.player_char.personality_brief">
+                <span class="ps-label">🧠 性格</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.5">{{ interactive.state.player_char.personality_brief }}</span>
+              </div>
+              <!-- 第一行：地点/进展/在场 -->
+              <div class="player-status-grid" style="margin-top:6px">
                 <div class="ps-cell" :class="{'ps-flash': statusFlash.scene_num}" v-if="interactive.state.state && interactive.state.state.location || statusFlash.scene_num">
                   <span class="ps-label">📍 地点</span>
                   <span class="ps-val">{{ interactive.state.state && interactive.state.state.location || '（未定）' }}</span>
@@ -1104,7 +1116,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <div class="ps-cell" :class="{'ps-flash': statusFlash.flags}" v-if="(interactive.state.state && interactive.state.state.flags || []).length || statusFlash.flags">
                   <span class="ps-label">🏷 进展</span>
                   <span class="ps-val">
-                    <span v-for="f in (interactive.state.state && interactive.state.state.flags || []).slice(-4)" :key="f" style="margin-right:8px;font-size:12px;background:rgba(212,175,55,.1);border-radius:4px;padding:1px 6px">{{ f }}</span>
+                    <span v-for="f in (interactive.state.state && interactive.state.state.flags || [])" :key="f" style="margin-right:8px;font-size:12px;background:rgba(212,175,55,.1);border-radius:4px;padding:1px 6px">{{ f }}</span>
                   </span>
                 </div>
                 <div class="ps-cell" v-if="presentChars.length">
@@ -1114,35 +1126,44 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   </span>
                 </div>
               </div>
-              <!-- 目标（章节目的，常驻完整显示） -->
+              <!-- 目标（章节目的，完整多行显示） -->
               <div class="ps-cell" style="margin-top:6px;padding:2px 4px" v-if="interactive.state.state && interactive.state.state.objective">
                 <span class="ps-label">🎯 目标</span>
                 <span class="ps-val" style="white-space:normal;line-height:1.5">{{ interactive.state.state.objective }}</span>
               </div>
-              <!-- 关系明细（谁 + 态度值，实时更新高亮） -->
+              <!-- 你上一步做了什么（行动轨迹） -->
+              <div class="ps-cell" v-if="interactive.state.last_action && interactive.state.last_action.summary">
+                <span class="ps-label">🕐 上一步</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.5;color:var(--text2)">{{ interactive.state.last_action.summary }}</span>
+              </div>
+              <!-- 关系明细（谁 + 态度值 + 态度描述，实时更新高亮） -->
               <div class="ps-cell ps-relations" :class="{'ps-flash': statusFlash.relations}" v-if="relCount">
                 <span class="ps-label">💞 关系</span>
                 <span class="ps-val ps-rel-wrap">
                   <span v-for="(rv, rn) in interactive.state.state.relations" :key="rn" class="ps-rel-item" :title="rn + ' 对你的态度'">
                     <span class="ps-rel-name">{{ rn }}</span>
-                    <span class="ps-rel-heart" :style="{color: rv>=60?'#e24b4a':(rv>=30?'#d4af37':'#888780')}">♥{{ rv }}</span>
+                    <span class="ps-rel-heart" :style="{color: typeof rv==='number' && rv>=60 ? '#e24b4a' : (typeof rv==='number' && rv>=30 ? '#d4af37' : '#888780')}">
+                      {{ typeof rv==='number' ? '♥'+rv : '' }}
+                    </span>
+                    <span v-if="typeof rv==='string'" class="ps-rel-desc">{{ rv }}</span>
                   </span>
                 </span>
               </div>
-              <!-- 承诺清单（你答应过的事，⏳ 待兑现高亮） -->
-              <div class="ps-cell" v-if="activeFacts.length">
+              <!-- 承诺清单（完整内容 + 状态：⏳ 待兑现 / ✅ 已兑现 / ⌛ 过期 / 💔 违约） -->
+              <div class="ps-cell" v-if="(interactive.state.facts||[]).length">
                 <span class="ps-label">⏳ 承诺</span>
-                <span class="ps-val" style="white-space:normal;line-height:1.6">
-                  <span v-for="f in activeFacts" :key="f.id" class="ps-fact-item" :title="'待兑现：' + f.content">
-                    {{ f.content.length > 34 ? f.content.slice(0, 34) + '…' : f.content }}
+                <span class="ps-val" style="white-space:normal;line-height:1.7">
+                  <span v-for="f in (interactive.state.facts||[]).slice(-6).reverse()" :key="f.id" class="ps-fact-item" :class="'fact-'+f.status">
+                    <span class="fact-badge-mini">{{ f.status==='active'?'⏳':f.status==='fulfilled'?'✅':f.status==='expired'?'⌛':'💔' }}</span>
+                    {{ f.content }}
                   </span>
                 </span>
               </div>
-              <!-- 刚发生的事（事件时间线，保持剧情连续性感知） -->
+              <!-- 刚发生的事（事件时间线，5 条） -->
               <div class="ps-cell" :class="{'ps-flash': statusFlash.events}" v-if="(interactive.state.events||[]).length">
                 <span class="ps-label">📌 刚发生</span>
                 <span class="ps-val" style="white-space:normal;line-height:1.6">
-                  <span v-for="(e, ei) in interactive.state.events.slice(-3).reverse()" :key="ei" class="ps-event-item">
+                  <span v-for="(e, ei) in interactive.state.events.slice(-5).reverse()" :key="ei" class="ps-event-item">
                     <span class="ps-event-ts">{{ e.ts }}</span> {{ e.summary }}
                   </span>
                 </span>
