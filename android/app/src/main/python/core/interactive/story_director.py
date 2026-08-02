@@ -44,13 +44,19 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
 
 NODE_SYSTEM = """你是互动小说剧情节奏师。判断当前场景是否应该暂停，让读者与角色对话。
 
-考虑因素：
-- 场景中出现重大事件（新线索/新人物/冲突升级/角色态度转变）→ 是
-- 场景中有角色与读者有直接互动可能（询问/邀请/威胁/诱惑）→ 是
-- 场景只是铺垫/过渡/风景描写 → 否
-- 最近已经对话过且无新进展 → 否
+**核心原则：对话节点要少而精，只在读者真正需要介入的时刻触发。** 过度打断是体验杀手。
 
-输出 JSON: {"is_node": true/false, "chars": ["在场角色名"], "suggested_rounds": 1-8, "confidence": 0-1, "reason": "一句话理由"}
+应该触发（confidence ≥ 0.7）：
+- 场景结尾留下需要读者当场决定的问题（答应/拒绝/追问/选择信任谁）
+- 角色直接向读者发问、邀请、威胁、交易，不回应剧情无法推进
+- 重大事件刚发生，读者必须表态（发现真相/身份暴露/生死抉择）
+
+不应该触发（confidence ≤ 0.3）：
+- 只是普通交谈、寒暄、铺垫、风景描写
+- 场景本身已有充分对话且无新决策点
+- 剧情还在推进中，无需读者介入
+
+输出 JSON: {"is_node": true/false, "chars": ["在场角色名"], "suggested_rounds": 2-6, "confidence": 0-1, "reason": "一句话理由"}
 只输出 JSON。"""
 
 PACT_SYSTEM = """你是互动小说因果提取器。从读者与角色的对话中，提取影响后续剧情的事实。
@@ -172,6 +178,10 @@ class StoryDirector:
         s = state.get("state", {})
         parts = []
         parts.append(f"## 小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
+        # v3.2: 世界观注入（保证剧情贴合本小说设定）
+        wb = state.get("worldbuilding_brief") or ""
+        if wb:
+            parts.append(f"## 世界观设定（必须严格遵守，不得偏离）:\n{wb[:600]}")
         parts.append(f"当前场景号: {state.get('scene_num', 0)}")
         if s.get("location"):
             parts.append(f"地点: {s['location']}")
@@ -289,40 +299,50 @@ class StoryDirector:
 
     # ── 节点判定 ──
     def _decide_node(self, novel_id: str, scene_num: int, blocks: list, state: dict) -> tuple:
-        """① 规则预筛 → ② LLM 精判。返回 (is_node, chars, rounds, reason)"""
-        # 规则 1：开场第 1 段必触发
+        """① 规则预筛 → ② LLM 精判。返回 (is_node, chars, rounds, reason)
+
+        v3.2 优化：减少打断感——只有真正值得玩家介入的时刻才触发对话。
+        - 规则 2 放宽到连续 3 段无对话（原来 2 段，太频繁）
+        - 规则 3 只保留强冲突词（去掉"怒""秘密"等泛词）
+        - LLM 精判 confidence 阈值 0.5，且必须场景里有角色
+        """
+        # 规则 1：开场第 1 段必触发（首次体验）
         if scene_num <= 1:
             return True, self._scene_chars(blocks), 3, "开场互动"
-        # 规则 2：连续 2 段无对话 → 强制（用最近场景判断）
-        last_two = self.store.recent_scenes(novel_id, 2)
-        if len(last_two) >= 2:
-            has_dialogue_prev = any(
-                b.get("type") == "dialogue" for b in last_two[-2].get("blocks", [])
-            )
-            has_dialogue_cur = any(b.get("type") == "dialogue" for b in blocks)
-            if not has_dialogue_prev and not has_dialogue_cur:
-                return True, self._scene_chars(blocks), 4, "连续两段无对话"
-        # 规则 3：场景出现新角色 / 冲突关键词
-        text = " ".join(b["content"] for b in blocks)
-        conflict_kw = ["怒", "拔剑", "威胁", "揭露", "震惊", "交易", "秘密", "追杀", "真相", "决裂"]
-        if any(k in text for k in conflict_kw):
-            chars = self._scene_chars(blocks)
-            if chars:
-                return True, chars, 5, f"冲突场景: {next((k for k in conflict_kw if k in text), '')}"
-        # 规则 4：场景中有对话但最近已对话过 → LLM 精判
         chars = self._scene_chars(blocks)
         if not chars:
             return False, [], 0, "无在场角色"
+        # 规则 2：连续 3 段无对话 → 强制（保互动频率下限）
+        last_three = self.store.recent_scenes(novel_id, 3)
+        if len(last_three) >= 3:
+            no_dialogue = all(
+                not any(b.get("type") == "dialogue" for b in sc.get("blocks", []))
+                for sc in last_three[-3:]
+            )
+            if no_dialogue:
+                return True, chars, 4, "连续三段无对话"
+        # 规则 3：强冲突事件（真正需要玩家抉择的时刻）
+        text = " ".join(b["content"] for b in blocks)
+        strong_kw = ["拔剑", "刀架", "生死", "追杀", "真相大白", "身份暴露", "决裂", "挟持",
+                     "下跪", "自尽", "灭口", "当场", "对质", "摊牌", "交易达成", "背叛"]
+        hit = next((k for k in strong_kw if k in text), "")
+        if hit:
+            return True, chars, 5, f"重大事件: {hit}"
         # LLM 精判（规则未命中才调用）
         result = self._llm_judge_node(text, chars, state)
         if result is None:
             return False, chars, 2, "判定失败，默认不触发（玩家可主动介入）"
         is_node = bool(result.get("is_node"))
         confidence = float(result.get("confidence", 0.5))
-        # 防注水：confidence < 0.4 且距上次对话 < 2 段 → 不触发
-        if is_node and confidence < 0.4 and scene_num - state.get("_last_chat_scene", 0) < 2:
-            return False, chars, 0, "低置信度且刚对话过"
+        # v3.2: 提高触发门槛——confidence ≥ 0.5 才触发，且刚对话过时更严格
+        last_chat_gap = scene_num - state.get("_last_chat_scene", 0)
+        if is_node:
+            if confidence < 0.5:
+                return False, chars, 0, f"置信度不足({confidence:.1f})"
+            if confidence < 0.7 and last_chat_gap < 3:
+                return False, chars, 0, "刚对话过且置信度一般"
         rounds = int(result.get("suggested_rounds", 3) or 3)
+        rounds = max(2, min(rounds, 8))
         return is_node, result.get("chars") or chars, rounds, result.get("reason", "")
 
     def _llm_judge_node(self, text: str, chars: list, state: dict) -> Optional[dict]:

@@ -30,12 +30,40 @@ CACHE_TTL = 7 * 24 * 3600  # 7 天
 # 常用中文音色（完整列表 GET /api/tts/voices）
 DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
 
-# 实测可用音色白名单（2026-08-02 验证：微软对部分音色限区域，失败自动降级）
+# 实测可用音色白名单（2026-08-02 实测：zh-CN 部分音色被微软限区域，
+# 但 zh-HK/zh-TW 全部可用；失败时自动降级）
 AVAILABLE_VOICES = [
     "zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural", "zh-CN-XiaoxuanNeural",
     "zh-CN-YunxiNeural", "zh-CN-YunxiaNeural", "zh-CN-YunjianNeural",
     "zh-CN-YunyangNeural",
+    "zh-HK-HiuGaaiNeural", "zh-HK-HiuMaanNeural", "zh-HK-WanLungNeural",
+    "zh-TW-HsiaoChenNeural", "zh-TW-HsiaoYuNeural", "zh-TW-YunJheNeural",
 ]
+
+# 全量中文音色风格表（v3.2: 全部音色 + 风格标注）
+VOICE_STYLES = {
+    "zh-CN-XiaoxiaoNeural":   {"gender": "女", "style": "温暖知性，适合温柔女主/旁白"},
+    "zh-CN-XiaoyiNeural":     {"gender": "女", "style": "活泼俏皮，适合元气少女"},
+    "zh-CN-YunjianNeural":    {"gender": "男", "style": "浑厚低沉，适合大叔/将领"},
+    "zh-CN-YunxiNeural":      {"gender": "男", "style": "清爽温和，适合阳光青年/男主"},
+    "zh-CN-YunxiaNeural":     {"gender": "男", "style": "清亮少年感，适合弟弟/年轻角色"},
+    "zh-CN-YunyangNeural":    {"gender": "男", "style": "沉稳磁性，适合反派/枭雄"},
+    "zh-CN-XiaoxuanNeural":   {"gender": "女", "style": "清冷空灵，适合仙子/高冷御姐"},
+    "zh-CN-XiaomoNeural":     {"gender": "女", "style": "成熟魅惑，适合御姐/妖女"},
+    "zh-CN-XiaomengNeural":   {"gender": "女", "style": "萌软甜美，适合萝莉"},
+    "zh-CN-XiaohanNeural":    {"gender": "女", "style": "温柔亲切，适合姐姐/老师"},
+    "zh-CN-XiaoruiNeural":    {"gender": "女", "style": "沉稳知性，适合女强人/掌权者"},
+    "zh-CN-XiaoshuangNeural": {"gender": "女", "style": "童声清脆，适合小女孩"},
+    "zh-CN-XiaozhenNeural":   {"gender": "女", "style": "甜美温柔，适合邻家少女"},
+    "zh-CN-YunhaoNeural":     {"gender": "男", "style": "活力阳光，适合热血青年"},
+    "zh-CN-YunyeNeural":      {"gender": "男", "style": "邪魅低音，适合反派/神秘角色"},
+    "zh-HK-HiuGaaiNeural":    {"gender": "女", "style": "粤语女声，港风"},
+    "zh-HK-HiuMaanNeural":    {"gender": "女", "style": "粤语女声，成熟"},
+    "zh-HK-WanLungNeural":    {"gender": "男", "style": "粤语男声，沉稳"},
+    "zh-TW-HsiaoChenNeural":  {"gender": "女", "style": "台语女声，清新"},
+    "zh-TW-HsiaoYuNeural":    {"gender": "女", "style": "台语女声，温柔"},
+    "zh-TW-YunJheNeural":     {"gender": "男", "style": "台语男声，斯文"},
+}
 
 
 def _sanitize_voice(voice: str) -> str:
@@ -149,22 +177,42 @@ async def tts_synthesize(req: TTSRequest):
 
 @router.get("/api/tts/voices")
 async def tts_voices():
-    """可用音色列表（中文优先，只返回实测可用白名单）"""
+    """全部中文音色列表（含风格标注 + 可用性标记）
+
+    v3.2: 以 VOICE_STYLES 风格表为准返回全量（zh-CN 全部 + zh-HK + zh-TW），
+    edge_tts.list_voices 可能漏列部分音色，仅作为补充。
+    available=true 表示实测可用（白名单）；false 表示可能受限（自动降级到近似音色）。
+    """
+    # 基础：风格表全量（保证不漏音色）
+    result = []
+    for name, info in VOICE_STYLES.items():
+        result.append({
+            "name": name,
+            "gender": info.get("gender", ""),
+            "locale": "zh-CN" if name.startswith("zh-CN") else name[:5],
+            "style": info.get("style", ""),
+            "available": name in AVAILABLE_VOICES,
+        })
+    # 补充：list_voices 里风格表外的（如方言音色）
     try:
         import edge_tts
         voices = await edge_tts.list_voices()
-        cn = sorted(
-            [{"name": v["ShortName"], "gender": v.get("Gender", ""),
-              "locale": v.get("Locale", "")}
-             for v in voices
-             if v.get("Locale", "").startswith("zh-CN")
-             and v["ShortName"] in AVAILABLE_VOICES],
-            key=lambda x: x["name"],
-        )
-        return {"count": len(cn), "voices": cn}
+        known = {v["name"] for v in result}
+        for v in voices:
+            loc = v.get("Locale", "")
+            if not (loc.startswith("zh-CN") or loc.startswith("zh-HK") or loc.startswith("zh-TW")):
+                continue
+            name = v["ShortName"]
+            if name in known:
+                continue
+            result.append({
+                "name": name,
+                "gender": v.get("Gender", ""),
+                "locale": loc,
+                "style": "",
+                "available": name in AVAILABLE_VOICES,
+            })
     except Exception as e:
         log.warning(f"List voices failed: {e}")
-        # 兜底：返回白名单
-        return {"count": len(AVAILABLE_VOICES),
-                "voices": [{"name": v, "gender": "Female" if "Xiao" in v else "Male",
-                            "locale": "zh-CN"} for v in AVAILABLE_VOICES]}
+    result.sort(key=lambda x: (x["locale"], x["name"]))
+    return {"count": len(result), "voices": result}

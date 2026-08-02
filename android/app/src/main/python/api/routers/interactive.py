@@ -72,10 +72,20 @@ async def interactive_start(novel_id: str):
         for name, info in (ctx.get("casts_preview") or {}).items():
             casts[name] = {"present": True, "profile": {}, "role": info.get("role", "")}
         st["casts"] = casts
-        # 初始化 location/objective（从世界观）
+        # v3.2: 世界观注入（重开后剧情必须贴合本小说设定）
         wb = ctx.get("worldbuilding") or {}
-        st["state"]["location"] = wb.get("starting_location", "") or ""
+        st["state"]["location"] = wb.get("starting_location") or wb.get("geography", "")[:60] or ""
         st["state"]["objective"] = wb.get("core_conflict", "") or "踏上你的旅程"
+        wb_brief = []
+        for k in ("era", "geography", "power_system", "core_conflict", "factions"):
+            v = wb.get(k)
+            if isinstance(v, str) and v.strip():
+                wb_brief.append(f"{k}: {v.strip()[:120]}")
+            elif isinstance(v, dict) and v:
+                wb_brief.append(f"{k}: {json.dumps(v, ensure_ascii=False)[:120]}")
+            elif isinstance(v, list) and v:
+                wb_brief.append(f"{k}: {'、'.join(str(x)[:40] for x in v[:4])[:120]}")
+        st["worldbuilding_brief"] = "\n".join(wb_brief)[:800]
         _store.save_state(novel_id, st)
 
     async def event_stream():
@@ -178,6 +188,19 @@ async def interactive_state(novel_id: str):
         cc.pop("profile", None)
         casts[name] = cc
     out["casts"] = casts
+    # v3.2: 返回最近场景的完整 blocks（前端切回时恢复显示）
+    try:
+        scenes = _store.recent_scenes(novel_id, 1)
+        if scenes:
+            out["recent_blocks"] = scenes[-1].get("blocks", [])
+            out["recent_scene_num"] = scenes[-1].get("scene_num", 0)
+        else:
+            out["recent_blocks"] = []
+            out["recent_scene_num"] = 0
+    except Exception as e:
+        log.warning(f"recent_blocks failed: {e}")
+        out["recent_blocks"] = []
+        out["recent_scene_num"] = 0
     return {"ok": True, "state": out}
 
 

@@ -14,13 +14,14 @@ log = logging.getLogger(__name__)
 DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
 DEFAULT_MALE = "zh-CN-YunxiNeural"
 
-# 实测可用音色白名单（2026-08-02 网络环境验证，微软对部分音色限区域）
-# 可用: Xiaoxiao/Xiaoyi/Xiaoxuan/Yunxi/Yunxia/Yunjian/Yunyang
-# 不可用: Xiaomeng/Xiaomo/Xiaorui/Xiaoshuang/Xiaohan/Xiaozhen/Yunye/Yunhao
+# 实测可用音色白名单（2026-08-02 网络环境验证：微软对部分 zh-CN 音色限区域，
+# zh-HK/zh-TW 全可用。不可用音色自动降级到最接近的可用音色）
 AVAILABLE_VOICES = {
     "zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural", "zh-CN-XiaoxuanNeural",
     "zh-CN-YunxiNeural", "zh-CN-YunxiaNeural", "zh-CN-YunjianNeural",
     "zh-CN-YunyangNeural",
+    "zh-HK-HiuGaaiNeural", "zh-HK-HiuMaanNeural", "zh-HK-WanLungNeural",
+    "zh-TW-HsiaoChenNeural", "zh-TW-HsiaoYuNeural", "zh-TW-YunJheNeural",
 }
 
 # (性别, 年龄/性格关键词列表, 音色, rate, pitch)
@@ -69,7 +70,12 @@ def sanitize_voice(voice: str) -> str:
     """把不可用音色替换为白名单内的最接近音色（服务端容错）"""
     if voice in AVAILABLE_VOICES:
         return voice
-    # 女性 → Xiaoxiao，男性 → Yunxi
+    # zh-HK/zh-TW 男声 → 普通话男声；女声 → 普通话女声
+    if voice.startswith("zh-") and "Male" in voice:
+        return DEFAULT_MALE
+    if voice.startswith("zh-") and "Female" in voice:
+        return DEFAULT_VOICE
+    # 其他（zh-CN 不可用音色）
     if voice.lower().startswith("zh-cn-yun"):
         return DEFAULT_MALE
     return DEFAULT_VOICE

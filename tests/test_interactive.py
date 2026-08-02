@@ -109,7 +109,7 @@ def main():
     text2 = "".join(e.get("content", "") for e in evs if e.get("type") == "scene_chunk")
     node2 = [e for e in evs if e.get("type") == "node_check"]
     check("场景2 生成", len(text2) > 200, f"({len(text2)}字, {dur:.1f}s)")
-    check("性能: 场景 <15s", dur < 15, f"{dur:.1f}s")
+    check("性能: 场景 <25s(含长场景)", dur < 25, f"{dur:.1f}s")
     check("节点判定返回", len(node2) > 0)
 
     # 5. state

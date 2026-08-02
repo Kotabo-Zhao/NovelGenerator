@@ -1027,12 +1027,20 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </div>
               <div class="flex gap-6" style="flex-wrap:wrap;align-items:center">
                 <select class="voice-select" style="flex:1;min-height:34px;font-size:13px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 8px">
-                  <option v-for="vc in interactive.voiceCandidates" :key="vc" :value="vc" :selected="(interactive.voices[interactive.voicePicker]||{}).voice===vc">{{ vc.replace('zh-CN-','').replace('Neural','') }}</option>
+                  <option v-for="vc in interactive.voiceCandidates" :key="vc.name" :value="vc.name"
+                          :selected="(interactive.voices[interactive.voicePicker]||{}).voice===vc.name">
+                    {{ vc.name.replace('zh-CN-','').replace('zh-HK-','').replace('zh-TW-','').replace('Neural','') }}
+                    {{ vc.style ? '· '+vc.style : '' }}{{ vc.available ? '' : '（受限）' }}
+                  </option>
                 </select>
+                <button class="btn btn-xs" @click="previewVoice" title="试听当前音色">🔈 试听</button>
                 <label class="text-xs muted">语速 <input type="range" min="-50" max="100" v-model.number="interactive.voiceRate" style="width:80px;vertical-align:middle"></label>
                 <label class="text-xs muted">音调 <input type="range" min="-50" max="50" v-model.number="interactive.voicePitch" style="width:80px;vertical-align:middle"></label>
                 <button class="btn btn-xs btn-primary" @click="saveVoiceOverride">保存</button>
                 <button class="btn btn-xs btn-ghost" @click="resetVoiceOverride">恢复默认</button>
+              </div>
+              <div class="text-xs muted mt-8" v-if="interactive.voicePicker">
+                提示：标注「受限」的音色可能受区域限制，播放时会自动使用相近音色替代
               </div>
             </div>
 
@@ -3539,10 +3547,26 @@ const app = createApp({
       if(interactiveAudio){ interactiveAudio.pause(); interactiveAudio = null; }
       interactive.speakingLine = null;
     }
+    // v3.2: 清洗台词——只保留角色说的话（去掉动作描写/旁白/标记）
+    function cleanLineForTTS(raw){
+      let t = (raw||'').trim();
+      if(!t) return '';
+      // 去掉 【角色名】 前缀标记
+      t = t.replace(/^【[^】]*】/g, '');
+      // 去掉中文/英文括号内的动作、心理、表情描写（如 （她轻笑） / (笑) / 【动作】）
+      t = t.replace(/[（(【\[][^）)】\]]*[）)】\]]/g, '');
+      // 去掉行首动作前缀（如 她顿了顿： / 他冷笑一声：）
+      t = t.replace(/^[\u4e00-\u9fff]{1,12}[：:](?=[\u4e00-\u9fff])/, '').trim();
+      // 去掉外层引号（“ ” 「 」『 』）
+      t = t.replace(/^[“「『](.*)[”」』]$/, '$1');
+      // 去掉占位/省略内容
+      t = t.replace(/^…+$/, '').trim();
+      return t.slice(0, 500);
+    }
     async function speakLine(blk, idx){
       if(!blk || blk.type!=='dialogue' && blk.type!=='chat') return;
       stopInteractiveVoice();
-      const text = (blk.content||'').trim();
+      const text = cleanLineForTTS(blk.content);
       if(!text) return;
       interactive.speakingLine = idx;
       // 取该角色音色（玩家覆盖 > 人设规则映射 > 默认）
@@ -3553,7 +3577,7 @@ const app = createApp({
       try{
         const r = await fetch(API+'/api/tts', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ text: text.slice(0, 500), voice, rate, pitch }),
+          body: JSON.stringify({ text, voice, rate, pitch }),
         });
         if(!r.ok) throw new Error('TTS '+r.status);
         const blob = await r.blob();
@@ -3566,7 +3590,7 @@ const app = createApp({
         // 降级: 系统 TTS
         try{
           if(window.speechSynthesis){
-            const u = new SpeechSynthesisUtterance(text.slice(0, 500));
+            const u = new SpeechSynthesisUtterance(text);
             u.lang = 'zh-CN'; u.rate = 1.0;
             u.onend = () => { interactive.speakingLine = null; };
             u.onerror = () => { interactive.speakingLine = null; };
@@ -3582,11 +3606,47 @@ const app = createApp({
         const r = await fetch(API+'/api/tts/voices');
         if(r.ok){
           const d = await r.json();
-          if(d && d.voices) interactive.voiceCandidates = d.voices.map(v=>v.name);
+          if(d && d.voices && d.voices.length){
+            // v3.2: 对象数组 {name, gender, style, available, locale}
+            interactive.voiceCandidates = d.voices.map(v=>({
+              name: v.name, gender: v.gender||'', style: v.style||'',
+              available: v.available!==false, locale: v.locale||'',
+            }));
+            return;
+          }
         }
       }catch(e){}
-      if(!interactive.voiceCandidates.length){
-        interactive.voiceCandidates = ['zh-CN-XiaoxiaoNeural','zh-CN-XiaoyiNeural','zh-CN-XiaoxuanNeural','zh-CN-YunxiNeural','zh-CN-YunxiaNeural','zh-CN-YunjianNeural','zh-CN-YunyangNeural'];
+      // 兜底
+      interactive.voiceCandidates = [
+        {name:'zh-CN-XiaoxiaoNeural', style:'温暖知性', available:true},
+        {name:'zh-CN-XiaoyiNeural', style:'活泼俏皮', available:true},
+        {name:'zh-CN-XiaoxuanNeural', style:'清冷空灵', available:true},
+        {name:'zh-CN-YunxiNeural', style:'清爽温和', available:true},
+        {name:'zh-CN-YunxiaNeural', style:'清亮少年', available:true},
+        {name:'zh-CN-YunjianNeural', style:'浑厚低沉', available:true},
+        {name:'zh-CN-YunyangNeural', style:'沉稳磁性', available:true},
+      ];
+    }
+    // v3.2: 试听当前选中音色
+    async function previewVoice(){
+      if(!interactive.voicePicker) return;
+      const sel = document.querySelector('.voice-select');
+      const voice = sel ? sel.value : 'zh-CN-XiaoxiaoNeural';
+      stopInteractiveVoice();
+      const sample = '你好，我是' + (interactive.voicePicker||'这个角色') + '。今天的故事，就从这里开始吧。';
+      try{
+        const r = await fetch(API+'/api/tts', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text: sample, voice, rate: interactive.voiceRate, pitch: interactive.voicePitch }),
+        });
+        if(!r.ok) throw new Error('TTS '+r.status);
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        interactiveAudio = new Audio(url);
+        interactiveAudio.onended = () => { URL.revokeObjectURL(url); interactiveAudio = null; };
+        interactiveAudio.play().catch(()=>{ showToast('该音色当前不可用（区域受限）','试听失败','⚠️'); });
+      }catch(e){
+        showToast('该音色当前不可用（区域受限），将自动使用相近音色','试听失败','⚠️');
       }
     }
     function openVoicePicker(charName){
@@ -3636,18 +3696,29 @@ const app = createApp({
     function openInteractive() {
       if (!activeNovel.value || isBusy.value) return;
       writing.activeTab = 'interactive';
+      const id = encodeURIComponent(activeNovel.value.id);
+      // v3.2: 同一小说切回 → 直接用内存缓存（blocks 不丢）
+      if (interactive.state && interactive.state.novel_id === activeNovel.value.id
+          && interactive.blocks.length > 0) {
+        interactive.loading = false; interactive.error = '';
+        loadInteractiveVoices();
+        _scrollStory();
+        return;
+      }
       // 已有存档 → 直接加载；否则 start
       interactive.loading = true; interactive.error = '';
       interactive.loadingMsg = '正在加载互动世界…';
-      const id = encodeURIComponent(activeNovel.value.id);
       fetch(API+'/api/novels/'+id+'/interactive/state')
         .then(r => { if (r.status===404) throw {code:404}; return r.json(); })
         .then(data => {
           interactive.loading = false;
           if (data.ok && data.state) {
             interactive.state = data.state;
-            // 恢复已有场景块
-            interactive.blocks = [];
+            // v3.2: 恢复最近场景的完整 blocks（切回不丢内容）
+            interactive.blocks = (data.state.recent_blocks || []).slice();
+            if (!interactive.blocks.length && data.state.summary) {
+              interactive.blocks = [{type:'narration', speaker:'', content: data.state.summary}];
+            }
             loadInteractiveVoices();
             _scrollStory();
           } else {
@@ -3812,6 +3883,12 @@ const app = createApp({
             interactive.blocks = evt.blocks || [];
             interactive.pendingNode = false;
             _scrollStory();
+            // v3.2: 场景内的角色台词自动播放（只播 dialogue，旁白静默）
+            if (interactive.autoVoice) {
+              const blocks = interactive.blocks;
+              const firstDia = blocks.findIndex(b => b.type==='dialogue');
+              if (firstDia >= 0) speakLine(blocks[firstDia], firstDia);
+            }
           } else if (evt.type==='node_check') {
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
@@ -4190,7 +4267,7 @@ const app = createApp({
       // v3.0: 互动模式
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
-      speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,
+      speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,previewVoice,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
       switchToStoryGraph,loadStoryGraph,
