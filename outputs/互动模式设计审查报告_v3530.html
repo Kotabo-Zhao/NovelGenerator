@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>互动模式设计审查报告 v3.5.30</title>
+<style>
+:root{--bg:#14161c;--card:#1d2027;--border:#2c3038;--text:#e8e6e0;--text2:#a8a49a;--gold:#d4af37;--red:#e24b4a;--green:#3fb950;--orange:#d29922}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Microsoft YaHei','PingFang SC',sans-serif;line-height:1.75;padding:32px 20px}
+.wrap{max-width:960px;margin:0 auto}
+h1{font-size:24px;color:var(--gold);text-align:center;margin-bottom:6px}
+.sub{text-align:center;color:var(--text2);font-size:13px;margin-bottom:28px}
+h2{font-size:18px;color:var(--gold);margin:34px 0 14px;padding-left:10px;border-left:3px solid var(--gold)}
+h3{font-size:15px;color:var(--text);margin:18px 0 8px}
+p{margin:8px 0;color:var(--text)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:12px 0}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+th{background:#262a33;color:var(--gold);padding:9px 10px;text-align:left;font-weight:600;border:1px solid var(--border)}
+td{padding:8px 10px;border:1px solid var(--border);color:var(--text);vertical-align:top}
+.ok{color:var(--green);font-weight:600}
+.warn{color:var(--orange);font-weight:600}
+.bad{color:var(--red);font-weight:600}
+code{background:#262a33;padding:2px 6px;border-radius:4px;font-size:12.5px;color:#d9bc7a}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11.5px;margin-right:6px}
+.tag-green{background:rgba(63,185,80,.12);color:var(--green);border:1px solid rgba(63,185,80,.3)}
+.tag-red{background:rgba(226,75,74,.12);color:var(--red);border:1px solid rgba(226,75,74,.3)}
+.tag-gold{background:rgba(212,175,55,.12);color:var(--gold);border:1px solid rgba(212,175,55,.3)}
+.footer{text-align:center;color:var(--text2);font-size:12px;margin-top:40px;padding-top:16px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>互动模式设计审查报告</h1>
+<div class="sub">设计初衷对照 · 架构全景 · 保障机制 · BUG 排查 · 结论 &nbsp;|&nbsp; v3.5.30 · 2026-08-02</div>
+
+<h2>一、设计初衷（方案文档）与当前实现对照</h2>
+<div class="card">
+<table>
+<tr><th style="width:34%">设计初衷（interactive-novel-plan.html）</th><th>当前实现</th><th style="width:9%">状态</th></tr>
+<tr><td>互动小说 = 写作管线 + 对话引擎 + 角色语音：用户生成世界观与开头，推进到<b>关键节点</b>暂停，与角色<b>自由对话</b>；对话写入<b>剧情状态</b>决定后续走向</td>
+<td>大纲驱动章节推进 + 节点对话（Agenda/钩子）+ PACT 提取写入 facts/关系/目标 + 自动流；玩家输入自由（对话/行动均可）</td>
+<td class="ok">✅ 达成</td></tr>
+<tr><td>AI 实时生成分支——玩家的每一句话都是分支输入，剧情每次游玩不一样</td>
+<td>行动识别（LLM 判定行动/对话）+ 实时生成场景；v3.5.30 实测 10 类输入 10/10 理解正确</td>
+<td class="ok">✅ 达成</td></tr>
+<tr><td>核心闭环：生成世界观 → 开场 → 关键节点 → 对话 → 状态改写 → 下一场景 → 循环</td>
+<td>完整闭环；且已增强为：大纲 → 互动（v3.5.28）→ 章节回流（v3.5.29），玩互动=写小说</td>
+<td class="ok">✅ 超越</td></tr>
+<tr><td>叙事段落纯文字（打字机），只有角色台词自动播语音（Galgame 经典）</td>
+<td>旁白静默 + 角色台词自动语音（edge-tts / 情感引擎）</td>
+<td class="ok">✅ 达成</td></tr>
+<tr><td>关键节点暂停 → 对话</td>
+<td>v3.5.20 修复"一步一问"后节点频率降低（发问收尾 0/3、节点 1/3）——节奏与"关键节点才暂停"的初衷一致</td>
+<td class="ok">✅ 校准</td></tr>
+</table>
+<p><b>结论：设计初衷全部达成，且双向打通（大纲↔互动↔章节）已超出原方案。</b></p>
+</div>
+
+<h2>二、架构全景（3,603 行后端 + 前端）</h2>
+<div class="card">
+<table>
+<tr><th>模块</th><th>职责</th><th>规模</th></tr>
+<tr><td>story_director.py</td><td>场景导演：大纲驱动/节点判定/议程/钩子核对/PACT/开场/角色状态/章节回流/逻辑引擎复用</td><td>1,153 行</td></tr>
+<tr><td>dialogue_engine.py</td><td>对话引擎：目标检测/白名单一对一/角色记忆注入/drift/OOC/行动联动</td><td>520 行</td></tr>
+<tr><td>action_engine.py</td><td>行动引擎：行动识别（LLM 裁决）/护栏（规则兜底）/状态写回/行动结果场景</td><td>488 行</td></tr>
+<tr><td>interact_store.py</td><td>存档：原子写/快照/回滚/场景对话日志</td><td>350 行</td></tr>
+<tr><td>char_memory.py / emotion_tts / voice_director / emotion_server</td><td>角色记忆 / 情感语音（本地 GPU）/ 音色映射</td><td>~1,100 行</td></tr>
+<tr><td>routers/interactive.py</td><td>API：start/scene/chat/end-chat/rollback/restart</td><td>402 行</td></tr>
+</table>
+</div>
+
+<h2>三、保障机制盘点</h2>
+<div class="card">
+<h3>3.1 前后连续性（6 层）</h3>
+<p><span class="tag tag-green">L1</span> 前情摘要"开头+结尾双段"（空间尾态不丢，v3.5.21）</p>
+<p><span class="tag tag-green">L2</span> 大纲章节驱动：每章 2-4 场景，切章自动推进（v3.5.28）</p>
+<p><span class="tag tag-green">L3</span> 复用小说模式 CharacterStateTracker：场景后提取角色状态写入 global_state（v3.5.22）</p>
+<p><span class="tag tag-green">L4</span> 复用 LogicSupervisor L1 规则：时间/空间/行为/物品矛盾零成本检查（v3.5.22）</p>
+<p><span class="tag tag-green">L5</span> 事件时间线（events 8 条）+ facts 承诺硬挂钩（PACT 提取，待兑现回扣）</p>
+<p><span class="tag tag-green">L6</span> 角色记忆（char_memory）：角色视角记忆，信息不对称</p>
+<h3>3.2 逻辑性（4 项）</h3>
+<p><span class="tag tag-gold">✓</span> 世界观边界注入（worldbuilding_brief，不得偏离）+ 行动护栏（LLM 结合世界观裁决，v3.5.23）</p>
+<p><span class="tag tag-gold">✓</span> 角色白名单（场景/对话/行动三处 P0 约束，v3.5.27）——没有召唤的人不出现</p>
+<p><span class="tag tag-gold">✓</span> 时间只向前、地点变化有过渡、已离开角色不瞬移（SCENE_SYSTEM 规则 11）</p>
+<p><span class="tag tag-gold">✓</span> 玩家台词过滤全覆盖（场景/行动结果/对话回复，v3.5.27）</p>
+<h3>3.3 生成质量（5 项）</h3>
+<p><span class="tag tag-green">✓</span> 场景开头强制环境交代（地点/时间/氛围，v3.5.27）</p>
+<p><span class="tag tag-green">✓</span> drift 轨道检测（LLM）+ OOC 抽检（每 10 轮）</p>
+<p><span class="tag tag-green">✓</span> 钩子核对（Agenda 推进开关）+ PACT 提取（facts/关系/目标）</p>
+<p><span class="tag tag-green">✓</span> AI 检测器离线规则（AI 腔评分）+ 章节回流质量整合（v3.5.29）</p>
+<p><span class="tag tag-green">✓</span> 忠实执行模式（v3.5.26）：不加私货，创意增强默认关</p>
+<h3>3.4 玩家行为理解（实测 10/10）</h3>
+<p>行动（推门/答应/递茶/签协议/离开）与对话（不同意/闲聊/陈述）判定全部正确；@指定对象正确剥离；长句行动正确识别（v3.5.23 第一人称全覆盖）。</p>
+<h3>3.5 记忆系统：人物/环境交互的沉淀与回响（实测验证）</h3>
+<p><b>写入点（谁沉淀）：</b></p>
+<p><span class="tag tag-green">人物交互→记忆</span> 对话（PACT 提取）：承诺/威胁/秘密/告知 → 写入<b>目标角色</b>专属记忆（promise 类，source=pact）；关系变化 → 事件时间线</p>
+<p><span class="tag tag-green">行动→记忆</span> 行动（apply_action）：关系变化 → 对应角色 attitude 记忆（"读者对你做了行动：…"）；行动本身 → 事件时间线</p>
+<p><span class="tag tag-green">环境交互→记忆</span> <b>地点变化 → 全体在场角色写入 event 记忆</b>（"读者去了街角的咖啡店"）+ location 实时更新 + 事件时间线</p>
+<p><b>存储机制（char_memory.py）：</b> 每角色上限 30 条 · 内容级去重（前 30 字相同视为重复）· <b>信息不对称</b>：角色 A 的记忆 B 看不到（除非剧情传话）· 随互动存档持久化</p>
+<p><b>回响点（谁记得）：</b></p>
+<p><span class="tag tag-gold">场景生成</span> 注入：待兑现 facts（硬挂钩）· 最近事件时间线 · 角色状态（CharacterStateTracker）· 当前地点——共享剧情状态视角</p>
+<p><span class="tag tag-gold">对话生成</span> 注入：目标角色<b>专属记忆</b>（memory_brief 8 条）——角色视角，"你记得的事你不能装作不知道"</p>
+<p><b>实测闭环（替身的告别，真实 LLM）：</b></p>
+<p>① 行动"去街角的咖啡店" → location 更新 + 事件"读者站起身离开当前地点，前往街角的咖啡店" + 记忆总数 10 条 ✅</p>
+<p>② 对话"我答应你，下周一定把设计稿给你" → 记忆 10→11，顾衍之新增"读者答应顾衍之，承诺下周交付设计稿" + facts 更新 ✅</p>
+<p>③ 后续场景生成 → <b>完整记得</b>："街角咖啡店的暖黄灯光从落地窗里漫出来……方才那句'下周交稿'，你说得干脆，可设计稿的内容此刻还只是一团模糊的光影"——地点与承诺不仅被记住，还融入心理描写与剧情 ✅</p>
+<p><b>边界说明：</b> 场景生成注入的是"共享剧情状态"（facts/events/角色状态），角色<b>私密记忆</b>（秘密类）只在对话时注入——符合信息不对称设计（场景中他人不知私密事）。若需场景中角色对私密记忆做出反应，可通过剧情传话实现。</p>
+</div>
+
+<h2>四、本轮审查发现与修复（v3.5.30）</h2>
+<div class="card">
+<table>
+<tr><th>问题</th><th>严重度</th><th>说明</th><th>处理</th></tr>
+<tr><td><b>最后一章永不回流</b></td><td class="bad">BUG</td><td>_advance_outline 条件 <code>idx &lt; len-1</code>——最后一章完成时既不切章也不触发章节回流，最后一章内容永远丢失</td>
+<td class="ok">✅ 已修：移除限制，末章完成后标记 final_done 防重复；单测 3/3</td></tr>
+<tr><td><b>objective 双写冲突</b></td><td class="warn">逻辑缺陷</td><td>PACT 对话后更新 objective（玩家方向），切章又覆盖为大纲摘要——互相覆盖，玩家方向丢失或章节目标丢失</td>
+<td class="ok">✅ 已修：切章不再覆盖 objective（大纲章节目标已在场景 prompt 单独注入"当前剧情章节"，两轨并行）</td></tr>
+<tr><td><b>重开/中途退出不回流当前章</b></td><td class="warn">体验缺陷</td><td>只在切章时回流——玩家玩到一半重开，本章互动白玩</td>
+<td class="ok">✅ 已修：restart 前后台线程回流当前章（不阻塞）</td></tr>
+<tr><td>玩家行为理解</td><td class="ok">验证</td><td>10 类输入实测（移动/承诺/交互/签署/离开/对话/闲聊/陈述/@对象）</td>
+<td class="ok">✅ 10/10 正确</td></tr>
+</table>
+</div>
+
+<h2>五、遗留已知问题（非阻断）</h2>
+<div class="card">
+<table>
+<tr><th>问题</th><th>影响</th><th>建议</th></tr>
+<tr><td>创建小说耗时 537s（LLM 输出波动重试）</td><td>首次创建慢</td><td>worldbuilding 阶段失败时降级 prompt 重试（已部分具备），后续可并行化</td></tr>
+<tr><td>互动章节覆盖小说模式章节（有 .bak 备份）</td><td>两路径写同一章节文件</td><td>设计决策：互动=玩家参与的权威版本；若需保留小说版可加"来源标记"</td></tr>
+<tr><td>CoherenceValidator 角色名解析误报（章节标题短语当角色名）</td><td>日志噪音、分数不可信</td><td>修复角色名提取正则（按人设名单过滤）</td></tr>
+<tr><td>每章场景数固定 2-4（按 target_words 粗略）</td><td>长章节压缩、短章节拖长</td><td>按章节字数/事件密度动态估算</td></tr>
+<tr><td>rollback 回退快照时 outline_progress 不同步</td><td>回退后章节进度可能超前</td><td>快照包含 outline_progress 即可（快照全量 state 已含，需验证恢复路径）</td></tr>
+</table>
+</div>
+
+<h2>六、结论</h2>
+<div class="card">
+<p><b>设计初衷：未偏离。</b> 定位（写作管线+对话+语音）、核心闭环（节点对话→状态改写→下一场景）、Galgame 语音体验全部达成，且大纲驱动 + 章节回流使互动成为小说的"可玩版本"，超出原方案。</p>
+<p><b>质量保障：有体系。</b> 连续性 6 层、逻辑性 4 项、质量 5 项检查覆盖；复用小说模式引擎（角色状态/逻辑监督/AI 检测）避免重复造轮子。</p>
+<p><b>玩家行为理解：实测准确。</b> 10/10——行动与对话判定、@对象、长句行动均正确，判断权归 AI、规则仅兜底。</p>
+<p><b>本轮修复 3 个问题</b>（末章回流丢失 / objective 双写冲突 / 重开不回流），均为推进链上的真实缺陷，已修并回归 17/17。</p>
+<p><b>剩余问题均为非阻断优化项</b>，建议按"创建耗时 > rollback 同步 > 验证器误报"顺序处理。</p>
+</div>
+
+<div class="footer">NovelGenerator · 互动模式审查 · v3.5.30 · 生成时间 2026-08-02 22:00</div>
+</div></body></html>
