@@ -17,3 +17,6 @@ backend/data/tts_cache/
 
 # 根目录分发用 APK（不进版本库）
 /app-*.apk
+
+# android 打包产物（不进版本库）
+android/*.apk
