@@ -65,10 +65,10 @@ class EmotionTTS:
             log.warning("EmotionTTS 子进程已退出，重启中…")
         py = _INDEXTTS_PY
         if not py:
-            # 默认路径：indextts venv
+            # 默认路径：indextts311 venv（IndexTTS 要求 Python 3.10-3.12）
             candidates = [
-                os.path.join(os.path.dirname(sys.executable), "..", "envs", "indextts", "Scripts", "python.exe"),
-                os.path.expanduser(r"~\.workbuddy\binaries\python\envs\indextts\Scripts\python.exe"),
+                os.path.expanduser(r"~\.workbuddy\binaries\python\envs\indextts311\Scripts\python.exe"),
+                os.path.join(os.path.dirname(sys.executable), "..", "envs", "indextts311", "Scripts", "python.exe"),
             ]
             py = next((c for c in candidates if os.path.exists(os.path.normpath(c))), "")
         if not py or not os.path.exists(SERVER_SCRIPT):

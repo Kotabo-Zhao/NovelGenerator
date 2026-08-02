@@ -23,19 +23,25 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [emotion-tts] %(message)s")
 log = logging.getLogger("emotion_server")
 
-MODEL_ROOT = os.environ.get("INDEXTTS_MODEL_ROOT", "").strip() or "index-tts/index-tts-v2"
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# index-tts 源码目录（Claw/index-tts，未 pip 安装时直接走源码）
+_INDEXTTS_SRC = os.path.normpath(os.path.join(_BASE_DIR, "..", "..", "index-tts"))
+if os.path.isdir(os.path.join(_INDEXTTS_SRC, "indextts")) and _INDEXTTS_SRC not in sys.path:
+    sys.path.insert(0, _INDEXTTS_SRC)
 
-# 情感参考音频（edge-tts 强情绪文本合成，首次生成后磁盘缓存）
-EMOTION_PROMPTS = {
-    "平静": "嗯，我知道了。这件事，我们慢慢说。",
-    "愤怒": "你！你怎么能这样对我！我绝不会原谅你！",
-    "悲伤": "为什么……为什么要这样……我真的很痛，很难过。",
-    "喜悦": "太好了！真的太好了！我就知道你会来！哈哈！",
-    "紧张": "别、别过来！你听我说，事情不是你想的那样！",
-    "冷漠": "呵。随你便吧。与我无关。",
+MODEL_ROOT = os.environ.get("INDEXTTS_MODEL_ROOT", "").strip() or os.path.normpath(
+    os.path.join(_INDEXTTS_SRC, "models", "index-tts-v2"))
+
+# 情感 → 情感文本提示（use_emo_text 模式：qwen_emo 从文本检测情感向量）
+EMOTION_TEXT_PROMPTS = {
+    "平静": None,  # 无情感参考 → 角色自身中性情感
+    "愤怒": "他压抑着怒火，一字一顿地说道",
+    "悲伤": "她的声音有些哽咽，带着哭腔",
+    "喜悦": "她眉眼弯弯，语气轻快地说",
+    "紧张": "他声音发紧，带着明显的不安",
+    "冷漠": "她语气冰冷，不带一丝感情",
 }
 
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REF_DIR = os.path.join(_BASE_DIR, "data", "tts_refs")
 
 _model = None
@@ -53,9 +59,15 @@ def _load_model():
             _model_error = "无可用 CUDA GPU"
             log.warning(_model_error)
             return
-        from indextts.index_tts import IndexTTS
-        _model = IndexTTS(MODEL_ROOT, device="cuda")
-        log.info(f"IndexTTS 模型加载完成 ({time.time()-t0:.1f}s)")
+        from indextts.infer_v2 import IndexTTS2
+        cfg = os.path.join(MODEL_ROOT, "config.yaml")
+        if not os.path.exists(cfg):
+            _model_error = f"模型目录缺失: {MODEL_ROOT}（config.yaml 不存在，需先下载模型）"
+            log.warning(_model_error)
+            return
+        _model = IndexTTS2(cfg_path=cfg, model_dir=MODEL_ROOT,
+                           device="cuda", use_fp16=True)
+        log.info(f"IndexTTS2 模型加载完成 ({time.time()-t0:.1f}s)")
     except Exception as e:
         _model_error = f"{type(e).__name__}: {str(e)[:150]}"
         log.warning(f"模型加载失败: {_model_error}")
@@ -69,16 +81,8 @@ async def _edge_tts(text: str, out_path: str, voice: str, rate: str, pitch: str)
 
 
 def _emotion_ref(emotion: str) -> str:
-    """情感参考音频（v1：edge-tts 强情绪文本占位）"""
-    path = os.path.join(REF_DIR, f"emotion_{emotion}.mp3")
-    if not os.path.exists(path):
-        try:
-            asyncio.run(_edge_tts(EMOTION_PROMPTS.get(emotion, "嗯。"), path,
-                                  "zh-CN-XiaoxiaoNeural", "+0%", "+0Hz"))
-            log.info(f"情感参考生成: {emotion}")
-        except Exception as e:
-            log.warning(f"情感参考失败 {emotion}: {e}")
-    return path if os.path.exists(path) else ""
+    """情感参考音频（v2 起用 use_emo_text 模式，不再需要情感音频——保留占位逻辑）"""
+    return ""
 
 
 def _char_ref(char_name: str, voice: str, rate: str, pitch: str) -> str:
@@ -100,27 +104,30 @@ def _char_ref(char_name: str, voice: str, rate: str, pitch: str) -> str:
 
 def _synthesize(text: str, char_name: str, emotion: str,
                 voice: str, rate: str, pitch: str) -> bytes:
-    """IndexTTS 合成：角色音色 ref + 情感参考 target → wav bytes"""
+    """IndexTTS2 合成：角色音色 spk_audio_prompt + 情感文本提示（qwen_emo）→ wav bytes"""
     _load_model()
     if _model is None:
         raise RuntimeError(_model_error or "模型未加载")
     ref = _char_ref(char_name, voice, rate, pitch)
-    emo_ref = _emotion_ref(emotion)
     if not ref:
         raise RuntimeError(f"角色参考音频缺失: {char_name}")
-    import io
-    import numpy as np
-    sr, wav = _model.infer(
+    emo_text = EMOTION_TEXT_PROMPTS.get(emotion)
+    # 返回 (sampling_rate, wav_data int16 numpy)；output_path=None 走内存返回
+    result = _model.infer(
+        spk_audio_prompt=ref,
         text=text,
-        ref_audio_path=ref,
-        ref_audio_text=EMOTION_PROMPTS["平静"],
-        target_audio_path=emo_ref or ref,
-        target_audio_text=EMOTION_PROMPTS.get(emotion, "嗯。"),
+        output_path=None,
+        use_emo_text=emo_text is not None,
+        emo_text=emo_text or text,
         temperature=0.3,
         top_k=30,
-        speed=1.0,
+        interval_silence=200,
     )
-    # numpy → wav bytes（自写头，不依赖 scipy）
+    if result is None:
+        raise RuntimeError("IndexTTS2 返回空结果")
+    sr, wav = result
+    import io
+    import numpy as np
     wav = np.asarray(wav)
     if wav.dtype != np.int16:
         wav = np.clip(wav * 32767, -32768, 32767).astype(np.int16)

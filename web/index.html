@@ -3811,6 +3811,12 @@ const app = createApp({
             interactive.typing = false;
             interactive.blocks = evt.blocks || [];
             _scrollStory();
+            // v3.5: 场景内角色台词预合成（情感引擎开启时）
+            if (interactive.emotionVoice && interactive.emotionAvailable) {
+              (evt.blocks || []).forEach(b => {
+                if (b.type === 'dialogue') prewarmVoice(b.content, b.speaker);
+              });
+            }
           } else if (evt.type==='node_check') {
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
@@ -3840,6 +3846,32 @@ const app = createApp({
         interactive.blocks.push({type:'typing', speaker:'', content:text});
       }
       _scrollStory();
+    }
+
+    // v3.5: 后台预合成（台词到达立即合成入缓存，点击播放时秒回）
+    let _prewarmQueue = [];
+    let _prewarming = false;
+    function prewarmVoice(text, speaker) {
+      if (!text || !speaker || speaker === '你') return;
+      if (!interactive.emotionVoice || !interactive.emotionAvailable) return;
+      _prewarmQueue.push({ text, speaker });
+      if (!_prewarming) _prewarmQueueRun();
+    }
+    async function _prewarmQueueRun() {
+      _prewarming = true;
+      while (_prewarmQueue.length) {
+        const item = _prewarmQueue.shift();
+        const v = (interactive.voices && interactive.voices[item.speaker]) || {};
+        try {
+          await fetch(API+'/api/tts/emotion', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ text: cleanLineForTTS(item.text), char_name: item.speaker,
+              emotion: interactive.emotion||'平静', voice: v.voice||'zh-CN-XiaoxiaoNeural',
+              rate: v.rate||'+0%', pitch: v.pitch||'+0Hz' }),
+          });
+        } catch(e) { /* 预合成失败静默，播放时降级 */ }
+      }
+      _prewarming = false;
     }
 
     function _scrollStory() {
@@ -3924,6 +3956,10 @@ const app = createApp({
             // v3.1: 对话台词自动播放（旁白静默，只对话题生效）
             if (interactive.autoVoice && last && (last.type==='chat' || last.type==='dialogue')) {
               speakLine(last, interactive.blocks.length-1);
+            }
+            // v3.5: 情感引擎开启时预合成（缓存预热，点击秒回）
+            if (last && (last.type==='chat' || last.type==='dialogue')) {
+              prewarmVoice(last.content, last.speaker);
             }
           } else if (evt.type==='drift_check') {
             // v3.3: 跑偏提示（角色下一轮会拉回）
