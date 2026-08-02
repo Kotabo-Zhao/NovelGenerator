@@ -252,8 +252,10 @@ async def tts_emotion_synthesize(req: EmotionTTSRequest):
         raise HTTPException(503, f"情感合成失败: {type(e).__name__}")
     if not data:
         raise HTTPException(503, "情感合成失败（空结果）")
+    # 修复：HTTP 头只允许 latin-1，中文情感名需 URL 编码
+    from urllib.parse import quote
     return Response(content=data, media_type="audio/wav",
-                    headers={"X-Emotion": req.emotion, "X-TTS-Engine": "indextts"})
+                    headers={"X-Emotion": quote(req.emotion), "X-TTS-Engine": "indextts"})
 
 
 @router.get("/api/tts/emotion/status")
