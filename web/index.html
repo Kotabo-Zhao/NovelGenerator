@@ -1335,11 +1335,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <!-- 输入区 -->
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
-                <input v-model="interactive.message" @keyup.enter="sendInteractiveChat"
+                <input v-model="interactive.message" @keyup.enter="sendInteractiveChat()"
                        :placeholder="interactive.busy || interactive.typing ? '⏳ 正在生成，请稍候…' : '说点什么，或直接行动：上车 / 推门 / 答应他 / 离开…（可 @角色名）'"
                        :disabled="interactive.busy || interactive.typing"
                        style="flex:1;min-height:38px;font-size:14px" />
-                <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||interactive.typing||!String(interactive.message||'').trim()">💬 说</button>
+                <button class="btn btn-sm btn-primary" @click="sendInteractiveChat()" :disabled="interactive.busy||interactive.typing||!String(interactive.message||'').trim()">💬 说</button>
               </div>
               <div class="flex gap-6 mt-8" style="justify-content:flex-end">
                 <button class="btn btn-sm btn-primary" @click="continueInteractive" :disabled="interactive.busy">
@@ -4302,8 +4302,10 @@ const app = createApp({
     async function sendInteractiveChat(prefill) {
       if (interactive.busy || interactive.typing) return;  // v3.5.45: 生成/播放中禁操作
       if (!activeNovel.value) return;
-      if (prefill !== undefined && prefill !== null && prefill !== '') {
-        interactive.message = String(prefill);        // v3.5.44: 强制字符串，防类型污染
+      // v3.5.46: 类型防线——只接受字符串 prefill（按钮裸绑 @click 会把
+      // PointerEvent 事件对象传进来，String(事件对象) 会变成 "[object PointerEvent]" 当消息发出去）
+      if (typeof prefill === 'string' && prefill !== '') {
+        interactive.message = prefill;
       }
       if (!String(interactive.message || '').trim()) return;
       cancelAuto();                                  // v3.5.7: 玩家输入打断自动流

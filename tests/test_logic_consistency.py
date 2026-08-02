@@ -175,6 +175,56 @@ def validate_novel(nid: str):
         soft('D3b cast_states 存在', bool(cs), '尚无 NPC 状态卡（新场景后生成）')
 
 
+def test_compute_present_unit():
+    """v3.5.46: compute_present 纯逻辑单元测试——在场/不在场推导 5 用例"""
+    sys.path.insert(0, os.path.join(ROOT, 'backend'))
+    from core.interactive.story_director import compute_present
+    cases = []
+
+    # 用例1: 位置冲突时以位置为准（present=True 但位置不同 → away）
+    st1 = {'state': {'location': '医馆'},
+           'player_state': {'location': '医馆', 'with': ['小翠']},
+           'cast_states': {'小翠': {'present': True, 'location': '医馆'},
+                           '张大夫': {'present': True, 'location': '医馆'},
+                           '王捕头': {'present': False, 'location': '衙门'},
+                           '李员外': {'present': True, 'location': '李府'}},
+           'casts': {'小翠': {'present': True}, '张大夫': {'present': True}},
+           'recent_blocks': []}
+    cases.append(('位置为准+同行在场',
+                  compute_present(st1) == (['小翠', '张大夫'], ['李员外', '王捕头'])))
+
+    # 用例2: 无位置时 present 兜底 + 最近说话人默认在场
+    st2 = {'state': {'location': '酒楼'}, 'player_state': {'location': '酒楼', 'with': []},
+           'cast_states': {'小二': {'present': True, 'location': '酒楼'},
+                           '掌柜': {'present': True}},
+           'recent_blocks': [{'type': 'dialogue', 'speaker': '小二'},
+                             {'type': 'dialogue', 'speaker': '神秘客'}]}
+    p2, a2 = compute_present(st2)
+    cases.append(('present兜底+最近说话人',
+                  '小二' in p2 and '掌柜' in p2 and '神秘客' in p2 and a2 == []))
+
+    # 用例3: 主角排除
+    st3 = {'state': {'location': '林间'}, 'player_state': {'location': '林间', 'with': []},
+           'player_char': {'name': '沈砚'},
+           'cast_states': {'沈砚': {'present': True, 'location': '林间'},
+                           '阿青': {'present': True, 'location': '林间'}}}
+    p3, a3 = compute_present(st3)
+    cases.append(('主角排除', p3 == ['阿青'] and '沈砚' not in p3))
+
+    # 用例4: 空状态兜底
+    p4, a4 = compute_present({})
+    cases.append(('空状态', p4 == [] and a4 == []))
+
+    # 用例5: 已离开角色必须在 away
+    st5 = {'state': {'location': '客栈'}, 'player_state': {'location': '客栈', 'with': []},
+           'cast_states': {'赵镖头': {'present': False, 'location': '城外官道'}}}
+    p5, a5 = compute_present(st5)
+    cases.append(('已离开→away', '赵镖头' in a5 and '赵镖头' not in p5))
+
+    for name, ok in cases:
+        check(f'P5 {name}', ok, '')
+
+
 def main():
     targets = sys.argv[1:] if len(sys.argv) > 1 else None
     nids = [d for d in os.listdir(NOVELS)
@@ -188,6 +238,11 @@ def main():
         return
     for nid in nids:
         validate_novel(nid)
+    # v3.5.46: compute_present 纯逻辑单元测试（不依赖存档）
+    try:
+        test_compute_present_unit()
+    except Exception as e:
+        check('P5 compute_present 单元测试', False, f'异常: {e}')
     print()
     for line in REPORT:
         print(line)

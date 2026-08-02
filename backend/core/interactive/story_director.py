@@ -66,7 +66,8 @@ PLAYER_STATE_SYSTEM = """你是互动小说的【世界状态追踪器】。根�
   "disguise": "当前身份（默认用本名；若主角伪装成他人则填伪装身份名）",
   "money": "随身钱财（充裕/够用/拮据/身无分文，或'一笔现金'等）",
   "situation": "主角当前处境一句话（正在做什么/刚发生了什么）"}},
-  "casts": {{"角色名": {{"location": "该角色当前所在位置（与主角同场景则同位置）",
+  "casts": {{"角色名": {{"present": true/false（该角色此刻是否与主角在同一地点/场景——离开场景必须翻转为 false，进入场景翻转为 true，这是最重要的字段）",
+    "location": "该角色当前所在位置（与主角同场景则同位置）",
     "mood": "当前情绪（冷静/愤怒/心虚/欣喜/戒备…）",
     "stance": "对主角的态度（敌视/缓和/合作/暧昧/怀疑…）",
     "knows": ["该角色当前知道的关键信息（秘密/真相/计划，不知道就不列）"],
@@ -74,6 +75,62 @@ PLAYER_STATE_SYSTEM = """你是互动小说的【世界状态追踪器】。根�
     "agenda": "该角色当前想达成什么（一句话）"}}}},
   "relations": {{"A与B": "关系描述（如：顾衍之与林佳期——利益同盟，互相提防）"}}}}
 规则：location 精确到场景级；未变化保持旧值；场景中明确的变化必须更新；只更新场景中出场的角色；关系矩阵覆盖重要角色之间（主角与 NPC、NPC 与 NPC）。"""
+
+
+def compute_present(state: dict) -> tuple:
+    """v3.5.46: 推导【本场景在场/不在场角色名单】——防角色乱入的架构基石（模块级共享）。
+
+    依据（多源加权，行为驱动闭环）：
+    - player_state.with（与主角同行 → 一定在场）
+    - cast_states.present（LLM 行为驱动标记，最权威）
+    - cast_states.location == 主角位置（位置吻合 → 在场）
+    - cast_states.location != 主角位置（明确在别处 → 不在场，硬约束）
+    - 最近场景台词说话人（默认还在现场，除非已被标记不在场）
+
+    返回 (present_list, away_list)。
+    """
+    s = state.get("state", {})
+    ps = state.get("player_state") or {}
+    cs = state.get("cast_states") or {}
+    casts = state.get("casts") or {}
+    player_name = (state.get("player_char") or {}).get("name", "")
+    my_loc = clean_location(ps.get("location") or s.get("location") or "")
+    with_chars = [str(x) for x in (ps.get("with") or [])]
+
+    present = set(with_chars)
+    away = set()
+    for name, c in (cs or {}).items():
+        name = str(name)
+        loc = clean_location(c.get("location") or "")
+        # 优先级：present=False 无条件不在场；位置数据可用时以位置为准
+        # （防 LLM 偷懒全标 present=True——位置冲突时位置是硬数据）
+        if c.get("present") is False:
+            away.add(name)
+        elif loc and my_loc:
+            if loc == my_loc:
+                present.add(name)
+            elif name not in with_chars:
+                away.add(name)
+        elif c.get("present"):
+            present.add(name)
+    # 最近场景说话人默认还在场（除非明确标记不在场）
+    try:
+        rb = state.get("recent_blocks") or []
+        for b in rb[-12:]:
+            if b.get("type") == "dialogue" and b.get("speaker"):
+                sp = str(b["speaker"])
+                if sp not in away:
+                    present.add(sp)
+    except Exception:
+        pass
+    # casts.present=True（v3.5.41 旧字段兼容）→ 在场
+    for name, c in (casts or {}).items():
+        if (c or {}).get("present") and name not in away:
+            present.add(name)
+    present.discard(player_name)
+    away.discard(player_name)
+    return sorted(present), sorted(away)
+
 
 # ── v3.5.40: 建议选项生成（Galgame 式真两难）──
 SUGGESTION_SYSTEM = """你是互动小说的选项设计师。为读者生成 3 个建议回应选项。
@@ -386,6 +443,7 @@ class StoryDirector:
                 if not isinstance(c, dict):
                     continue
                 clean_cs[str(name)[:20]] = {
+                    "present": bool(c.get("present", old_cs.get(str(name), {}).get("present", True))),
                     "location": str(c.get("location", ""))[:60],
                     "mood": str(c.get("mood", ""))[:20],
                     "stance": str(c.get("stance", ""))[:30],
@@ -404,9 +462,50 @@ class StoryDirector:
         except Exception as e:
             log.warning(f"player_state extract failed: {type(e).__name__}: {str(e)[:80]}")
 
-    def _post_scene_logic_check(self, novel_id: str, scene_num: int, scene_text: str):
+    def compute_present(self, state: dict) -> tuple:
+        """v3.5.46: 推导【本场景在场/不在场角色名单】（兼容包装，实现在模块级）"""
+        return compute_present(state)
+
+    def _validate_scene_present(self, novel_id: str, scene_num: int, blocks: list):
+        """v3.5.46: 场景后在场校验（后台防线）——台词角色命中 away 名单 →
+        记录 violation + 合理化 cast_states（位置/在场同步，防后续矛盾继续扩散）"""
+        try:
+            st = self.store.load_state(novel_id) or {}
+            _present, _away = self.compute_present(st)
+            if not _away:
+                return
+            hits = [str(b.get("speaker")) for b in (blocks or [])
+                    if b.get("type") == "dialogue" and b.get("speaker") in _away]
+            if not hits:
+                return
+            hits = sorted(set(hits))
+            # 合理化：LLM 已让 TA 出场 → 状态同步（行为既成事实，硬删会产生更多矛盾）
+            cs = st.get("cast_states") or {}
+            ps = st.get("player_state") or {}
+            my_loc = clean_location(ps.get("location") or "")
+            for sp in hits:
+                c = cs.setdefault(sp, {})
+                c["present"] = True
+                if my_loc:
+                    c["location"] = my_loc
+            st["cast_states"] = cs
+            st["present_violations"] = st.get("present_violations", []) + [
+                {"scene": scene_num, "chars": hits,
+                 "ts": time.strftime("%m-%d %H:%M")}]
+            st["present_violations"] = st["present_violations"][-5:]
+            self.store.save_state(novel_id, st)
+            log.warning(f"[在场校验] 场景{scene_num} 不在场角色乱入: {hits}（已合理化，违规次数:{len(st['present_violations'])}）")
+        except Exception as e:
+            log.warning(f"validate_present failed: {type(e).__name__}: {str(e)[:80]}")
+
+    def _post_scene_logic_check(self, novel_id: str, scene_num: int, scene_text: str, blocks: list = None):
         """场景生成后（后台）：复用小说模式引擎做状态更新 + 矛盾检查"""
         try:
+            # v3.5.46: 在场校验（不在场角色乱入检测 + 合理化）
+            try:
+                self._validate_scene_present(novel_id, scene_num, blocks or [])
+            except Exception as e:
+                log.warning(f"validate present failed: {e}")
             # v3.5.37: 主角状态卡提取（精确位置/时间/同行/物品/处境）
             try:
                 self._extract_player_state(novel_id, scene_text)
@@ -574,6 +673,19 @@ class StoryDirector:
                                  f"知道[{','.join(_c.get('knows') or []) or '无'}] "
                                  f"想[{_c.get('agenda', '')}]]")
             parts.append("NPC 状态卡（以此为准——角色行为/台词必须符合其状态）:\n" + "\n".join(_cs_lines))
+        # v3.5.46: 本场景在场角色 P0 硬约束——防角色乱入（谁在场/谁不在场一清二楚）
+        _present, _away = self.compute_present(state)
+        _loc = clean_location(ps.get("location") or s.get("location") or "")
+        if _present or _away:
+            _pl = "、".join(_present) if _present else "（仅主角一人）"
+            _al = ("明确不在场（严禁让 TA 们在本场景现身或说话，最多在台词中被提及）: "
+                   + "、".join(_away)) if _away else ""
+            parts.append(f"## 本场景在场角色（P0 硬约束——防角色乱入）:\n"
+                         f"当前地点: {_loc or '（未定）'}\n"
+                         f"在场（本场景只能让这些角色现身/说话/被互动）: {_pl}\n"
+                         f"{_al}\n"
+                         f"规则: 不在场角色无论与主角多熟都不得凭空出现；新人登场必须由剧情自然引出"
+                         f"（如读者走入新地点遇到的人），出场后即视为在场。")
         # v3.5.43: 角色间关系矩阵（防止 AI 搞错 NPC 之间的恩怨）
         nr = state.get("npc_relations") or {}
         if nr:
@@ -619,8 +731,15 @@ class StoryDirector:
             parts.append(f"最近发生的事（承接时间线，不要时间倒流）: {ev_brief}")
         # 角色卡（v3.5.12: 主角标注，防止 LLM 替主角写台词/用第三人称转述）
         casts = state.get("casts", {})
+        # v3.5.46: 人设只注入【在场角色】——不在场角色档案不展示，杜绝 LLM 乱入素材
+        # （不在场名单已通过 cast_states 位置可见，但细节档案不再供给）
         # v3.5.41: temp 角色（临时登场）不入白名单人设——防乱入合法化
-        _whitelist = {n: c for n, c in casts.items() if not (c or {}).get("temp")}
+        _present_set = set(_present)
+        _whitelist = {n: c for n, c in casts.items()
+                      if not (c or {}).get("temp") and n in _present_set}
+        # 兜底：状态未建立的旧档退化为全量（保证人设不缺失）
+        if not _whitelist and casts:
+            _whitelist = {n: c for n, c in casts.items() if not (c or {}).get("temp")}
         if _whitelist:
             parts.append("在场角色人设（说话必须符合）:")
             for name, c in _whitelist.items():
@@ -792,7 +911,7 @@ class StoryDirector:
             import threading
             threading.Thread(
                 target=self._post_scene_logic_check,
-                args=(novel_id, scene_num, scene_text),
+                args=(novel_id, scene_num, scene_text, blocks),
                 daemon=True).start()
         except Exception:
             pass
@@ -834,6 +953,16 @@ class StoryDirector:
             elif c.get("temp"):
                 c["absent_count"] = 0
         state["casts"] = casts
+        # v3.5.46: 出场角色同步 cast_states.present=True（行为驱动闭环——
+        # 只要在场景里说了话就视为在场，与 LLM 标记一致，防止前后状态打架）
+        _cs = state.get("cast_states") or {}
+        _my_loc = clean_location(ps.get("location") or "")
+        for sp in speakers:
+            if sp and sp in _cs:
+                _cs[sp]["present"] = True
+                if not _cs[sp].get("location") and _my_loc:
+                    _cs[sp]["location"] = _my_loc
+        state["cast_states"] = _cs
         self.store.save_state(novel_id, state)
 
         yield {"type": "scene_end", "scene_num": scene_num, "blocks": blocks,

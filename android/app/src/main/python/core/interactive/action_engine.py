@@ -288,7 +288,12 @@ class ActionEngine:
             f"- hook[{i}] trigger: {h.get('trigger', '')} → outcome: {h.get('outcome', '')}"
             for i, h in enumerate(hooks)
         ) or "（无）"
-        chars = list(state.get("casts", {}).keys())
+        # v3.5.46: 在场角色用推导名单（不在场角色不得在行动中现身/反应）
+        try:
+            from .story_director import compute_present
+            chars, _away = compute_present(state)
+        except Exception:
+            chars = list(state.get("casts", {}).keys())
         # v3.4.1：注入世界观边界 + 关键角色保护
         wb = str(state.get("worldbuilding_brief", ""))[:400]
         # v3.5.37: 主角状态卡注入（精确位置/时间/同行/处境）
@@ -460,7 +465,12 @@ class ActionEngine:
             yield {"type": "error", "message": "互动存档不存在"}
             return
         s = state.get("state", {})
-        chars = list(state.get("casts", {}).keys())
+        # v3.5.46: 在场角色用推导名单（不在场角色不得反应/出现）
+        try:
+            from .story_director import compute_present
+            chars, _away = compute_present(state)
+        except Exception:
+            chars = list(state.get("casts", {}).keys())
         char_briefs = []
         for name in chars[:3]:
             prof = (state.get("casts", {}).get(name) or {}).get("profile", {})
