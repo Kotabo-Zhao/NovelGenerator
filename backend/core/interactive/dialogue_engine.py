@@ -19,6 +19,7 @@ import time
 from typing import AsyncIterator, Optional
 
 from ..resilient_client import ResilientLLMClient
+from .action_engine import ActionEngine
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +68,8 @@ class DialogueEngine:
         self.store = store
         self.engine = engine
         self._resilient = ResilientLLMClient(client, model)
+        # v3.4: 行动引擎（对话即剧情——玩家输入行动直接推进）
+        self.action = ActionEngine(client, model, store)
 
     # ── LLM 基础 ──
     def _llm(self, system: str, user: str, temperature: float = 0.8,
@@ -104,8 +107,14 @@ class DialogueEngine:
 
     # ── 上下文组装 ──
     def _build_chat_prompt(self, state: dict, target_char: str,
-                           history: list) -> str:
+                           history: list, last_action: Optional[dict] = None) -> str:
         parts = []
+        # v3.4: 读者刚执行的行动（角色需即时反应，不复述行动本身）
+        if last_action:
+            parts.append(f"## 读者刚刚执行了行动: {last_action.get('summary', '')}"
+                         f"{'（' + str(last_action.get('reason', ''))[:60] + '）' if last_action.get('reason') else ''}")
+            parts.append("你的反应要求：对行动给出即时、符合人设的反应（言语/态度/小动作），"
+                         "不要复述行动本身，不要总结发生了什么。")
         casts = state.get("casts", {})
         target = casts.get(target_char, {})
         prof = target.get("profile", {})
@@ -265,10 +274,33 @@ class DialogueEngine:
                       "ts": time.strftime("%H:%M:%S")}
         self.store.append_chat(novel_id, entry_user)
 
+        # v3.4: 行动识别——玩家输入是"剧情操作"（上车/推门/答应/拒绝…）→ 直接推进剧情
+        action = self.action.detect_action(clean_input, state)
+        if action:
+            yield {"type": "action_detect", "action_type": action.get("type", "other"),
+                   "summary": action.get("summary", ""), "end_chat": action.get("end_chat", False)}
+            applied = self.action.apply_action(novel_id, action)
+            changed = applied.get("changed", [])
+            # 行动结果场景（流式，1-3 句）
+            async for ev in self.action.action_scene_stream(novel_id, action, changed):
+                yield ev
+            # 行动改变场景（离开/进入新地点）→ 对话自然收尾
+            if action.get("end_chat"):
+                yield {"type": "action_done", "end_chat": True, "action": action}
+                # 行动命中 agenda hooks 的核对由 end-chat 的 verify_hooks 统一处理（行动已入日志）
+                yield {"type": "done"}
+                return
+            # 行动后角色反应（对话继续）
+            yield {"type": "action_done", "end_chat": False, "action": action}
+            last_action = action
+        else:
+            last_action = None
+
         # 组装上下文
         history = self.store.recent_chats(novel_id, 20)
-        history = [h for h in history if h.get("role") in ("user", "assistant")]
-        prompt = self._build_chat_prompt(state, target, history)
+        history = [h for h in history if h.get("role") in ("user", "assistant")
+                   and h.get("type") != "action_result"]
+        prompt = self._build_chat_prompt(state, target, history, last_action)
 
         # 流式回复
         collected = []

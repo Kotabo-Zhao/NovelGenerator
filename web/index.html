@@ -991,6 +991,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <div class="flex justify-between items-center mb-12" style="flex-wrap:wrap;gap:8px">
               <div class="text-sm">
                 <span class="badge badge-ok mr-8">场景 {{ interactive.state.scene_num||0 }}</span>
+                <span v-if="interactive.state.state && interactive.state.state.location" class="badge mr-8" style="background:rgba(57,197,207,.12);color:#39c5cf">📍 {{ interactive.state.state.location }}</span>
                 <span v-if="interactive.pendingNode" class="badge" style="background:rgba(212,175,55,.15);color:var(--gold)">💬 可对话</span>
                 <span v-else class="badge">📖 剧情中</span>
                 <span v-if="interactive.agenda && interactive.agenda.goal" class="badge" style="background:rgba(188,140,255,.12);color:#bc8cff;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle" title="这场对话要谈：{{ interactive.agenda.goal }}">🎯 {{ interactive.agenda.goal }}</span>
@@ -1012,6 +1013,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <template v-for="(blk, i) in interactive.blocks" :key="i">
                 <div v-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
                 <div v-else-if="blk.type==='action'" class="inter-action">{{ blk.content }}</div>
+                <div v-else-if="blk.type==='action_desc'" class="inter-action" style="color:var(--gold)">{{ blk.content }}</div>
+                <div v-else-if="blk.type==='action_result'" class="inter-narr" style="border-left:3px solid var(--gold);padding-left:10px">{{ blk.content }}</div>
                 <div v-else class="inter-line" :class="{playing: interactive.speakingLine===i}">
                   <span class="inter-speaker">{{ blk.speaker }}</span>
                   <span class="inter-dialogue">{{ blk.content }}</span>
@@ -1054,7 +1057,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
                 <input v-model="interactive.message" @keyup.enter="sendInteractiveChat"
-                       placeholder="说点什么…（可 @角色名 指定对象）" :disabled="interactive.busy"
+                       placeholder="说点什么，或直接行动：上车 / 推门 / 答应他 / 离开…（可 @角色名）" :disabled="interactive.busy"
                        style="flex:1;min-height:38px;font-size:14px" />
                 <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||!interactive.message.trim()">💬 说</button>
               </div>
@@ -3863,6 +3866,28 @@ const app = createApp({
             // v3.3.1: 对话目标已达成
             interactive.naturalEnd = evt.message || '对话目标已达成';
             interactive.driftNote = '';
+          } else if (evt.type==='action_detect') {
+            // v3.4: 玩家行动被识别 → 即时推进剧情（对话即剧情）
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') interactive.blocks.pop();
+            interactive.blocks.push({type:'action_desc', speaker:'你', content:'〔'+evt.summary+'〕'});
+            interactive.blocks.push({type:'typing', speaker:'', content:''});
+            _scrollStory();
+          } else if (evt.type==='action_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') last.content += evt.content;
+            else interactive.blocks.push({type:'typing', speaker:'', content:evt.content});
+            _scrollStory();
+          } else if (evt.type==='action_end') {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') { last.type='action_result'; last.speaker=''; last.content=evt.content; }
+            _scrollStory();
+          } else if (evt.type==='action_done') {
+            // 行动完成：end_chat=true → 对话自然收尾（可继续剧情）
+            if (evt.end_chat) {
+              interactive.hookSummary = '你的行动改变了剧情走向';
+              interactive.inChat = false;
+            }
           } else if (evt.type==='error') {
             interactive.blocks.push({type:'error', speaker:'', content: evt.message});
           }

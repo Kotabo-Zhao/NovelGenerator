@@ -457,7 +457,10 @@ class StoryDirector:
         chat = self.store.recent_chats(novel_id, 40)
         transcript = []
         for i, e in enumerate(chat):
-            role = "读者" if e.get("role") == "user" else f"角色{e.get('speaker', '')}"
+            if e.get("type") == "action_result":
+                role = "行动结果"
+            else:
+                role = "读者" if e.get("role") == "user" else f"角色{e.get('speaker', '')}"
             transcript.append(f"[{i}] {role}: {e.get('content', '')[:150]}")
         hook_lines = "\n".join(
             f"- hook[{i}] trigger: {h.get('trigger', '')} → outcome: {h.get('outcome', '')}"
