@@ -56,11 +56,21 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
    - 指代主角一律用"你"（如"你推开门""你感到手心发凉"），严禁用"她/他/沈念薇"旁观式转述
    - 主角是行动主体：场景中的事件发生在"你"身上或眼前，不要写成上帝视角的群像
    - NPC 的台词、动作、反应都是冲着"你"来的
+10. v3.5.18 铁律（绝对禁止）：严禁生成【主角名】的台词块——主角（如【沈念薇】）的
+    台词/行动只能由读者输入决定，你替 TA 说话就是破坏角色扮演。若主角需要反应，
+    用旁白写 TA 的心声/身体反应（如"你心中冷笑，面上不露分毫"），而不是台词。
+    输出中不得出现以主角名标注的台词行。
 只输出标记语言文本，不要输出解释。"""
 
-INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份开场背景介绍（300-400 字），
-让玩家立刻明白五件事：我是谁、我在哪、我和谁是什么关系、现在发生了什么、我要做什么。
-用第二人称（"你"）写，像小说的序章，文笔凝练有氛围感。
+INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份详尽的开场背景介绍（500-700 字），
+用第二人称（"你"）写，像小说序章，文笔凝练有氛围感。必须覆盖以下内容（缺一不可）：
+
+一、世界观：时代背景、主要地点、势力格局（谁掌握权力/财富，社会规则是什么）
+二、主要人物背景：每个出场角色的身份、与你的关系、性格底色（人人有交代，别只列名字）
+三、你的处境：你现在是谁、经历了什么、正处在什么局面
+四、你的目标：当前主线目标是什么、为什么
+
+段落分明（用空行分段），先世界观后人物再处境再目标，层层递进。
 基于给定资料组织，不要编造资料之外的设定；不要写成教程，要写成有代入感的开场。
 只输出介绍文本，不要输出标题和解释。"""
 
@@ -304,7 +314,7 @@ class StoryDirector:
 
     # ── 开场背景介绍（v3.5.13：玩家打开互动模式先知道"我是谁/在哪/要做什么"）──
     def generate_intro(self, novel_id: str, state: dict, force: bool = False) -> str:
-        """生成/取缓存的故事背景介绍（300-400 字，第二人称序章）"""
+        """生成/取缓存的故事背景介绍（v3.5.18: 500-700 字，覆盖世界观/人物/处境/目标）"""
         cached = state.get("intro")
         if cached and not force:
             return cached
@@ -314,21 +324,40 @@ class StoryDirector:
         parts.append(f"小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
         if pc.get("name"):
             parts.append(f"你扮演：{pc['name']}（{pc.get('identity', '')}）"
-                         f"{'，' + pc.get('personality_brief', '')[:60] if pc.get('personality_brief') else ''}")
+                         f"{'，' + pc.get('personality_brief', '')[:120] if pc.get('personality_brief') else ''}")
         wb = state.get("worldbuilding_brief") or ""
         if wb:
-            parts.append(f"世界观与处境：{wb[:400]}")
+            parts.append(f"世界观（时代/地点/势力/规则）：\n{wb[:600]}")
+        # v3.5.18: 注入每个角色的人设档案（身份/性格/与主角关系）
         casts = state.get("casts") or {}
+        player_name = pc.get("name", "")
         if casts:
-            parts.append(f"主要人物：{'、'.join(list(casts.keys())[:8])}")
+            cast_lines = []
+            for name, c in casts.items():
+                if name == player_name:
+                    continue
+                prof = (c.get("profile") or {})
+                brief = []
+                if prof.get("identity"):
+                    brief.append(f"身份:{str(prof['identity'])[:50]}")
+                dna = prof.get("expression_dna") or []
+                if dna:
+                    d0 = dna[0]
+                    brief.append(f"性格:{str(d0.get('name', d0))[:40] if isinstance(d0, dict) else str(d0)[:40]}")
+                role = c.get("role", "")
+                if role:
+                    brief.append(f"定位:{role}")
+                cast_lines.append(f"- {name}{'（' + '，'.join(brief) + '）' if brief else ''}")
+            if cast_lines:
+                parts.append("主要人物档案：\n" + "\n".join(cast_lines[:8]))
         if s.get("objective"):
-            parts.append(f"主线目标：{s['objective'][:200]}")
+            parts.append(f"主线目标：{s['objective'][:250]}")
         user = "\n".join(parts)
         intro = ""
         try:
-            raw = self._llm(INTRO_SYSTEM, user, temperature=0.7, max_tokens=600)
+            raw = self._llm(INTRO_SYSTEM, user, temperature=0.7, max_tokens=900)
             intro = (raw or "").strip()
-            if len(intro) < 80:
+            if len(intro) < 120:
                 intro = ""
         except Exception as e:
             log.warning(f"intro 生成失败: {e}")
@@ -391,6 +420,18 @@ class StoryDirector:
 
         # 解析 + 持久化
         blocks = parse_scene_markup(scene_text)
+        # v3.5.18: 过滤玩家角色的自动台词——LLM 偶发替玩家说话（如【沈念薇】xxx），
+        # 玩家言行只能由读者输入决定；转成旁白心声（不占对话气泡、不触发语音）
+        player_name = (state.get("player_char") or {}).get("name", "")
+        if player_name:
+            cleaned = []
+            for b in blocks:
+                if b.get("type") == "dialogue" and b.get("speaker") == player_name:
+                    cleaned.append({"type": "narration", "speaker": "",
+                                    "content": f"你心中所想：{b.get('content', '')}"})
+                else:
+                    cleaned.append(b)
+            blocks = cleaned
         scene_record = {
             "scene_num": scene_num,
             "scene_text": scene_text,

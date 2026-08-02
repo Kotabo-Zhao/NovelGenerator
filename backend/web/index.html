@@ -1077,7 +1077,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                       <span v-if="interactive.pendingNode" style="color:var(--gold)"> · 💬 可对话</span>
                       <span v-else-if="interactive.autoStopped" style="color:var(--gold)" title="连续推进已暂停，输入或点继续可恢复"> · ⏸ 已暂停</span>
                       <span v-else> · 📖 剧情中</span>
-                      <span v-if="!interactive.statusOpen && interactive.state.state && interactive.state.state.location" class="ps-head-loc"> · 📍 {{ interactive.state.state.location.slice(0,16) }}{{ interactive.state.state.location.length > 16 ? '…' : '' }}</span>
+                      <span v-if="!interactive.statusOpen && interactive.state.state && interactive.state.state.location" class="ps-head-loc"> · 📍 {{ fmtText(interactive.state.state.location, 16) }}</span>
                       <span v-if="!interactive.statusOpen && relCount" class="ps-head-rel"> · 💞 {{ relCount }}人</span>
                       <span v-if="!interactive.statusOpen && activeFacts.length" class="ps-head-fact"> · ⏳ {{ activeFacts.length }}</span>
                     </div>
@@ -1111,7 +1111,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <div class="player-status-grid" style="margin-top:6px">
                 <div class="ps-cell" :class="{'ps-flash': statusFlash.scene_num}" v-if="interactive.state.state && interactive.state.state.location || statusFlash.scene_num">
                   <span class="ps-label">📍 地点</span>
-                  <span class="ps-val">{{ interactive.state.state && interactive.state.state.location || '（未定）' }}</span>
+                  <span class="ps-val">{{ fmtText(interactive.state.state && interactive.state.state.location) || '（未定）' }}</span>
                 </div>
                 <div class="ps-cell" :class="{'ps-flash': statusFlash.flags}" v-if="(interactive.state.state && interactive.state.state.flags || []).length || statusFlash.flags">
                   <span class="ps-label">🏷 进展</span>
@@ -1129,7 +1129,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <!-- 目标（章节目的，完整多行显示） -->
               <div class="ps-cell" style="margin-top:6px;padding:2px 4px" v-if="interactive.state.state && interactive.state.state.objective">
                 <span class="ps-label">🎯 目标</span>
-                <span class="ps-val" style="white-space:normal;line-height:1.5">{{ interactive.state.state.objective }}</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.5">{{ fmtText(interactive.state.state.objective) }}</span>
               </div>
               <!-- 你上一步做了什么（行动轨迹） -->
               <div class="ps-cell" v-if="interactive.state.last_action && interactive.state.last_action.summary">
@@ -3773,6 +3773,20 @@ const app = createApp({
       statusOpen: false,
     });
     // v3.5.5: 玩家状态卡计算属性
+    // v3.5.18: 显示格式化——location/objective 可能是 JSON 数组字符串（如
+    // ["上海陆家嘴…","老洋房…"]），提取可读文本避免界面出现 JSON 字样
+    function fmtText(v, maxLen = 0) {
+      if (!v) return '';
+      let s = String(v);
+      try {
+        if (s.trim().startsWith('[')) {
+          const arr = JSON.parse(s);
+          if (Array.isArray(arr) && arr.length) s = String(arr[0]);
+        }
+      } catch(e) {}
+      if (maxLen && s.length > maxLen) s = s.slice(0, maxLen) + '…';
+      return s;
+    }
     const relCount = computed(() => {
       const s = interactive.state.state || {};
       return Object.keys(s.relations || {}).length;
@@ -4839,6 +4853,8 @@ const app = createApp({
       relCount,presentChars,playerName,
       // v3.5.9: 承诺清单
       activeFacts,
+      // v3.5.18: 显示格式化（location JSON 数组转可读文本）
+      fmtText,
       // v3.5: 角色头像徽章配色
       avatarStyle,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,

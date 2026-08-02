@@ -90,8 +90,11 @@ async def interactive_start(novel_id: str):
         # v3.2: 世界观注入（重开后剧情必须贴合本小说设定）
         wb = ctx.get("worldbuilding") or {}
         # v3.3.1: geography 可能是 str/dict/list，统一转字符串（修复 start 500）
+        # v3.5.18: location 只取第一个地点（list 转字符串会显示 JSON 数组字样）
         _geo = wb.get("geography", "")
-        if isinstance(_geo, (dict, list)):
+        if isinstance(_geo, list) and _geo:
+            _geo = _geo[0] if isinstance(_geo[0], str) else json.dumps(_geo[0], ensure_ascii=False)
+        elif isinstance(_geo, dict):
             _geo = json.dumps(_geo, ensure_ascii=False)
         st["state"]["location"] = wb.get("starting_location") or str(_geo)[:60] or ""
         core_conflict = wb.get("core_conflict", "")
@@ -120,15 +123,18 @@ async def interactive_start(novel_id: str):
             log.warning(f"attach_cast_profiles failed: {e}")
         # v3.5.13: 开场背景介绍——缓存命中先发（老玩家秒看）；未缓存则与场景并行
         # 生成（不阻塞场景流，避免首次进入 25s+）
+        # v3.5.18: 旧缓存过浅（<200 字）强制重新生成
         intro_fut = None
         try:
             state = _store.load_state(novel_id)
             if state:
-                if state.get("intro"):
-                    yield f"data: {json.dumps({'type': 'intro', 'content': state['intro']}, ensure_ascii=False)}\n\n"
+                cached_intro = state.get("intro") or ""
+                if cached_intro and len(cached_intro) >= 200:
+                    yield f"data: {json.dumps({'type': 'intro', 'content': cached_intro}, ensure_ascii=False)}\n\n"
                 else:
                     intro_fut = asyncio.create_task(
-                        asyncio.to_thread(_story.generate_intro, novel_id, state))
+                        asyncio.to_thread(_story.generate_intro, novel_id, state,
+                                          force=bool(cached_intro)))
         except Exception as e:
             log.warning(f"intro pre failed: {e}")
         async for data in _sse_with_heartbeat(_story.generate_scene_stream(novel_id)):
