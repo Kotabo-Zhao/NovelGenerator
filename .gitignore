@@ -14,3 +14,6 @@ dist/
 
 # TTS 语音缓存
 backend/data/tts_cache/
+
+# 根目录分发用 APK（不进版本库）
+/app-*.apk
