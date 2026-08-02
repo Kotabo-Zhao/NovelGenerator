@@ -1076,9 +1076,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                       <span v-if="!interactive.statusOpen && activeFacts.length" class="ps-head-fact"> · ⏳ {{ activeFacts.length }}</span>
                     </div>
                   </div>
-                  <span class="ps-fold-btn" style="margin-left:auto">{{ interactive.statusOpen ? '▾ 收起' : '▸ 展开' }}</span>
                 </div>
-                <div class="flex gap-6" style="flex-wrap:wrap">
+                <div class="flex gap-6" style="flex-wrap:wrap;align-items:center">
+                  <!-- v3.5.14: 状态折叠按钮放最前，醒目可见 -->
+                  <button class="btn btn-xs" :class="interactive.statusOpen?'btn-ghost':'btn-primary'" @click="interactive.statusOpen=!interactive.statusOpen"
+                          :title="interactive.statusOpen ? '收起状态卡' : '展开状态卡（目标/关系/承诺/刚发生）'"
+                          style="min-width:64px">{{ interactive.statusOpen ? '▾ 收起状态' : '▸ 展开状态' }}</button>
                   <button class="btn btn-xs" :class="interactive.autoPlay?'btn-primary':''" @click="interactive.autoPlay=!interactive.autoPlay; cancelAuto()" title="剧情自动流：行动/对话后剧情自动衔接，只在需要你决策时停下">⏵ {{ interactive.autoPlay?'自动':'手动' }}</button>
                   <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
                   <span v-if="interactive.emotionAvailable" style="display:flex;gap:6px;align-items:center">
