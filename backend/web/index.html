@@ -1098,6 +1098,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </div>
             </div>
 
+            <!-- v3.5.2: 主动对话入口（任何时刻可发起对话，修复互斥 bug） -->
+            <div v-if="!interactive.pendingNode && !interactive.inChat && !interactive.typing" style="display:flex;justify-content:center;margin-top:2px">
+              <button class="btn btn-sm btn-ghost" @click="interactive.forceChat=true;interactive.pendingNode=true" :disabled="interactive.busy"
+                      title="任何时候都可以主动找角色说话" style="border:1px dashed rgba(212,175,55,.5);color:var(--gold)">
+                💬 我要说话
+              </button>
+            </div>
+
             <!-- 输入区 -->
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
@@ -1107,7 +1115,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||!interactive.message.trim()">💬 说</button>
               </div>
               <div class="flex gap-6 mt-8" style="justify-content:flex-end">
-                <button class="btn btn-xs" @click="interactive.forceChat=true;interactive.pendingNode=true" v-if="!interactive.pendingNode && !interactive.inChat">💬 我要说话</button>
                 <button class="btn btn-sm btn-primary" @click="continueInteractive" :disabled="interactive.busy">
                   {{ interactive.pendingNode && !interactive.inChat ? '💬 进入对话' : '▶ 继续剧情' }}
                 </button>

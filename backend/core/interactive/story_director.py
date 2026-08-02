@@ -340,10 +340,9 @@ class StoryDirector:
     def _decide_node(self, novel_id: str, scene_num: int, blocks: list, state: dict) -> tuple:
         """① 规则预筛 → ② LLM 精判。返回 (is_node, chars, rounds, reason)
 
-        v3.2 优化：减少打断感——只有真正值得玩家介入的时刻才触发对话。
-        - 规则 2 放宽到连续 3 段无对话（原来 2 段，太频繁）
-        - 规则 3 只保留强冲突词（去掉"怒""秘密"等泛词）
-        - LLM 精判 confidence 阈值 0.5，且必须场景里有角色
+        v3.5.2 节奏校准：PC 端反馈"对话太少、一直大段文字"（安卓旧版连 2 段必触发更舒服）。
+        - 规则 2 改回连续 2 段无对话强制（v3.2 的 3 段太稀疏）
+        - LLM 精判 confidence 阈值 0.5 → 0.45；"刚对话过"抑制从 <3 段收窄到 <2 段
         """
         # 规则 1：开场第 1 段必触发（首次体验）
         if scene_num <= 1:
@@ -351,15 +350,15 @@ class StoryDirector:
         chars = self._scene_chars(blocks)
         if not chars:
             return False, [], 0, "无在场角色"
-        # 规则 2：连续 3 段无对话 → 强制（保互动频率下限）
-        last_three = self.store.recent_scenes(novel_id, 3)
-        if len(last_three) >= 3:
+        # 规则 2：连续 2 段无对话 → 强制（保互动频率下限，v3.5.2 从 3 段改回 2 段）
+        last_two = self.store.recent_scenes(novel_id, 2)
+        if len(last_two) >= 2:
             no_dialogue = all(
                 not any(b.get("type") == "dialogue" for b in sc.get("blocks", []))
-                for sc in last_three[-3:]
+                for sc in last_two[-2:]
             )
             if no_dialogue:
-                return True, chars, 4, "连续三段无对话"
+                return True, chars, 4, "连续两段无对话"
         # 规则 3：强冲突事件（真正需要玩家抉择的时刻）
         text = " ".join(b["content"] for b in blocks)
         strong_kw = ["拔剑", "刀架", "生死", "追杀", "真相大白", "身份暴露", "决裂", "挟持",
@@ -373,12 +372,12 @@ class StoryDirector:
             return False, chars, 2, "判定失败，默认不触发（玩家可主动介入）"
         is_node = bool(result.get("is_node"))
         confidence = float(result.get("confidence", 0.5))
-        # v3.2: 提高触发门槛——confidence ≥ 0.5 才触发，且刚对话过时更严格
+        # v3.5.2: 阈值 0.45，刚对话过抑制从 <3 收窄到 <2
         last_chat_gap = scene_num - state.get("_last_chat_scene", 0)
         if is_node:
-            if confidence < 0.5:
+            if confidence < 0.45:
                 return False, chars, 0, f"置信度不足({confidence:.1f})"
-            if confidence < 0.7 and last_chat_gap < 3:
+            if confidence < 0.65 and last_chat_gap < 2:
                 return False, chars, 0, "刚对话过且置信度一般"
         rounds = int(result.get("suggested_rounds", 3) or 3)
         rounds = max(2, min(rounds, 8))
