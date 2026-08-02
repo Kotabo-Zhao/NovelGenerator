@@ -423,6 +423,10 @@ class StoryDirector:
         # ── 节点判定（三层保障的 ① 规则预筛 + ② LLM 精判）──
         if force_node_check:
             is_node, node_chars, rounds, reason = self._decide_node(novel_id, scene_num, blocks, state)
+            # v3.5.16: 对话候选排除玩家自己（玩家是主角，只跟 NPC 对话）
+            player_name = (state.get("player_char") or {}).get("name", "")
+            if player_name and player_name in node_chars:
+                node_chars = [c for c in node_chars if c != player_name]
             state = self.store.load_state(novel_id)
             state["pending_node"] = is_node
             state["node_chars"] = node_chars
@@ -777,8 +781,12 @@ class StoryDirector:
             return
         casts = state.get("casts", {})
         changed = False
+        player_name = (state.get("player_char") or {}).get("name", "")
         for name in char_names:
             if not name:
+                continue
+            # v3.5.16: 玩家角色不挂人设（由玩家扮演，不需要 AI 蒸馏）
+            if player_name and name == player_name:
                 continue
             existing = casts.get(name, {})
             if existing.get("profile"):

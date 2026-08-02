@@ -262,19 +262,23 @@ class DialogueEngine:
             yield {"type": "error", "message": "互动存档不存在，请先 start"}
             return
 
-        # @角色 切换
+        # @角色 切换（v3.5.16: 对话对象永远排除玩家自己——玩家扮演的主角只跟 NPC 对话）
+        player_name = (state.get("player_char") or {}).get("name", "")
         target = target_char
         if not target:
             target = self._detect_target(state, user_input)
         if not target:
             casts = state.get("casts", {})
-            # 默认当前在场第一个有 profile 的角色
+            # 默认当前在场第一个有 profile 的 NPC 角色（跳过玩家自己）
             for name, c in casts.items():
+                if name == player_name:
+                    continue
                 if c.get("profile"):
                     target = name
                     break
         if not target:
-            target = state.get("node_chars") or list(casts.keys())
+            node_chars = [n for n in (state.get("node_chars") or []) if n != player_name]
+            target = node_chars or [n for n in casts.keys() if n != player_name]
             target = target[0] if target else ""
         if not target:
             yield {"type": "error", "message": "没有可对话的角色"}
@@ -406,16 +410,23 @@ class DialogueEngine:
         return _parse_json(raw) if raw else None
 
     def _detect_target(self, state: dict, text: str) -> Optional[str]:
-        """从 @角色名 提取交流对象"""
+        """从 @角色名 提取交流对象（v3.5.16: 排除玩家自己——玩家是沈念薇，
+        不能和自己对话；@沈念薇 或 @念薇 应视为对场景里其他角色的指令/自我对话无效）"""
         import re
         m = re.search(r"@([\u4e00-\u9fff\w]{1,8})", text)
         if m:
             name = m.group(1)
             casts = state.get("casts", {})
+            player_name = (state.get("player_char") or {}).get("name", "")
+            # 玩家自己排除（@自己 = 无效目标，不匹配）
+            if player_name and (name == player_name or name in player_name or player_name in name):
+                return None
             if name in casts:
                 return name
             # 模糊匹配
             for cn in casts:
+                if cn == player_name:
+                    continue
                 if name in cn or cn in name:
                     return cn
         return None
