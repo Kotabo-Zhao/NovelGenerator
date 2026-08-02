@@ -295,6 +295,7 @@ class ActionEngine:
         _ps = state.get("player_state") or {}
         _ps_line = (f"主角状态卡: 位置[{_ps.get('location', '')}] 时间[{_ps.get('time', '')}] "
                     f"同行[{','.join(_ps.get('with') or []) or '无'}] "
+                    f"身体[{_ps.get('condition', '健康')}] 身份[{_ps.get('disguise', '本名') or '本名'}] "
                     f"处境[{_ps.get('situation', '')}]\n") if _ps else ""
         user = (
             f"当前地点: {clean_location(s.get('location', '')) or '（未定）'}\n"

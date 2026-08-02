@@ -56,6 +56,9 @@ PLAYER_STATE_SYSTEM = """你是互动小说状态追踪器。根据最新场景�
   "time": "当前时间段（清晨/上午/正午/下午/傍晚/夜晚/深夜）",
   "with": ["当前与主角同行的角色名（没有则空数组）"],
   "holding": ["主角随身携带的重要物品（没有则空数组）"],
+  "condition": "身体状况（健康/轻伤/重伤/醉酒/疲惫/发烧等，没有异常则健康）",
+  "disguise": "当前身份（默认用本名；若主角伪装成他人则填伪装身份名）",
+  "money": "随身钱财（充裕/够用/拮据/身无分文，或'一笔现金'等）",
   "situation": "主角当前处境一句话（正在做什么/刚发生了什么）"}}
 规则：location 必须精确到场景级（不是城市名）；未发生的地点/时间变化保持旧值；场景中明确的变化必须更新。"""
 
@@ -340,6 +343,10 @@ class StoryDirector:
                 "with": [str(x)[:20] for x in (ps.get("with") or [])][:4],
                 "holding": [str(x)[:30] for x in (ps.get("holding") or [])][:5],
                 "situation": str(ps.get("situation", old_ps.get("situation", "")))[:120],
+                # v3.5.38: 身体状况/当前身份/随身钱财
+                "condition": str(ps.get("condition", old_ps.get("condition", "健康")))[:20],
+                "disguise": str(ps.get("disguise", old_ps.get("disguise", "")))[:30],
+                "money": str(ps.get("money", old_ps.get("money", "")))[:30],
             }
             st["player_state"] = clean
             self.store.save_state(novel_id, st)
@@ -504,7 +511,8 @@ class StoryDirector:
                          f"位置[{ps.get('location', '')}] 时间[{ps.get('time', '')}] "
                          f"同行[{','.join(ps.get('with') or []) or '无'}] "
                          f"物品[{','.join(ps.get('holding') or []) or '无'}] "
-                         f"处境[{ps.get('situation', '')}]")
+                         f"身体[{ps.get('condition', '健康')}] 身份[{ps.get('disguise', '本名') or '本名'}] "
+                         f"钱[{ps.get('money', '') or '未定'}] 处境[{ps.get('situation', '')}]")
         if s.get("objective"):
             parts.append(f"主线目标（必须推进）: {s['objective']}")
         if s.get("flags"):

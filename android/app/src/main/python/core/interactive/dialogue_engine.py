@@ -129,6 +129,7 @@ class DialogueEngine:
         if ps:
             parts.append(f"## 当前状态: 位置[{ps.get('location', '')}] 时间[{ps.get('time', '')}] "
                          f"同行[{','.join(ps.get('with') or []) or '无'}] "
+                         f"身体[{ps.get('condition', '健康')}] 身份[{ps.get('disguise', '本名') or '本名'}] "
                          f"处境[{ps.get('situation', '')}]")
         # v3.5.27: 角色白名单——本轮只有你与读者，严禁其他人出现
         parts.append(f"## 对话对象: 你（{target_char}）与读者（{((state.get('player_char') or {}).get('name', '你'))}）"
