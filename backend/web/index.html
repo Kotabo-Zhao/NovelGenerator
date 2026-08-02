@@ -495,6 +495,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .fact-expired{color:var(--text3)}
   .fact-broken{color:var(--red)}
   .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 16px}
+  /* v3.5.5: 玩家角色状态卡 */
+  .player-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px}
+  .player-status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;margin-top:4px}
+  .ps-cell{display:flex;align-items:baseline;gap:8px;min-width:0}
+  .ps-label{font-size:11.5px;color:var(--text3);flex-shrink:0;width:52px}
+  .ps-val{font-size:12.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  @media(max-width:760px){.player-status-grid{grid-template-columns:1fr}}
   .sg-relation-svg-wrap svg,.sg-timeline-svg-wrap svg{width:100%;height:100%}
 
   /* ── 导出列表 ── */
@@ -1005,25 +1012,71 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </div>
 
           <div v-else class="interactive-shell">
-            <!-- 状态栏 -->
-            <div class="flex justify-between items-center mb-12" style="flex-wrap:wrap;gap:8px">
-              <div class="text-sm">
-                <span class="badge badge-ok mr-8">场景 {{ interactive.state.scene_num||0 }}</span>
-                <span v-if="interactive.state.state && interactive.state.state.location" class="badge mr-8" style="background:rgba(57,197,207,.12);color:#39c5cf">📍 {{ interactive.state.state.location }}</span>
-                <span v-if="interactive.pendingNode" class="badge" style="background:rgba(212,175,55,.15);color:var(--gold)">💬 可对话</span>
-                <span v-else class="badge">📖 剧情中</span>
-                <span v-if="interactive.agenda && interactive.agenda.goal" class="badge" style="background:rgba(188,140,255,.12);color:#bc8cff;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle" title="这场对话要谈：{{ interactive.agenda.goal }}">🎯 {{ interactive.agenda.goal }}</span>
+            <!-- v3.5.5: 玩家角色状态卡（我是谁/在哪/要做什么/关系） -->
+            <div class="player-status-card">
+              <div class="flex justify-between items-center mb-8" style="flex-wrap:wrap;gap:8px">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <div class="inter-avatar" style="width:38px;height:38px;font-size:15px"
+                       :style="avatarStyle(interactive.state.player_char ? interactive.state.player_char.name : '你')">
+                    {{ (interactive.state.player_char ? interactive.state.player_char.name : '你').slice(0,1) }}
+                  </div>
+                  <div>
+                    <div style="font-weight:600;font-size:14px;color:var(--text)">
+                      {{ interactive.state.player_char ? interactive.state.player_char.name : '读者' }}
+                      <span class="muted" style="font-weight:400;font-size:12px" v-if="interactive.state.player_char && interactive.state.player_char.identity">
+                        · {{ interactive.state.player_char.identity }}
+                      </span>
+                    </div>
+                    <div class="text-xs muted">场景 {{ interactive.state.scene_num||0 }}
+                      <span v-if="interactive.pendingNode" style="color:var(--gold)"> · 💬 可对话</span>
+                      <span v-else-if="interactive.autoStopped" style="color:var(--gold)" title="连续推进已暂停，输入或点继续可恢复"> · ⏸ 已暂停</span>
+                      <span v-else> · 📖 剧情中</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="flex gap-6">
+                  <button class="btn btn-xs" :class="interactive.autoPlay?'btn-primary':''" @click="interactive.autoPlay=!interactive.autoPlay; _cancelAuto()" title="剧情自动流：行动/对话后剧情自动衔接，只在需要你决策时停下">⏵ {{ interactive.autoPlay?'自动':'手动' }}</button>
+                  <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
+                  <span v-if="interactive.emotionAvailable" style="display:flex;gap:6px;align-items:center">
+                    <button class="btn btn-xs" :class="interactive.emotionVoice?'btn-primary':''" @click="interactive.emotionVoice=!interactive.emotionVoice" :disabled="interactive.busy" title="IndexTTS-2 本地情感引擎（角色音色+情感，免费离线）">🎭 {{ interactive.emotionVoice?'情感开':'情感关' }}</button>
+                    <select v-if="interactive.emotionVoice" v-model="interactive.emotion" style="min-height:30px;font-size:12px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:2px 6px">
+                      <option v-for="em in ['平静','愤怒','悲伤','喜悦','紧张','冷漠']" :key="em" :value="em">{{ em }}</option>
+                    </select>
+                  </span>
+                  <button class="btn btn-xs btn-ghost" @click="interactiveRollback" :disabled="interactive.busy" title="回退到上一场景">↩ 回退</button>
+                  <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
+                </div>
               </div>
-              <div class="flex gap-6">
-                <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
-                <span v-if="interactive.emotionAvailable" style="display:flex;gap:6px;align-items:center">
-                  <button class="btn btn-xs" :class="interactive.emotionVoice?'btn-primary':''" @click="interactive.emotionVoice=!interactive.emotionVoice" :disabled="interactive.busy" title="IndexTTS-2 本地情感引擎（角色音色+情感，免费离线）">🎭 {{ interactive.emotionVoice?'情感开':'情感关' }}</button>
-                  <select v-if="interactive.emotionVoice" v-model="interactive.emotion" style="min-height:30px;font-size:12px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:2px 6px">
-                    <option v-for="em in ['平静','愤怒','悲伤','喜悦','紧张','冷漠']" :key="em" :value="em">{{ em }}</option>
-                  </select>
-                </span>
-                <button class="btn btn-xs btn-ghost" @click="interactiveRollback" :disabled="interactive.busy" title="回退到上一场景">↩ 回退</button>
-                <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
+              <!-- 剧情进展 + 角色状态 -->
+              <div class="player-status-grid">
+                <div class="ps-cell" v-if="interactive.state.state && interactive.state.state.location">
+                  <span class="ps-label">📍 地点</span>
+                  <span class="ps-val">{{ interactive.state.state.location }}</span>
+                </div>
+                <div class="ps-cell" v-if="interactive.state.state && interactive.state.state.objective">
+                  <span class="ps-label">🎯 目标</span>
+                  <span class="ps-val">{{ interactive.state.state.objective }}</span>
+                </div>
+                <div class="ps-cell" v-if="relCount">
+                  <span class="ps-label">💞 关系</span>
+                  <span class="ps-val">
+                    <span v-for="(rv, rn) in interactive.state.state.relations" :key="rn" style="margin-right:10px">
+                      {{ rn }}<span :style="{color: rv>=60?'#e24b4a':(rv>=30?'#d4af37':'#888780')}">♥{{ rv }}</span>
+                    </span>
+                  </span>
+                </div>
+                <div class="ps-cell" v-if="(interactive.state.state && interactive.state.state.flags || []).length">
+                  <span class="ps-label">🏷 进展</span>
+                  <span class="ps-val">
+                    <span v-for="f in interactive.state.state.flags.slice(-4)" :key="f" style="margin-right:8px;font-size:12px;background:rgba(212,175,55,.1);border-radius:4px;padding:1px 6px">{{ f }}</span>
+                  </span>
+                </div>
+                <div class="ps-cell" v-if="presentChars.length">
+                  <span class="ps-label">👥 在场</span>
+                  <span class="ps-val">
+                    <span v-for="c in presentChars" :key="c" style="margin-right:8px">{{ c }}</span>
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -1041,9 +1094,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <div v-else-if="blk.type==='action_result'" class="inter-action-result">{{ blk.content }}</div>
                 <div v-else-if="blk.type==='typing'" class="inter-typing" style="text-align:center;padding:8px 0">▋</div>
                 <div v-else class="inter-line" :class="{'playing': interactive.speakingLine===i, 'inter-player': blk.type==='player'}">
-                  <div class="inter-avatar" :style="avatarStyle(blk.speaker)">{{ (blk.speaker||'?').slice(0,1) }}</div>
+                  <div class="inter-avatar" :style="avatarStyle(blk.type==='player' ? playerName : blk.speaker)">{{ (blk.type==='player' ? playerName : (blk.speaker||'?')).slice(0,1) }}</div>
                   <div class="inter-bubble">
-                    <div v-if="blk.type!=='player'" style="font-size:11px;color:var(--accent);margin-bottom:2px;opacity:.85">{{ blk.speaker }}</div>
+                    <div v-if="blk.type==='player'" style="font-size:11px;color:var(--gold);margin-bottom:2px;opacity:.9">{{ playerName }}</div>
+                    <div v-else style="font-size:11px;color:var(--accent);margin-bottom:2px;opacity:.85">{{ blk.speaker }}</div>
                     <span class="inter-dialogue">{{ blk.content }}</span>
                     <div style="display:flex;gap:8px;align-items:center;margin-top:4px" v-if="blk.type==='dialogue'||blk.type==='chat'">
                       <span class="inter-voice" v-if="interactive.voices[blk.speaker]">
@@ -3608,6 +3662,9 @@ const app = createApp({
       driftNote: '',          // 话题跑偏提示（drift_check 事件）
       naturalEnd: false,      // 对话目标已达成提示
       hookSummary: '',        // end-chat 钩子核对摘要（推进/未谈成）
+      // v3.5.7: 剧情自动流——场景/行动/对话自动衔接，只在需要决策时停
+      autoPlay: true,         // 自动推进开关（剧情不等人，玩家可随时打断）
+      autoStopped: false,     // 连续自动 3 段后强制暂停提示
       // v3.5: 情感语音（IndexTTS-2 本地引擎）
       emotionVoice: false,    // 情感引擎开关
       emotion: '平静',        // 当前情感（平静/愤怒/悲伤/喜悦/紧张/冷漠）
@@ -3615,6 +3672,20 @@ const app = createApp({
       realVoices: [],         // v3.5.1: 真人音色库 [{id, gender, style}]
       realVoiceMap: {},       // 角色 → 真人音色 id（localStorage 持久化）
     });
+    // v3.5.5: 玩家状态卡计算属性
+    const relCount = computed(() => {
+      const s = interactive.state.state || {};
+      return Object.keys(s.relations || {}).length;
+    });
+    const presentChars = computed(() => {
+      const cs = interactive.state.casts || {};
+      const pn = (interactive.state.player_char || {}).name;
+      return Object.keys(cs).filter(k => {
+        const c = cs[k] || {};
+        return k !== pn && c.present !== false;
+      }).slice(0, 6);
+    });
+    const playerName = computed(() => (interactive.state.player_char || {}).name || '你');
     let interactiveAbort = null;
     let interactiveAudio = null;   // 当前播放的 Audio
 
@@ -3985,6 +4056,7 @@ const app = createApp({
     async function sendInteractiveChat() {
       if (!interactive.message.trim() || interactive.busy) return;
       if (!activeNovel.value) return;
+      _cancelAuto();                                  // v3.5.7: 玩家输入打断自动流
       const id = encodeURIComponent(activeNovel.value.id);
       const msg = interactive.message.trim();
       interactive.message = '';
@@ -4019,6 +4091,8 @@ const app = createApp({
             if (last && (last.type==='chat' || last.type==='dialogue')) {
               prewarmVoice(last.content, last.speaker);
             }
+            // v3.5.7: 剧情自动流——角色回复完，玩家 8s 未输入 → 自动收尾对话并推进
+            _scheduleAutoEndChat();
           } else if (evt.type==='drift_check') {
             // v3.3: 跑偏提示（角色下一轮会拉回）
             interactive.driftNote = evt.on_track ? '' : (evt.reason || '话题跑偏了');
@@ -4052,6 +4126,9 @@ const app = createApp({
               interactive.hookSummary = '你的行动改变了剧情走向';
               interactive.inChat = false;
             }
+            // v3.5.7: 行动后剧情自动衔接（行动有后果，顺势走下一段；force 无视 pendingNode）
+            _cancelAuto();
+            _scheduleAutoNext(2200, true);
           } else if (evt.type==='error') {
             interactive.blocks.push({type:'error', speaker:'', content: evt.message});
           }
@@ -4061,6 +4138,52 @@ const app = createApp({
       }
       interactive.busy = false;
       _scrollStory();
+    }
+
+    // ═══ v3.5.7: 剧情自动流 ═══
+    // 静止点（场景结束/行动完成/角色回复完）→ 玩家未干预 → 自动衔接下一段剧情；
+    // 节点判定需要玩家介入 → 停；连续自动 3 段 → 强制停一次；玩家输入随时打断。
+    let _autoTimer = null;
+    let _autoStreak = 0;
+
+    function _cancelAuto(reason) {
+      if (_autoTimer) { clearTimeout(_autoTimer); _autoTimer = null; }
+      // 玩家主动干预 → 重置连播计数
+      _autoStreak = 0;
+      interactive.autoStopped = false;
+    }
+    function _scheduleAutoNext(delayMs, force) {
+      if (!interactive.autoPlay) return;
+      if (interactive.inChat) return;
+      if (!force && interactive.pendingNode) return;  // force: 行动后无视 pendingNode（行动=玩家已决策）
+      if (_autoTimer) return;                       // 已有待执行的自动推进
+      if (_autoStreak >= 3) {                        // 连续 3 段后强制停，防止无限自动跑
+        interactive.autoStopped = true;
+        return;
+      }
+      _autoTimer = setTimeout(async () => {
+        _autoTimer = null;
+        if (!interactive.autoPlay || interactive.busy || interactive.pendingNode) return;
+        _autoStreak++;
+        try { await continueInteractive(); }
+        catch(e) { /* 自动推进失败静默，玩家可手动 */ }
+      }, delayMs || 1600);
+    }
+    // 对话中角色回复完 → 若玩家已说过话且 12s 未输入 → 自动收尾对话并推进
+    function _scheduleAutoEndChat() {
+      if (!interactive.autoPlay || !interactive.inChat) return;
+      // 只对"玩家已发言过的对话"自动收尾（节点对话刚开始、玩家还没开口时不自动结束）
+      const hasPlayer = [...interactive.blocks].reverse().slice(0, 8).some(b => b.type === 'player');
+      if (!hasPlayer) return;
+      if (_autoTimer) { clearTimeout(_autoTimer); }
+      _autoTimer = setTimeout(async () => {
+        _autoTimer = null;
+        if (!interactive.autoPlay || interactive.busy || !interactive.inChat) return;
+        if (interactive.message && interactive.message.trim()) return; // 玩家正在输入
+        _autoStreak = 0;
+        try { await continueInteractive(); }        // end-chat + 下一场景
+        catch(e) { /* 静默 */ }
+      }, 12000);
     }
 
     async function continueInteractive() {
@@ -4119,6 +4242,13 @@ const app = createApp({
             // v3.3: 议程展示（这场对话要谈什么）
             interactive.agenda = evt.agenda || null;
             interactive.driftNote = ''; interactive.naturalEnd = false; interactive.hookSummary = '';
+            // v3.5.7: 剧情自动流——节点判定：需要玩家介入 → 停；
+            // 不需要 → 自动衔接下一段（连续 3 段后强制停）
+            if (evt.is_node) {
+              _cancelAuto();
+            } else {
+              _scheduleAutoNext(2000);
+            }
           } else if (evt.type==='error') {
             interactive.error = evt.message;
           }
@@ -4494,9 +4624,13 @@ const app = createApp({
       // v3.0: 互动模式
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
+      // v3.5.7: 剧情自动流
+      _cancelAuto,
       speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,previewVoice,
       // v3.5.1: 真人音色（v3.5.4 融合：与 edge 音色统一决策树）
       setRealVoice,clearRealVoice,realVoiceName,
+      // v3.5.5: 玩家状态卡
+      relCount,presentChars,playerName,
       // v3.5: 角色头像徽章配色
       avatarStyle,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,

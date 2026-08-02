@@ -40,6 +40,13 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
 4. 若给定"待兑现事实"（facts），本段必须自然回扣至少 1 个（兑现/提及/利用/其后果显现）
 5. 角色说话必须符合各自的人设卡与声音卡（口头禅/句式/情绪表达）
 6. 单场景 300-600 字，节奏紧凑，不要在无关细节上停留
+7. v3.5.5 对话衔接：若场景涉及需要读者抉择/回应的关键节点，场景可以以角色的发问、
+   邀约、警告或悬念收尾（如"……他忽然停步：'你，真的决定了吗？'"），
+   让后续对话自然衔接，不要生硬结束
+8. v3.5.7 承接性（最高优先级）：若给定"读者上一步做了什么"（last_action）或
+   "刚结束的对话"，本段场景必须从它的后果/余波/反应开始写——
+   行动已改变剧情（地点/关系/物品/承诺），严禁无视玩家行为另起炉灶或时间倒流；
+   若没有给定，则正常推进主线
 只输出标记语言文本，不要输出解释。"""
 
 NODE_SYSTEM = """你是互动小说剧情节奏师。判断当前场景是否应该暂停，让读者与角色对话。
@@ -231,6 +238,20 @@ class StoryDirector:
                 parts.append(f"- {str(m)[:60]}")
         if summary:
             parts.append(f"前情摘要: {summary[:600]}")
+        # v3.5.7: 读者上一步行动（承接性——新场景必须从行动后果写起）
+        la = state.get("last_action") or {}
+        if la and la.get("summary"):
+            parts.append(f"读者上一步做了什么（本段必须从这件事的后果/余波写起，严禁无视）:")
+            parts.append(f"- [{la.get('type', '行动')}] {la.get('summary', '')[:200]}")
+        # v3.5.7: 刚结束的对话（承接对话结论）
+        nid = state.get("novel_id", "")
+        recent_chats = self.store.recent_chats(nid, 6) if (nid and hasattr(self.store, "recent_chats")) else []
+        chat_lines = [f"{'读者' if c.get('role') == 'user' else c.get('speaker', '角色')}: {str(c.get('content', ''))[:80]}"
+                      for c in recent_chats if c.get("content")]
+        if chat_lines:
+            parts.append("刚结束的对话（本段可自然承接其中情绪/未尽话题，但不要复述）:")
+            for line in chat_lines[-4:]:
+                parts.append(f"- {line}")
         # 角色卡
         casts = state.get("casts", {})
         if casts:
@@ -611,6 +632,10 @@ class StoryDirector:
             return {"title": novel_id, "genre": "", "style": "",
                     "protagonist_name": "", "casts_preview": {}}
         proto = novel.get("protagonist") or {}
+        # v3.5.5: characters 字段结构（characters.protagonist）优先
+        chars_field = novel.get("characters") or {}
+        if not proto and isinstance(chars_field, dict):
+            proto = chars_field.get("protagonist") or {}
         casts_preview = {}
         if proto.get("name"):
             casts_preview[proto["name"]] = {"role": "protagonist", "desc": str(proto.get("personality", ""))[:80]}
@@ -620,11 +645,21 @@ class StoryDirector:
         for c in novel.get("antagonist", []) or []:
             if isinstance(c, dict) and c.get("name"):
                 casts_preview[c["name"]] = {"role": "antagonist", "desc": str(c.get("personality", ""))[:80]}
+        # v3.5.5: characters 字段里的配角/反派
+        if isinstance(chars_field, dict):
+            for role_key in ("supporting", "antagonist"):
+                group = chars_field.get(role_key) or []
+                if isinstance(group, list):
+                    for c in group:
+                        if isinstance(c, dict) and c.get("name") and c["name"] not in casts_preview:
+                            casts_preview[c["name"]] = {"role": role_key,
+                                                        "desc": str(c.get("personality", ""))[:80]}
         return {
             "title": novel.get("title", novel_id),
             "genre": novel.get("genre", ""),
             "style": novel.get("style", ""),
             "protagonist_name": proto.get("name", ""),
+            "protagonist": proto,   # v3.5.5: 完整主角信息（玩家扮演角色）
             "casts_preview": casts_preview,
             "worldbuilding": novel.get("worldbuilding", {}),
         }

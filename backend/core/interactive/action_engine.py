@@ -37,7 +37,8 @@ ACTION_DESC_RE = re.compile(
 _ACTION_VERBS = (
     "上车|下车|上马|下马|上楼|下楼|上船|进去|进来|出去|出来|进屋|出屋|进城|出城|"
     "开门|推门|推开|关门|锁门|开窗|转身|回头|跟上|跟着|坐下|站起来|起身|"
-    "走到|走进|走出|来到|到达|离开|逃走|逃跑|逃离|躲进|躲藏|藏进|尾随|追赶|"
+    "走到|走进|走出|来到|到达|离开|逃走|逃跑|逃离|躲进|躲藏|藏进|尾随|追赶|追上|出发|"
+    "追(?:上|到|来|去)?|"
     "推开门|跟着走|跟着你|拔剑|拔刀|出手|攻击|跪下|叩头|低头|鞠躬|行礼|作揖|抱拳|点头|摇头|"
     "掏出|拿出|交出|交给|递上|接过|放回|收起|捡起|穿上|脱下|戴上|摘下|"
     "答应|拒绝|同意|接受|成交|收下|归还|签字|画押|发誓|承诺|威胁|示好|坦白|隐瞒|"
@@ -60,6 +61,13 @@ LOW_CONF_ACTION_RE = re.compile(r"^(?:好|行|可以|好的|行吧|好吧|嗯|�
 
 # 裸行动词（"上车" 两个字本身）
 NAKED_ACTION_RE = re.compile(r"^(?:上车|下车|进去|出来|走吧|开门|推门|跟上|坐下|过来|等等|停下|住手|别动|放手|松手|给|拿来|走开|退下|成交)[。！!]?$")
+
+# v3.5.7: 句首行动动词 + 补充内容（"我答应你，今晚就去"这类长句）→ LLM 精判
+# 之前整句匹配漏掉带补充的长句 → 全部当闲聊，剧情不动——这是"行为不推进剧情"的机制根因
+VERB_PREFIX_RE = re.compile(
+    r"^(?:(?:我|咱|咱们|我们|人家)?(?:这就|现在|马上|要|想|打算|就|已经|去|来)?)(?:"
+    + _ACTION_VERBS + r")[\u4e00-\u9fff]{0,24}"
+)
 
 # ── 行动护栏（v3.4.1 Guardrails）──
 
@@ -165,6 +173,9 @@ def rule_prescreen(user_input: str) -> Optional[dict]:
         return {"candidate": True, "forced": True, "hint": "括号动作描写"}
     if NAKED_ACTION_RE.match(text) or HIGH_CONF_ACTION_RE.match(text):
         return {"candidate": True, "forced": True, "hint": "高置信行动词"}
+    # v3.5.7: 句首动词+补充长句 → LLM 精判（forced=False，LLM 可纠偏为对话）
+    if VERB_PREFIX_RE.match(text):
+        return {"candidate": True, "forced": False, "hint": "句首行动动词，需精判"}
     if LOW_CONF_ACTION_RE.match(text):
         return {"candidate": True, "forced": False, "hint": "低置信回应词，需精判"}
     return {"candidate": False, "forced": False, "hint": "普通对话"}
