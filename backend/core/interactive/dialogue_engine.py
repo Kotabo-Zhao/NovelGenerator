@@ -295,6 +295,9 @@ class DialogueEngine:
                       "ts": time.strftime("%H:%M:%S")}
         self.store.append_chat(novel_id, entry_user)
 
+        # v3.5.19: 阶段提示（对话生成中）
+        yield {"type": "phase", "label": "💭 角色思考中…"}
+
         # v3.4: 行动识别——玩家输入是"剧情操作"（上车/推门/答应/拒绝…）→ 直接推进剧情
         action = self.action.detect_action(clean_input, state)
         if action:

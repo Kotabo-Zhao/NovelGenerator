@@ -401,6 +401,8 @@ class StoryDirector:
         prompt = self._build_scene_prompt(state, summary)
         collected = []
 
+        # v3.5.19: 阶段提示——生成前告知前端（显示"正在生成…"避免用户以为卡住）
+        yield {"type": "phase", "label": "📖 正在展开剧情…"}
         yield {"type": "scene_chunk", "scene_num": scene_num, "content": ""}
         try:
             async for chunk in self._llm_stream(SCENE_SYSTEM, prompt):
@@ -463,6 +465,8 @@ class StoryDirector:
 
         # ── 节点判定（三层保障的 ① 规则预筛 + ② LLM 精判）──
         if force_node_check:
+            # v3.5.19: 节点判定/议程生成可能耗时 3-8s——先提示用户
+            yield {"type": "phase", "label": "🤔 正在判断剧情走向…"}
             is_node, node_chars, rounds, reason = self._decide_node(novel_id, scene_num, blocks, state)
             # v3.5.16: 对话候选排除玩家自己（玩家是主角，只跟 NPC 对话）
             player_name = (state.get("player_char") or {}).get("name", "")
@@ -475,6 +479,7 @@ class StoryDirector:
             agenda = None
             if is_node:
                 # v3.3: Agenda 机制——对话前生成议程（目标/推进开关/边界），对话围绕它推进
+                yield {"type": "phase", "label": "📋 正在安排这场对话…"}
                 agenda = self._generate_agenda(novel_id, node_chars, state)
                 state["agenda"] = agenda
             self.store.save_state(novel_id, state)

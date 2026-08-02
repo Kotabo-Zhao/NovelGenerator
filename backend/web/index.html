@@ -506,6 +506,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 16px}
   /* v3.5.5: 玩家角色状态卡 */
   /* v3.5.13: 故事背景卡（开场介绍） */
+  /* v3.5.19: 生成状态条（生成中提示，金色呼吸 + spinner） */
+  .inter-generating{display:flex;align-items:center;gap:8px;background:rgba(212,175,55,.08);border:1px solid rgba(212,175,55,.3);border-radius:8px;padding:6px 14px;font-size:12.5px;color:#d9bc7a;animation:genBreath 1.8s ease-in-out infinite}
+  @keyframes genBreath{0%,100%{opacity:.75}50%{opacity:1}}
+  .gen-spinner{width:13px;height:13px;border:2px solid rgba(212,175,55,.25);border-top-color:#d9bc7a;border-radius:50%;animation:genSpin .8s linear infinite;flex-shrink:0}
+  @keyframes genSpin{to{transform:rotate(360deg)}}
   .inter-intro{background:linear-gradient(180deg,rgba(212,175,55,.06),rgba(212,175,55,.02));border:1px solid rgba(212,175,55,.28);border-radius:14px;padding:10px 16px;cursor:pointer;transition:border-color .2s}
   .inter-intro:hover{border-color:rgba(212,175,55,.5)}
   .inter-intro-head{display:flex;justify-content:space-between;align-items:center;color:#d9bc7a}
@@ -1169,6 +1174,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 </span>
               </div>
               </template>
+            </div>
+
+            <!-- v3.5.19: 生成状态条（生成中明确告知，避免以为卡住） -->
+            <div v-if="interactive.generating" class="inter-generating">
+              <span class="gen-spinner"></span>
+              <span>{{ interactive.generating }}</span>
             </div>
 
             <!-- v3.3: 对话轨道提示（跑偏/自然收尾/钩子核对） -->
@@ -2340,6 +2351,9 @@ const app = createApp({
             try {
               const evt = JSON.parse(line.slice(6));
               if (evt.type === 'ping') continue; // Render心跳，忽略
+              // v3.5.19: 生成阶段提示统一处理（互动模式）
+              if (evt.type === 'phase') { _setPhase(evt.label, 30000); continue; }
+              if (evt.type === 'scene_chunk' || evt.type === 'chat_chunk' || evt.type === 'action_chunk') _kickPhase();
               if (onEvent(evt) === false) { reader.cancel(); break; }
             } catch (_) {}
           }
@@ -3771,6 +3785,8 @@ const app = createApp({
       introOpen: true,        // 背景卡默认展开（首次进入先看背景）
       // v3.5.14: 状态卡折叠（默认收起省空间，头部显示摘要，展开看全量）
       statusOpen: false,
+      // v3.5.19: 生成状态提示（生成中告知用户，避免以为卡住）
+      generating: '',          // 当前生成阶段 label（空 = 无生成）
     });
     // v3.5.5: 玩家状态卡计算属性
     // v3.5.18: 显示格式化——location/objective 可能是 JSON 数组字符串（如
@@ -4211,6 +4227,7 @@ const app = createApp({
       if (!interactive.message.trim() || interactive.busy) return;
       if (!activeNovel.value) return;
       cancelAuto();                                  // v3.5.7: 玩家输入打断自动流
+      _setPhase('💭 正在发送…', 30000);               // v3.5.19: 生成提示
       const id = encodeURIComponent(activeNovel.value.id);
       const msg = interactive.message.trim();
       interactive.message = '';
@@ -4301,6 +4318,7 @@ const app = createApp({
         interactive.blocks.push({type:'error', speaker:'', content:'对话失败: '+(e.message||e)});
       }
       interactive.busy = false;
+      _setPhase('');                                   // v3.5.19: 生成结束
       _scrollStory();
     }
 
@@ -4345,6 +4363,31 @@ const app = createApp({
         interactive.blocks.push({ type:'sys_change', speaker:'', content: c });
       });
       _scrollStory();
+    }
+
+    // ═══ v3.5.19: 生成阶段提示 ═══
+    // phase 事件更新 label；任何内容块到达重置超时；超时无内容 → 升级提示
+    let _phaseTimer = null;
+    function _setPhase(label, timeoutMs) {
+      interactive.generating = label || '';
+      if (_phaseTimer) clearTimeout(_phaseTimer);
+      _phaseTimer = null;
+      if (label && timeoutMs) {
+        _phaseTimer = setTimeout(() => {
+          if (interactive.generating === label) {
+            interactive.generating = '⏳ 仍在生成中（内容较长，请稍候）…';
+          }
+        }, timeoutMs);
+      }
+    }
+    function _kickPhase() {
+      // 内容块到达 → 重置超时（label 不变）
+      if (_phaseTimer) clearTimeout(_phaseTimer);
+      if (interactive.generating) {
+        _phaseTimer = setTimeout(() => {
+          if (interactive.generating) interactive.generating = '⏳ 仍在生成中（内容较长，请稍候）…';
+        }, 25000);
+      }
     }
 
     // ═══ v3.5.7: 剧情自动流 ═══
@@ -4403,8 +4446,10 @@ const app = createApp({
       if (!activeNovel.value || interactive.busy) return;
       const id = encodeURIComponent(activeNovel.value.id);
       interactive.busy = true;
+      _setPhase('🔄 正在推进剧情…', 30000);           // v3.5.19: 生成提示
       try {
         // 结束对话 → PACT 提取（无条件执行，提取本轮全部对话）
+        _setPhase('📝 正在整理对话影响…', 30000);       // v3.5.19
         const endRes = await fetch(API+'/api/novels/'+id+'/interactive/end-chat', {
           method:'POST', body:'{}', headers:{'Content-Type':'application/json'},
         });
@@ -4477,6 +4522,7 @@ const app = createApp({
         interactive.error = '推进失败: '+(e.message||e);
       }
       interactive.busy = false;
+      _setPhase('');                                   // v3.5.19: 生成结束
     }
 
     async function interactiveRollback() {

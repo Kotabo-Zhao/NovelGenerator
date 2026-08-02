@@ -424,6 +424,8 @@ class ActionEngine:
             f"生成这段行动的结果场景（1-3 句）。"
         )
         collected = []
+        # v3.5.19: 阶段提示（行动结果生成中）
+        yield {"type": "phase", "label": "⚡ 正在生成行动结果…"}
         yield {"type": "action_chunk", "content": ""}
         try:
             async for chunk in self._llm_stream(ACTION_SCENE_SYSTEM, user):
