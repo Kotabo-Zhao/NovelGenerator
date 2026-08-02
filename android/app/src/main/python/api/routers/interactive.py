@@ -394,8 +394,28 @@ async def interactive_rollback(novel_id: str):
 # ── restart：重开 ──
 @router.post("/api/novels/{novel_id}/interactive/restart")
 async def interactive_restart(novel_id: str):
-    """重置互动存档（旧存档备份到 backup-<ts>/）"""
+    """重置互动存档（旧存档备份到 backup-<ts>/）
+
+    v3.5.30: 重开前后台把当前章的互动剧情沉淀为章节正文（玩到一半不白玩）
+    """
     _validate_novel_id(novel_id)
+    try:
+        _st = _store.load_state(novel_id)
+        if _st:
+            _chs = _st.get("outline_chapters") or []
+            _op = _st.get("outline_progress") or {}
+            _idx = int(_op.get("idx", 0))
+            if _chs and not _op.get("final_done") and _idx < len(_chs):
+                import threading
+                threading.Thread(
+                    target=_story._sync_chapter_from_interactive,
+                    args=(novel_id, _idx,
+                          int(_op.get("scene_start", 1) or 1),
+                          int(_st.get("scene_num", 0) or 0)),
+                    daemon=True,
+                ).start()
+    except Exception as e:
+        log.warning(f"restart pre-sync failed: {e}")
     ok = _store.restart(novel_id)
     if not ok:
         raise HTTPException(500, "重开失败（备份失败）")

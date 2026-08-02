@@ -1013,11 +1013,15 @@ class StoryDirector:
             return
         op = dict(state.get("outline_progress") or {})
         idx = int(op.get("idx", 0))
+        # v3.5.30: 最后一章已回流过（final_done）→ 不再触发
+        if op.get("final_done"):
+            return
         cnt = int(op.get("scene_in_chapter", 0)) + 1
         ch = chs[min(idx, len(chs) - 1)]
         tw = int(ch.get("target_words", 0) or 0)
         per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
-        if cnt >= per and idx < len(chs) - 1:
+        # v3.5.30: 最后一章也回流（原条件 idx < len-1 导致最后一章永远不生成章节正文）
+        if cnt >= per:
             # ── 本章完成：把 [scene_start, scene_num-1] 的互动剧情沉淀为章节正文 ──
             done_idx = idx
             scene_start = int(op.get("scene_start", 1) or 1)
@@ -1030,15 +1034,16 @@ class StoryDirector:
                 ).start()
             except Exception as e:
                 log.warning(f"chapter sync thread failed: {e}")
-            idx += 1
-            cnt = 0
-            nch = chs[idx]
+            if idx < len(chs) - 1:
+                idx += 1
+                cnt = 0
+                # v3.5.30: 不再覆盖 objective——目标字段由 PACT 维护（玩家对话产生的方向），
+                # 大纲章节目标已在场景 prompt 单独注入"当前剧情章节"，两轨并行不冲突
+                log.info(f"Outline advanced → 第{nch.get('number', idx + 1)}章《{nch.get('title', '')}》")
+            # 最后一章完成：保持 idx 不变，标记 final_done 防重复回流
             state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
-                                         "scene_start": state.get("scene_num", 0) or 0}
-            state["state"]["objective"] = (
-                f"【{nch['title']}】{nch['summary']}"[:220]
-                or state["state"]["objective"])
-            log.info(f"Outline advanced → 第{nch.get('number', idx + 1)}章《{nch.get('title', '')}》")
+                                         "scene_start": state.get("scene_num", 0) or 0,
+                                         "final_done": True}
         else:
             state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
                                          "scene_start": op.get("scene_start", 1) or 1}
