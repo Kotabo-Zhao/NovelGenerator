@@ -91,6 +91,12 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
 13. v3.5.27 环境交代（P0）：场景【开头必须】先用 1-3 句交代当前环境——
     地点（街道名/房间/氛围）、时间（时辰/光线）、天气/声响等感官细节，
     让读者清楚"我在哪里、什么情况"。禁止一上来就抛对话或直接推进动作。
+14. v3.5.32 篇幅精简（P0）：单个场景总长度【200-350 字】（含旁白与台词），
+    严禁超过 400 字。一个场景只推进一个事件/一个对话回合：
+   - 旁白简洁：环境交代 1-3 句 + 事件推进 2-4 句，不堆砌长篇心理描写
+   - 台词克制：每个角色 1-2 句，点到为止，让玩家有接话空间
+   - 禁止：大段环境铺陈、多段连续心理活动、重复描述已知信息
+   玩家要在移动端快速读完，宁可少写不可啰嗦。
 只输出标记语言文本，不要输出解释。"""
 
 INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份详尽的开场背景介绍（500-700 字），
@@ -362,7 +368,7 @@ class StoryDirector:
             return None
 
     async def _llm_stream(self, system: str, user: str,
-                          temperature: float = 0.8) -> AsyncIterator[str]:
+                          temperature: float = 0.8, max_tokens: int = 2500) -> AsyncIterator[str]:
         try:
             async for chunk in self._resilient.create_stream(
                 messages=[
@@ -370,7 +376,7 @@ class StoryDirector:
                     {"role": "user", "content": user},
                 ],
                 temperature=temperature,
-                max_tokens=2500,
+                max_tokens=max_tokens,
             ):
                 yield chunk
         except Exception as e:
@@ -572,7 +578,8 @@ class StoryDirector:
         yield {"type": "phase", "label": "📖 正在展开剧情…"}
         yield {"type": "scene_chunk", "scene_num": scene_num, "content": ""}
         try:
-            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt):
+            # v3.5.32: max_tokens 520（≈360字）——LLM 生成即短，流式显示与落盘一致
+            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=520):
                 if chunk:
                     collected.append(chunk)
                     yield {"type": "scene_chunk", "scene_num": scene_num, "content": chunk}
@@ -586,6 +593,18 @@ class StoryDirector:
             # 兜底文本
             scene_text = f"【旁白】夜色渐深，{state.get('title', '故事')}还在继续。远处传来更鼓声，故事尚未落幕。"
             yield {"type": "scene_chunk", "scene_num": scene_num, "content": scene_text}
+
+        # v3.5.32: 后处理硬截断——仅影响落盘/回流（前端流式已由 max_tokens 限制，
+        # 不重复 yield 避免显示叠加）
+        if len(scene_text) > 400:
+            cut = scene_text[:380]
+            for sep in ("。", "！", "？", "！？", "……"):
+                idx = cut.rfind(sep)
+                if idx >= 200:
+                    scene_text = cut[:idx + 1] + "……"
+                    break
+            else:
+                scene_text = cut + "……"
 
         # 解析 + 持久化
         blocks = parse_scene_markup(scene_text)
