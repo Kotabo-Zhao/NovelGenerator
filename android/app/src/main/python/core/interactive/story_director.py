@@ -70,6 +70,12 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
     离开/去了哪里/时间点）。本场景必须严格遵守——已离开的角色不能立即出现在
     现场（除非有新剧情交代其返回）；时间只能向前流动；地点的变化必须有过渡。
     若上一场景角色"推门离去"，本场景他不在场，除非剧情明确安排他回来。
+12. v3.5.27 角色白名单（P0）：本场景出场角色【仅限于】"在场角色人设"名单中的角色。
+    严禁引入名单之外的角色——读者没有召唤的人不会凭空出现；若剧情确实需要
+    新角色，先写环境暗示（脚步声/通报/敲门声），下一场景再登场。
+13. v3.5.27 环境交代（P0）：场景【开头必须】先用 1-3 句交代当前环境——
+    地点（街道名/房间/氛围）、时间（时辰/光线）、天气/声响等感官细节，
+    让读者清楚"我在哪里、什么情况"。禁止一上来就抛对话或直接推进动作。
 只输出标记语言文本，不要输出解释。"""
 
 INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份详尽的开场背景介绍（500-700 字），
@@ -167,6 +173,22 @@ def _parse_json(content: str) -> Optional[dict]:
         except json.JSONDecodeError:
             return None
     return None
+
+
+def _clean_player_dialogue(blocks: list, player_name: str) -> list:
+    """v3.5.27: 过滤玩家角色的自动台词（场景/对话/行动结果通用）——
+    LLM 偶发替玩家说话（如【沈念薇】xxx），玩家言行只能由读者输入决定；
+    转成旁白心声（不占对话气泡、不触发语音）"""
+    if not player_name:
+        return blocks
+    cleaned = []
+    for b in blocks:
+        if b.get("type") == "dialogue" and b.get("speaker") == player_name:
+            cleaned.append({"type": "narration", "speaker": "",
+                            "content": f"你心中所想：{b.get('content', '')}"})
+        else:
+            cleaned.append(b)
+    return cleaned
 
 
 def parse_scene_markup(text: str) -> list:
@@ -543,18 +565,9 @@ class StoryDirector:
 
         # 解析 + 持久化
         blocks = parse_scene_markup(scene_text)
-        # v3.5.18: 过滤玩家角色的自动台词——LLM 偶发替玩家说话（如【沈念薇】xxx），
-        # 玩家言行只能由读者输入决定；转成旁白心声（不占对话气泡、不触发语音）
+        # v3.5.18/v3.5.27: 过滤玩家角色的自动台词（通用函数，场景/对话/行动结果共用）
         player_name = (state.get("player_char") or {}).get("name", "")
-        if player_name:
-            cleaned = []
-            for b in blocks:
-                if b.get("type") == "dialogue" and b.get("speaker") == player_name:
-                    cleaned.append({"type": "narration", "speaker": "",
-                                    "content": f"你心中所想：{b.get('content', '')}"})
-                else:
-                    cleaned.append(b)
-            blocks = cleaned
+        blocks = _clean_player_dialogue(blocks, player_name)
         scene_record = {
             "scene_num": scene_num,
             "scene_text": scene_text,

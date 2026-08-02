@@ -31,7 +31,10 @@ CHAT_SYSTEM = """你是小说角色扮演引擎。你扮演小说中的角色，
 3. 读者的输入可能带动作描写（如"（压低声音）…"），正常回应即可
 4. 剧情状态中的 facts 会影响你的态度（读者承诺过/威胁过你，你要有相应的反应）
 5. 单轮回复 30-120 字，口语化，自然，不要说教
-6. 若多个角色在场且合适，可用【角色名】分段让其他角色插话（最多 2 个角色）
+6. 【v3.5.27 角色白名单 P0】你只扮演你的角色，与读者一对一对话：
+   - 严禁让其他角色突然出现、插话或加入对话（哪怕他们"在场"）
+   - 只有读者主动提及/召唤其他角色时，才可在下一轮自然回应相关情况
+   - 严禁生成读者（主角）的台词——读者的言行由读者自己决定
 7. 【对话议程（Agenda）】这场对话你是有目的的（见 agenda）：
    - 对话围绕 goal 推进，不把 agenda 直接说破，自然引导读者
    - 读者触发了 hooks 的推进开关 → 按 outcome 给出相应反应（松口/让步/反击…）
@@ -111,6 +114,14 @@ class DialogueEngine:
     def _build_chat_prompt(self, state: dict, target_char: str,
                            history: list, last_action: Optional[dict] = None) -> str:
         parts = []
+        # v3.5.27: 当前环境（对话发生在哪——角色对环境有感知，玩家也知道身在何处）
+        s = state.get("state", {}) or {}
+        loc = s.get("location", "") or ""
+        if loc:
+            parts.append(f"## 当前环境: {str(loc)[:80]}")
+        # v3.5.27: 角色白名单——本轮只有你与读者，严禁其他人出现
+        parts.append(f"## 对话对象: 你（{target_char}）与读者（{((state.get('player_char') or {}).get('name', '你'))}）"
+                     "两人。其他角色一律不得出现、插话或提及在场（读者主动提起时只回应其内容）。")
         # v3.4: 读者刚执行的行动（角色需即时反应，不复述行动本身）
         if last_action:
             parts.append(f"## 读者刚刚执行了行动: {last_action.get('summary', '')}"
@@ -341,6 +352,11 @@ class DialogueEngine:
             return
 
         reply = "".join(collected).strip()
+        # v3.5.27: 对话回复里的玩家自动台词 → 剔除（玩家言行由读者决定）
+        pname = (state.get("player_char") or {}).get("name", "")
+        if pname and ("【" + pname + "】") in reply:
+            import re as _re
+            reply = _re.sub(r"【" + _re.escape(pname) + r"】[^\n]*", "", reply).strip()
         if not reply:
             reply = "（沉默片刻）……你说什么？"
             yield {"type": "chat_chunk", "speaker": target, "content": reply}

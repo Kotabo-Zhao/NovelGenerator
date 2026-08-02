@@ -127,9 +127,11 @@ ACTION_SCENE_SYSTEM = """你是互动小说即时行动导演。读者刚刚执�
 要求：
 1. 1-3 句，标记语言：【旁白】叙事 / 【角色名】在场角色的反应台词
 2. 行动结果必须真实反映在叙事里（上车→车身晃动、车门合拢；拔剑→气氛骤变；答应→对方态度变化）
-3. 行动改变了场景（离开/进入新地点）→ 给新地点一笔环境描写
+3. 行动改变了场景（离开/进入新地点）→ 给新地点一笔环境描写（地点/氛围/光线）
 4. 保持小说文笔与世界观风格，不要机械描述
 5. 若【角色名】给了反应台词，该台词要符合角色人设
+6. v3.5.27 角色白名单：反应台词只来自"在场角色"名单，严禁名单外角色出现
+7. v3.5.27 铁律：严禁生成【主角名】的台词——主角言行由读者决定，需要反应时用旁白写"你…"
 
 【行动结果的三条铁律】：
 1. **行动可能失败**：考虑读者实力、在场角色、关系值、剧情阶段——行动可以部分成功或失败（对方躲开/被拦下/自己犹豫/时机不对）。失败也是剧情，不是系统限制
@@ -463,6 +465,15 @@ class ActionEngine:
         if not text:
             text = f"【旁白】你做了这个决定，{state.get('title', '故事')}的走向因此改变。"
             yield {"type": "action_chunk", "content": text}
+        # v3.5.27: 行动结果里的玩家自动台词 → 转旁白心声
+        pname = (state.get("player_char") or {}).get("name", "")
+        if pname:
+            from .story_director import parse_scene_markup, _clean_player_dialogue
+            cleaned = _clean_player_dialogue(parse_scene_markup(text), pname)
+            if cleaned:
+                text = "\n".join(
+                    f"【{b['speaker']}】{b['content']}" if b.get("speaker")
+                    else f"【旁白】{b['content']}" for b in cleaned)
         # v3.5.8: 状态变化实时推送（前端对话流内直接展示 + 状态卡实时更新，免滚动）
         if changed:
             yield {"type": "state_change", "changes": changed,
