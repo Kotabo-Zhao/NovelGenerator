@@ -395,6 +395,15 @@ class StoryDirector:
             if ctx:
                 parts.append(f"当前角色状态（必须遵守，场景中角色的位置/状态以此为准）:\n{ctx[:300]}")
         parts.append(f"当前场景号: {state.get('scene_num', 0)}")
+        # v3.5.28: 大纲驱动——当前章节目标（互动剧情按大纲章节推进）
+        oc = state.get("outline_chapters") or []
+        op = state.get("outline_progress") or {}
+        if oc:
+            ci = min(int(op.get("idx", 0)), len(oc) - 1)
+            ch = oc[ci]
+            parts.append(f"当前剧情章节（本章目标，场景必须围绕它推进）: "
+                         f"第{ch.get('number', ci + 1)}章《{ch.get('title', '')}》"
+                         f"（{ch.get('volume', '')}）—— {ch.get('summary', '')}")
         if s.get("location"):
             parts.append(f"地点: {s['location']}")
         if s.get("objective"):
@@ -575,6 +584,11 @@ class StoryDirector:
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         self.store.append_scene(novel_id, scene_record)
+        # v3.5.28: 大纲章节推进——每章约 3 个场景后切下一章，目标随章更新
+        try:
+            self._advance_outline(novel_id, state)
+        except Exception as e:
+            log.warning(f"advance_outline failed: {e}")
         # v3.5.22: 复用小说模式逻辑引擎（后台，不阻塞场景流）——
         # 角色状态更新 + L1 矛盾检查
         try:
@@ -972,6 +986,33 @@ class StoryDirector:
             "casts_preview": casts_preview,
             "worldbuilding": novel.get("worldbuilding", {}),
         }
+
+    def _advance_outline(self, novel_id: str, state: dict):
+        """v3.5.28: 大纲章节推进——场景数达阈值切下一章，objective 随章更新
+
+        每章约 3 个场景（场景数/章按章节 target_words 微调：<2500 字 2 场景，>=5000 字 4 场景）
+        """
+        chs = state.get("outline_chapters") or []
+        if not chs:
+            return
+        op = dict(state.get("outline_progress") or {})
+        idx = int(op.get("idx", 0))
+        cnt = int(op.get("scene_in_chapter", 0)) + 1
+        ch = chs[min(idx, len(chs) - 1)]
+        tw = int(ch.get("target_words", 0) or 0)
+        per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
+        if cnt >= per and idx < len(chs) - 1:
+            idx += 1
+            cnt = 0
+            nch = chs[idx]
+            state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt}
+            state["state"]["objective"] = (
+                f"【{nch['title']}】{nch['summary']}"[:220]
+                or state["state"]["objective"])
+            log.info(f"Outline advanced → 第{nch.get('number', idx + 1)}章《{nch.get('title', '')}》")
+        else:
+            state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt}
+        self.store.save_state(novel_id, state)
 
     def attach_cast_profiles(self, novel_id: str, char_names: list):
         """为出场角色挂载人设卡（有蒸馏数据则用，无则留空由对话引擎即时蒸馏兜底）"""

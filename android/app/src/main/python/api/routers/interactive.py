@@ -139,6 +139,45 @@ async def interactive_start(novel_id: str):
             log.warning(f"global resources load failed: {e}")
         _store.save_state(novel_id, st)
 
+    # v3.5.28: 大纲驱动互动——每次 start 都刷新章节列表（老存档也补上），
+    # 互动剧情按 plan.outline 章节推进（不在初始化块内：老存档 scene_num>0 会跳过）
+    try:
+        import os as _os
+        from config import NOVELS_DIR as _ND
+        _plan_path = _os.path.join(_ND, novel_id, "plan.json")
+        if _os.path.exists(_plan_path):
+            with open(_plan_path, "r", encoding="utf-8") as _f:
+                _plan = json.load(_f)
+            _out = _plan.get("outline") or {}
+            _chs = []
+            for _v in (_out.get("volumes") or []):
+                for _c in (_v.get("chapters") or []):
+                    _chs.append({
+                        "number": int(_c.get("number", len(_chs) + 1)),
+                        "title": str(_c.get("title", ""))[:30],
+                        "summary": str(_c.get("summary", ""))[:180],
+                        "volume": str(_v.get("title", ""))[:20],
+                        "target_words": int(_c.get("target_words", 0) or 0),
+                    })
+            if _chs:
+                _st2 = _store.load_state(novel_id) or {}
+                _st2["outline_chapters"] = _chs
+                _op = _st2.get("outline_progress") or {}
+                if not _op:
+                    # v3.5.28: 老存档按已玩场景数估算大纲进度（避免剧情倒流）
+                    _sn = int((_st2.get("scene_num") or 0))
+                    _est = max(0, min((_sn - 1) // 3, len(_chs) - 1)) if _sn > 0 else 0
+                    _st2["outline_progress"] = {
+                        "idx": _est,
+                        "scene_in_chapter": (_sn - 1) % 3 if _sn > 0 else 0,
+                    }
+                    _st2["state"]["objective"] = (
+                        f"【{_chs[_est]['title']}】{_chs[_est]['summary']}"[:220]
+                        or _st2["state"]["objective"])
+                _store.save_state(novel_id, _st2)
+    except Exception as e:
+        log.warning(f"outline load failed: {e}")
+
     async def event_stream():
         # 挂载出场角色人设（异步后台，不阻塞开场）
         try:
