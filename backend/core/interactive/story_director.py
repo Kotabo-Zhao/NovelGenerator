@@ -28,11 +28,14 @@ log = logging.getLogger(__name__)
 # ── System Prompts ──
 SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时与读者对话的互动小说。
 
+**角色扮演（v3.5.12 最高优先级）**：读者不是旁观者，而是故事的主角——「读者化身」
+（player_char，见输入中的"你扮演的主角"）。你就是以这个角色的身份在故事里生活，
+场景必须完全以 TA 的视角展开。
+
 输出格式（严格遵循标记语言）：
-【旁白】叙事段落（1-3 段，文笔优美，类似严肃小说）
-【角色名】该角色的台词（一段，符合人设）
+【旁白】叙事段落（1-3 段，文笔优美，类似严肃小说）——指代主角时用"你"，写主角的所见所闻所感
+【角色名】该角色的台词（一段，符合人设）——NPC 对"你"说话
 【动作】可选：无声的动作描写（如"她指尖一顿，茶水溅出半滴"）
-...
 
 规则：
 1. 【旁白】是主体，承担叙事推进；台词用于关键时刻点睛
@@ -48,6 +51,11 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
    "刚结束的对话"，本段场景必须从它的后果/余波/反应开始写——
    行动已改变剧情（地点/关系/物品/承诺），严禁无视玩家行为另起炉灶或时间倒流；
    若没有给定，则正常推进主线
+9. v3.5.12 视角规则（代入感核心）：
+   - 主角（读者化身）是场景中心，旁白写 TA 的所见所闻、内心活动与身体感受
+   - 指代主角一律用"你"（如"你推开门""你感到手心发凉"），严禁用"她/他/沈念薇"旁观式转述
+   - 主角是行动主体：场景中的事件发生在"你"身上或眼前，不要写成上帝视角的群像
+   - NPC 的台词、动作、反应都是冲着"你"来的
 只输出标记语言文本，不要输出解释。"""
 
 NODE_SYSTEM = """你是互动小说剧情节奏师。判断当前场景是否应该暂停，让读者与角色对话。
@@ -214,6 +222,16 @@ class StoryDirector:
         s = state.get("state", {})
         parts = []
         parts.append(f"## 小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
+        # v3.5.12: 玩家角色扮演——读者化身是主角，场景以 TA 视角写（代入感核心）
+        pc = state.get("player_char") or {}
+        if pc.get("name"):
+            parts.append(f"## 你扮演的主角（读者化身）: {pc['name']}")
+            if pc.get("identity"):
+                parts.append(f"身份: {pc['identity']}")
+            if pc.get("personality_brief"):
+                parts.append(f"性格: {pc['personality_brief'][:120]}")
+            parts.append("本场景完全以这位主角的视角展开：旁白用'你'指代 TA，TA 是场景中心，"
+                         "事件发生在 TA 身上/眼前，严禁旁观者视角")
         # v3.2: 世界观注入（保证剧情贴合本小说设定）
         wb = state.get("worldbuilding_brief") or ""
         if wb:
@@ -246,8 +264,9 @@ class StoryDirector:
             parts.append(f"- [{la.get('type', '行动')}] {la.get('summary', '')[:200]}")
         # v3.5.7: 刚结束的对话（承接对话结论）
         nid = state.get("novel_id", "")
+        player_name = (state.get("player_char") or {}).get("name", "读者")
         recent_chats = self.store.recent_chats(nid, 6) if (nid and hasattr(self.store, "recent_chats")) else []
-        chat_lines = [f"{'读者' if c.get('role') == 'user' else c.get('speaker', '角色')}: {str(c.get('content', ''))[:80]}"
+        chat_lines = [f"{player_name if c.get('role') == 'user' else c.get('speaker', '角色')}: {str(c.get('content', ''))[:80]}"
                       for c in recent_chats if c.get("content")]
         if chat_lines:
             parts.append("刚结束的对话（本段可自然承接其中情绪/未尽话题，但不要复述）:")
@@ -258,11 +277,14 @@ class StoryDirector:
         ev_brief = events_brief(state, 5)
         if ev_brief:
             parts.append(f"最近发生的事（承接时间线，不要时间倒流）: {ev_brief}")
-        # 角色卡
+        # 角色卡（v3.5.12: 主角标注，防止 LLM 替主角写台词/用第三人称转述）
         casts = state.get("casts", {})
         if casts:
             parts.append("在场角色人设（说话必须符合）:")
             for name, c in casts.items():
+                if name == player_name:
+                    parts.append(f"- {name}（主角，由读者扮演——不要替 TA 写台词，TA 的言行由读者决定）")
+                    continue
                 prof = c.get("profile", {})
                 brief = []
                 dna = prof.get("expression_dna", [])[:2]

@@ -417,7 +417,7 @@ class ActionEngine:
         user = (
             f"小说: 《{state.get('title', '')}》 {state.get('genre', '')}·{state.get('style', '')}\n"
             f"当前地点: {s.get('location', '') or '（未定）'}\n"
-            f"读者行动: {action.get('summary', '')}\n"
+            f"你的行动（主角 {((state.get('player_char') or {}).get('name', '你'))} 刚刚做的）: {action.get('summary', '')}\n"
             f"行动类型: {action.get('type', 'other')}\n"
             f"状态变化: {'；'.join(changed) or '（无）'}\n"
             f"在场角色:\n{chr(10).join(char_briefs) or '（无）'}\n"

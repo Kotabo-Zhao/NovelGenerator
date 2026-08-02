@@ -382,13 +382,14 @@ class DialogueEngine:
 
     def _check_drift(self, novel_id: str, char_name: str, state: dict) -> Optional[dict]:
         """对话轨道轻校验：最近 4 轮是否偏离议程目标 + 哪些推进开关已被触发"""
+        player_name = (state.get("player_char") or {}).get("name", "读者")
         agenda = state.get("agenda") or {}
         if not agenda.get("goal"):
             return None  # 无议程不校验（普通闲聊模式兼容）
         recent = self.store.recent_chats(novel_id, 6)
         transcript = []
         for h in recent:
-            role = "读者" if h.get("role") == "user" else h.get("speaker", char_name)
+            role = player_name if h.get("role") == "user" else h.get("speaker", char_name)
             transcript.append(f"{role}: {h.get('content', '')[:120]}")
         if not transcript:
             return None
@@ -442,10 +443,11 @@ class DialogueEngine:
 
     def _ooc_check(self, novel_id: str, char_name: str, state: dict) -> list:
         """OOC 抽检最近 10 轮（轻量）"""
+        player_name = (state.get("player_char") or {}).get("name", "读者")
         recent = self.store.recent_chats(novel_id, 10)
         transcript = []
         for h in recent:
-            role = "读者" if h.get("role") == "user" else h.get("speaker", char_name)
+            role = player_name if h.get("role") == "user" else h.get("speaker", char_name)
             transcript.append(f"{role}: {h.get('content', '')[:150]}")
         if not transcript:
             return []
