@@ -25,6 +25,21 @@ from .action_engine import _state_snapshot
 
 log = logging.getLogger(__name__)
 
+# v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
+INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式的场景记录整合为正式的小说章节正文。
+
+要求：
+1. 以"本章大纲摘要"为骨架，以"互动场景记录"为血肉——玩家在互动中实际经历的
+   情节、做出的选择、说过的话、产生的关系变化，都必须体现在正文里
+2. 视角转换：互动记录是第二人称"你"，正文改为第三人称（用主角姓名），
+   保持主角内心戏的细腻度
+3. 去除互动痕迹：不出现【旁白】【动作】标签、不出现"场景N"字样、不出现
+   "读者""玩家"字样；整合为连贯的段落与对话
+4. 小说文笔：环境描写、人物神态、对话自然，与前文风格一致；不要列提纲、
+   不要总结、不要"本章讲述了"之类的说明
+5. 篇幅：接近目标字数（上下浮动 20% 可接受），宁可充实不要干瘪
+只输出章节正文，不要输出标题以外的任何解释。"""
+
 # ── System Prompts ──
 SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时与读者对话的互动小说。
 
@@ -991,6 +1006,7 @@ class StoryDirector:
         """v3.5.28: 大纲章节推进——场景数达阈值切下一章，objective 随章更新
 
         每章约 3 个场景（场景数/章按章节 target_words 微调：<2500 字 2 场景，>=5000 字 4 场景）
+        v3.5.29: 切章时后台把本章互动剧情沉淀为小说章节正文（互动→章节回流）
         """
         chs = state.get("outline_chapters") or []
         if not chs:
@@ -1002,17 +1018,108 @@ class StoryDirector:
         tw = int(ch.get("target_words", 0) or 0)
         per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
         if cnt >= per and idx < len(chs) - 1:
+            # ── 本章完成：把 [scene_start, scene_num-1] 的互动剧情沉淀为章节正文 ──
+            done_idx = idx
+            scene_start = int(op.get("scene_start", 1) or 1)
+            try:
+                import threading
+                threading.Thread(
+                    target=self._sync_chapter_from_interactive,
+                    args=(novel_id, done_idx, scene_start, state.get("scene_num", 0) or 0),
+                    daemon=True,
+                ).start()
+            except Exception as e:
+                log.warning(f"chapter sync thread failed: {e}")
             idx += 1
             cnt = 0
             nch = chs[idx]
-            state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt}
+            state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
+                                         "scene_start": state.get("scene_num", 0) or 0}
             state["state"]["objective"] = (
                 f"【{nch['title']}】{nch['summary']}"[:220]
                 or state["state"]["objective"])
             log.info(f"Outline advanced → 第{nch.get('number', idx + 1)}章《{nch.get('title', '')}》")
         else:
-            state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt}
+            state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
+                                         "scene_start": op.get("scene_start", 1) or 1}
         self.store.save_state(novel_id, state)
+
+    def _sync_chapter_from_interactive(self, novel_id: str, chapter_idx: int,
+                                       scene_start: int, scene_end: int):
+        """v3.5.29: 互动→章节回流——把一章的互动场景 + 玩家行动整合为正式章节正文
+
+        后台线程执行（不阻塞场景流）。场景文本（第二人称"你"）→ 章节正文
+        （第三人称主角名），玩家的选择与行动必须体现在正文中。
+        """
+        try:
+            chs = (self.store.load_state(novel_id) or {}).get("outline_chapters") or []
+            if chapter_idx >= len(chs):
+                return
+            ch = chs[chapter_idx]
+            ch_num = int(ch.get("number", chapter_idx + 1))
+            # 收集本章场景
+            scenes = []
+            for rec in self.store.recent_scenes(novel_id, 200):
+                sn = int(rec.get("scene_num", 0) or 0)
+                if scene_start <= sn <= max(scene_end, scene_start):
+                    scenes.append((sn, rec.get("scene_text", "")))
+            scenes.sort()
+            if not scenes:
+                return
+            # 收集玩家行动/对话
+            player_acts = []
+            try:
+                for h in self.store.recent_chats(novel_id, 200):
+                    if h.get("role") == "user" and h.get("content"):
+                        player_acts.append(str(h.get("content"))[:100])
+            except Exception:
+                pass
+            scene_text = "\n\n".join(f"[场景{sn}]\n{t}" for sn, t in scenes)
+            user = (
+                f"## 本章大纲摘要（骨架）\n第{ch_num}章《{ch.get('title', '')}》"
+                f"（{ch.get('volume', '')}）\n{ch.get('summary', '')}\n\n"
+                f"## 互动场景记录（本玩家真实经历，含其选择与行动）\n{scene_text[:6000]}\n\n"
+                + (f"## 玩家在互动中的行动/对话（必须体现在正文）\n"
+                   + "\n".join(f"- {a}" for a in player_acts[-8:]) if player_acts else "")
+                + f"\n\n请把以上内容整理成正式章节正文（{max(800, int(ch.get('target_words', 1500) or 1500))} 字左右）。"
+            )
+            raw = self._llm(INTERACTIVE_TO_CHAPTER_SYSTEM, user, temperature=0.7, max_tokens=4000)
+            body = (raw or "").strip()
+            if len(body) < 200:
+                return
+            # v3.5.29: LLM 输出可能自带章节标题（## 第X章），剥掉避免与文件头重复
+            import re as _re
+            body = _re.sub(r"^#{1,3}\s*第?\s*\d+\s*章.*?\n+", "", body, count=1)
+            # 写入 chapters/
+            import os
+            from config import NOVELS_DIR
+            ch_dir = os.path.join(NOVELS_DIR, novel_id, "chapters")
+            os.makedirs(ch_dir, exist_ok=True)
+            fname = f"chapter_{ch_num:04d}.md"
+            fpath = os.path.join(ch_dir, fname)
+            if os.path.exists(fpath):
+                os.replace(fpath, fpath + f".bak_{int(time.time())}")  # 保底备份
+            content = f"# 第{ch_num}章 {ch.get('title', '')}\n\n{body}\n"
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.write(content)
+            # 同步根 state 进度
+            gs_path = os.path.join(NOVELS_DIR, novel_id, "state.json")
+            if os.path.exists(gs_path):
+                try:
+                    with open(gs_path, "r", encoding="utf-8") as f:
+                        gs = json.load(f)
+                    gs["current_chapter"] = ch_num
+                    if ch_num not in (gs.get("completed_chapters") or []):
+                        gs.setdefault("completed_chapters", []).append(ch_num)
+                    gs["total_words"] = int(gs.get("total_words", 0) or 0) + len(body)
+                    gs.setdefault("summaries", {})[str(ch_num)] = body[:120]
+                    with open(gs_path, "w", encoding="utf-8") as f:
+                        json.dump(gs, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    log.warning(f"gs update failed: {e}")
+            log.info(f"Chapter {ch_num} synced from interactive ({len(scenes)} scenes, {len(body)} chars)")
+        except Exception as e:
+            log.warning(f"_sync_chapter_from_interactive failed: {type(e).__name__}: {str(e)[:100]}")
 
     def attach_cast_profiles(self, novel_id: str, char_names: list):
         """为出场角色挂载人设卡（有蒸馏数据则用，无则留空由对话引擎即时蒸馏兜底）"""
