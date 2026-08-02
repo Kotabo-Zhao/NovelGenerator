@@ -226,6 +226,7 @@ class EmotionTTSRequest(BaseModel):
     voice: str = DEFAULT_VOICE
     rate: str = "+0%"
     pitch: str = "+0Hz"
+    real_voice: str = ""   # v3.5.1: 真人音色库 id（voice_01~12），空则用 voice 合成参考
 
 
 @router.post("/api/tts/emotion")
@@ -243,7 +244,7 @@ async def tts_emotion_synthesize(req: EmotionTTSRequest):
     try:
         data = await asyncio.to_thread(
             EmotionTTS.get().synthesize, text, req.char_name, req.emotion,
-            req.voice, req.rate, req.pitch)
+            req.voice, req.rate, req.pitch, req.real_voice)
     except EmotionTTSUnavailable as e:
         raise HTTPException(503, f"情感引擎不可用: {e}")
     except Exception as e:
@@ -257,6 +258,8 @@ async def tts_emotion_synthesize(req: EmotionTTSRequest):
 
 @router.get("/api/tts/emotion/status")
 async def tts_emotion_status():
-    """情感引擎状态（前端用于显示可用性）"""
+    """情感引擎状态 + 真人音色库（前端用于显示可用性和音色选择）"""
     from core.interactive.emotion_tts import EmotionTTS
-    return {"ok": True, **EmotionTTS.get().status}
+    st = EmotionTTS.get().status
+    st["real_voices"] = EmotionTTS.get().real_voices()
+    return {"ok": True, **st}

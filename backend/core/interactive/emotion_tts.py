@@ -119,15 +119,28 @@ class EmotionTTS:
         except Exception:
             return {"available": False, "emotions": EMOTIONS, "model": "", "error": "引擎未启动"}
 
+    def real_voices(self) -> list:
+        """真人音色库列表（[{id, gender, style, available}]）"""
+        try:
+            with urllib.request.urlopen(f"{EMOTION_SERVER_URL}/voices", timeout=5) as r:
+                data = json.loads(r.read().decode("utf-8", "ignore"))
+                return data.get("voices", []) or []
+        except Exception:
+            return []
+
     # ── 合成（HTTP 调子进程）──
     def synthesize(self, text: str, char_name: str, emotion: str,
                    voice: str = "zh-CN-XiaoxiaoNeural",
-                   rate: str = "+0%", pitch: str = "+0Hz") -> Optional[bytes]:
-        """情感合成：角色音色 + 情感参考 → wav bytes。失败返回 None（上层降级）"""
+                   rate: str = "+0%", pitch: str = "+0Hz",
+                   real_voice: str = "") -> Optional[bytes]:
+        """情感合成：角色音色 + 情感参考 → wav bytes。失败返回 None（上层降级）
+
+        real_voice 指定真人音色库 id（如 voice_11）→ 用真人参考音频，人味更足。
+        """
         if emotion not in EMOTIONS:
             emotion = "平静"
         # 缓存
-        key = hashlib.md5(f"{text}|{char_name}|{emotion}|{voice}".encode()).hexdigest()[:16]
+        key = hashlib.md5(f"{text}|{char_name}|{emotion}|{voice}|{real_voice}".encode()).hexdigest()[:16]
         cache_path = os.path.join(CACHE_DIR, f"{key}.wav")
         if os.path.exists(cache_path):
             if time.time() - os.path.getmtime(cache_path) < CACHE_TTL:
@@ -145,7 +158,7 @@ class EmotionTTS:
                 raise EmotionTTSUnavailable("子进程超时未就绪")
             data = self._request("/synthesize", {
                 "text": text[:500], "char_name": char_name, "emotion": emotion,
-                "voice": voice, "rate": rate, "pitch": pitch,
+                "voice": voice, "rate": rate, "pitch": pitch, "real_voice": real_voice,
             })
         except EmotionTTSUnavailable:
             raise

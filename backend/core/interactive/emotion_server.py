@@ -43,6 +43,33 @@ EMOTION_TEXT_PROMPTS = {
 }
 
 REF_DIR = os.path.join(_BASE_DIR, "data", "tts_refs")
+VOICES_DIR = os.path.join(REF_DIR, "voices")
+
+# ── 真人音色库（IndexTTS-2 官方 Demo 参考音频，真人录音）──
+# 性格标签根据官方 cases.jsonl 示例文本归纳
+REAL_VOICES = {
+    "voice_01": {"file": "voice_01.wav", "gender": "男", "style": "少年音，翻译腔，清爽"},
+    "voice_02": {"file": "voice_02.wav", "gender": "女", "style": "古风宫廷，清冷御姐"},
+    "voice_03": {"file": "voice_03.wav", "gender": "女", "style": "亲切主播，带货感"},
+    "voice_04": {"file": "voice_04.wav", "gender": "男", "style": "沉稳专业，可靠大叔"},
+    "voice_05": {"file": "voice_05.wav", "gender": "男", "style": "解说腔，冷静叙述"},
+    "voice_06": {"file": "voice_06.wav", "gender": "男", "style": "播客主播，活力阳光"},
+    "voice_07": {"file": "voice_07.wav", "gender": "男", "style": "说书人，江湖气"},
+    "voice_08": {"file": "voice_08.wav", "gender": "男", "style": "中年父亲，威严沙哑"},
+    "voice_09": {"file": "voice_09.wav", "gender": "女", "style": "软萌少女，撒娇"},
+    "voice_11": {"file": "voice_11.wav", "gender": "女", "style": "古风女主，悲情婉转"},
+    "voice_12": {"file": "voice_12.wav", "gender": "女", "style": "清亮少女，紧张感"},
+}
+
+
+def list_real_voices() -> list:
+    """真人音色列表（带文件存在性）"""
+    out = []
+    for vid, meta in REAL_VOICES.items():
+        path = os.path.join(VOICES_DIR, meta["file"])
+        out.append({"id": vid, "gender": meta["gender"], "style": meta["style"],
+                    "available": os.path.exists(path)})
+    return out
 
 _model = None
 _model_error = ""
@@ -103,14 +130,23 @@ def _char_ref(char_name: str, voice: str, rate: str, pitch: str) -> str:
 
 
 def _synthesize(text: str, char_name: str, emotion: str,
-                voice: str, rate: str, pitch: str) -> bytes:
-    """IndexTTS2 合成：角色音色 spk_audio_prompt + 情感文本提示（qwen_emo）→ wav bytes"""
+                voice: str, rate: str, pitch: str, real_voice: str = "") -> bytes:
+    """IndexTTS2 合成：角色音色 spk_audio_prompt + 情感文本提示（qwen_emo）→ wav bytes
+
+    real_voice 指定时用真人音色库参考音频（人味），否则用 edge-tts 合成角色参考。
+    """
     _load_model()
     if _model is None:
         raise RuntimeError(_model_error or "模型未加载")
-    ref = _char_ref(char_name, voice, rate, pitch)
-    if not ref:
-        raise RuntimeError(f"角色参考音频缺失: {char_name}")
+    # v3.5.1: 真人音色库优先
+    if real_voice in REAL_VOICES:
+        ref = os.path.join(VOICES_DIR, REAL_VOICES[real_voice]["file"])
+        if not os.path.exists(ref):
+            raise RuntimeError(f"真人音色文件缺失: {real_voice}")
+    else:
+        ref = _char_ref(char_name, voice, rate, pitch)
+        if not ref:
+            raise RuntimeError(f"角色参考音频缺失: {char_name}")
     emo_text = EMOTION_TEXT_PROMPTS.get(emotion)
     # 返回 (sampling_rate, wav_data int16 numpy)；output_path=None 走内存返回
     result = _model.infer(
@@ -165,6 +201,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/status"):
             self._send_json({"ready": _model is not None, "model": MODEL_ROOT,
                              "error": _model_error})
+        elif self.path.startswith("/voices"):
+            self._send_json({"voices": list_real_voices()})
         else:
             self._send_json({"error": "not found"}, 404)
 
@@ -181,12 +219,13 @@ class Handler(BaseHTTPRequestHandler):
             voice = str(payload.get("voice", "zh-CN-XiaoxiaoNeural"))[:50]
             rate = str(payload.get("rate", "+0%"))[:10]
             pitch = str(payload.get("pitch", "+0Hz"))[:10]
+            real_voice = str(payload.get("real_voice", ""))[:30]
             if not text.strip():
                 self._send_json({"error": "text 为空"}, 400)
                 return
             t0 = time.time()
-            wav = _synthesize(text, char_name, emotion, voice, rate, pitch)
-            log.info(f"synthesize {char_name}/{emotion} {len(text)}字 ({time.time()-t0:.1f}s)")
+            wav = _synthesize(text, char_name, emotion, voice, rate, pitch, real_voice)
+            log.info(f"synthesize {char_name}/{emotion}/{real_voice or voice} {len(text)}字 ({time.time()-t0:.1f}s)")
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
             self.send_header("Content-Length", str(len(wav)))

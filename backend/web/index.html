@@ -1080,6 +1080,22 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <div class="text-xs muted mt-8" v-if="interactive.voicePicker">
                 提示：标注「受限」的音色可能受区域限制，播放时会自动使用相近音色替代
               </div>
+              <!-- v3.5.1: 真人音色库（IndexTTS 克隆，人味） -->
+              <div v-if="interactive.realVoices.length" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+                <div class="card-title" style="font-size:13px;margin-bottom:8px">🎙 真人音色 · 当前角色「{{ interactive.voicePicker }}」</div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px">
+                  <button v-for="rv in interactive.realVoices" :key="rv.id"
+                    class="btn btn-xs" :class="interactive.realVoiceMap[interactive.voicePicker]===rv.id?'btn-primary':''"
+                    @click="setRealVoice(rv.id)"
+                    :title="rv.gender+' · '+rv.style">
+                    {{ rv.id.replace('voice_','V') }}{{ rv.gender==='女'?'♀':'♂' }} {{ rv.style.split('，')[0] }}
+                  </button>
+                </div>
+                <div class="text-xs muted" style="margin-top:6px">
+                  <span v-if="interactive.realVoiceMap[interactive.voicePicker]" style="color:var(--gold)">✓ 已选真人音色（合成时克隆此人声音，不再是 AI 腔）</span>
+                  <span v-else>选一个真人音色，该角色说话就带"人味"（可随时换回电子音色）</span>
+                </div>
+              </div>
             </div>
 
             <!-- 输入区 -->
@@ -3585,6 +3601,8 @@ const app = createApp({
       emotionVoice: false,    // 情感引擎开关
       emotion: '平静',        // 当前情感（平静/愤怒/悲伤/喜悦/紧张/冷漠）
       emotionAvailable: false, // 引擎是否可用
+      realVoices: [],         // v3.5.1: 真人音色库 [{id, gender, style}]
+      realVoiceMap: {},       // 角色 → 真人音色 id（localStorage 持久化）
     });
     let interactiveAbort = null;
     let interactiveAudio = null;   // 当前播放的 Audio
@@ -3627,7 +3645,8 @@ const app = createApp({
           const er = await fetch(API+'/api/tts/emotion', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ text, char_name: blk.speaker||'角色',
-              emotion: interactive.emotion||'平静', voice, rate, pitch }),
+              emotion: interactive.emotion||'平静', voice, rate, pitch,
+              real_voice: interactive.realVoiceMap[blk.speaker] || '' }),
           });
           if(er.ok){
             const blob = await er.blob();
@@ -3848,6 +3867,13 @@ const app = createApp({
       _scrollStory();
     }
 
+    // v3.5.1: 设置角色的真人音色（持久化）
+    function setRealVoice(voiceId) {
+      if (!interactive.voicePicker) return;
+      interactive.realVoiceMap[interactive.voicePicker] = voiceId;
+      try { localStorage.setItem('interactiveRealVoice', JSON.stringify(interactive.realVoiceMap)); } catch(e) {}
+    }
+
     // v3.5: 后台预合成（台词到达立即合成入缓存，点击播放时秒回）
     let _prewarmQueue = [];
     let _prewarming = false;
@@ -3867,7 +3893,8 @@ const app = createApp({
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ text: cleanLineForTTS(item.text), char_name: item.speaker,
               emotion: interactive.emotion||'平静', voice: v.voice||'zh-CN-XiaoxiaoNeural',
-              rate: v.rate||'+0%', pitch: v.pitch||'+0Hz' }),
+              rate: v.rate||'+0%', pitch: v.pitch||'+0Hz',
+              real_voice: interactive.realVoiceMap[item.speaker] || '' }),
           });
         } catch(e) { /* 预合成失败静默，播放时降级 */ }
       }
@@ -3914,12 +3941,18 @@ const app = createApp({
           if (data.ok) interactive.voices = data.voices || {};
         }
       } catch(e) { console.warn('loadInteractiveVoices failed:', e); }
-      // v3.5: 情感引擎状态（可用则显示 🎭 开关）
+      // v3.5: 情感引擎状态 + 真人音色库（可用则显示 🎭 开关）
       try {
         const r = await fetch(API+'/api/tts/emotion/status');
         if (r.ok) {
           const d = await r.json();
           interactive.emotionAvailable = !!d.available;
+          interactive.realVoices = (d.real_voices || []).filter(v => v.available);
+          // 恢复角色真人音色映射
+          try {
+            const saved = JSON.parse(localStorage.getItem('interactiveRealVoice') || '{}');
+            interactive.realVoiceMap = saved || {};
+          } catch(e) {}
         }
       } catch(e) { interactive.emotionAvailable = false; }
     }
@@ -4437,6 +4470,8 @@ const app = createApp({
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
       speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,previewVoice,
+      // v3.5.1: 真人音色
+      setRealVoice,
       // v3.5: 角色头像徽章配色
       avatarStyle,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
