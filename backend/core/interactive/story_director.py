@@ -58,8 +58,13 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
    - NPC 的台词、动作、反应都是冲着"你"来的
 只输出标记语言文本，不要输出解释。"""
 
-NODE_SYSTEM = """你是互动小说剧情节奏师。判断当前场景是否应该暂停，让读者与角色对话。
+INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份开场背景介绍（300-400 字），
+让玩家立刻明白五件事：我是谁、我在哪、我和谁是什么关系、现在发生了什么、我要做什么。
+用第二人称（"你"）写，像小说的序章，文笔凝练有氛围感。
+基于给定资料组织，不要编造资料之外的设定；不要写成教程，要写成有代入感的开场。
+只输出介绍文本，不要输出标题和解释。"""
 
+NODE_SYSTEM = """你是互动小说剧情节奏师。判断当前场景是否应该暂停，让读者与角色对话。
 **核心原则（v3.5.3）：对话只在影响剧情走向的地方出现。** 不是"该不该聊"，
 而是"这一停，会不会改变剧情走向"——不会就不停。对话是剧情的岔路口，不是聊天室。
 
@@ -296,6 +301,56 @@ class StoryDirector:
                 if brief:
                     parts.append(f"- {name}: {'；'.join(brief)}")
         return "\n".join(parts)
+
+    # ── 开场背景介绍（v3.5.13：玩家打开互动模式先知道"我是谁/在哪/要做什么"）──
+    def generate_intro(self, novel_id: str, state: dict, force: bool = False) -> str:
+        """生成/取缓存的故事背景介绍（300-400 字，第二人称序章）"""
+        cached = state.get("intro")
+        if cached and not force:
+            return cached
+        pc = state.get("player_char") or {}
+        s = state.get("state", {})
+        parts = []
+        parts.append(f"小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
+        if pc.get("name"):
+            parts.append(f"你扮演：{pc['name']}（{pc.get('identity', '')}）"
+                         f"{'，' + pc.get('personality_brief', '')[:60] if pc.get('personality_brief') else ''}")
+        wb = state.get("worldbuilding_brief") or ""
+        if wb:
+            parts.append(f"世界观与处境：{wb[:400]}")
+        casts = state.get("casts") or {}
+        if casts:
+            parts.append(f"主要人物：{'、'.join(list(casts.keys())[:8])}")
+        if s.get("objective"):
+            parts.append(f"主线目标：{s['objective'][:200]}")
+        user = "\n".join(parts)
+        intro = ""
+        try:
+            raw = self._llm(INTRO_SYSTEM, user, temperature=0.7, max_tokens=600)
+            intro = (raw or "").strip()
+            if len(intro) < 80:
+                intro = ""
+        except Exception as e:
+            log.warning(f"intro 生成失败: {e}")
+        if not intro:
+            # 降级：模板拼接（保底有背景可看）
+            name = pc.get("name", "你")
+            lines = [f"你是{name}。"]
+            if pc.get("identity"):
+                lines.append(f"身份：{pc['identity']}。")
+            if s.get("objective"):
+                lines.append(f"你当前的目标：{s['objective'][:120]}。")
+            if casts:
+                lines.append(f"与你相关的人：{'、'.join(list(casts.keys())[:6])}。")
+            if wb:
+                lines.append(str(wb).replace("\n", " ")[:200])
+            intro = "".join(lines)
+        state["intro"] = intro
+        try:
+            self.store.save_state(novel_id, state)
+        except Exception:
+            pass
+        return intro
 
     # ── 场景生成（SSE）──
     async def generate_scene_stream(self, novel_id: str,

@@ -505,6 +505,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .fact-broken{color:var(--red)}
   .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 16px}
   /* v3.5.5: 玩家角色状态卡 */
+  /* v3.5.13: 故事背景卡（开场介绍） */
+  .inter-intro{background:linear-gradient(180deg,rgba(212,175,55,.06),rgba(212,175,55,.02));border:1px solid rgba(212,175,55,.28);border-radius:14px;padding:10px 16px;cursor:pointer;transition:border-color .2s}
+  .inter-intro:hover{border-color:rgba(212,175,55,.5)}
+  .inter-intro-head{display:flex;justify-content:space-between;align-items:center;color:#d9bc7a}
+  .inter-intro-body{margin-top:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi","SimSun",serif;font-size:14px;line-height:2;letter-spacing:.5px;padding:4px 6px;border-top:1px dashed rgba(212,175,55,.15);animation:interRise .5s ease both}
+  .inter-intro.intro-collapsed{padding:8px 16px}
   .player-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px;position:sticky;top:0;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.22)}
   .player-status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;margin-top:4px}
   .ps-cell{display:flex;align-items:baseline;gap:8px;min-width:0;border-radius:6px;padding:2px 4px;transition:background .3s}
@@ -1030,6 +1036,15 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </div>
 
           <div v-else class="interactive-shell">
+            <!-- v3.5.13: 故事背景卡（开场先懂"我是谁/在哪/要做什么"，可折叠常驻） -->
+            <div class="inter-intro" v-if="interactive.intro" :class="{'intro-collapsed': !interactive.introOpen}">
+              <div class="inter-intro-head" @click="interactive.introOpen=!interactive.introOpen">
+                <span style="font-size:13px;letter-spacing:2px">📖 故事背景</span>
+                <span class="muted" style="font-size:11px">{{ interactive.introOpen ? '点击收起' : '点击展开' }}</span>
+              </div>
+              <div class="inter-intro-body" v-if="interactive.introOpen">{{ interactive.intro }}</div>
+            </div>
+
             <!-- v3.5.5: 玩家角色状态卡（我是谁/在哪/要做什么/关系） -->
             <div class="player-status-card">
               <div class="flex justify-between items-center mb-8" style="flex-wrap:wrap;gap:8px">
@@ -3715,6 +3730,9 @@ const app = createApp({
       emotionAvailable: false, // 引擎是否可用
       realVoices: [],         // v3.5.1: 真人音色库 [{id, gender, style}]
       realVoiceMap: {},       // 角色 → 真人音色 id（localStorage 持久化）
+      // v3.5.13: 开场背景介绍
+      intro: '',              // 故事背景（start 时生成）
+      introOpen: true,        // 背景卡默认展开（首次进入先看背景）
     });
     // v3.5.5: 玩家状态卡计算属性
     const relCount = computed(() => {
@@ -3930,6 +3948,9 @@ const app = createApp({
           interactive.loading = false;
           if (data.ok && data.state) {
             interactive.state = data.state;
+            // v3.5.13: 恢复开场背景（intro 已缓存到 state）
+            interactive.intro = data.state.intro || '';
+            interactive.introOpen = !!data.state.intro;
             // v3.2: 恢复最近场景的完整 blocks（切回不丢内容）
             interactive.blocks = (data.state.recent_blocks || []).slice();
             if (!interactive.blocks.length && data.state.summary) {
@@ -3955,7 +3976,11 @@ const app = createApp({
         if (!r.ok) throw new Error('HTTP '+r.status);
         interactive.blocks = [];
         await readSSE(r, (evt) => {
-          if (evt.type==='scene_chunk' && evt.content) {
+          if (evt.type==='intro' && evt.content) {
+            // v3.5.13: 开场背景介绍（先看背景，再进剧情）
+            interactive.intro = evt.content;
+            interactive.introOpen = true;
+          } else if (evt.type==='scene_chunk' && evt.content) {
             interactive.typing = true;
             _appendTyping(evt.content);
           } else if (evt.type==='scene_end') {

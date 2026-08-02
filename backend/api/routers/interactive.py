@@ -67,6 +67,21 @@ async def interactive_start(novel_id: str):
         st = new_state(novel_id, ctx.get("title", novel_id),
                        ctx.get("genre", ""), ctx.get("style", ""),
                        ctx.get("protagonist_name", ""))
+        # v3.5.5: 玩家扮演角色（bible 主角）
+        proto = ctx.get("protagonist") or {}
+        if proto.get("name"):
+            p_ident = proto.get("identity", "")
+            p_pers = ""
+            pers = proto.get("personality") or {}
+            if isinstance(pers, dict):
+                p_pers = str(pers.get("true_self") or pers.get("surface") or "")[:120]
+            elif isinstance(pers, str):
+                p_pers = pers[:120]
+            st["player_char"] = {
+                "name": proto["name"],
+                "identity": str(p_ident)[:80],
+                "personality_brief": p_pers,
+            }
         # 预置主要角色（从 bible 预览）
         casts = st.get("casts", {})
         for name, info in (ctx.get("casts_preview") or {}).items():
@@ -103,8 +118,29 @@ async def interactive_start(novel_id: str):
                 _story.attach_cast_profiles(novel_id, list(state.get("casts", {}).keys()))
         except Exception as e:
             log.warning(f"attach_cast_profiles failed: {e}")
+        # v3.5.13: 开场背景介绍——缓存命中先发（老玩家秒看）；未缓存则与场景并行
+        # 生成（不阻塞场景流，避免首次进入 25s+）
+        intro_fut = None
+        try:
+            state = _store.load_state(novel_id)
+            if state:
+                if state.get("intro"):
+                    yield f"data: {json.dumps({'type': 'intro', 'content': state['intro']}, ensure_ascii=False)}\n\n"
+                else:
+                    intro_fut = asyncio.create_task(
+                        asyncio.to_thread(_story.generate_intro, novel_id, state))
+        except Exception as e:
+            log.warning(f"intro pre failed: {e}")
         async for data in _sse_with_heartbeat(_story.generate_scene_stream(novel_id)):
             yield data
+        # 场景流结束后拿并行生成的 intro（不阻塞场景本身）
+        if intro_fut is not None:
+            try:
+                intro = await asyncio.wait_for(intro_fut, timeout=30)
+                if intro:
+                    yield f"data: {json.dumps({'type': 'intro', 'content': intro}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                log.warning(f"intro parallel failed: {e}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
