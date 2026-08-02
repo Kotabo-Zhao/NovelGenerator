@@ -89,6 +89,11 @@ async def rate_limit_middleware(request: Request, call_next):
             _generate_conns[client_ip] = max(0, _generate_conns[client_ip] - 1)
 
     # 普通端点：60 秒窗口计数
+    # v3.5.17: 静态资源不限流（favicon/sw.js/vue.js 页面加载即消耗多次，
+    # 计入 60/min 窗口会误伤正常使用）；只对 /api 接口限流
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+
     now = _time.time()
     window_start = now - _RATE_WINDOW
     _rate_limits[client_ip] = [t for t in _rate_limits[client_ip] if t > window_start]

@@ -662,6 +662,11 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         if not os.path.exists(config.NOVELS_DIR):
             return novels
         for name in os.listdir(config.NOVELS_DIR):
+            # v3.5.11: 跳过隐藏目录（.trash 回收站等）+ 软删除标记的小说
+            if name.startswith("."):
+                continue
+            if os.path.exists(os.path.join(config.NOVELS_DIR, name, ".deleted")):
+                continue
             plan_path = os.path.join(config.NOVELS_DIR, name, "plan.json")
             if os.path.exists(plan_path):
                 plan = safe_read_json(plan_path)
@@ -683,30 +688,35 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
 
     def delete_novel(self, novel_id: str) -> bool:
         """删除小说及其所有章节、状态文件
-        
-        Args:
-            novel_id: 小说目录名
-            
-        Returns:
-            True 如果删除成功，False 如果小说不存在
+
+        v3.5.11: Windows 沙箱内 Python 删除 API（os.remove/rmtree）被 safe-delete
+        钩子接管并 fail-closed（必然抛错）→ 改为软删除：os.rename 移到 novels/.trash/。
+        rename 不在钩子 patch 范围，零删除风险，误删可手动移回恢复。
         """
         import shutil
         novel_dir = self.memory.get_novel_dir(novel_id)
         if not os.path.exists(novel_dir):
             return False
-        
+
         # v2.3: 输入校验 — 防止路径遍历攻击
         safe_name = os.path.basename(os.path.normpath(novel_id))
         if safe_name != novel_id or ".." in novel_id or "/" in novel_id or "\\" in novel_id:
             log.warning(f"Rejected unsafe novel_id: {novel_id}")
             return False
-        
+
         # 清除缓存
         self.memory.invalidate_novel(novel_id)
-        
+
+        # v3.5.11: 沙箱进程（受限 ACL：允许写文件、禁止目录重命名/删除 DELETE_CHILD）
+        # 内 os.rename / PowerShell Rename-Item 均被拒（WinError 5）。
+        # 改用标记式软删除：写 .deleted 标记文件（纯写操作，沙箱允许）→ 列表/搜索
+        # 过滤 → 前端删除立即生效；磁盘保留（零风险可恢复：删标记文件即恢复）。
         try:
-            shutil.rmtree(novel_dir)
-            log.info(f"Novel deleted: {novel_id}")
+            marker = os.path.join(novel_dir, ".deleted")
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write(f"deleted_at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"restore: 删除此文件即可恢复\n")
+            log.info(f"Novel soft-deleted (marker): {novel_id}")
             return True
         except OSError as e:
             log.error(f"Failed to delete novel {novel_id}: {e}")

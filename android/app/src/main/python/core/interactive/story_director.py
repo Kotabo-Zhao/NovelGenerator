@@ -21,17 +21,21 @@ import uuid
 from typing import AsyncIterator, Optional
 
 from ..resilient_client import ResilientLLMClient
+from .action_engine import _state_snapshot
 
 log = logging.getLogger(__name__)
 
 # ── System Prompts ──
 SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时与读者对话的互动小说。
 
+**角色扮演（v3.5.12 最高优先级）**：读者不是旁观者，而是故事的主角——「读者化身」
+（player_char，见输入中的"你扮演的主角"）。你就是以这个角色的身份在故事里生活，
+场景必须完全以 TA 的视角展开。
+
 输出格式（严格遵循标记语言）：
-【旁白】叙事段落（1-3 段，文笔优美，类似严肃小说）
-【角色名】该角色的台词（一段，符合人设）
+【旁白】叙事段落（1-3 段，文笔优美，类似严肃小说）——指代主角时用"你"，写主角的所见所闻所感
+【角色名】该角色的台词（一段，符合人设）——NPC 对"你"说话
 【动作】可选：无声的动作描写（如"她指尖一顿，茶水溅出半滴"）
-...
 
 规则：
 1. 【旁白】是主体，承担叙事推进；台词用于关键时刻点睛
@@ -40,23 +44,65 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
 4. 若给定"待兑现事实"（facts），本段必须自然回扣至少 1 个（兑现/提及/利用/其后果显现）
 5. 角色说话必须符合各自的人设卡与声音卡（口头禅/句式/情绪表达）
 6. 单场景 300-600 字，节奏紧凑，不要在无关细节上停留
+7. v3.5.20 收尾规则（替代 v3.5.5 发问收尾）：场景正常自然收尾，不要每段都以
+   角色发问结尾（"一步一问"会让玩家疲惫、剧情推进慢）。**仅当本场景真的包含
+   必须由读者当场决定的重大抉择**（生死/去留/信任/交易/身份揭晓）时，才以发问、
+   邀约或对峙收尾；普通场景的悬念用旁白收（"她望着你的背影，欲言又止"），
+   把话留给后续剧情自然展开。
+8. v3.5.7 承接性（最高优先级）：若给定"读者上一步做了什么"（last_action）或
+   "刚结束的对话"，本段场景必须从它的后果/余波/反应开始写——
+   行动已改变剧情（地点/关系/物品/承诺），严禁无视玩家行为另起炉灶或时间倒流；
+   若没有给定，则正常推进主线
+   v3.5.20 承接与主线的平衡：承接玩家行动只占本段开头（1-2 句），随后必须
+   回到主线轨道——每个场景都必须让 objective 有实质进展（角色关系推进/信息
+   揭露/事件发生），玩家行动若偏离主线，用其后果自然牵引回主线（如玩家执意
+   逛街 → 逛街中偶遇关键人物/发现线索），严禁剧情跟着闲聊原地打转
+9. v3.5.12 视角规则（代入感核心）：
+   - 主角（读者化身）是场景中心，旁白写 TA 的所见所闻、内心活动与身体感受
+   - 指代主角一律用"你"（如"你推开门""你感到手心发凉"），严禁用"她/他/沈念薇"旁观式转述
+   - 主角是行动主体：场景中的事件发生在"你"身上或眼前，不要写成上帝视角的群像
+   - NPC 的台词、动作、反应都是冲着"你"来的
+10. v3.5.18 铁律（绝对禁止）：严禁生成【主角名】的台词块——主角（如【沈念薇】）的
+    台词/行动只能由读者输入决定，你替 TA 说话就是破坏角色扮演。若主角需要反应，
+    用旁白写 TA 的心声/身体反应（如"你心中冷笑，面上不露分毫"），而不是台词。
+    输出中不得出现以主角名标注的台词行。
+11. v3.5.21 空间与时间连续性（P0 级）：前情摘要包含上一场景结尾（谁在场/谁刚
+    离开/去了哪里/时间点）。本场景必须严格遵守——已离开的角色不能立即出现在
+    现场（除非有新剧情交代其返回）；时间只能向前流动；地点的变化必须有过渡。
+    若上一场景角色"推门离去"，本场景他不在场，除非剧情明确安排他回来。
 只输出标记语言文本，不要输出解释。"""
 
+INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份详尽的开场背景介绍（500-700 字），
+用第二人称（"你"）写，像小说序章，文笔凝练有氛围感。必须覆盖以下内容（缺一不可）：
+
+一、世界观：时代背景、主要地点、势力格局（谁掌握权力/财富，社会规则是什么）
+二、主要人物背景：每个出场角色的身份、与你的关系、性格底色（人人有交代，别只列名字）
+三、你的处境：你现在是谁、经历了什么、正处在什么局面
+四、你的目标：当前主线目标是什么、为什么
+
+段落分明（用空行分段），先世界观后人物再处境再目标，层层递进。
+基于给定资料组织，不要编造资料之外的设定；不要写成教程，要写成有代入感的开场。
+只输出介绍文本，不要输出标题和解释。"""
+
 NODE_SYSTEM = """你是互动小说剧情节奏师。判断当前场景是否应该暂停，让读者与角色对话。
+**核心原则（v3.5.3）：对话只在影响剧情走向的地方出现。** 不是"该不该聊"，
+而是"这一停，会不会改变剧情走向"——不会就不停。对话是剧情的岔路口，不是聊天室。
 
-**核心原则：对话节点要少而精，只在读者真正需要介入的时刻触发。** 过度打断是体验杀手。
+应该触发（confidence ≥ 0.65）：
+- 读者的一句话/一个决定会改变后续剧情（答应/拒绝/信任谁/跟谁走/说出秘密）
+- 关键信息即将揭晓，读者有权追问或阻止（真相、阴谋、身世）
+- 关系重大转折点（表白/决裂/结盟/背叛前夕）
+- 角色提出明确邀请/交易/威胁，读者必须当场回应
 
-应该触发（confidence ≥ 0.7）：
-- 场景结尾留下需要读者当场决定的问题（答应/拒绝/追问/选择信任谁）
-- 角色直接向读者发问、邀请、威胁、交易，不回应剧情无法推进
-- 重大事件刚发生，读者必须表态（发现真相/身份暴露/生死抉择）
+不应该触发（confidence ≤ 0.35）：
+- 场景本身已有对话且无新决策点（**已有 2 条以上角色台词 → 默认不触发**）
+- 过渡、铺垫、日常推进、风景描写——叙事自行推进即可
+- 只是读者想插话的场合——读者有「我要说话」按钮，想聊随时能聊，不需要系统停
+- 对话无法改变剧情走向时（闲聊、寒暄、信息已定）
+- v3.5.20：角色的一般性发问（征求意见"你怎么看"、寒暄式提问"最近好吗"、
+  随口试探）——**提问本身不构成节点**，剧情继续推进，读者想答随时可用按钮介入
 
-不应该触发（confidence ≤ 0.3）：
-- 只是普通交谈、寒暄、铺垫、风景描写
-- 场景本身已有充分对话且无新决策点
-- 剧情还在推进中，无需读者介入
-
-输出 JSON: {"is_node": true/false, "chars": ["在场角色名"], "suggested_rounds": 2-6, "confidence": 0-1, "reason": "一句话理由"}
+输出 JSON: {"is_node": true/false, "chars": ["在场角色名"], "suggested_rounds": 2-4, "confidence": 0-1, "reason": "一句话理由"}
 只输出 JSON。"""
 
 PACT_SYSTEM = """你是互动小说因果提取器。从读者与角色的对话中，提取影响后续剧情的事实。
@@ -72,6 +118,31 @@ PACT_SYSTEM = """你是互动小说因果提取器。从读者与角色的对话
 
 输出 JSON:
 {"facts": [{"id": "f1", "type": "promise/action/secret/change", "subject": "player/角色名", "target": "角色名/player", "content": "一句话描述", "severity": "high/medium/low", "source_chat": 轮次序号}], "relations": {"角色名": "+/-数值或描述"}, "objective_update": "更新后的目标或空", "tone": "对话基调（试探/交易/亲昵/敌对…）"}
+只输出 JSON。"""
+
+AGENDA_SYSTEM = """你是互动小说对话编排师。为即将开始的角色对话制定议程（Agenda）。
+
+**Agenda 的目的**：让对话有方向——角色带着目的聊天，而不是陪读者闲聊。对话结束后剧情必须因这场对话而推进。
+
+设计规则：
+1. goal：这场对话要达成的目标（获取信息/说服读者/建立关系/考验读者），一句话，必须与当前主线目标相关
+2. hooks：2-4 条"推进开关"——读者说出/做出什么，剧情就向前走（如"读者提到金吾卫 → 苏晚松口给线索"）。钩子是对话推进剧情的机关
+3. boundaries：角色在这场对话中绝不主动透露/绝不做的事（1-3 条，如"苏晚绝不主动承认认识绣衣使"）——保留剧情张力
+4. exit：对话自然收尾条件（min_rounds 最少轮数、condition 何时可以收尾）
+
+输出 JSON:
+{"goal": "一句话目标", "hooks": [{"trigger": "读者行为/话语", "outcome": "剧情推进结果"}], "boundaries": ["角色绝不主动做的事"], "exit": {"min_rounds": 3, "condition": "收尾条件"}}
+只输出 JSON。"""
+
+HOOK_VERIFY_SYSTEM = """你是互动小说钩子核对器。判断读者与角色的对话中，议程（Agenda）的"推进开关"（hooks）是否已被触发。
+
+判断标准：
+- hook 触发 = 对话中读者说/做了与 trigger 实质相符的事（包含威胁、交易、承诺、追问关键信息等）
+- 读者明确拒绝/回避该话题 → hit=false，记入拒绝
+- 只有闲聊寒暄 → 全部 hit=false
+
+输出 JSON:
+{"hook_hits": [{"hook_index": 0, "hit": true/false, "evidence": "对话原文摘录或'未触发'"}], "all_hit": true/false}
 只输出 JSON。"""
 
 
@@ -136,6 +207,102 @@ class StoryDirector:
         self.store = store
         self.engine = engine  # NovelEngine 引用（人设蒸馏/读取用，避免重复实例化）
         self._resilient = ResilientLLMClient(client, model)
+        self._tracker = None   # v3.5.22: 复用小说模式 CharacterStateTracker（懒加载）
+        self._supervisor = None  # v3.5.22: 复用小说模式 LogicSupervisor（懒加载）
+
+    # ── v3.5.22: 复用小说模式逻辑引擎（不另起炉灶）──
+    def _logic_tracker(self):
+        """角色状态追踪器（小说模式 CharacterStateTracker）——跟踪角色位置/状态，
+        保证互动场景的空间连续性有结构化依据"""
+        if self._tracker is None and self.engine is not None:
+            try:
+                from ..character_state import CharacterStateTracker
+                self._tracker = CharacterStateTracker(
+                    self.engine.client, self.engine.model, self.engine.memory)
+            except Exception as e:
+                log.warning(f"CharacterStateTracker init failed: {e}")
+        return self._tracker
+
+    def _logic_supervisor(self):
+        """逻辑监督器（小说模式 LogicSupervisor）——L1 规则引擎检查
+        时间线/空间/行为/物品矛盾"""
+        if self._supervisor is None and self.engine is not None:
+            self._supervisor = getattr(self.engine, "logic_supervisor", None)
+        return self._supervisor
+
+    def _logic_context(self, novel_id: str) -> str:
+        """复用角色状态追踪：返回当前角色状态文本（位置/健康等）供场景注入"""
+        try:
+            tr = self._logic_tracker()
+            if tr is None:
+                return ""
+            tr.init_from_plan(novel_id)  # 幂等：已有状态不覆盖
+            return tr.build_context(novel_id) or ""
+        except Exception as e:
+            log.warning(f"logic_context failed: {e}")
+            return ""
+
+    def _post_scene_logic_check(self, novel_id: str, scene_num: int, scene_text: str):
+        """场景生成后（后台）：复用小说模式引擎做状态更新 + 矛盾检查"""
+        try:
+            # 1) 角色状态更新（提取位置/状态变化 → global_state.json）
+            tr = self._logic_tracker()
+            if tr is not None:
+                import asyncio
+                asyncio.run(tr.update_from_chapter(novel_id, scene_num, scene_text))
+            # 2) L1 逻辑监督（时间线/空间/行为/物品矛盾，规则引擎零 LLM 成本）
+            sup = self._logic_supervisor()
+            if sup is not None:
+                plan = None
+                gs = None
+                try:
+                    plan = self.engine.memory.read("plan", novel_id)
+                    gs = self.engine.memory.read("global_state", novel_id) or {}
+                except Exception:
+                    pass
+                prev = {}
+                if scene_num > 1:
+                    last_scenes = self.store.recent_scenes(novel_id, 1) or []
+                    if last_scenes:
+                        prev[scene_num - 1] = str(last_scenes[0].get("scene_text", ""))
+                res = sup.validate_chapter(scene_text, scene_num, plan or {},
+                                           prev, gs, run_deep=False)
+                # 视角适配：互动模式第二人称（"你"指代主角），小说模式的
+                # "主角全名未出现"类检查是误报——过滤
+                is_second_person = scene_text.count("你") > 10
+                violations = [v for v in (res.get("violations") or [])
+                              if not (is_second_person and
+                                      "未出现" in str(v.get("description", "")))]
+                p0 = [v for v in violations if v.get("severity") == "P0"]
+                if p0:
+                    cats = [f"{v.get('category', '?')}:{v.get('description', '')[:40]}" for v in p0[:3]]
+                    log.warning(f"[逻辑监督] 场景{scene_num} P0 矛盾: {' | '.join(cats)}")
+                    try:
+                        st = self.store.load_state(novel_id)
+                        if st:
+                            from .char_memory import add_event
+                            add_event(st, f"⚠ 检测到剧情矛盾（已记录待修正）: {p0[0].get('description', '')[:40]}", "warning")
+                            self.store.save_state(novel_id, st)
+                    except Exception:
+                        pass
+        except Exception as e:
+            log.warning(f"post_scene_logic_check failed: {type(e).__name__}: {str(e)[:100]}")
+        # 3) AI 痕迹检测（复用小说模式 AIDetector 离线规则，零 LLM 成本）
+        try:
+            from ..ai_detector import AIDetector
+            det = AIDetector._offline_detect(scene_text)
+            if det.get("ai_score", 0) >= 60:
+                log.warning(f"[AI检测] 场景{scene_num} AI 痕迹 {det.get('ai_score')}/100")
+                try:
+                    st = self.store.load_state(novel_id)
+                    if st:
+                        from .char_memory import add_event
+                        add_event(st, f"⚠ 本段 AI 腔较重（{det.get('ai_score')}/100）", "warning")
+                        self.store.save_state(novel_id, st)
+                except Exception:
+                    pass
+        except Exception as e:
+            log.warning(f"ai_detect failed: {e}")
 
     # ── LLM 基础 ──
     def _llm(self, system: str, user: str, temperature: float = 0.8,
@@ -178,10 +345,33 @@ class StoryDirector:
         s = state.get("state", {})
         parts = []
         parts.append(f"## 小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
+        # v3.5.12: 玩家角色扮演——读者化身是主角，场景以 TA 视角写（代入感核心）
+        pc = state.get("player_char") or {}
+        if pc.get("name"):
+            parts.append(f"## 你扮演的主角（读者化身）: {pc['name']}")
+            if pc.get("identity"):
+                parts.append(f"身份: {pc['identity']}")
+            if pc.get("personality_brief"):
+                parts.append(f"性格: {pc['personality_brief'][:120]}")
+            parts.append("本场景完全以这位主角的视角展开：旁白用'你'指代 TA，TA 是场景中心，"
+                         "事件发生在 TA 身上/眼前，严禁旁观者视角")
         # v3.2: 世界观注入（保证剧情贴合本小说设定）
         wb = state.get("worldbuilding_brief") or ""
         if wb:
             parts.append(f"## 世界观设定（必须严格遵守，不得偏离）:\n{wb[:600]}")
+        # v3.5.20: 复用全局状态——时间线/章节脉络（剧情连续）+ 未回收伏笔（可呼应）
+        tl = state.get("timeline_brief") or ""
+        if tl:
+            parts.append(f"故事时间线（保持连续，不要与已发生的事件矛盾）: {tl[:200]}")
+        fs = state.get("foreshadows_brief") or ""
+        if fs:
+            parts.append(f"未揭晓的伏笔（剧情中可自然铺垫/呼应，不必强行回收）: {fs[:200]}")
+        # v3.5.22: 复用小说模式角色状态追踪——当前角色位置/状态（结构化，防瞬移）
+        nid = state.get("novel_id", "")
+        if nid:
+            ctx = self._logic_context(nid)
+            if ctx:
+                parts.append(f"当前角色状态（必须遵守，场景中角色的位置/状态以此为准）:\n{ctx[:300]}")
         parts.append(f"当前场景号: {state.get('scene_num', 0)}")
         if s.get("location"):
             parts.append(f"地点: {s['location']}")
@@ -195,13 +385,42 @@ class StoryDirector:
             parts.append("待兑现事实（本段必须自然回扣至少 1 个）:")
             for f in facts[:6]:
                 parts.append(f"- [{f.get('type')}] {f.get('content')}")
+        # v3.3.1: 上一场对话未达成的目标（missing hooks）——软约束：后果显现/角色惦记
+        missing = state.get("pending_missing_hooks") or []
+        if missing:
+            parts.append("上一场对话未谈成的事（本段剧情可让其后顾显现，或角色主动提起追问）:")
+            for m in missing[:3]:
+                parts.append(f"- {str(m)[:60]}")
         if summary:
             parts.append(f"前情摘要: {summary[:600]}")
-        # 角色卡
+        # v3.5.7: 读者上一步行动（承接性——新场景必须从行动后果写起）
+        la = state.get("last_action") or {}
+        if la and la.get("summary"):
+            parts.append(f"读者上一步做了什么（本段必须从这件事的后果/余波写起，严禁无视）:")
+            parts.append(f"- [{la.get('type', '行动')}] {la.get('summary', '')[:200]}")
+        # v3.5.7: 刚结束的对话（承接对话结论）
+        nid = state.get("novel_id", "")
+        player_name = (state.get("player_char") or {}).get("name", "读者")
+        recent_chats = self.store.recent_chats(nid, 6) if (nid and hasattr(self.store, "recent_chats")) else []
+        chat_lines = [f"{player_name if c.get('role') == 'user' else c.get('speaker', '角色')}: {str(c.get('content', ''))[:80]}"
+                      for c in recent_chats if c.get("content")]
+        if chat_lines:
+            parts.append("刚结束的对话（本段可自然承接其中情绪/未尽话题，但不要复述）:")
+            for line in chat_lines[-4:]:
+                parts.append(f"- {line}")
+        # v3.5.9: 事件时间线（刚发生的事——保持剧情连续性）
+        from .char_memory import events_brief
+        ev_brief = events_brief(state, 5)
+        if ev_brief:
+            parts.append(f"最近发生的事（承接时间线，不要时间倒流）: {ev_brief}")
+        # 角色卡（v3.5.12: 主角标注，防止 LLM 替主角写台词/用第三人称转述）
         casts = state.get("casts", {})
         if casts:
             parts.append("在场角色人设（说话必须符合）:")
             for name, c in casts.items():
+                if name == player_name:
+                    parts.append(f"- {name}（主角，由读者扮演——不要替 TA 写台词，TA 的言行由读者决定）")
+                    continue
                 prof = c.get("profile", {})
                 brief = []
                 dna = prof.get("expression_dna", [])[:2]
@@ -213,6 +432,75 @@ class StoryDirector:
                 if brief:
                     parts.append(f"- {name}: {'；'.join(brief)}")
         return "\n".join(parts)
+
+    # ── 开场背景介绍（v3.5.13：玩家打开互动模式先知道"我是谁/在哪/要做什么"）──
+    def generate_intro(self, novel_id: str, state: dict, force: bool = False) -> str:
+        """生成/取缓存的故事背景介绍（v3.5.18: 500-700 字，覆盖世界观/人物/处境/目标）"""
+        cached = state.get("intro")
+        if cached and not force:
+            return cached
+        pc = state.get("player_char") or {}
+        s = state.get("state", {})
+        parts = []
+        parts.append(f"小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
+        if pc.get("name"):
+            parts.append(f"你扮演：{pc['name']}（{pc.get('identity', '')}）"
+                         f"{'，' + pc.get('personality_brief', '')[:120] if pc.get('personality_brief') else ''}")
+        wb = state.get("worldbuilding_brief") or ""
+        if wb:
+            parts.append(f"世界观（时代/地点/势力/规则）：\n{wb[:600]}")
+        # v3.5.18: 注入每个角色的人设档案（身份/性格/与主角关系）
+        casts = state.get("casts") or {}
+        player_name = pc.get("name", "")
+        if casts:
+            cast_lines = []
+            for name, c in casts.items():
+                if name == player_name:
+                    continue
+                prof = (c.get("profile") or {})
+                brief = []
+                if prof.get("identity"):
+                    brief.append(f"身份:{str(prof['identity'])[:50]}")
+                dna = prof.get("expression_dna") or []
+                if dna:
+                    d0 = dna[0]
+                    brief.append(f"性格:{str(d0.get('name', d0))[:40] if isinstance(d0, dict) else str(d0)[:40]}")
+                role = c.get("role", "")
+                if role:
+                    brief.append(f"定位:{role}")
+                cast_lines.append(f"- {name}{'（' + '，'.join(brief) + '）' if brief else ''}")
+            if cast_lines:
+                parts.append("主要人物档案：\n" + "\n".join(cast_lines[:8]))
+        if s.get("objective"):
+            parts.append(f"主线目标：{s['objective'][:250]}")
+        user = "\n".join(parts)
+        intro = ""
+        try:
+            raw = self._llm(INTRO_SYSTEM, user, temperature=0.7, max_tokens=900)
+            intro = (raw or "").strip()
+            if len(intro) < 120:
+                intro = ""
+        except Exception as e:
+            log.warning(f"intro 生成失败: {e}")
+        if not intro:
+            # 降级：模板拼接（保底有背景可看）
+            name = pc.get("name", "你")
+            lines = [f"你是{name}。"]
+            if pc.get("identity"):
+                lines.append(f"身份：{pc['identity']}。")
+            if s.get("objective"):
+                lines.append(f"你当前的目标：{s['objective'][:120]}。")
+            if casts:
+                lines.append(f"与你相关的人：{'、'.join(list(casts.keys())[:6])}。")
+            if wb:
+                lines.append(str(wb).replace("\n", " ")[:200])
+            intro = "".join(lines)
+        state["intro"] = intro
+        try:
+            self.store.save_state(novel_id, state)
+        except Exception:
+            pass
+        return intro
 
     # ── 场景生成（SSE）──
     async def generate_scene_stream(self, novel_id: str,
@@ -234,6 +522,8 @@ class StoryDirector:
         prompt = self._build_scene_prompt(state, summary)
         collected = []
 
+        # v3.5.19: 阶段提示——生成前告知前端（显示"正在生成…"避免用户以为卡住）
+        yield {"type": "phase", "label": "📖 正在展开剧情…"}
         yield {"type": "scene_chunk", "scene_num": scene_num, "content": ""}
         try:
             async for chunk in self._llm_stream(SCENE_SYSTEM, prompt):
@@ -253,6 +543,18 @@ class StoryDirector:
 
         # 解析 + 持久化
         blocks = parse_scene_markup(scene_text)
+        # v3.5.18: 过滤玩家角色的自动台词——LLM 偶发替玩家说话（如【沈念薇】xxx），
+        # 玩家言行只能由读者输入决定；转成旁白心声（不占对话气泡、不触发语音）
+        player_name = (state.get("player_char") or {}).get("name", "")
+        if player_name:
+            cleaned = []
+            for b in blocks:
+                if b.get("type") == "dialogue" and b.get("speaker") == player_name:
+                    cleaned.append({"type": "narration", "speaker": "",
+                                    "content": f"你心中所想：{b.get('content', '')}"})
+                else:
+                    cleaned.append(b)
+            blocks = cleaned
         scene_record = {
             "scene_num": scene_num,
             "scene_text": scene_text,
@@ -260,13 +562,31 @@ class StoryDirector:
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         self.store.append_scene(novel_id, scene_record)
+        # v3.5.22: 复用小说模式逻辑引擎（后台，不阻塞场景流）——
+        # 角色状态更新 + L1 矛盾检查
+        try:
+            import threading
+            threading.Thread(
+                target=self._post_scene_logic_check,
+                args=(novel_id, scene_num, scene_text),
+                daemon=True).start()
+        except Exception:
+            pass
 
         # 更新状态：场景号、摘要、最近场景
         state["scene_num"] = scene_num
-        state["summary"] = scene_text[:300]
+        # v3.5.21: 前情摘要改"开头+结尾"双段——开头交代情境、结尾保留空间/人物状态
+        # （原只取开头 300 字：角色"出门/离开"发生在场景结尾时会被截断丢失，
+        #  下一场景不知情 → 出现"已出门又回到椅子上"的空间矛盾）
+        _head = scene_text[:150].strip()
+        _tail = scene_text[-260:].strip()
+        _summary = (_head + "……" + _tail) if len(scene_text) > 420 else scene_text[:300]
+        state["summary"] = _summary
         recent = state.get("recent_scenes", [])
-        recent.append(scene_text[:300])
+        recent.append(_summary)
         state["recent_scenes"] = recent[-3:]
+        # v3.3.1: missing hooks 只影响本段场景，用后即清（软约束不过期悬挂）
+        state.pop("pending_missing_hooks", None)
         # 在场角色（从台词块提取）
         speakers = {b["speaker"] for b in blocks if b["type"] == "dialogue"}
         casts = state.get("casts", {})
@@ -277,15 +597,28 @@ class StoryDirector:
         state["casts"] = casts
         self.store.save_state(novel_id, state)
 
-        yield {"type": "scene_end", "scene_num": scene_num, "blocks": blocks}
+        yield {"type": "scene_end", "scene_num": scene_num, "blocks": blocks,
+               "snapshot": _state_snapshot(state)}
 
         # ── 节点判定（三层保障的 ① 规则预筛 + ② LLM 精判）──
         if force_node_check:
+            # v3.5.19: 节点判定/议程生成可能耗时 3-8s——先提示用户
+            yield {"type": "phase", "label": "🤔 正在判断剧情走向…"}
             is_node, node_chars, rounds, reason = self._decide_node(novel_id, scene_num, blocks, state)
+            # v3.5.16: 对话候选排除玩家自己（玩家是主角，只跟 NPC 对话）
+            player_name = (state.get("player_char") or {}).get("name", "")
+            if player_name and player_name in node_chars:
+                node_chars = [c for c in node_chars if c != player_name]
             state = self.store.load_state(novel_id)
             state["pending_node"] = is_node
             state["node_chars"] = node_chars
             state["node_rounds"] = rounds
+            agenda = None
+            if is_node:
+                # v3.3: Agenda 机制——对话前生成议程（目标/推进开关/边界），对话围绕它推进
+                yield {"type": "phase", "label": "📋 正在安排这场对话…"}
+                agenda = self._generate_agenda(novel_id, node_chars, state)
+                state["agenda"] = agenda
             self.store.save_state(novel_id, state)
             yield {
                 "type": "node_check",
@@ -293,6 +626,8 @@ class StoryDirector:
                 "chars": node_chars,
                 "suggested_rounds": rounds,
                 "reason": reason,
+                "agenda": agenda,   # 前端可展示"这场对话要谈什么"
+                "snapshot": _state_snapshot(state),
             }
 
         yield {"type": "done"}
@@ -301,17 +636,27 @@ class StoryDirector:
     def _decide_node(self, novel_id: str, scene_num: int, blocks: list, state: dict) -> tuple:
         """① 规则预筛 → ② LLM 精判。返回 (is_node, chars, rounds, reason)
 
-        v3.2 优化：减少打断感——只有真正值得玩家介入的时刻才触发对话。
-        - 规则 2 放宽到连续 3 段无对话（原来 2 段，太频繁）
-        - 规则 3 只保留强冲突词（去掉"怒""秘密"等泛词）
-        - LLM 精判 confidence 阈值 0.5，且必须场景里有角色
+        v3.5.3 节奏定稿（老赵："对话只在影响剧情走向的地方"）：
+        - 场景已有 ≥2 条角色台词 → 不触发（叙事里已经对话过了，不再打断）
+        - 规则 2 保底：连续 3 段无对话才强制（防纯文字荒漠，但不频繁）
+        - LLM 精判为主力：阈值 0.5，判定导向"是否影响剧情走向"
+        - 玩家主动权兜底：「我要说话」按钮随时可发起
         """
-        # 规则 1：开场第 1 段必触发（首次体验）
-        if scene_num <= 1:
-            return True, self._scene_chars(blocks), 3, "开场互动"
         chars = self._scene_chars(blocks)
+        # v3.5.17: 场景纯旁白（v3.5.12 后"你"视角开场可能无 NPC 台词）→
+        # 用在场角色兜底，保证开场节点必有对话对象
+        if not chars:
+            player_name = (state.get("player_char") or {}).get("name", "")
+            chars = [n for n in (state.get("casts") or {}) if n != player_name][:3]
         if not chars:
             return False, [], 0, "无在场角色"
+        # 规则 1：开场第 1 段必触发（首次体验，优先于其他规则）
+        if scene_num <= 1:
+            return True, chars, 3, "开场互动"
+        # 规则 0（v3.5.3）：场景已有充分对话 → 不触发（不再打断）
+        dialogue_count = sum(1 for b in blocks if b.get("type") == "dialogue")
+        if dialogue_count >= 2:
+            return False, chars, 0, "场景已有充分对话"
         # 规则 2：连续 3 段无对话 → 强制（保互动频率下限）
         last_three = self.store.recent_scenes(novel_id, 3)
         if len(last_three) >= 3:
@@ -334,15 +679,16 @@ class StoryDirector:
             return False, chars, 2, "判定失败，默认不触发（玩家可主动介入）"
         is_node = bool(result.get("is_node"))
         confidence = float(result.get("confidence", 0.5))
-        # v3.2: 提高触发门槛——confidence ≥ 0.5 才触发，且刚对话过时更严格
+        # v3.5.20: 阈值 0.55（过滤一般性发问型场景——"你怎么看"类提问置信度
+        # 通常中等，不再触发节点）；刚对话过（<2 段）且置信度一般时抑制
         last_chat_gap = scene_num - state.get("_last_chat_scene", 0)
         if is_node:
-            if confidence < 0.5:
+            if confidence < 0.55:
                 return False, chars, 0, f"置信度不足({confidence:.1f})"
-            if confidence < 0.7 and last_chat_gap < 3:
+            if confidence < 0.7 and last_chat_gap < 2:
                 return False, chars, 0, "刚对话过且置信度一般"
         rounds = int(result.get("suggested_rounds", 3) or 3)
-        rounds = max(2, min(rounds, 8))
+        rounds = max(2, min(rounds, 5))
         return is_node, result.get("chars") or chars, rounds, result.get("reason", "")
 
     def _llm_judge_node(self, text: str, chars: list, state: dict) -> Optional[dict]:
@@ -355,6 +701,102 @@ class StoryDirector:
         )
         raw = self._llm(NODE_SYSTEM, user, temperature=0.3, max_tokens=300)
         return _parse_json(raw) if raw else None
+
+    # ── Agenda 机制（v3.3：对话轨道）──
+    def _generate_agenda(self, novel_id: str, chars: list, state: dict) -> Optional[dict]:
+        """对话前生成议程：goal（目标）/ hooks（推进开关）/ boundaries（边界）/ exit（收尾条件）
+
+        对话引擎据此"带目标对话"，PACT 提取后据此核对钩子是否命中——
+        对话从自由漫游变为受控推进。
+        """
+        if not chars:
+            return None
+        s = state.get("state", {})
+        casts = state.get("casts", {})
+        char_briefs = []
+        for name in chars[:3]:
+            prof = (casts.get(name) or {}).get("profile", {})
+            dna = prof.get("expression_dna", [])[:2]
+            brief = "；".join(
+                str(d.get("name", d))[:50] if isinstance(d, dict) else str(d)[:50] for d in dna
+            ) or "（人设未蒸馏）"
+            char_briefs.append(f"- {name}: {brief}")
+        facts = [f for f in state.get("facts", []) if f.get("status") == "active"]
+        user = (
+            f"主线目标: {s.get('objective', '') or '（未定）'}\n"
+            f"剧情标记: {'、'.join(s.get('flags', [])[-5:]) or '（无）'}\n"
+            f"待兑现事实: {'；'.join(f.get('content', '') for f in facts[:5]) or '（无）'}\n"
+            f"最近剧情: {state.get('summary', '')[:200]}\n"
+            f"对话角色:\n{chr(10).join(char_briefs)}\n"
+            f"请为这场对话制定议程（goal 必须与主线相关，hooks 是剧情推进开关）。"
+        )
+        raw = self._llm(AGENDA_SYSTEM, user, temperature=0.4, max_tokens=500)
+        agenda = _parse_json(raw) if raw else None
+        if not isinstance(agenda, dict):
+            log.warning(f"Agenda 生成失败，使用默认议程: {novel_id}")
+            agenda = {
+                "goal": f"推进主线：{s.get('objective', '继续旅程')}",
+                "hooks": [],
+                "boundaries": [],
+                "exit": {"min_rounds": 3, "condition": "读者已了解当前处境"},
+            }
+        # 规范化
+        agenda.setdefault("goal", s.get("objective", "") or "继续旅程")
+        agenda["hooks"] = [h for h in agenda.get("hooks", []) if isinstance(h, dict)][:4]
+        agenda["boundaries"] = [str(b)[:80] for b in agenda.get("boundaries", [])[:3]]
+        ex = agenda.get("exit") or {}
+        try:
+            min_rounds = max(2, min(int(ex.get("min_rounds", 3) or 3), 10))
+        except (TypeError, ValueError):
+            min_rounds = 3
+        agenda["exit"] = {"min_rounds": min_rounds,
+                          "condition": str(ex.get("condition", ""))[:100] or "目标已达成"}
+        return agenda
+
+    def verify_hooks(self, novel_id: str, agenda: dict) -> dict:
+        """钩子核对：对话结束后检查议程的推进开关是否被触发（1 次轻量 LLM 调用）
+
+        返回: {hook_hits: [{hook_index, hit, evidence}], all_hit, missing: [未触发钩子]}
+        """
+        hooks = (agenda or {}).get("hooks", [])
+        if not hooks:
+            return {"hook_hits": [], "all_hit": True, "missing": []}
+        chat = self.store.recent_chats(novel_id, 40)
+        transcript = []
+        for i, e in enumerate(chat):
+            if e.get("type") == "action_result":
+                role = "行动结果"
+            else:
+                role = "读者" if e.get("role") == "user" else f"角色{e.get('speaker', '')}"
+            transcript.append(f"[{i}] {role}: {e.get('content', '')[:150]}")
+        hook_lines = "\n".join(
+            f"- hook[{i}] trigger: {h.get('trigger', '')} → outcome: {h.get('outcome', '')}"
+            for i, h in enumerate(hooks)
+        )
+        user = f"对话记录:\n" + "\n".join(transcript[-30:]) + f"\n\nAgenda 推进开关:\n{hook_lines}\n请逐条核对。"
+        raw = self._llm(HOOK_VERIFY_SYSTEM, user, temperature=0.2, max_tokens=500)
+        result = _parse_json(raw) if raw else None
+        if not isinstance(result, dict):
+            return {"hook_hits": [], "all_hit": False, "missing": [h.get("trigger", "") for h in hooks]}
+        hits = result.get("hook_hits", []) or []
+        hit_map = {}
+        for hh in hits:
+            if isinstance(hh, dict) and "hook_index" in hh:
+                hit_map[int(hh["hook_index"])] = bool(hh.get("hit"))
+        hook_hits = []
+        missing = []
+        for i, h in enumerate(hooks):
+            evidence = ""
+            hit = hit_map.get(i, False)
+            for hh in hits:
+                if isinstance(hh, dict) and hh.get("hook_index") == i:
+                    evidence = str(hh.get("evidence", ""))[:80]
+                    break
+            hook_hits.append({"hook_index": i, "trigger": h.get("trigger", ""),
+                              "hit": hit, "evidence": evidence})
+            if not hit:
+                missing.append(h.get("trigger", ""))
+        return {"hook_hits": hook_hits, "all_hit": len(missing) == 0, "missing": missing}
 
     @staticmethod
     def _scene_chars(blocks: list) -> list:
@@ -433,6 +875,24 @@ class StoryDirector:
         # objective 更新
         if result.get("objective_update"):
             state["state"]["objective"] = result["objective_update"]
+        # v3.5.9: 对话沉淀为角色记忆——PACT facts 同步进目标角色的专属记忆
+        from .char_memory import add_event, add_memory
+        for f in state.get("facts", []):
+            target = f.get("target") or ""
+            if not target or target == "player":
+                continue
+            tag = {"promise": "承诺", "threat": "威胁", "request": "请求",
+                   "secret": "秘密", "info": "告知", "break": "违约"}.get(
+                str(f.get("type", "")), "约定")
+            add_memory(state, target, "promise",
+                       f"读者{tag}了你：{f.get('content', '')}",
+                       source="pact")
+        # 关系变化 → 事件时间线
+        if result.get("relations"):
+            rel_changed = [f"{k} ♥{v}" for k, v in result.get("relations", {}).items()
+                           if isinstance(k, str) and "-" not in k and k in (state.get("casts") or {})]
+            if rel_changed:
+                add_event(state, "关系变化: " + "、".join(rel_changed[:3]), "relation")
         state["_last_chat_scene"] = state.get("scene_num", 0)
         self.store.save_state(novel_id, state)
         return result
@@ -468,6 +928,10 @@ class StoryDirector:
             return {"title": novel_id, "genre": "", "style": "",
                     "protagonist_name": "", "casts_preview": {}}
         proto = novel.get("protagonist") or {}
+        # v3.5.5: characters 字段结构（characters.protagonist）优先
+        chars_field = novel.get("characters") or {}
+        if not proto and isinstance(chars_field, dict):
+            proto = chars_field.get("protagonist") or {}
         casts_preview = {}
         if proto.get("name"):
             casts_preview[proto["name"]] = {"role": "protagonist", "desc": str(proto.get("personality", ""))[:80]}
@@ -477,11 +941,21 @@ class StoryDirector:
         for c in novel.get("antagonist", []) or []:
             if isinstance(c, dict) and c.get("name"):
                 casts_preview[c["name"]] = {"role": "antagonist", "desc": str(c.get("personality", ""))[:80]}
+        # v3.5.5: characters 字段里的配角/反派
+        if isinstance(chars_field, dict):
+            for role_key in ("supporting", "antagonist"):
+                group = chars_field.get(role_key) or []
+                if isinstance(group, list):
+                    for c in group:
+                        if isinstance(c, dict) and c.get("name") and c["name"] not in casts_preview:
+                            casts_preview[c["name"]] = {"role": role_key,
+                                                        "desc": str(c.get("personality", ""))[:80]}
         return {
             "title": novel.get("title", novel_id),
             "genre": novel.get("genre", ""),
             "style": novel.get("style", ""),
             "protagonist_name": proto.get("name", ""),
+            "protagonist": proto,   # v3.5.5: 完整主角信息（玩家扮演角色）
             "casts_preview": casts_preview,
             "worldbuilding": novel.get("worldbuilding", {}),
         }
@@ -496,8 +970,12 @@ class StoryDirector:
             return
         casts = state.get("casts", {})
         changed = False
+        player_name = (state.get("player_char") or {}).get("name", "")
         for name in char_names:
             if not name:
+                continue
+            # v3.5.16: 玩家角色不挂人设（由玩家扮演，不需要 AI 蒸馏）
+            if player_name and name == player_name:
                 continue
             existing = casts.get(name, {})
             if existing.get("profile"):

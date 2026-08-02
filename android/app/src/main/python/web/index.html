@@ -451,19 +451,50 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .sg-relation-svg-wrap{height:380px}
   .sg-timeline-svg-wrap{height:340px}
 
-  /* ── v3.0: 互动模式 ── */
+}
+
+  /* ── v3.0: 互动模式（v3.5 Galgame 风格 UI）── */
   .interactive-shell{display:flex;flex-direction:column;gap:14px}
-  .interactive-story{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px 22px;min-height:280px;max-height:52vh;overflow-y:auto;line-height:1.85;font-size:15px}
-  .inter-narr{color:var(--text);margin:10px 0;text-indent:2em}
-  .inter-action{color:var(--text3);font-style:italic;margin:8px 0;text-indent:2em;font-size:14px}
-  .inter-line{margin:10px 0;display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
-  .inter-speaker{color:#f778ba;font-weight:700;min-width:56px;white-space:nowrap}
-  .inter-dialogue{flex:1;color:var(--text)}
+  .interactive-story{background:linear-gradient(180deg,var(--bg2) 0%,#12151c 100%);border:1px solid var(--border);border-radius:18px;padding:24px 26px 30px;min-height:300px;max-height:63vh;overflow-y:auto;line-height:1.9;font-size:15px;position:relative}
+  .interactive-story::-webkit-scrollbar{width:6px}
+  .interactive-story::-webkit-scrollbar-thumb{background:rgba(212,175,55,.25);border-radius:3px}
+  /* 旁白：居中衬线，小说感 */
+  .inter-narr{color:#c9c2b4;margin:16px 30px;text-align:center;font-family:"STKaiti","KaiTi","SimSun",serif;font-size:14.5px;letter-spacing:.5px;animation:interRise .5s ease both}
+  /* v3.5.10: 场景分隔线（历史流定位） */
+  .inter-scene-div{color:#6b6458;font-size:11.5px;text-align:center;margin:22px 0 6px;letter-spacing:3px;position:relative}
+  .inter-scene-div::before,.inter-scene-div::after{content:"";position:absolute;top:50%;width:28%;height:1px;background:rgba(255,255,255,.07)}
+  .inter-scene-div::before{left:8%}
+  .inter-scene-div::after{right:8%}
+  .inter-action{color:#8a8375;font-style:italic;margin:10px 30px;text-align:center;font-size:13.5px;animation:interRise .5s ease both}
+  /* 对话气泡：角色左、玩家右 */
+  .inter-line{margin:12px 0;display:flex;align-items:flex-start;gap:10px;animation:interRise .45s ease both}
+  .inter-line.inter-player{flex-direction:row-reverse}
+  .inter-avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);margin-top:2px;background:rgba(255,255,255,.06)}
+  .inter-bubble{max-width:78%;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px 16px;font-size:14.5px;line-height:1.8;color:var(--text)}
+  .inter-player .inter-bubble{background:rgba(212,175,55,.08);border-color:rgba(212,175,55,.35)}
+  .inter-player .inter-avatar{background:rgba(212,175,55,.15);border-color:rgba(212,175,55,.4)}
+  .inter-dialogue{word-break:break-word}
+  .inter-speaker{display:none}  /* 角色名进徽章，不再独立显示 */
   .inter-voice{font-size:11px;color:var(--text3);white-space:nowrap;align-self:center}
-  .inter-typing{color:var(--accent);animation:blink 1s infinite}
+  .inter-actions{display:flex;gap:4px;align-items:center;align-self:center;margin-top:2px}
+  .voice-btn{background:var(--card);border:1px solid var(--border);border-radius:8px;width:26px;height:26px;font-size:12px;cursor:pointer;color:var(--text2);transition:all .2s}
+  .voice-btn:hover{border-color:var(--accent);color:var(--accent);transform:scale(1.08)}
+  /* 播放中：气泡金边呼吸 */
+  .inter-line.playing .inter-bubble{border-color:var(--accent);box-shadow:0 0 0 1px rgba(212,175,55,.25),0 0 18px rgba(212,175,55,.12);animation:interPlaying 1.2s ease-in-out infinite}
+  .inter-typing{color:var(--accent);animation:blink 1s infinite;font-size:15px}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-  .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
-  .interactive-facts{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  @keyframes interRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @keyframes interPlaying{0%,100%{box-shadow:0 0 0 1px rgba(212,175,55,.25)}50%{box-shadow:0 0 0 1px rgba(212,175,55,.55),0 0 22px rgba(212,175,55,.2)}}
+  /* 行动块：左侧金边 + 淡金底 */
+  .inter-action-desc{display:flex;align-items:center;gap:8px;margin:14px 18px;padding:8px 16px;border-left:3px solid var(--gold);background:rgba(212,175,55,.06);border-radius:8px;color:#d9bc7a;font-size:13.5px;animation:interRise .45s ease both}
+  .inter-action-result{margin:14px 30px;padding:12px 18px;border-left:3px solid var(--gold);background:rgba(212,175,55,.04);border-radius:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi",serif;font-size:14px;text-align:center;animation:interRise .5s ease both}
+  /* v3.5.8: 状态变化系统提示（对话流内，绿色轻提示） */
+  .inter-sys-change{color:#8fd3a8;font-size:12.5px;margin:6px 30px;text-align:center;background:rgba(63,185,80,.07);border:1px solid rgba(63,185,80,.22);border-radius:6px;padding:4px 10px;animation:interRise .4s ease both;letter-spacing:.3px}
+  /* 轨道提示条 */
+  .inter-track-note{border-radius:10px;padding:8px 14px;font-size:12.5px;margin-bottom:12px;animation:interRise .4s ease both}
+  .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;transition:border-color .3s, box-shadow .3s}
+  .interactive-input:focus-within{border-color:rgba(212,175,55,.5);box-shadow:0 0 0 3px rgba(212,175,55,.08)}
+  .interactive-facts{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px}
   .fact-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;flex-wrap:wrap}
   .fact-badge{font-size:13px}
   .fact-text{flex:1;color:var(--text)}
@@ -472,11 +503,56 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .fact-fulfilled{color:var(--green)}
   .fact-expired{color:var(--text3)}
   .fact-broken{color:var(--red)}
-  .inter-actions{display:flex;gap:4px;align-items:center}
-  .voice-btn{background:var(--card);border:1px solid var(--border);border-radius:6px;width:26px;height:26px;font-size:12px;cursor:pointer;color:var(--text2)}
-  .voice-btn:hover{border-color:var(--accent);color:var(--accent)}
-  .inter-line.playing .inter-dialogue{color:var(--accent)}
-  .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 16px}
+  /* v3.5.5: 玩家角色状态卡 */
+  /* v3.5.13: 故事背景卡（开场介绍） */
+  /* v3.5.19: 生成状态条（生成中提示，金色呼吸 + spinner） */
+  .inter-generating{display:flex;align-items:center;gap:8px;background:rgba(212,175,55,.08);border:1px solid rgba(212,175,55,.3);border-radius:8px;padding:6px 14px;font-size:12.5px;color:#d9bc7a;animation:genBreath 1.8s ease-in-out infinite}
+  /* v3.5.23: 当前剧情任务条（常驻：概况+目标） */
+  .inter-goal-bar{background:linear-gradient(90deg,rgba(212,175,55,.10),rgba(212,175,55,.03));border:1px solid rgba(212,175,55,.26);border-left:3px solid #d4af37;border-radius:10px;padding:8px 14px;margin-bottom:10px}
+  .goal-row{display:flex;align-items:baseline;gap:8px;line-height:1.6}
+  .goal-icon{flex-shrink:0;font-size:14px}
+  .goal-label{flex-shrink:0;font-size:11px;font-weight:600;color:#d4af37;letter-spacing:1px}
+  .goal-text{font-size:13.5px;color:#f0e6c8;font-weight:500;white-space:normal}
+  .goal-sub{font-size:11.5px;color:#9a937e;margin-top:2px}
+  .goal-event{color:#8f886f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}
+  @keyframes genBreath{0%,100%{opacity:.75}50%{opacity:1}}
+  .gen-spinner{width:13px;height:13px;border:2px solid rgba(212,175,55,.25);border-top-color:#d9bc7a;border-radius:50%;animation:genSpin .8s linear infinite;flex-shrink:0}
+  @keyframes genSpin{to{transform:rotate(360deg)}}
+  .inter-intro{background:linear-gradient(180deg,rgba(212,175,55,.06),rgba(212,175,55,.02));border:1px solid rgba(212,175,55,.28);border-radius:14px;padding:10px 16px;cursor:pointer;transition:border-color .2s}
+  .inter-intro:hover{border-color:rgba(212,175,55,.5)}
+  .inter-intro-head{display:flex;justify-content:space-between;align-items:center;color:#d9bc7a}
+  .inter-intro-body{margin-top:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi","SimSun",serif;font-size:14px;line-height:2;letter-spacing:.5px;padding:4px 6px;border-top:1px dashed rgba(212,175,55,.15);animation:interRise .5s ease both}
+  .inter-intro.intro-collapsed{padding:8px 16px}
+  .player-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;position:sticky;top:0;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.22);transition:padding .2s}
+  /* v3.5.14: 折叠态——紧凑单行，不占对话框空间 */
+  .player-status-card.ps-collapsed{padding:8px 14px}
+  .ps-fold-btn{font-size:11px;color:var(--text3);flex-shrink:0;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:6px;padding:2px 8px;cursor:pointer;transition:all .2s}
+  .ps-fold-btn:hover{color:var(--gold);border-color:rgba(212,175,55,.4)}
+  .ps-head-loc{color:var(--accent);opacity:.85}
+  .ps-head-rel{color:#d4af37}
+  .ps-head-fact{color:#8fd3a8}
+  .player-status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;margin-top:4px}
+  .ps-cell{display:flex;align-items:baseline;gap:8px;min-width:0;border-radius:6px;padding:2px 4px;transition:background .3s}
+  .ps-cell.ps-flash{background:rgba(212,175,55,.14);animation:psFlash 1.8s ease}
+  @keyframes psFlash{0%{background:rgba(212,175,55,.28)}100%{background:rgba(212,175,55,.14)}}
+  .ps-label{font-size:11.5px;color:var(--text3);flex-shrink:0;width:52px}
+  .ps-val{font-size:12.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* v3.5.9: 关系明细 / 承诺清单 / 事件时间线 */
+  .ps-rel-wrap{display:flex;flex-wrap:wrap;gap:4px 10px;white-space:normal}
+  .ps-rel-item{display:inline-flex;align-items:baseline;gap:3px;background:rgba(226,75,74,.06);border:1px solid rgba(226,75,74,.14);border-radius:6px;padding:1px 7px;font-size:12px}
+  .ps-rel-name{color:var(--text2)}
+  .ps-rel-heart{font-weight:600}
+  /* v3.5.17: 关系态度描述（字符串值时展示） */
+  .ps-rel-desc{color:var(--text3);font-size:11px;opacity:.85}
+  .ps-fact-item{display:inline-block;margin:2px 6px 2px 0;padding:1px 8px;border-radius:6px;font-size:12px;background:rgba(212,175,55,.08);border:1px dashed rgba(212,175,55,.32);color:#d9bc7a}
+  .ps-fact-item.fact-fulfilled{background:rgba(63,185,80,.08);border-color:rgba(63,185,80,.32);color:#8fd3a8}
+  .ps-fact-item.fact-expired{background:rgba(136,135,128,.08);border-color:rgba(136,135,128,.3);color:#888780}
+  .ps-fact-item.fact-broken{background:rgba(248,81,73,.08);border-color:rgba(248,81,73,.35);color:#f85149}
+  .fact-badge-mini{margin-right:3px}
+  .ps-event-item{display:block;font-size:12px;color:var(--text3);margin:1px 0;line-height:1.5}
+  .ps-event-ts{color:var(--accent);opacity:.7;margin-right:5px;font-size:11px}
+  @media(max-width:760px){.player-status-grid{grid-template-columns:1fr}}
   .sg-relation-svg-wrap svg,.sg-timeline-svg-wrap svg{width:100%;height:100%}
 
   /* ── 导出列表 ── */
@@ -491,7 +567,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   /* ── 弹层/Toast ── */
   .toast-box{width:88vw;max-width:340px}
   .toast-overlay{padding:16px}
-}
 
 /* 超窄屏（≤420px，小手机） */
 @media(max-width:420px){
@@ -987,36 +1062,183 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
           </div>
 
           <div v-else class="interactive-shell">
-            <!-- 状态栏 -->
-            <div class="flex justify-between items-center mb-12" style="flex-wrap:wrap;gap:8px">
-              <div class="text-sm">
-                <span class="badge badge-ok mr-8">场景 {{ interactive.state.scene_num||0 }}</span>
-                <span v-if="interactive.pendingNode" class="badge" style="background:rgba(212,175,55,.15);color:var(--gold)">💬 可对话</span>
-                <span v-else class="badge">📖 剧情中</span>
+            <!-- v3.5.13: 故事背景卡（开场先懂"我是谁/在哪/要做什么"，可折叠常驻） -->
+            <div class="inter-intro" v-if="interactive.intro" :class="{'intro-collapsed': !interactive.introOpen}">
+              <div class="inter-intro-head" @click="interactive.introOpen=!interactive.introOpen">
+                <span style="font-size:13px;letter-spacing:2px">📖 故事背景</span>
+                <span class="muted" style="font-size:11px">{{ interactive.introOpen ? '点击收起' : '点击展开' }}</span>
               </div>
-              <div class="flex gap-6">
-                <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
-                <button class="btn btn-xs btn-ghost" @click="interactiveRollback" :disabled="interactive.busy" title="回退到上一场景">↩ 回退</button>
-                <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
+              <div class="inter-intro-body" v-if="interactive.introOpen">{{ interactive.intro }}</div>
+            </div>
+
+            <!-- v3.5.14: 玩家状态卡（头部常驻摘要，内容可折叠——默认收起省空间） -->
+            <div class="player-status-card" :class="{'ps-collapsed': !interactive.statusOpen}">
+              <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:8px">
+                <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer" @click="interactive.statusOpen=!interactive.statusOpen">
+                  <div class="inter-avatar" style="width:34px;height:34px;font-size:14px;flex-shrink:0"
+                       :style="avatarStyle(interactive.state.player_char ? interactive.state.player_char.name : '你')">
+                    {{ (interactive.state.player_char ? interactive.state.player_char.name : '你').slice(0,1) }}
+                  </div>
+                  <div style="min-width:0">
+                    <div style="font-weight:600;font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                      {{ interactive.state.player_char ? interactive.state.player_char.name : '读者' }}
+                      <span class="muted" style="font-weight:400;font-size:11.5px" v-if="interactive.state.player_char && interactive.state.player_char.identity">
+                        · {{ interactive.state.player_char.identity.slice(0,18) }}{{ interactive.state.player_char.identity.length > 18 ? '…' : '' }}
+                      </span>
+                    </div>
+                    <div class="text-xs muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">场景 {{ interactive.state.scene_num||0 }}
+                      <span v-if="interactive.pendingNode" style="color:var(--gold)"> · 💬 可对话</span>
+                      <span v-else-if="interactive.autoStopped" style="color:var(--gold)" title="连续推进已暂停，输入或点继续可恢复"> · ⏸ 已暂停</span>
+                      <span v-else> · 📖 剧情中</span>
+                      <span v-if="!interactive.statusOpen && interactive.state.state && interactive.state.state.location" class="ps-head-loc"> · 📍 {{ fmtText(interactive.state.state.location, 16) }}</span>
+                      <span v-if="!interactive.statusOpen && relCount" class="ps-head-rel"> · 💞 {{ relCount }}人</span>
+                      <span v-if="!interactive.statusOpen && activeFacts.length" class="ps-head-fact"> · ⏳ {{ activeFacts.length }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="flex gap-6" style="flex-wrap:wrap;align-items:center">
+                  <!-- v3.5.14: 状态折叠按钮放最前，醒目可见 -->
+                  <button class="btn btn-xs" :class="interactive.statusOpen?'btn-ghost':'btn-primary'" @click="interactive.statusOpen=!interactive.statusOpen"
+                          :title="interactive.statusOpen ? '收起状态卡' : '展开状态卡（目标/关系/承诺/刚发生）'"
+                          style="min-width:64px">{{ interactive.statusOpen ? '▾ 收起状态' : '▸ 展开状态' }}</button>
+                  <button class="btn btn-xs" :class="interactive.autoPlay?'btn-primary':''" @click="interactive.autoPlay=!interactive.autoPlay; cancelAuto()" title="剧情自动流：行动/对话后剧情自动衔接，只在需要你决策时停下">⏵ {{ interactive.autoPlay?'自动':'手动' }}</button>
+                  <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
+                  <span v-if="interactive.emotionAvailable" style="display:flex;gap:6px;align-items:center">
+                    <button class="btn btn-xs" :class="interactive.emotionVoice?'btn-primary':''" @click="interactive.emotionVoice=!interactive.emotionVoice" :disabled="interactive.busy" title="IndexTTS-2 本地情感引擎（角色音色+情感，免费离线）">🎭 {{ interactive.emotionVoice?'情感开':'情感关' }}</button>
+                    <select v-if="interactive.emotionVoice" v-model="interactive.emotion" style="min-height:30px;font-size:12px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:2px 6px">
+                      <option v-for="em in ['平静','愤怒','悲伤','喜悦','紧张','冷漠']" :key="em" :value="em">{{ em }}</option>
+                    </select>
+                  </span>
+                  <button class="btn btn-xs btn-ghost" @click="interactiveRollback" :disabled="interactive.busy" title="回退到上一场景">↩ 回退</button>
+                  <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
+                </div>
+              </div>
+              <!-- v3.5.17: 剧情状态总览（展开态详情版：性格/关系态度/承诺状态/时间线/上一步） -->
+              <template v-if="interactive.statusOpen">
+              <!-- 主角性格（展开时补充） -->
+              <div class="ps-cell" v-if="interactive.state.player_char && interactive.state.player_char.personality_brief">
+                <span class="ps-label">🧠 性格</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.5">{{ interactive.state.player_char.personality_brief }}</span>
+              </div>
+              <!-- 第一行：地点/进展/在场 -->
+              <div class="player-status-grid" style="margin-top:6px">
+                <div class="ps-cell" :class="{'ps-flash': statusFlash.scene_num}" v-if="interactive.state.state && interactive.state.state.location || statusFlash.scene_num">
+                  <span class="ps-label">📍 地点</span>
+                  <span class="ps-val">{{ fmtText(interactive.state.state && interactive.state.state.location) || '（未定）' }}</span>
+                </div>
+                <div class="ps-cell" :class="{'ps-flash': statusFlash.flags}" v-if="(interactive.state.state && interactive.state.state.flags || []).length || statusFlash.flags">
+                  <span class="ps-label">🏷 进展</span>
+                  <span class="ps-val">
+                    <span v-for="f in (interactive.state.state && interactive.state.state.flags || [])" :key="f" style="margin-right:8px;font-size:12px;background:rgba(212,175,55,.1);border-radius:4px;padding:1px 6px">{{ f }}</span>
+                  </span>
+                </div>
+                <div class="ps-cell" v-if="presentChars.length">
+                  <span class="ps-label">👥 在场</span>
+                  <span class="ps-val">
+                    <span v-for="c in presentChars" :key="c" style="margin-right:8px">{{ c }}</span>
+                  </span>
+                </div>
+              </div>
+              <!-- 目标（章节目的，完整多行显示） -->
+              <div class="ps-cell" style="margin-top:6px;padding:2px 4px" v-if="interactive.state.state && interactive.state.state.objective">
+                <span class="ps-label">🎯 目标</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.5">{{ fmtText(interactive.state.state.objective) }}</span>
+              </div>
+              <!-- 你上一步做了什么（行动轨迹） -->
+              <div class="ps-cell" v-if="interactive.state.last_action && interactive.state.last_action.summary">
+                <span class="ps-label">🕐 上一步</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.5;color:var(--text2)">{{ interactive.state.last_action.summary }}</span>
+              </div>
+              <!-- 关系明细（谁 + 态度值 + 态度描述，实时更新高亮） -->
+              <div class="ps-cell ps-relations" :class="{'ps-flash': statusFlash.relations}" v-if="relCount">
+                <span class="ps-label">💞 关系</span>
+                <span class="ps-val ps-rel-wrap">
+                  <span v-for="(rv, rn) in interactive.state.state.relations" :key="rn" class="ps-rel-item" :title="rn + ' 对你的态度'">
+                    <span class="ps-rel-name">{{ rn }}</span>
+                    <span class="ps-rel-heart" :style="{color: typeof rv==='number' && rv>=60 ? '#e24b4a' : (typeof rv==='number' && rv>=30 ? '#d4af37' : '#888780')}">
+                      {{ typeof rv==='number' ? '♥'+rv : '' }}
+                    </span>
+                    <span v-if="typeof rv==='string'" class="ps-rel-desc">{{ rv }}</span>
+                  </span>
+                </span>
+              </div>
+              <!-- 承诺清单（完整内容 + 状态：⏳ 待兑现 / ✅ 已兑现 / ⌛ 过期 / 💔 违约） -->
+              <div class="ps-cell" v-if="(interactive.state.facts||[]).length">
+                <span class="ps-label">⏳ 承诺</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.7">
+                  <span v-for="f in (interactive.state.facts||[]).slice(-6).reverse()" :key="f.id" class="ps-fact-item" :class="'fact-'+f.status">
+                    <span class="fact-badge-mini">{{ f.status==='active'?'⏳':f.status==='fulfilled'?'✅':f.status==='expired'?'⌛':'💔' }}</span>
+                    {{ f.content }}
+                  </span>
+                </span>
+              </div>
+              <!-- 刚发生的事（事件时间线，5 条） -->
+              <div class="ps-cell" :class="{'ps-flash': statusFlash.events}" v-if="(interactive.state.events||[]).length">
+                <span class="ps-label">📌 刚发生</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.6">
+                  <span v-for="(e, ei) in interactive.state.events.slice(-5).reverse()" :key="ei" class="ps-event-item">
+                    <span class="ps-event-ts">{{ e.ts }}</span> {{ e.summary }}
+                  </span>
+                </span>
+              </div>
+              </template>
+            </div>
+
+            <!-- v3.5.23: 当前剧情任务条（常驻：剧情概况 + 需要达成的目标，玩家随时参考） -->
+            <div class="inter-goal-bar" v-if="interactive.state.state && (interactive.state.state.objective || interactive.state.state.location)">
+              <div class="goal-row">
+                <span class="goal-icon">🎯</span>
+                <span class="goal-label">当前目标</span>
+                <span class="goal-text">{{ fmtText(interactive.state.state.objective) || '继续探索剧情' }}</span>
+              </div>
+              <div class="goal-row goal-sub">
+                <span v-if="interactive.state.state.location">📍 {{ fmtText(interactive.state.state.location, 30) }}</span>
+                <span v-if="goalEventText" class="goal-event"> · {{ goalEventText }}</span>
               </div>
             </div>
 
-            <!-- 叙事区（打字机） -->
-            <div class="interactive-story" ref="storyBox">
+            <!-- v3.5.19: 生成状态条（生成中明确告知，避免以为卡住） -->
+            <div v-if="interactive.generating" class="inter-generating">
+              <span class="gen-spinner"></span>
+              <span>{{ interactive.generating }}</span>
+            </div>
+
+            <!-- v3.3: 对话轨道提示（跑偏/自然收尾/钩子核对） -->
+            <div v-if="interactive.driftNote" class="inter-track-note" style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.35);color:#f85149;border-radius:8px;padding:6px 12px;font-size:12px;margin-bottom:10px">⚠ 话题跑偏了：{{ interactive.driftNote }} —— 角色正在把话题拉回正事</div>
+            <div v-else-if="interactive.naturalEnd" class="inter-track-note" style="background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.35);color:#3fb950;border-radius:8px;padding:6px 12px;font-size:12px;margin-bottom:10px">✅ {{ interactive.naturalEnd }} —— 可以「继续剧情」了</div>
+            <div v-else-if="interactive.hookSummary" class="inter-track-note" style="background:rgba(188,140,255,.08);border:1px solid rgba(188,140,255,.35);color:#bc8cff;border-radius:8px;padding:6px 12px;font-size:12px;margin-bottom:10px">🔗 {{ interactive.hookSummary }}</div>
+
+            <!-- 叙事区（打字机）v3.5.10: @scroll 智能滚动（回看不抢） -->
+            <div class="interactive-story" ref="storyBox" @scroll="interactiveStoryScroll">
               <template v-for="(blk, i) in interactive.blocks" :key="i">
-                <div v-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
+                <!-- v3.5.10: 场景分隔（历史回看定位用） -->
+                <div v-if="blk.type==='scene_div'" class="inter-scene-div">── 场景 {{ blk.content }} ──</div>
+                <div v-else-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
                 <div v-else-if="blk.type==='action'" class="inter-action">{{ blk.content }}</div>
-                <div v-else class="inter-line" :class="{playing: interactive.speakingLine===i}">
-                  <span class="inter-speaker">{{ blk.speaker }}</span>
-                  <span class="inter-dialogue">{{ blk.content }}</span>
-                  <span class="inter-voice" v-if="interactive.voices[blk.speaker]">🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</span>
-                  <span class="inter-actions" v-if="blk.type==='dialogue'||blk.type==='chat'">
-                    <button class="voice-btn" @click="speakLine(blk, i)" :title="interactive.speakingLine===i?'停止':'播放语音'">{{ interactive.speakingLine===i?'⏹':'🔊' }}</button>
-                    <button class="voice-btn" @click="openVoicePicker(blk.speaker)" title="更换音色">🎙</button>
-                  </span>
+                <div v-else-if="blk.type==='action_desc'" class="inter-action-desc">⚡ {{ blk.content }}</div>
+                <div v-else-if="blk.type==='action_result'" class="inter-action-result">{{ blk.content }}</div>
+                <!-- v3.5.8: 状态变化系统提示（对话流内可见，免抬头） -->
+                <div v-else-if="blk.type==='sys_change'" class="inter-sys-change">✨ {{ blk.content }}</div>
+                <div v-else-if="blk.type==='typing'" class="inter-typing" style="text-align:center;padding:8px 0">▋</div>
+                <div v-else class="inter-line" :class="{'playing': interactive.speakingLine===i, 'inter-player': blk.type==='player'}">
+                  <div class="inter-avatar" :style="avatarStyle(blk.type==='player' ? playerName : blk.speaker)">{{ (blk.type==='player' ? playerName : (blk.speaker||'?')).slice(0,1) }}</div>
+                  <div class="inter-bubble">
+                    <div v-if="blk.type==='player'" style="font-size:11px;color:var(--gold);margin-bottom:2px;opacity:.9">{{ playerName }}</div>
+                    <div v-else style="font-size:11px;color:var(--accent);margin-bottom:2px;opacity:.85">{{ blk.speaker }}</div>
+                    <span class="inter-dialogue">{{ blk.content }}</span>
+                    <div style="display:flex;gap:8px;align-items:center;margin-top:4px" v-if="blk.type==='dialogue'||blk.type==='chat'">
+                      <span class="inter-voice" v-if="interactive.voices[blk.speaker]">
+                        <template v-if="interactive.realVoiceMap[blk.speaker]">🎙 {{ realVoiceName(interactive.realVoiceMap[blk.speaker]) }}</template>
+                        <template v-else>🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</template>
+                      </span>
+                      <span class="inter-actions">
+                        <button class="voice-btn" @click="speakLine(blk, i)" :title="interactive.speakingLine===i?'停止':'播放语音'">{{ interactive.speakingLine===i?'⏹':'🔊' }}</button>
+                        <button class="voice-btn" @click="openVoicePicker(blk.speaker)" title="更换音色">🎙</button>
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </template>
-              <div v-if="interactive.typing" class="inter-typing">▋</div>
             </div>
 
             <!-- v3.1: 音色选择器 -->
@@ -1042,18 +1264,42 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <div class="text-xs muted mt-8" v-if="interactive.voicePicker">
                 提示：标注「受限」的音色可能受区域限制，播放时会自动使用相近音色替代
               </div>
+              <!-- v3.5.1: 真人音色库（IndexTTS 克隆，人味） -->
+              <div v-if="interactive.realVoices.length" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+                <div class="card-title" style="font-size:13px;margin-bottom:8px">🎙 真人音色 · 当前角色「{{ interactive.voicePicker }}」</div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px">
+                  <button v-for="rv in interactive.realVoices" :key="rv.id"
+                    class="btn btn-xs" :class="interactive.realVoiceMap[interactive.voicePicker]===rv.id?'btn-primary':''"
+                    @click="setRealVoice(rv.id)"
+                    :title="rv.gender+' · '+rv.style">
+                    {{ rv.id.replace('voice_','V') }}{{ rv.gender==='女'?'♀':'♂' }} {{ rv.style.split('，')[0] }}
+                  </button>
+                </div>
+                <div class="text-xs muted" style="margin-top:6px">
+                  <span v-if="interactive.realVoiceMap[interactive.voicePicker]" style="color:var(--gold)">✓ 当前角色使用真人音色「{{ realVoiceName(interactive.realVoiceMap[interactive.voicePicker]) }}」——自动走情感引擎，无需开 🎭 开关</span>
+                  <span v-else>选一个真人音色，该角色说话就带"人味"（选了自动生效，与上方电子音色二选一）</span>
+                  <button v-if="interactive.realVoiceMap[interactive.voicePicker]" class="btn btn-xs btn-ghost" style="margin-left:8px" @click="clearRealVoice">↩ 恢复电子音色</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- v3.5.2: 主动对话入口（任何时刻可发起对话，修复互斥 bug） -->
+            <div v-if="!interactive.pendingNode && !interactive.inChat && !interactive.typing" style="display:flex;justify-content:center;margin-top:2px">
+              <button class="btn btn-sm btn-ghost" @click="interactive.forceChat=true;interactive.pendingNode=true" :disabled="interactive.busy"
+                      title="任何时候都可以主动找角色说话" style="border:1px dashed rgba(212,175,55,.5);color:var(--gold)">
+                💬 我要说话
+              </button>
             </div>
 
             <!-- 输入区 -->
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
                 <input v-model="interactive.message" @keyup.enter="sendInteractiveChat"
-                       placeholder="说点什么…（可 @角色名 指定对象）" :disabled="interactive.busy"
+                       placeholder="说点什么，或直接行动：上车 / 推门 / 答应他 / 离开…（可 @角色名）" :disabled="interactive.busy"
                        style="flex:1;min-height:38px;font-size:14px" />
                 <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||!interactive.message.trim()">💬 说</button>
               </div>
               <div class="flex gap-6 mt-8" style="justify-content:flex-end">
-                <button class="btn btn-xs" @click="interactive.forceChat=true;interactive.pendingNode=true" v-if="!interactive.pendingNode && !interactive.inChat">💬 我要说话</button>
                 <button class="btn btn-sm btn-primary" @click="continueInteractive" :disabled="interactive.busy">
                   {{ interactive.pendingNode && !interactive.inChat ? '💬 进入对话' : '▶ 继续剧情' }}
                 </button>
@@ -2126,6 +2372,9 @@ const app = createApp({
             try {
               const evt = JSON.parse(line.slice(6));
               if (evt.type === 'ping') continue; // Render心跳，忽略
+              // v3.5.19: 生成阶段提示统一处理（互动模式）
+              if (evt.type === 'phase') { _setPhase(evt.label, 30000); continue; }
+              if (evt.type === 'scene_chunk' || evt.type === 'chat_chunk' || evt.type === 'action_chunk') _kickPhase();
               if (onEvent(evt) === false) { reader.cancel(); break; }
             } catch (_) {}
           }
@@ -3538,6 +3787,68 @@ const app = createApp({
       voicePicker: null,      // 正在调音色的角色名
       voiceCandidates: [],    // 可选音色列表
       voiceRate: '+0%', voicePitch: '+0Hz',
+      // v3.3: Agenda 对话轨道（前端可见性）
+      agenda: null,           // 当前对话议程 {goal, hooks, boundaries}
+      driftNote: '',          // 话题跑偏提示（drift_check 事件）
+      naturalEnd: false,      // 对话目标已达成提示
+      hookSummary: '',        // end-chat 钩子核对摘要（推进/未谈成）
+      // v3.5.7: 剧情自动流——场景/行动/对话自动衔接，只在需要决策时停
+      autoPlay: true,         // 自动推进开关（剧情不等人，玩家可随时打断）
+      autoStopped: false,     // 连续自动 3 段后强制暂停提示
+      // v3.5: 情感语音（IndexTTS-2 本地引擎）
+      emotionVoice: false,    // 情感引擎开关
+      emotion: '平静',        // 当前情感（平静/愤怒/悲伤/喜悦/紧张/冷漠）
+      emotionAvailable: false, // 引擎是否可用
+      realVoices: [],         // v3.5.1: 真人音色库 [{id, gender, style}]
+      realVoiceMap: {},       // 角色 → 真人音色 id（localStorage 持久化）
+      // v3.5.13: 开场背景介绍
+      intro: '',              // 故事背景（start 时生成）
+      introOpen: true,        // 背景卡默认展开（首次进入先看背景）
+      // v3.5.14: 状态卡折叠（默认收起省空间，头部显示摘要，展开看全量）
+      statusOpen: false,
+      // v3.5.19: 生成状态提示（生成中告知用户，避免以为卡住）
+      generating: '',          // 当前生成阶段 label（空 = 无生成）
+    });
+    // v3.5.5: 玩家状态卡计算属性
+    // v3.5.18: 显示格式化——location/objective 可能是 JSON 数组字符串（如
+    // ["上海陆家嘴…","老洋房…"]），提取可读文本避免界面出现 JSON 字样
+    function fmtText(v, maxLen = 0) {
+      if (!v) return '';
+      let s = String(v);
+      try {
+        if (s.trim().startsWith('[')) {
+          const arr = JSON.parse(s);
+          if (Array.isArray(arr) && arr.length) s = String(arr[0]);
+        }
+      } catch(e) {}
+      if (maxLen && s.length > maxLen) s = s.slice(0, maxLen) + '…';
+      return s;
+    }
+    const relCount = computed(() => {
+      const s = interactive.state.state || {};
+      return Object.keys(s.relations || {}).length;
+    });
+    const presentChars = computed(() => {
+      const cs = interactive.state.casts || {};
+      const pn = (interactive.state.player_char || {}).name;
+      return Object.keys(cs).filter(k => {
+        const c = cs[k] || {};
+        return k !== pn && c.present !== false;
+      }).slice(0, 6);
+    });
+    const playerName = computed(() => (interactive.state.player_char || {}).name || '你');
+    // v3.5.9: 待兑现承诺（active facts，状态卡显眼展示）
+    const activeFacts = computed(() => {
+      return (interactive.state.facts || []).filter(f => f.status === 'active').slice(-4).reverse();
+    });
+    // v3.5.23: 剧情概况（任务条副行：最近一条刚发生的事件，过滤矛盾检测噪音）
+    const goalEventText = computed(() => {
+      const evs = interactive.state.events || [];
+      for (let i = evs.length - 1; i >= 0; i--) {
+        const s = String(evs[i].summary || '');
+        if (!s.includes('剧情矛盾') && !s.includes('检测到')) return s.slice(0, 36);
+      }
+      return '';
     });
     let interactiveAbort = null;
     let interactiveAudio = null;   // 当前播放的 Audio
@@ -3574,7 +3885,28 @@ const app = createApp({
       const voice = v.voice || 'zh-CN-XiaoxiaoNeural';
       const rate = v.rate || '+0%';
       const pitch = v.pitch || '+0Hz';
+      // v3.5.4 融合：真人音色优先（选了真人音色 → 自动走情感引擎，无需手动开情感开关）
+      const realVoice = interactive.realVoiceMap[blk.speaker] || '';
+      const useEmotion = interactive.emotionAvailable && (realVoice || interactive.emotionVoice);
       try{
+        if(useEmotion){
+          const er = await fetch(API+'/api/tts/emotion', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ text, char_name: blk.speaker||'角色',
+              emotion: interactive.emotion||'平静', voice, rate, pitch,
+              real_voice: realVoice }),
+          });
+          if(er.ok){
+            const blob = await er.blob();
+            const url = URL.createObjectURL(blob);
+            interactiveAudio = new Audio(url);
+            interactiveAudio.onended = () => { interactive.speakingLine = null; URL.revokeObjectURL(url); interactiveAudio = null; };
+            interactiveAudio.onerror = () => { interactive.speakingLine = null; URL.revokeObjectURL(url); interactiveAudio = null; };
+            interactiveAudio.play().catch(()=>{ interactive.speakingLine = null; });
+            return;
+          }
+          // 引擎报错 → 降级普通 TTS
+        }
         const r = await fetch(API+'/api/tts', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ text, voice, rate, pitch }),
@@ -3714,6 +4046,9 @@ const app = createApp({
           interactive.loading = false;
           if (data.ok && data.state) {
             interactive.state = data.state;
+            // v3.5.13: 恢复开场背景（intro 已缓存到 state）
+            interactive.intro = data.state.intro || '';
+            interactive.introOpen = !!data.state.intro;
             // v3.2: 恢复最近场景的完整 blocks（切回不丢内容）
             interactive.blocks = (data.state.recent_blocks || []).slice();
             if (!interactive.blocks.length && data.state.summary) {
@@ -3739,17 +4074,34 @@ const app = createApp({
         if (!r.ok) throw new Error('HTTP '+r.status);
         interactive.blocks = [];
         await readSSE(r, (evt) => {
-          if (evt.type==='scene_chunk' && evt.content) {
+          if (evt.type==='intro' && evt.content) {
+            // v3.5.13: 开场背景介绍（先看背景，再进剧情）
+            interactive.intro = evt.content;
+            interactive.introOpen = true;
+          } else if (evt.type==='scene_chunk' && evt.content) {
             interactive.typing = true;
             _appendTyping(evt.content);
           } else if (evt.type==='scene_end') {
             interactive.typing = false;
-            interactive.blocks = evt.blocks || [];
-            _scrollStory();
+            // v3.5.10: 历史保留——新场景 append 到历史流（带场景分隔），不清空
+            _appendSceneBlocks(evt.blocks || [], evt.scene_num);
+            // v3.5.8: 场景结束 → 状态卡实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            // v3.5: 场景内角色台词预合成（情感引擎开启时）
+            if (interactive.emotionVoice && interactive.emotionAvailable) {
+              (evt.blocks || []).forEach(b => {
+                if (b.type === 'dialogue') prewarmVoice(b.content, b.speaker);
+              });
+            }
           } else if (evt.type==='node_check') {
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
             interactive.typing = false;
+            // v3.3: 议程展示（这场对话要谈什么）
+            interactive.agenda = evt.agenda || null;
+            interactive.driftNote = ''; interactive.naturalEnd = false; interactive.hookSummary = '';
+            // v3.5.8: 状态快照实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
           } else if (evt.type==='error') {
             interactive.error = evt.message;
           }
@@ -3774,11 +4126,90 @@ const app = createApp({
       _scrollStory();
     }
 
+    // v3.5.1: 设置角色的真人音色（持久化）；v3.5.4 融合：选真人音色自动生效
+    function setRealVoice(voiceId) {
+      if (!interactive.voicePicker) return;
+      interactive.realVoiceMap[interactive.voicePicker] = voiceId;
+      try { localStorage.setItem('interactiveRealVoice', JSON.stringify(interactive.realVoiceMap)); } catch(e) {}
+    }
+    function clearRealVoice() {
+      if (!interactive.voicePicker) return;
+      delete interactive.realVoiceMap[interactive.voicePicker];
+      try { localStorage.setItem('interactiveRealVoice', JSON.stringify(interactive.realVoiceMap)); } catch(e) {}
+    }
+    function realVoiceName(vid) {
+      const rv = interactive.realVoices.find(x => x.id === vid);
+      return rv ? (rv.id.replace('voice_','V') + '·' + rv.style.split('，')[0]) : vid;
+    }
+
+    // v3.5: 后台预合成（台词到达立即合成入缓存，点击播放时秒回）
+    let _prewarmQueue = [];
+    let _prewarming = false;
+    function prewarmVoice(text, speaker) {
+      if (!text || !speaker || speaker === '你') return;
+      // v3.5.4: 真人音色优先自动生效；否则仅情感开关开启时预热
+      const realVoice = interactive.realVoiceMap[speaker] || '';
+      if (!interactive.emotionAvailable) return;
+      if (!realVoice && !interactive.emotionVoice) return;
+      _prewarmQueue.push({ text, speaker, realVoice });
+      if (!_prewarming) _prewarmQueueRun();
+    }
+    async function _prewarmQueueRun() {
+      _prewarming = true;
+      while (_prewarmQueue.length) {
+        const item = _prewarmQueue.shift();
+        const v = (interactive.voices && interactive.voices[item.speaker]) || {};
+        try {
+          await fetch(API+'/api/tts/emotion', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ text: cleanLineForTTS(item.text), char_name: item.speaker,
+              emotion: interactive.emotion||'平静', voice: v.voice||'zh-CN-XiaoxiaoNeural',
+              rate: v.rate||'+0%', pitch: v.pitch||'+0Hz',
+              real_voice: item.realVoice }),
+          });
+        } catch(e) { /* 预合成失败静默，播放时降级 */ }
+      }
+      _prewarming = false;
+    }
+
+    // v3.5.10: 智能滚动——玩家在底部才自动跟随；回看历史时不抢滚动
+    let _userAtBottom = true;
+    function interactiveStoryScroll() {
+      const box = document.querySelector('.interactive-story');
+      if (!box) return;
+      _userAtBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 120;
+    }
     function _scrollStory() {
       nextTick(() => {
         const box = document.querySelector('.interactive-story');
-        if (box) box.scrollTop = box.scrollHeight;
+        if (!box) return;
+        if (_userAtBottom) box.scrollTop = box.scrollHeight;
       });
+    }
+    // v3.5.10: 场景历史保留——新场景 append 到历史流（带场景分隔），不替换
+    function _appendSceneBlocks(blocks, sceneNum) {
+      // 移除残留的打字机块（新场景已落盘）
+      while (interactive.blocks.length &&
+             interactive.blocks[interactive.blocks.length - 1].type === 'typing') {
+        interactive.blocks.pop();
+      }
+      if (interactive.blocks.length) {
+        interactive.blocks.push({ type: 'scene_div', speaker: '', content: sceneNum || '' });
+      }
+      (blocks || []).forEach(b => interactive.blocks.push({ ...b }));
+      // 历史上限：超过 400 块时截断到最近 260 块（保留可回看，防无限膨胀）
+      if (interactive.blocks.length > 400) {
+        interactive.blocks.splice(0, interactive.blocks.length - 260);
+      }
+      _scrollStory();
+    }
+
+    // v3.5: 角色头像徽章配色（角色名 hash → 色相，同角色同色）
+    function avatarStyle(name) {
+      if (!name || name === '你') return {background:'rgba(212,175,55,.16)', borderColor:'rgba(212,175,55,.45)', color:'#e8c85a'};
+      let h = 0;
+      for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+      return {background:`hsla(${h},55%,42%,.28)`, borderColor:`hsla(${h},60%,62%,.55)`, color:`hsl(${h},72%,76%)`};
     }
 
     async function loadInteractiveState() {
@@ -3806,11 +4237,27 @@ const app = createApp({
           if (data.ok) interactive.voices = data.voices || {};
         }
       } catch(e) { console.warn('loadInteractiveVoices failed:', e); }
+      // v3.5: 情感引擎状态 + 真人音色库（可用则显示 🎭 开关）
+      try {
+        const r = await fetch(API+'/api/tts/emotion/status');
+        if (r.ok) {
+          const d = await r.json();
+          interactive.emotionAvailable = !!d.available;
+          interactive.realVoices = (d.real_voices || []).filter(v => v.available);
+          // 恢复角色真人音色映射
+          try {
+            const saved = JSON.parse(localStorage.getItem('interactiveRealVoice') || '{}');
+            interactive.realVoiceMap = saved || {};
+          } catch(e) {}
+        }
+      } catch(e) { interactive.emotionAvailable = false; }
     }
 
     async function sendInteractiveChat() {
       if (!interactive.message.trim() || interactive.busy) return;
       if (!activeNovel.value) return;
+      cancelAuto();                                  // v3.5.7: 玩家输入打断自动流
+      _setPhase('💭 正在发送…', 30000);               // v3.5.19: 生成提示
       const id = encodeURIComponent(activeNovel.value.id);
       const msg = interactive.message.trim();
       interactive.message = '';
@@ -3837,10 +4284,62 @@ const app = createApp({
             const last = interactive.blocks[interactive.blocks.length-1];
             if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
             _scrollStory();
+            // v3.5.8: 状态快照实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.1: 对话台词自动播放（旁白静默，只对话题生效）
             if (interactive.autoVoice && last && (last.type==='chat' || last.type==='dialogue')) {
               speakLine(last, interactive.blocks.length-1);
             }
+            // v3.5: 情感引擎开启时预合成（缓存预热，点击秒回）
+            if (last && (last.type==='chat' || last.type==='dialogue')) {
+              prewarmVoice(last.content, last.speaker);
+            }
+            // v3.5.7: 剧情自动流——角色回复完，玩家 8s 未输入 → 自动收尾对话并推进
+            _scheduleAutoEndChat();
+          } else if (evt.type==='drift_check') {
+            // v3.3: 跑偏提示（角色下一轮会拉回）
+            interactive.driftNote = evt.on_track ? '' : (evt.reason || '话题跑偏了');
+            interactive.naturalEnd = false;
+          } else if (evt.type==='natural_end') {
+            // v3.3.1: 对话目标已达成
+            interactive.naturalEnd = evt.message || '对话目标已达成';
+            interactive.driftNote = '';
+          } else if (evt.type==='action_detect') {
+            // v3.4: 玩家行动被识别 → 即时推进剧情（对话即剧情）
+            // v3.4.1: blocked=true → 超现实尝试，结果按"无果"生成
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') interactive.blocks.pop();
+            const prefix = evt.blocked ? '（尝试，但做不到）' : '〔';
+            const suffix = evt.blocked ? '' : '〕';
+            interactive.blocks.push({type:'action_desc', speaker:'你', content: prefix+evt.summary+suffix});
+            interactive.blocks.push({type:'typing', speaker:'', content:''});
+            _scrollStory();
+          } else if (evt.type==='action_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') last.content += evt.content;
+            else interactive.blocks.push({type:'typing', speaker:'', content:evt.content});
+            _scrollStory();
+          } else if (evt.type==='action_end') {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') { last.type='action_result'; last.speaker=''; last.content=evt.content; }
+            _scrollStory();
+            // v3.5.8: 行动结果 → 状态卡实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+          } else if (evt.type==='state_change') {
+            // v3.5.8: 状态变化 → 对话流内提示 + 状态卡更新（免滚动查看）
+            _pushStateChange(evt.changes);
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+          } else if (evt.type==='action_done') {
+            // 行动完成：end_chat=true → 对话自然收尾（可继续剧情）
+            if (evt.end_chat) {
+              interactive.hookSummary = '你的行动改变了剧情走向';
+              interactive.inChat = false;
+            }
+            // v3.5.8: 状态快照实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            // v3.5.7: 行动后剧情自动衔接（行动有后果，顺势走下一段；force 无视 pendingNode）
+            cancelAuto();
+            _scheduleAutoNext(4000, true);
           } else if (evt.type==='error') {
             interactive.blocks.push({type:'error', speaker:'', content: evt.message});
           }
@@ -3849,7 +4348,127 @@ const app = createApp({
         interactive.blocks.push({type:'error', speaker:'', content:'对话失败: '+(e.message||e)});
       }
       interactive.busy = false;
+      _setPhase('');                                   // v3.5.19: 生成结束
       _scrollStory();
+    }
+
+    // ═══ v3.5.8: 状态快照实时更新 ═══
+    // SSE 事件携带 state_snapshot → 免请求直接更新状态卡；变化字段高亮闪烁
+    let statusFlash = reactive({});
+
+    function _applySnapshot(snap) {
+      if (!snap) return;
+      const st = interactive.state;
+      const old = {
+        location: (st.state && st.state.location) || '',
+        relations: JSON.stringify((st.state && st.state.relations) || {}),
+        flags: JSON.stringify((st.state && st.state.flags) || []),
+        scene_num: st.scene_num || 0,
+      };
+      if (snap.scene_num != null) st.scene_num = snap.scene_num;
+      if (!st.state) st.state = {};
+      if (snap.location) st.state.location = snap.location;
+      if (snap.objective) st.state.objective = snap.objective;
+      if (snap.relations) st.state.relations = snap.relations;
+      if (snap.flags) st.state.flags = snap.flags;
+      // v3.5.9: 事件时间线（状态卡"刚发生的事"）
+      if (snap.events) st.events = snap.events;
+      // 变化高亮（1.8s 后熄灭）
+      const flash = {};
+      if (snap.location && snap.location !== old.location) flash.location = true;
+      if (snap.relations && JSON.stringify(snap.relations) !== old.relations) flash.relations = true;
+      if (snap.flags && JSON.stringify(snap.flags) !== old.flags) flash.flags = true;
+      if (snap.scene_num != null && snap.scene_num !== old.scene_num) flash.scene_num = true;
+      if (snap.events && JSON.stringify(snap.events) !== JSON.stringify(st.events)) flash.events = true;
+      Object.keys(flash).forEach(k => statusFlash[k] = true);
+      if (Object.keys(flash).length) {
+        setTimeout(() => { Object.keys(flash).forEach(k => statusFlash[k] = false); }, 1800);
+      }
+    }
+
+    // v3.5.8: 对话流内状态变化提示（玩家不用抬头看状态卡）
+    function _pushStateChange(changes) {
+      if (!changes || !changes.length) return;
+      changes.slice(0, 3).forEach(c => {
+        interactive.blocks.push({ type:'sys_change', speaker:'', content: c });
+      });
+      _scrollStory();
+    }
+
+    // ═══ v3.5.19: 生成阶段提示 ═══
+    // phase 事件更新 label；任何内容块到达重置超时；超时无内容 → 升级提示
+    let _phaseTimer = null;
+    function _setPhase(label, timeoutMs) {
+      interactive.generating = label || '';
+      if (_phaseTimer) clearTimeout(_phaseTimer);
+      _phaseTimer = null;
+      if (label && timeoutMs) {
+        _phaseTimer = setTimeout(() => {
+          if (interactive.generating === label) {
+            interactive.generating = '⏳ 仍在生成中（内容较长，请稍候）…';
+          }
+        }, timeoutMs);
+      }
+    }
+    function _kickPhase() {
+      // 内容块到达 → 重置超时（label 不变）
+      if (_phaseTimer) clearTimeout(_phaseTimer);
+      if (interactive.generating) {
+        _phaseTimer = setTimeout(() => {
+          if (interactive.generating) interactive.generating = '⏳ 仍在生成中（内容较长，请稍候）…';
+        }, 25000);
+      }
+    }
+
+    // ═══ v3.5.7: 剧情自动流 ═══
+    // 静止点（场景结束/行动完成/角色回复完）→ 玩家未干预 → 自动衔接下一段剧情；
+    // 节点判定需要玩家介入 → 停；连续自动 3 段 → 强制停一次；玩家输入随时打断。
+    let _autoTimer = null;
+    let _autoStreak = 0;
+
+    function cancelAuto(reason) {
+      if (_autoTimer) { clearTimeout(_autoTimer); _autoTimer = null; }
+      // 玩家主动干预 → 重置连播计数
+      _autoStreak = 0;
+      interactive.autoStopped = false;
+    }
+    function _scheduleAutoNext(delayMs, force) {
+      if (!interactive.autoPlay) return;
+      if (interactive.inChat) return;
+      if (!force && interactive.pendingNode) return;  // force: 行动后无视 pendingNode（行动=玩家已决策）
+      if (_autoTimer) return;                       // 已有待执行的自动推进
+      if (_autoStreak >= 3) {                        // 连续 3 段后强制停，防止无限自动跑
+        interactive.autoStopped = true;
+        return;
+      }
+      _autoTimer = setTimeout(async () => {
+        _autoTimer = null;
+        if (!interactive.autoPlay || interactive.busy || interactive.pendingNode) return;
+        // v3.5.10: 玩家正在回看历史（不在底部）→ 稍后再试，不抢滚动
+        if (!_userAtBottom) {
+          _scheduleAutoNext(delayMs || 5000);
+          return;
+        }
+        _autoStreak++;
+        try { await continueInteractive(); }
+        catch(e) { /* 自动推进失败静默，玩家可手动 */ }
+      }, delayMs || 5000);
+    }
+    // 对话中角色回复完 → 若玩家已说过话且 12s 未输入 → 自动收尾对话并推进
+    function _scheduleAutoEndChat() {
+      if (!interactive.autoPlay || !interactive.inChat) return;
+      // 只对"玩家已发言过的对话"自动收尾（节点对话刚开始、玩家还没开口时不自动结束）
+      const hasPlayer = [...interactive.blocks].reverse().slice(0, 8).some(b => b.type === 'player');
+      if (!hasPlayer) return;
+      if (_autoTimer) { clearTimeout(_autoTimer); }
+      _autoTimer = setTimeout(async () => {
+        _autoTimer = null;
+        if (!interactive.autoPlay || interactive.busy || !interactive.inChat) return;
+        if (interactive.message && interactive.message.trim()) return; // 玩家正在输入
+        _autoStreak = 0;
+        try { await continueInteractive(); }        // end-chat + 下一场景
+        catch(e) { /* 静默 */ }
+      }, 12000);
     }
 
     async function continueInteractive() {
@@ -3857,14 +4476,29 @@ const app = createApp({
       if (!activeNovel.value || interactive.busy) return;
       const id = encodeURIComponent(activeNovel.value.id);
       interactive.busy = true;
+      _setPhase('🔄 正在推进剧情…', 30000);           // v3.5.19: 生成提示
       try {
         // 结束对话 → PACT 提取（无条件执行，提取本轮全部对话）
+        _setPhase('📝 正在整理对话影响…', 30000);       // v3.5.19
         const endRes = await fetch(API+'/api/novels/'+id+'/interactive/end-chat', {
           method:'POST', body:'{}', headers:{'Content-Type':'application/json'},
         });
         if (endRes.ok) {
           const data = await endRes.json();
           interactive.state = { ...interactive.state, facts: data.facts || interactive.state.facts };
+          // v3.3: 钩子核对摘要（这场对话推进了什么 / 没谈成什么）
+          const hk = data.hooks;
+          if (hk && hk.hook_hits && hk.hook_hits.length) {
+            const hitN = hk.hook_hits.filter(h => h.hit).length;
+            const missN = hk.hook_hits.length - hitN;
+            interactive.hookSummary = hitN > 0
+              ? `这场对话推动了剧情（${hitN}/${hk.hook_hits.length} 个关键点）`
+              : `这场对话没有推动剧情——${missN} 个关键话题未触及，角色可能还会提起`;
+          } else {
+            interactive.hookSummary = '';
+          }
+          interactive.agenda = null;
+          interactive.driftNote = ''; interactive.naturalEnd = false;
         }
         // 推进场景
         interactive.typing = true;
@@ -3880,9 +4514,11 @@ const app = createApp({
             _scrollStory();
           } else if (evt.type==='scene_end') {
             interactive.typing = false;
-            interactive.blocks = evt.blocks || [];
             interactive.pendingNode = false;
-            _scrollStory();
+            // v3.5.10: 历史保留——新场景 append 到历史流（带场景分隔），不清空
+            _appendSceneBlocks(evt.blocks || [], evt.scene_num);
+            // v3.5.8: 场景结束 → 状态卡实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.2: 场景内的角色台词自动播放（只播 dialogue，旁白静默）
             if (interactive.autoVoice) {
               const blocks = interactive.blocks;
@@ -3892,6 +4528,18 @@ const app = createApp({
           } else if (evt.type==='node_check') {
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
+            // v3.3: 议程展示（这场对话要谈什么）
+            interactive.agenda = evt.agenda || null;
+            interactive.driftNote = ''; interactive.naturalEnd = false; interactive.hookSummary = '';
+            // v3.5.8: 状态快照实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            // v3.5.7: 剧情自动流——节点判定：需要玩家介入 → 停；
+            // 不需要 → 自动衔接下一段（连续 3 段后强制停）
+            if (evt.is_node) {
+              cancelAuto();
+            } else {
+              _scheduleAutoNext(5000);
+            }
           } else if (evt.type==='error') {
             interactive.error = evt.message;
           }
@@ -3904,6 +4552,7 @@ const app = createApp({
         interactive.error = '推进失败: '+(e.message||e);
       }
       interactive.busy = false;
+      _setPhase('');                                   // v3.5.19: 生成结束
     }
 
     async function interactiveRollback() {
@@ -4267,7 +4916,25 @@ const app = createApp({
       // v3.0: 互动模式
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
+      // v3.5.7: 剧情自动流
+      cancelAuto,
+      // v3.5.10: 智能滚动
+      interactiveStoryScroll,
+      // v3.5.8: 状态卡变化高亮
+      statusFlash,
       speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,previewVoice,
+      // v3.5.1: 真人音色（v3.5.4 融合：与 edge 音色统一决策树）
+      setRealVoice,clearRealVoice,realVoiceName,
+      // v3.5.5: 玩家状态卡
+      relCount,presentChars,playerName,
+      // v3.5.9: 承诺清单
+      activeFacts,
+      // v3.5.23: 剧情概况（任务条副行）
+      goalEventText,
+      // v3.5.18: 显示格式化（location JSON 数组转可读文本）
+      fmtText,
+      // v3.5: 角色头像徽章配色
+      avatarStyle,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
       switchToStoryGraph,loadStoryGraph,

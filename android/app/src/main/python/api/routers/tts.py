@@ -216,3 +216,52 @@ async def tts_voices():
         log.warning(f"List voices failed: {e}")
     result.sort(key=lambda x: (x["locale"], x["name"]))
     return {"count": len(result), "voices": result}
+
+
+# ── v3.5: 情感语音引擎（IndexTTS-2 本地子进程，免费离线）──
+class EmotionTTSRequest(BaseModel):
+    text: str
+    char_name: str = "角色"
+    emotion: str = "平静"
+    voice: str = DEFAULT_VOICE
+    rate: str = "+0%"
+    pitch: str = "+0Hz"
+    real_voice: str = ""   # v3.5.1: 真人音色库 id（voice_01~12），空则用 voice 合成参考
+
+
+@router.post("/api/tts/emotion")
+async def tts_emotion_synthesize(req: EmotionTTSRequest):
+    """情感语音合成 → WAV（角色音色 + 情感参考，IndexTTS-2 本地推理）
+
+    引擎不可用 → 503，前端自动降级普通 edge-tts 语音。
+    """
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(400, "文本不能为空")
+    if len(text) > 500:
+        raise HTTPException(400, "文本过长（最多 500 字）")
+    from core.interactive.emotion_tts import EmotionTTS, EmotionTTSUnavailable
+    try:
+        data = await asyncio.to_thread(
+            EmotionTTS.get().synthesize, text, req.char_name, req.emotion,
+            req.voice, req.rate, req.pitch, req.real_voice)
+    except EmotionTTSUnavailable as e:
+        raise HTTPException(503, f"情感引擎不可用: {e}")
+    except Exception as e:
+        log.error(f"Emotion TTS failed: {e}")
+        raise HTTPException(503, f"情感合成失败: {type(e).__name__}")
+    if not data:
+        raise HTTPException(503, "情感合成失败（空结果）")
+    # 修复：HTTP 头只允许 latin-1，中文情感名需 URL 编码
+    from urllib.parse import quote
+    return Response(content=data, media_type="audio/wav",
+                    headers={"X-Emotion": quote(req.emotion), "X-TTS-Engine": "indextts"})
+
+
+@router.get("/api/tts/emotion/status")
+async def tts_emotion_status():
+    """情感引擎状态 + 真人音色库（前端用于显示可用性和音色选择）"""
+    from core.interactive.emotion_tts import EmotionTTS
+    st = EmotionTTS.get().status
+    st["real_voices"] = EmotionTTS.get().real_voices()
+    return {"ok": True, **st}

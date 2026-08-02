@@ -67,6 +67,21 @@ async def interactive_start(novel_id: str):
         st = new_state(novel_id, ctx.get("title", novel_id),
                        ctx.get("genre", ""), ctx.get("style", ""),
                        ctx.get("protagonist_name", ""))
+        # v3.5.5: 玩家扮演角色（bible 主角）
+        proto = ctx.get("protagonist") or {}
+        if proto.get("name"):
+            p_ident = proto.get("identity", "")
+            p_pers = ""
+            pers = proto.get("personality") or {}
+            if isinstance(pers, dict):
+                p_pers = str(pers.get("true_self") or pers.get("surface") or "")[:120]
+            elif isinstance(pers, str):
+                p_pers = pers[:120]
+            st["player_char"] = {
+                "name": proto["name"],
+                "identity": str(p_ident)[:80],
+                "personality_brief": p_pers,
+            }
         # 预置主要角色（从 bible 预览）
         casts = st.get("casts", {})
         for name, info in (ctx.get("casts_preview") or {}).items():
@@ -74,8 +89,18 @@ async def interactive_start(novel_id: str):
         st["casts"] = casts
         # v3.2: 世界观注入（重开后剧情必须贴合本小说设定）
         wb = ctx.get("worldbuilding") or {}
-        st["state"]["location"] = wb.get("starting_location") or wb.get("geography", "")[:60] or ""
-        st["state"]["objective"] = wb.get("core_conflict", "") or "踏上你的旅程"
+        # v3.3.1: geography 可能是 str/dict/list，统一转字符串（修复 start 500）
+        # v3.5.18: location 只取第一个地点（list 转字符串会显示 JSON 数组字样）
+        _geo = wb.get("geography", "")
+        if isinstance(_geo, list) and _geo:
+            _geo = _geo[0] if isinstance(_geo[0], str) else json.dumps(_geo[0], ensure_ascii=False)
+        elif isinstance(_geo, dict):
+            _geo = json.dumps(_geo, ensure_ascii=False)
+        st["state"]["location"] = wb.get("starting_location") or str(_geo)[:60] or ""
+        core_conflict = wb.get("core_conflict", "")
+        if isinstance(core_conflict, (dict, list)):
+            core_conflict = json.dumps(core_conflict, ensure_ascii=False)
+        st["state"]["objective"] = str(core_conflict) or "踏上你的旅程"
         wb_brief = []
         for k in ("era", "geography", "power_system", "core_conflict", "factions"):
             v = wb.get(k)
@@ -86,6 +111,32 @@ async def interactive_start(novel_id: str):
             elif isinstance(v, list) and v:
                 wb_brief.append(f"{k}: {'、'.join(str(x)[:40] for x in v[:4])[:120]}")
         st["worldbuilding_brief"] = "\n".join(wb_brief)[:800]
+        # v3.5.20: 复用全局状态资源——时间线摘要 + 未回收伏笔（剧情呼应）
+        try:
+            import os
+            from config import NOVELS_DIR
+            gs_path = os.path.join(NOVELS_DIR, novel_id, "global_state.json")
+            if os.path.exists(gs_path):
+                with open(gs_path, "r", encoding="utf-8") as f:
+                    gs = json.load(f)
+                tl = gs.get("timeline") or []
+                if isinstance(tl, list) and tl:
+                    st["timeline_brief"] = " → ".join(str(x)[:40] for x in tl[-5:])
+                chs = gs.get("chapters_summary") or ""
+                if isinstance(chs, str) and chs.strip():
+                    st["chapters_brief"] = str(chs)[:200]
+            fs_path = os.path.join(NOVELS_DIR, novel_id, "foreshadowing.json")
+            if os.path.exists(fs_path):
+                with open(fs_path, "r", encoding="utf-8") as f:
+                    fs = json.load(f)
+                if isinstance(fs, list):
+                    unclosed = [x for x in fs if isinstance(x, dict) and not x.get("resolved")]
+                    if unclosed:
+                        st["foreshadows_brief"] = "；".join(
+                            str(x.get("content") or x.get("seed") or "")[:50]
+                            for x in unclosed[:3])
+        except Exception as e:
+            log.warning(f"global resources load failed: {e}")
         _store.save_state(novel_id, st)
 
     async def event_stream():
@@ -96,8 +147,32 @@ async def interactive_start(novel_id: str):
                 _story.attach_cast_profiles(novel_id, list(state.get("casts", {}).keys()))
         except Exception as e:
             log.warning(f"attach_cast_profiles failed: {e}")
+        # v3.5.13: 开场背景介绍——缓存命中先发（老玩家秒看）；未缓存则与场景并行
+        # 生成（不阻塞场景流，避免首次进入 25s+）
+        # v3.5.18: 旧缓存过浅（<200 字）强制重新生成
+        intro_fut = None
+        try:
+            state = _store.load_state(novel_id)
+            if state:
+                cached_intro = state.get("intro") or ""
+                if cached_intro and len(cached_intro) >= 200:
+                    yield f"data: {json.dumps({'type': 'intro', 'content': cached_intro}, ensure_ascii=False)}\n\n"
+                else:
+                    intro_fut = asyncio.create_task(
+                        asyncio.to_thread(_story.generate_intro, novel_id, state,
+                                          force=bool(cached_intro)))
+        except Exception as e:
+            log.warning(f"intro pre failed: {e}")
         async for data in _sse_with_heartbeat(_story.generate_scene_stream(novel_id)):
             yield data
+        # 场景流结束后拿并行生成的 intro（不阻塞场景本身）
+        if intro_fut is not None:
+            try:
+                intro = await asyncio.wait_for(intro_fut, timeout=30)
+                if intro:
+                    yield f"data: {json.dumps({'type': 'intro', 'content': intro}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                log.warning(f"intro parallel failed: {e}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -144,7 +219,7 @@ async def interactive_chat(novel_id: str, req: ChatRequest):
 # ── end-chat：PACT 提取 ──
 @router.post("/api/novels/{novel_id}/interactive/end-chat")
 async def interactive_end_chat(novel_id: str):
-    """结束对话：PACT 提取对话 → 剧情事实（facts）+ 关系更新"""
+    """结束对话：PACT 提取对话 → 剧情事实（facts）+ 关系更新 + Agenda 钩子核对"""
     _validate_novel_id(novel_id)
     if not _store.exists(novel_id):
         raise HTTPException(404, "互动存档不存在，请先 start")
@@ -156,12 +231,27 @@ async def interactive_end_chat(novel_id: str):
     result = await asyncio.to_thread(_story.extract_pact, novel_id, chat_entries)
 
     state = _store.load_state(novel_id)
+    # v3.3: Agenda 钩子核对（对话是否推进了剧情开关）
+    agenda = state.get("agenda")
+    hooks_result = {}
+    if agenda:
+        hooks_result = await asyncio.to_thread(_story.verify_hooks, novel_id, agenda)
+        # v3.3.1: missing hooks 回流——未达成的对话目标写入 state，
+        # 下一段场景生成时作为"未兑现的因果"软约束（后果显现/角色惦记）
+        if hooks_result.get("missing"):
+            state["pending_missing_hooks"] = hooks_result["missing"][:3]
+    # 核对完成后清除议程（本轮对话的轨道使命结束，下一节点重新生成）
+    if agenda:
+        state.pop("agenda", None)
+        state.pop("drift_note", None)
+        _store.save_state(novel_id, state)
     return {
         "ok": True,
         "facts": state.get("facts", [])[-10:],
         "relations": state.get("state", {}).get("relations", {}),
         "objective": state.get("state", {}).get("objective", ""),
         "tone": result.get("tone", ""),
+        "hooks": hooks_result,   # {hook_hits, all_hit, missing}
     }
 
 
