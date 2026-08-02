@@ -99,8 +99,8 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
    玩家要在移动端快速读完，宁可少写不可啰嗦。
 只输出标记语言文本，不要输出解释。"""
 
-INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份详尽的开场背景介绍（500-700 字），
-用第二人称（"你"）写，像小说序章，文笔凝练有氛围感。必须覆盖以下内容（缺一不可）：
+INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份简洁的开场背景介绍（250-350 字），
+用第二人称（"你"）写，像小说序章的开头，文笔凝练有氛围感。必须覆盖以下内容（缺一不可）：
 
 一、世界观：时代背景、主要地点、势力格局（谁掌握权力/财富，社会规则是什么）
 二、主要人物背景：每个出场角色的身份、与你的关系、性格底色（人人有交代，别只列名字）
@@ -110,6 +110,15 @@ INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份详尽的�
 段落分明（用空行分段），先世界观后人物再处境再目标，层层递进。
 基于给定资料组织，不要编造资料之外的设定；不要写成教程，要写成有代入感的开场。
 只输出介绍文本，不要输出标题和解释。"""
+
+# v3.5.33: 开场背景压缩——超长时语义压缩为精简版（非截断，保留完整信息）
+INTRO_COMPRESS_SYSTEM = """你是文案压缩师。把下面的开场背景介绍压缩到 300 字以内。
+
+要求：
+1. 保留全部关键信息：主角是谁、在哪、和谁什么关系、当前处境、要做什么
+2. 删除铺陈性描写、形容词堆砌、重复信息
+3. 保持第二人称"你"和小说语气，通顺自然
+只输出压缩后的文本，不要解释。"""
 
 NODE_SYSTEM = """你是互动小说剧情节奏师。判断当前场景是否应该暂停，让读者与角色对话。
 **核心原则（v3.5.3）：对话只在影响剧情走向的地方出现。** 不是"该不该聊"，
@@ -528,8 +537,16 @@ class StoryDirector:
         user = "\n".join(parts)
         intro = ""
         try:
-            raw = self._llm(INTRO_SYSTEM, user, temperature=0.7, max_tokens=900)
+            raw = self._llm(INTRO_SYSTEM, user, temperature=0.7, max_tokens=420)  # v3.5.33 精简版
             intro = (raw or "").strip()
+            # v3.5.33: 超长时语义压缩（非截断——保留完整语义的精简版）
+            if len(intro) > 400:
+                try:
+                    comp = self._llm(INTRO_COMPRESS_SYSTEM, intro, temperature=0.5, max_tokens=350)
+                    if comp and 150 < len(comp.strip()) < len(intro):
+                        intro = comp.strip()
+                except Exception as e:
+                    log.warning(f"intro compress failed: {e}")
             if len(intro) < 120:
                 intro = ""
         except Exception as e:
@@ -579,7 +596,7 @@ class StoryDirector:
         yield {"type": "scene_chunk", "scene_num": scene_num, "content": ""}
         try:
             # v3.5.32: max_tokens 520（≈360字）——LLM 生成即短，流式显示与落盘一致
-            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=520):
+            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=420):
                 if chunk:
                     collected.append(chunk)
                     yield {"type": "scene_chunk", "scene_num": scene_num, "content": chunk}
@@ -594,17 +611,7 @@ class StoryDirector:
             scene_text = f"【旁白】夜色渐深，{state.get('title', '故事')}还在继续。远处传来更鼓声，故事尚未落幕。"
             yield {"type": "scene_chunk", "scene_num": scene_num, "content": scene_text}
 
-        # v3.5.32: 后处理硬截断——仅影响落盘/回流（前端流式已由 max_tokens 限制，
-        # 不重复 yield 避免显示叠加）
-        if len(scene_text) > 400:
-            cut = scene_text[:380]
-            for sep in ("。", "！", "？", "！？", "……"):
-                idx = cut.rfind(sep)
-                if idx >= 200:
-                    scene_text = cut[:idx + 1] + "……"
-                    break
-            else:
-                scene_text = cut + "……"
+        # v3.5.33: 不硬截断——长度由 max_tokens(520)+prompt 规则控制（硬截断会切断语义）
 
         # 解析 + 持久化
         blocks = parse_scene_markup(scene_text)
@@ -734,7 +741,12 @@ class StoryDirector:
         hit = next((k for k in strong_kw if k in text), "")
         if hit:
             return True, chars, 5, f"重大事件: {hit}"
-        # LLM 精判（规则未命中才调用）
+        # v3.5.33: 纯叙事场景（无台词/无强冲突）跳过 LLM 精判——规则 2（连续 3 段
+        # 无对话强制）已保底互动频率，省每次 3-8s；玩家「我要说话」随时可介入
+        has_dialogue = any(b.get("type") == "dialogue" for b in blocks)
+        if not has_dialogue:
+            return False, chars, 0, "纯叙事场景，规则 2 保底即可"
+        # LLM 精判（规则未命中且有台词才调用）
         result = self._llm_judge_node(text, chars, state)
         if result is None:
             return False, chars, 2, "判定失败，默认不触发（玩家可主动介入）"

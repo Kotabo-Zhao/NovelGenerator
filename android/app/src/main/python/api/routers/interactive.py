@@ -194,7 +194,8 @@ async def interactive_start(novel_id: str):
             state = _store.load_state(novel_id)
             if state:
                 cached_intro = state.get("intro") or ""
-                if cached_intro and len(cached_intro) >= 200:
+                # v3.5.33: 精简版 250-350 字——旧缓存 >500 字（长篇）也强制重生
+                if cached_intro and 200 <= len(cached_intro) <= 400:
                     yield f"data: {json.dumps({'type': 'intro', 'content': cached_intro}, ensure_ascii=False)}\n\n"
                 else:
                     intro_fut = asyncio.create_task(
