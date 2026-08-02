@@ -1330,7 +1330,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <input v-model="interactive.message" @keyup.enter="sendInteractiveChat"
                        placeholder="说点什么，或直接行动：上车 / 推门 / 答应他 / 离开…（可 @角色名）" :disabled="interactive.busy"
                        style="flex:1;min-height:38px;font-size:14px" />
-                <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||!interactive.message.trim()">💬 说</button>
+                <button class="btn btn-sm btn-primary" @click="sendInteractiveChat" :disabled="interactive.busy||!String(interactive.message||'').trim()">💬 说</button>
               </div>
               <div class="flex gap-6 mt-8" style="justify-content:flex-end">
                 <button class="btn btn-sm btn-primary" @click="continueInteractive" :disabled="interactive.busy">
@@ -4128,7 +4128,7 @@ const app = createApp({
             }
           } else if (evt.type==='node_check') {
             interactive.pendingReason = evt.reason || '';
-            interactive.suggestions = evt.suggestions || [];
+            interactive.suggestions = (evt.suggestions || []).filter(s => typeof s === 'string');
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
             interactive.typing = false;
@@ -4258,7 +4258,7 @@ const app = createApp({
             interactive.state = data.state;
             interactive.pendingNode = !!data.state.pending_node;
             interactive.pendingReason = data.state.pending_reason || '';  // v3.5.35
-            interactive.suggestions = data.state.suggestions || [];       // v3.5.40
+            interactive.suggestions = (data.state.suggestions || []).filter(s => typeof s === 'string'); // v3.5.44 类型过滤
           }
         }
       } catch(e) { console.warn('loadInteractiveState failed:', e); }
@@ -4293,12 +4293,14 @@ const app = createApp({
     async function sendInteractiveChat(prefill) {
       if (interactive.busy) return;
       if (!activeNovel.value) return;
-      if (prefill) interactive.message = prefill;    // v3.5.40: 建议选项直接发送
-      if (!interactive.message.trim()) return;
+      if (prefill !== undefined && prefill !== null && prefill !== '') {
+        interactive.message = String(prefill);        // v3.5.44: 强制字符串，防类型污染
+      }
+      if (!String(interactive.message || '').trim()) return;
       cancelAuto();                                  // v3.5.7: 玩家输入打断自动流
       _setPhase('💭 正在发送…', 30000);               // v3.5.19: 生成提示
       const id = encodeURIComponent(activeNovel.value.id);
-      const msg = interactive.message.trim();
+      const msg = String(interactive.message || '').trim();
       interactive.message = '';
       interactive.busy = true;
       interactive.inChat = true;
@@ -4566,7 +4568,7 @@ const app = createApp({
             }
           } else if (evt.type==='node_check') {
             interactive.pendingReason = evt.reason || '';
-            interactive.suggestions = evt.suggestions || [];
+            interactive.suggestions = (evt.suggestions || []).filter(s => typeof s === 'string');
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
             // v3.3: 议程展示（这场对话要谈什么）
