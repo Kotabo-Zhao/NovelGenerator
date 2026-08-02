@@ -19,7 +19,7 @@ import time
 from typing import AsyncIterator, Optional
 
 from ..resilient_client import ResilientLLMClient
-from .action_engine import ActionEngine
+from .action_engine import ActionEngine, _state_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -174,6 +174,16 @@ class DialogueEngine:
             if v.get("emotion_expression"):
                 parts.append(f"情绪表达: {str(v['emotion_expression'])[:60]}")
 
+        # v3.5.5: 玩家扮演的角色（bible 主角）
+        pc = state.get("player_char") or {}
+        player_name = pc.get("name", "读者")
+        if pc:
+            parts.append(f"## 读者的化身（你对话的对象）: {player_name}"
+                         f"{'，' + str(pc.get('identity', ''))[:40] if pc.get('identity') else ''}")
+            if pc.get("personality_brief"):
+                parts.append(f"读者角色性格: {pc['personality_brief'][:100]}")
+            parts.append("用{player_name}称呼这位读者，而不是'你'以外的称呼；他是故事中的真实角色")
+
         # 剧情状态（态度依据）
         s = state.get("state", {})
         rel = s.get("relations", {}).get(target_char)
@@ -217,9 +227,9 @@ class DialogueEngine:
         if history:
             parts.append("## 对话历史（最近）:")
             for h in history[-16:]:
-                role = "读者" if h.get("role") == "user" else h.get("speaker", target_char)
+                role = player_name if h.get("role") == "user" else h.get("speaker", target_char)
                 parts.append(f"{role}: {h.get('content', '')[:200]}")
-        parts.append(f"## 现在读者对你说：\n{history[-1].get('content', '') if history else ''}")
+        parts.append(f"## 现在{player_name}对你说：\n{history[-1].get('content', '') if history else ''}")
         return "\n".join(parts)
 
     def _get_voices(self, state: dict, char_name: str) -> dict:
@@ -289,12 +299,12 @@ class DialogueEngine:
                 yield ev
             # 行动改变场景（离开/进入新地点）→ 对话自然收尾
             if action.get("end_chat"):
-                yield {"type": "action_done", "end_chat": True, "action": action}
+                yield {"type": "action_done", "end_chat": True, "action": action, "snapshot": _state_snapshot(state)}
                 # 行动命中 agenda hooks 的核对由 end-chat 的 verify_hooks 统一处理（行动已入日志）
                 yield {"type": "done"}
                 return
             # 行动后角色反应（对话继续）
-            yield {"type": "action_done", "end_chat": False, "action": action}
+            yield {"type": "action_done", "end_chat": False, "action": action, "snapshot": _state_snapshot(state)}
             last_action = action
         else:
             last_action = None
@@ -330,7 +340,8 @@ class DialogueEngine:
                            "ts": time.strftime("%H:%M:%S")}
         self.store.append_chat(novel_id, entry_assistant)
 
-        yield {"type": "chat_end", "speaker": target, "content": reply, "segments": segments}
+        yield {"type": "chat_end", "speaker": target, "content": reply, "segments": segments,
+               "snapshot": _state_snapshot(state)}
 
         # OOC 抽检（每 10 轮）
         chat_count = len(self.store.recent_chats(novel_id, 100))

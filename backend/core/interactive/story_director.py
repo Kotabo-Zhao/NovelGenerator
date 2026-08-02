@@ -21,6 +21,7 @@ import uuid
 from typing import AsyncIterator, Optional
 
 from ..resilient_client import ResilientLLMClient
+from .action_engine import _state_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -334,7 +335,8 @@ class StoryDirector:
         state["casts"] = casts
         self.store.save_state(novel_id, state)
 
-        yield {"type": "scene_end", "scene_num": scene_num, "blocks": blocks}
+        yield {"type": "scene_end", "scene_num": scene_num, "blocks": blocks,
+               "snapshot": _state_snapshot(state)}
 
         # ── 节点判定（三层保障的 ① 规则预筛 + ② LLM 精判）──
         if force_node_check:
@@ -356,6 +358,7 @@ class StoryDirector:
                 "suggested_rounds": rounds,
                 "reason": reason,
                 "agenda": agenda,   # 前端可展示"这场对话要谈什么"
+                "snapshot": _state_snapshot(state),
             }
 
         yield {"type": "done"}

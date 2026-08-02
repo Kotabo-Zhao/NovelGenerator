@@ -451,6 +451,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .sg-relation-svg-wrap{height:380px}
   .sg-timeline-svg-wrap{height:340px}
 
+}
+
   /* ── v3.0: 互动模式（v3.5 Galgame 风格 UI）── */
   .interactive-shell{display:flex;flex-direction:column;gap:14px}
   .interactive-story{background:linear-gradient(180deg,var(--bg2) 0%,#12151c 100%);border:1px solid var(--border);border-radius:18px;padding:24px 26px 30px;min-height:300px;max-height:54vh;overflow-y:auto;line-height:1.9;font-size:15px;position:relative}
@@ -481,6 +483,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   /* 行动块：左侧金边 + 淡金底 */
   .inter-action-desc{display:flex;align-items:center;gap:8px;margin:14px 18px;padding:8px 16px;border-left:3px solid var(--gold);background:rgba(212,175,55,.06);border-radius:8px;color:#d9bc7a;font-size:13.5px;animation:interRise .45s ease both}
   .inter-action-result{margin:14px 30px;padding:12px 18px;border-left:3px solid var(--gold);background:rgba(212,175,55,.04);border-radius:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi",serif;font-size:14px;text-align:center;animation:interRise .5s ease both}
+  /* v3.5.8: 状态变化系统提示（对话流内，绿色轻提示） */
+  .inter-sys-change{color:#8fd3a8;font-size:12.5px;margin:6px 30px;text-align:center;background:rgba(63,185,80,.07);border:1px solid rgba(63,185,80,.22);border-radius:6px;padding:4px 10px;animation:interRise .4s ease both;letter-spacing:.3px}
   /* 轨道提示条 */
   .inter-track-note{border-radius:10px;padding:8px 14px;font-size:12.5px;margin-bottom:12px;animation:interRise .4s ease both}
   .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;transition:border-color .3s, box-shadow .3s}
@@ -496,9 +500,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .fact-broken{color:var(--red)}
   .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 16px}
   /* v3.5.5: 玩家角色状态卡 */
-  .player-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px}
+  .player-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px;position:sticky;top:0;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.22)}
   .player-status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;margin-top:4px}
-  .ps-cell{display:flex;align-items:baseline;gap:8px;min-width:0}
+  .ps-cell{display:flex;align-items:baseline;gap:8px;min-width:0;border-radius:6px;padding:2px 4px;transition:background .3s}
+  .ps-cell.ps-flash{background:rgba(212,175,55,.14);animation:psFlash 1.8s ease}
+  @keyframes psFlash{0%{background:rgba(212,175,55,.28)}100%{background:rgba(212,175,55,.14)}}
   .ps-label{font-size:11.5px;color:var(--text3);flex-shrink:0;width:52px}
   .ps-val{font-size:12.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   @media(max-width:760px){.player-status-grid{grid-template-columns:1fr}}
@@ -516,7 +522,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   /* ── 弹层/Toast ── */
   .toast-box{width:88vw;max-width:340px}
   .toast-overlay{padding:16px}
-}
 
 /* 超窄屏（≤420px，小手机） */
 @media(max-width:420px){
@@ -1035,7 +1040,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   </div>
                 </div>
                 <div class="flex gap-6">
-                  <button class="btn btn-xs" :class="interactive.autoPlay?'btn-primary':''" @click="interactive.autoPlay=!interactive.autoPlay; _cancelAuto()" title="剧情自动流：行动/对话后剧情自动衔接，只在需要你决策时停下">⏵ {{ interactive.autoPlay?'自动':'手动' }}</button>
+                  <button class="btn btn-xs" :class="interactive.autoPlay?'btn-primary':''" @click="interactive.autoPlay=!interactive.autoPlay; cancelAuto()" title="剧情自动流：行动/对话后剧情自动衔接，只在需要你决策时停下">⏵ {{ interactive.autoPlay?'自动':'手动' }}</button>
                   <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
                   <span v-if="interactive.emotionAvailable" style="display:flex;gap:6px;align-items:center">
                     <button class="btn btn-xs" :class="interactive.emotionVoice?'btn-primary':''" @click="interactive.emotionVoice=!interactive.emotionVoice" :disabled="interactive.busy" title="IndexTTS-2 本地情感引擎（角色音色+情感，免费离线）">🎭 {{ interactive.emotionVoice?'情感开':'情感关' }}</button>
@@ -1047,17 +1052,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
                 </div>
               </div>
-              <!-- 剧情进展 + 角色状态 -->
+              <!-- 剧情进展 + 角色状态（v3.5.8: 实时更新 + 变化高亮） -->
               <div class="player-status-grid">
-                <div class="ps-cell" v-if="interactive.state.state && interactive.state.state.location">
+                <div class="ps-cell" :class="{'ps-flash': statusFlash.scene_num}" v-if="interactive.state.state && interactive.state.state.location || statusFlash.scene_num">
                   <span class="ps-label">📍 地点</span>
-                  <span class="ps-val">{{ interactive.state.state.location }}</span>
+                  <span class="ps-val">{{ interactive.state.state && interactive.state.state.location || '（未定）' }}</span>
                 </div>
-                <div class="ps-cell" v-if="interactive.state.state && interactive.state.state.objective">
-                  <span class="ps-label">🎯 目标</span>
-                  <span class="ps-val">{{ interactive.state.state.objective }}</span>
-                </div>
-                <div class="ps-cell" v-if="relCount">
+                <div class="ps-cell" :class="{'ps-flash': statusFlash.relations}" v-if="relCount || statusFlash.relations">
                   <span class="ps-label">💞 关系</span>
                   <span class="ps-val">
                     <span v-for="(rv, rn) in interactive.state.state.relations" :key="rn" style="margin-right:10px">
@@ -1065,10 +1066,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                     </span>
                   </span>
                 </div>
-                <div class="ps-cell" v-if="(interactive.state.state && interactive.state.state.flags || []).length">
+                <div class="ps-cell" :class="{'ps-flash': statusFlash.flags}" v-if="(interactive.state.state && interactive.state.state.flags || []).length || statusFlash.flags">
                   <span class="ps-label">🏷 进展</span>
                   <span class="ps-val">
-                    <span v-for="f in interactive.state.state.flags.slice(-4)" :key="f" style="margin-right:8px;font-size:12px;background:rgba(212,175,55,.1);border-radius:4px;padding:1px 6px">{{ f }}</span>
+                    <span v-for="f in (interactive.state.state && interactive.state.state.flags || []).slice(-4)" :key="f" style="margin-right:8px;font-size:12px;background:rgba(212,175,55,.1);border-radius:4px;padding:1px 6px">{{ f }}</span>
                   </span>
                 </div>
                 <div class="ps-cell" v-if="presentChars.length">
@@ -1077,6 +1078,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                     <span v-for="c in presentChars" :key="c" style="margin-right:8px">{{ c }}</span>
                   </span>
                 </div>
+              </div>
+              <!-- v3.5.8: 目标始终显示（章节目的实时可见） -->
+              <div class="ps-cell" style="margin-top:6px;padding:2px 4px" v-if="interactive.state.state && interactive.state.state.objective">
+                <span class="ps-label">🎯 目标</span>
+                <span class="ps-val" style="white-space:normal;line-height:1.5">{{ interactive.state.state.objective }}</span>
               </div>
             </div>
 
@@ -1092,6 +1098,8 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <div v-else-if="blk.type==='action'" class="inter-action">{{ blk.content }}</div>
                 <div v-else-if="blk.type==='action_desc'" class="inter-action-desc">⚡ {{ blk.content }}</div>
                 <div v-else-if="blk.type==='action_result'" class="inter-action-result">{{ blk.content }}</div>
+                <!-- v3.5.8: 状态变化系统提示（对话流内可见，免抬头） -->
+                <div v-else-if="blk.type==='sys_change'" class="inter-sys-change">✨ {{ blk.content }}</div>
                 <div v-else-if="blk.type==='typing'" class="inter-typing" style="text-align:center;padding:8px 0">▋</div>
                 <div v-else class="inter-line" :class="{'playing': interactive.speakingLine===i, 'inter-player': blk.type==='player'}">
                   <div class="inter-avatar" :style="avatarStyle(blk.type==='player' ? playerName : blk.speaker)">{{ (blk.type==='player' ? playerName : (blk.speaker||'?')).slice(0,1) }}</div>
@@ -3914,6 +3922,8 @@ const app = createApp({
             interactive.typing = false;
             interactive.blocks = evt.blocks || [];
             _scrollStory();
+            // v3.5.8: 场景结束 → 状态卡实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.5: 场景内角色台词预合成（情感引擎开启时）
             if (interactive.emotionVoice && interactive.emotionAvailable) {
               (evt.blocks || []).forEach(b => {
@@ -3927,6 +3937,8 @@ const app = createApp({
             // v3.3: 议程展示（这场对话要谈什么）
             interactive.agenda = evt.agenda || null;
             interactive.driftNote = ''; interactive.naturalEnd = false; interactive.hookSummary = '';
+            // v3.5.8: 状态快照实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
           } else if (evt.type==='error') {
             interactive.error = evt.message;
           }
@@ -4056,7 +4068,7 @@ const app = createApp({
     async function sendInteractiveChat() {
       if (!interactive.message.trim() || interactive.busy) return;
       if (!activeNovel.value) return;
-      _cancelAuto();                                  // v3.5.7: 玩家输入打断自动流
+      cancelAuto();                                  // v3.5.7: 玩家输入打断自动流
       const id = encodeURIComponent(activeNovel.value.id);
       const msg = interactive.message.trim();
       interactive.message = '';
@@ -4083,6 +4095,8 @@ const app = createApp({
             const last = interactive.blocks[interactive.blocks.length-1];
             if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
             _scrollStory();
+            // v3.5.8: 状态快照实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.1: 对话台词自动播放（旁白静默，只对话题生效）
             if (interactive.autoVoice && last && (last.type==='chat' || last.type==='dialogue')) {
               speakLine(last, interactive.blocks.length-1);
@@ -4120,14 +4134,22 @@ const app = createApp({
             const last = interactive.blocks[interactive.blocks.length-1];
             if (last && last.type==='typing') { last.type='action_result'; last.speaker=''; last.content=evt.content; }
             _scrollStory();
+            // v3.5.8: 行动结果 → 状态卡实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+          } else if (evt.type==='state_change') {
+            // v3.5.8: 状态变化 → 对话流内提示 + 状态卡更新（免滚动查看）
+            _pushStateChange(evt.changes);
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
           } else if (evt.type==='action_done') {
             // 行动完成：end_chat=true → 对话自然收尾（可继续剧情）
             if (evt.end_chat) {
               interactive.hookSummary = '你的行动改变了剧情走向';
               interactive.inChat = false;
             }
+            // v3.5.8: 状态快照实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.5.7: 行动后剧情自动衔接（行动有后果，顺势走下一段；force 无视 pendingNode）
-            _cancelAuto();
+            cancelAuto();
             _scheduleAutoNext(2200, true);
           } else if (evt.type==='error') {
             interactive.blocks.push({type:'error', speaker:'', content: evt.message});
@@ -4140,13 +4162,53 @@ const app = createApp({
       _scrollStory();
     }
 
+    // ═══ v3.5.8: 状态快照实时更新 ═══
+    // SSE 事件携带 state_snapshot → 免请求直接更新状态卡；变化字段高亮闪烁
+    let statusFlash = reactive({});
+
+    function _applySnapshot(snap) {
+      if (!snap) return;
+      const st = interactive.state;
+      const old = {
+        location: (st.state && st.state.location) || '',
+        relations: JSON.stringify((st.state && st.state.relations) || {}),
+        flags: JSON.stringify((st.state && st.state.flags) || []),
+        scene_num: st.scene_num || 0,
+      };
+      if (snap.scene_num != null) st.scene_num = snap.scene_num;
+      if (!st.state) st.state = {};
+      if (snap.location) st.state.location = snap.location;
+      if (snap.objective) st.state.objective = snap.objective;
+      if (snap.relations) st.state.relations = snap.relations;
+      if (snap.flags) st.state.flags = snap.flags;
+      // 变化高亮（1.8s 后熄灭）
+      const flash = {};
+      if (snap.location && snap.location !== old.location) flash.location = true;
+      if (snap.relations && JSON.stringify(snap.relations) !== old.relations) flash.relations = true;
+      if (snap.flags && JSON.stringify(snap.flags) !== old.flags) flash.flags = true;
+      if (snap.scene_num != null && snap.scene_num !== old.scene_num) flash.scene_num = true;
+      Object.keys(flash).forEach(k => statusFlash[k] = true);
+      if (Object.keys(flash).length) {
+        setTimeout(() => { Object.keys(flash).forEach(k => statusFlash[k] = false); }, 1800);
+      }
+    }
+
+    // v3.5.8: 对话流内状态变化提示（玩家不用抬头看状态卡）
+    function _pushStateChange(changes) {
+      if (!changes || !changes.length) return;
+      changes.slice(0, 3).forEach(c => {
+        interactive.blocks.push({ type:'sys_change', speaker:'', content: c });
+      });
+      _scrollStory();
+    }
+
     // ═══ v3.5.7: 剧情自动流 ═══
     // 静止点（场景结束/行动完成/角色回复完）→ 玩家未干预 → 自动衔接下一段剧情；
     // 节点判定需要玩家介入 → 停；连续自动 3 段 → 强制停一次；玩家输入随时打断。
     let _autoTimer = null;
     let _autoStreak = 0;
 
-    function _cancelAuto(reason) {
+    function cancelAuto(reason) {
       if (_autoTimer) { clearTimeout(_autoTimer); _autoTimer = null; }
       // 玩家主动干预 → 重置连播计数
       _autoStreak = 0;
@@ -4230,6 +4292,8 @@ const app = createApp({
             interactive.blocks = evt.blocks || [];
             interactive.pendingNode = false;
             _scrollStory();
+            // v3.5.8: 场景结束 → 状态卡实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.2: 场景内的角色台词自动播放（只播 dialogue，旁白静默）
             if (interactive.autoVoice) {
               const blocks = interactive.blocks;
@@ -4242,10 +4306,12 @@ const app = createApp({
             // v3.3: 议程展示（这场对话要谈什么）
             interactive.agenda = evt.agenda || null;
             interactive.driftNote = ''; interactive.naturalEnd = false; interactive.hookSummary = '';
+            // v3.5.8: 状态快照实时更新
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.5.7: 剧情自动流——节点判定：需要玩家介入 → 停；
             // 不需要 → 自动衔接下一段（连续 3 段后强制停）
             if (evt.is_node) {
-              _cancelAuto();
+              cancelAuto();
             } else {
               _scheduleAutoNext(2000);
             }
@@ -4625,7 +4691,9 @@ const app = createApp({
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
       // v3.5.7: 剧情自动流
-      _cancelAuto,
+      cancelAuto,
+      // v3.5.8: 状态卡变化高亮
+      statusFlash,
       speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,previewVoice,
       // v3.5.1: 真人音色（v3.5.4 融合：与 edge 音色统一决策树）
       setRealVoice,clearRealVoice,realVoiceName,

@@ -181,6 +181,23 @@ def rule_prescreen(user_input: str) -> Optional[dict]:
     return {"candidate": False, "forced": False, "hint": "普通对话"}
 
 
+# v3.5.8: 状态快照（SSE 事件携带，前端实时更新状态卡，免滚动查看）
+def _state_snapshot(state: dict) -> dict:
+    s = state.get("state", {}) or {}
+    rel = {}
+    for k, v in (s.get("relations") or {}).items():
+        rel[str(k)[:12]] = v if isinstance(v, (int, float)) else str(v)[:20]
+    return {
+        "scene_num": state.get("scene_num", 0),
+        "location": s.get("location", "") or "",
+        "objective": s.get("objective", "") or "",
+        "relations": rel,
+        "flags": [str(f)[:40] for f in (s.get("flags") or [])[-4:]],
+        "facts_count": len([f for f in state.get("facts", []) if f.get("status") == "active"]),
+        "last_action": (state.get("last_action") or {}).get("summary", "")[:60],
+    }
+
+
 class ActionEngine:
     def __init__(self, client, model: str, store):
         self.client = client
@@ -398,10 +415,15 @@ class ActionEngine:
         if not text:
             text = f"【旁白】你做了这个决定，{state.get('title', '故事')}的走向因此改变。"
             yield {"type": "action_chunk", "content": text}
+        # v3.5.8: 状态变化实时推送（前端对话流内直接展示 + 状态卡实时更新，免滚动）
+        if changed:
+            yield {"type": "state_change", "changes": changed,
+                   "snapshot": _state_snapshot(state)}
         # 落盘（进 chat_logs 保持时序，标记 action_result）
         self.store.append_chat(novel_id, {
             "role": "assistant", "speaker": "旁白", "type": "action_result",
             "content": text, "action": action.get("type", "other"),
             "ts": time.strftime("%H:%M:%S"),
         })
-        yield {"type": "action_end", "content": text, "action": action}
+        yield {"type": "action_end", "content": text, "action": action,
+               "snapshot": _state_snapshot(state)}
