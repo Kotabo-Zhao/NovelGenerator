@@ -66,8 +66,10 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
     """
 
     def __init__(self):
+        # v3.5.23: 空 key 时用占位 key 宽容初始化（CI/测试无 .env 环境可建引擎，
+        # 真实 LLM 调用才会 401——测试只验证流程不真调用）
         self.client = OpenAI(
-            api_key=config.DEEPSEEK_API_KEY,
+            api_key=config.DEEPSEEK_API_KEY or "sk-placeholder-for-tests",
             base_url=config.DEEPSEEK_BASE_URL,
         )
         self.model = config.DEEPSEEK_MODEL
