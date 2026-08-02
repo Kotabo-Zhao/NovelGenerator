@@ -124,6 +124,12 @@ class DialogueEngine:
         loc = s.get("location", "") or ""
         if loc:
             parts.append(f"## 当前环境: {clean_location(loc)}")
+        # v3.5.37: 主角状态卡（对话发生在哪/何时/和谁/处境）
+        ps = state.get("player_state") or {}
+        if ps:
+            parts.append(f"## 当前状态: 位置[{ps.get('location', '')}] 时间[{ps.get('time', '')}] "
+                         f"同行[{','.join(ps.get('with') or []) or '无'}] "
+                         f"处境[{ps.get('situation', '')}]")
         # v3.5.27: 角色白名单——本轮只有你与读者，严禁其他人出现
         parts.append(f"## 对话对象: 你（{target_char}）与读者（{((state.get('player_char') or {}).get('name', '你'))}）"
                      "两人。其他角色一律不得出现、插话或提及在场（读者主动提起时只回应其内容）。")

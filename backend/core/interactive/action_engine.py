@@ -291,9 +291,15 @@ class ActionEngine:
         chars = list(state.get("casts", {}).keys())
         # v3.4.1：注入世界观边界 + 关键角色保护
         wb = str(state.get("worldbuilding_brief", ""))[:400]
+        # v3.5.37: 主角状态卡注入（精确位置/时间/同行/处境）
+        _ps = state.get("player_state") or {}
+        _ps_line = (f"主角状态卡: 位置[{_ps.get('location', '')}] 时间[{_ps.get('time', '')}] "
+                    f"同行[{','.join(_ps.get('with') or []) or '无'}] "
+                    f"处境[{_ps.get('situation', '')}]\n") if _ps else ""
         user = (
             f"当前地点: {clean_location(s.get('location', '')) or '（未定）'}\n"
-            f"主线目标: {s.get('objective', '') or '（未定）'}\n"
+            + _ps_line
+            + f"主线目标: {s.get('objective', '') or '（未定）'}\n"
             f"世界观边界: {wb or '（无，按现实世界逻辑）'}\n"
             f"在场角色: {', '.join(chars) or '（无）'}\n"
             f"对话议程推进开关:\n{hook_lines}\n"
@@ -403,6 +409,16 @@ class ActionEngine:
                 else:
                     rel_map[k] = str(v)[:60]
                 changed.append(f"关系[{k}]: {v}")
+        # v3.5.37: 行动同步到主角状态卡（location/物品/处境更新）
+        ps = state.get("player_state") or {}
+        if action.get("type") in ("move", "leave", "interact") and su.get("location"):
+            ps["location"] = str(su["location"])[:80]
+        if action.get("type") in ("use", "interact") and su.get("inventory"):
+            ps["holding"] = [str(x)[:30] for x in su["inventory"]][:5]
+        if action.get("type") in ("move", "leave"):
+            ps["situation"] = f"刚执行行动：{str(action.get('summary', ''))[:60]}"
+        if ps:
+            state["player_state"] = ps
         # 记录最近一次行动（PACT/场景生成可感知）
         state["last_action"] = {
             "type": action.get("type", "other"),

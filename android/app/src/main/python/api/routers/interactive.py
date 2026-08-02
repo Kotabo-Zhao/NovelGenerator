@@ -106,6 +106,9 @@ async def interactive_start(novel_id: str):
                     _loc = _loc.split(_sep)[0].strip()
                     break
         st["state"]["location"] = _loc[:60]
+        # v3.5.37: 主角状态卡初始化（精确位置由场景后后台提取更新）
+        st["player_state"] = {"location": _loc[:60], "time": "",
+                              "with": [], "holding": [], "situation": ""}
         core_conflict = wb.get("core_conflict", "")
         if isinstance(core_conflict, (dict, list)):
             core_conflict = json.dumps(core_conflict, ensure_ascii=False)

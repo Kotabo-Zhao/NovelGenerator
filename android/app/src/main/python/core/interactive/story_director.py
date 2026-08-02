@@ -40,6 +40,25 @@ INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式
 5. 篇幅：接近目标字数（上下浮动 20% 可接受），宁可充实不要干瘪
 只输出章节正文，不要输出标题以外的任何解释。"""
 
+# ── v3.5.37: 主角状态卡提取（后台，场景后更新——LLM 结构化识别主角当前状态）──
+PLAYER_STATE_SYSTEM = """你是互动小说状态追踪器。根据最新场景更新主角的状态卡。
+
+状态卡是固定的结构化字段，供后续生成准确识别主角当前状态（防地点/时间/物品错乱）：
+
+当前状态卡（旧）:
+{old_state}
+
+最新场景:
+{scene_text}
+
+请更新状态卡，只输出 JSON（不要解释）:
+{{"location": "主角当前精确位置（如：陆氏集团28层，陆廷深办公室门口）",
+  "time": "当前时间段（清晨/上午/正午/下午/傍晚/夜晚/深夜）",
+  "with": ["当前与主角同行的角色名（没有则空数组）"],
+  "holding": ["主角随身携带的重要物品（没有则空数组）"],
+  "situation": "主角当前处境一句话（正在做什么/刚发生了什么）"}}
+规则：location 必须精确到场景级（不是城市名）；未发生的地点/时间变化保持旧值；场景中明确的变化必须更新。"""
+
 # ── System Prompts ──
 SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时与读者对话的互动小说。
 
@@ -298,9 +317,43 @@ class StoryDirector:
             log.warning(f"logic_context failed: {e}")
             return ""
 
+    def _extract_player_state(self, novel_id: str, scene_text: str):
+        """v3.5.37: 场景后（后台）提取主角状态卡——location 精确化/时间/同行/物品/处境"""
+        try:
+            st = self.store.load_state(novel_id) or {}
+            old_ps = st.get("player_state") or {}
+            user = PLAYER_STATE_SYSTEM.format(
+                old_state=old_ps or {},
+                scene_text=str(scene_text)[:1500],
+            )
+            raw = self._llm(PLAYER_STATE_SYSTEM, user, temperature=0.2, max_tokens=400)
+            import re as _re
+            m = _re.search(r"\{.*?\}", raw or "", _re.S)
+            if not m:
+                return
+            ps = json.loads(m.group(0))
+            if not isinstance(ps, dict):
+                return
+            clean = {
+                "location": str(ps.get("location", old_ps.get("location", "")))[:80],
+                "time": str(ps.get("time", old_ps.get("time", "")))[:20],
+                "with": [str(x)[:20] for x in (ps.get("with") or [])][:4],
+                "holding": [str(x)[:30] for x in (ps.get("holding") or [])][:5],
+                "situation": str(ps.get("situation", old_ps.get("situation", "")))[:120],
+            }
+            st["player_state"] = clean
+            self.store.save_state(novel_id, st)
+        except Exception as e:
+            log.warning(f"player_state extract failed: {type(e).__name__}: {str(e)[:80]}")
+
     def _post_scene_logic_check(self, novel_id: str, scene_num: int, scene_text: str):
         """场景生成后（后台）：复用小说模式引擎做状态更新 + 矛盾检查"""
         try:
+            # v3.5.37: 主角状态卡提取（精确位置/时间/同行/物品/处境）
+            try:
+                self._extract_player_state(novel_id, scene_text)
+            except Exception as e:
+                log.warning(f"ps extract failed: {e}")
             # 1) 角色状态更新（提取位置/状态变化 → global_state.json）
             tr = self._logic_tracker()
             if tr is not None:
@@ -444,6 +497,14 @@ class StoryDirector:
                          f"（{ch.get('volume', '')}）—— {ch.get('summary', '')}")
         if s.get("location"):
             parts.append(f"地点: {clean_location(s['location'])}")
+        # v3.5.37: 主角状态卡（精确位置/时间/同行/物品/处境——LLM 结构化识别）
+        ps = state.get("player_state") or {}
+        if ps:
+            parts.append(f"主角状态卡（以此为准，保持状态连续）: "
+                         f"位置[{ps.get('location', '')}] 时间[{ps.get('time', '')}] "
+                         f"同行[{','.join(ps.get('with') or []) or '无'}] "
+                         f"物品[{','.join(ps.get('holding') or []) or '无'}] "
+                         f"处境[{ps.get('situation', '')}]")
         if s.get("objective"):
             parts.append(f"主线目标（必须推进）: {s['objective']}")
         if s.get("flags"):
