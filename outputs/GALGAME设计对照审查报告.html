@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GALGAME 设计范式对照审查报告</title>
+<style>
+:root{--bg:#14161c;--card:#1d2027;--border:#2c3038;--text:#e8e6e0;--text2:#a8a49a;--gold:#d4af37;--red:#e24b4a;--green:#3fb950;--orange:#d29922;--blue:#58a6ff}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Microsoft YaHei','PingFang SC',sans-serif;line-height:1.75;padding:32px 20px}
+.wrap{max-width:980px;margin:0 auto}
+h1{font-size:24px;color:var(--gold);text-align:center;margin-bottom:6px}
+.sub{text-align:center;color:var(--text2);font-size:13px;margin-bottom:28px}
+h2{font-size:18px;color:var(--gold);margin:34px 0 14px;padding-left:10px;border-left:3px solid var(--gold)}
+h3{font-size:15px;color:var(--text);margin:18px 0 8px}
+p{margin:8px 0;color:var(--text)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:12px 0}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+th{background:#262a33;color:var(--gold);padding:9px 10px;text-align:left;font-weight:600;border:1px solid var(--border)}
+td{padding:8px 10px;border:1px solid var(--border);color:var(--text);vertical-align:top}
+.ok{color:var(--green);font-weight:600}
+.warn{color:var(--orange);font-weight:600}
+.bad{color:var(--red);font-weight:600}
+.blue{color:var(--blue);font-weight:600}
+code{background:#262a33;padding:2px 6px;border-radius:4px;font-size:12.5px;color:#d9bc7a}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11.5px;margin-right:6px}
+.tag-green{background:rgba(63,185,80,.12);color:var(--green);border:1px solid rgba(63,185,80,.3)}
+.tag-red{background:rgba(226,75,74,.12);color:var(--red);border:1px solid rgba(226,75,74,.3)}
+.tag-gold{background:rgba(212,175,55,.12);color:var(--gold);border:1px solid rgba(212,175,55,.3)}
+.tag-blue{background:rgba(88,166,255,.12);color:var(--blue);border:1px solid rgba(88,166,255,.3)}
+.footer{text-align:center;color:var(--text2);font-size:12px;margin-top:40px;padding-top:16px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>GALGAME 设计范式对照审查报告</h1>
+<div class="sub">学习 GALGAME 设计 → 对照 NovelGenerator 互动模式 → 问题分级与改进路线图 &nbsp;|&nbsp; 2026-08-02</div>
+
+<h2>一、GALGAME 设计范式（学习摘要）</h2>
+<div class="card">
+<table>
+<tr><th style="width:16%">维度</th><th>成熟范式</th><th style="width:30%">代表案例/数据</th></tr>
+<tr><td><b>结构</b></td><td>共通线 → 分支路线（hub-and-spoke）：共用开场建立世界与角色 → 进入个人线/结局。分支树 vs 轮毂式，前者变化多成本高，后者角色深度好</td><td>Clannad / Little Busters（Key 社）</td></tr>
+<tr><td><b>节奏</b></td><td><b>有效情节密度 = (关键选择数 × 分支影响度) / 平均阅读时长</b>，理想区间 0.6-1.2；逐行阅读、每句有分量、已读可 SKIP</td><td>《海市蜃楼之馆》实测</td></tr>
+<tr><td><b>选择设计</b></td><td>四原则：①虚假选择过滤（伪分支无效）②延迟反馈（选择后果被记住并回馈）③道德模糊化 ④元叙事干预。选项要少而关键，米勒定律（≤7 个）</td><td>TellTale / 隐形守护者</td></tr>
+<tr><td><b>好感度</b></td><td>上品：选项影响走向 + <b>多维关系启发式</b>（5 维 10 变量）+ 事件内增减；忌"选项堆数值"（下乘）；角色会<b>记住并认可玩家之前的选择</b></td><td>Scarlet Hollow</td></tr>
+<tr><td><b>反馈</b></td><td>延迟反馈机制（成就/提示）：选择后果不即时剧透但会被系统记住，在关键时刻回馈（"你当初的承诺，我一直记得"）</td><td>隐形守护者成就系统</td></tr>
+<tr><td><b>演出</b></td><td>立绘+表情差分 / BGM / SE / 语音 / 转场——文本与视听协同传达情绪</td><td>几乎所有商业 GAL</td></tr>
+<tr><td><b>玩家控制</b></td><td>点击推进 / 文本速度调节 / 已读跳过 / 自动模式 / 完整对话历史（滚轮回看）/ 存档位+路线图</td><td>标准 ADV 引擎（Ren'Py）</td></tr>
+<tr><td><b>写作</b></td><td>角色第一（矛盾/想要/恐惧），情节第二；配角有自己的小弧线</td><td>vnpaths 指南</td></tr>
+</table>
+</div>
+
+<h2>二、当前项目对照审查</h2>
+<div class="card">
+<h3>2.1 已符合 GALGAME 范式的部分（做对了的）</h3>
+<table>
+<tr><th style="width:26%">范式</th><th>当前实现</th><th style="width:10%">状态</th></tr>
+<tr><td>角色第一</td><td>人设卡/表达 DNA/角色专属记忆/信息不对称——角色是"人"不是剧情工具</td><td class="ok">✅</td></tr>
+<tr><td>语音对白</td><td>角色台词自动语音（edge-tts/情感引擎），旁白静默——Galgame 经典体验</td><td class="ok">✅</td></tr>
+<tr><td>玩家节奏</td><td>自动流/手动切换/回退/重开</td><td class="ok">✅</td></tr>
+<tr><td>精简文本</td><td>场景 200-400 字、对话 20-80 字——逐句有分量，符合 VN 阅读特性</td><td class="ok">✅</td></tr>
+<tr><td>选择记忆</td><td>PACT/角色记忆/事件时间线——玩家选择被记住并持续影响（"记得"能力已具备）</td><td class="ok">✅</td></tr>
+<tr><td>关键节点停顿</td><td>节点判定（规则+LLM）+ 停顿理由展示——"只在影响剧情走向的地方停"</td><td class="ok">✅</td></tr>
+</table>
+
+<h3>2.2 与 GALGAME 范式的差距（问题清单）</h3>
+<table>
+<tr><th style="width:22%">问题</th><th>范式要求</th><th>当前状态</th><th style="width:9%">级别</th></tr>
+<tr><td><b>① 无分支路线感</b></td><td>共通线 → 分支 → 结局；选择改变路线</td><td>大纲线性推进，玩家选择影响"细节"（关系/承诺/记忆）但不改变路线——更像"可插话的线性小说"。分支会偏离大纲是设计冲突点</td><td class="bad">P0</td></tr>
+<tr><td><b>② 选择反馈延迟不足</b></td><td>延迟反馈机制：后果被记住并在关键时刻回馈（"你当初的承诺，我一直记得"）</td><td>有记忆系统但"回馈时刻"少——角色很少主动提起玩家的旧选择；关系变化提示藏在状态卡</td><td class="bad">P0</td></tr>
+<tr><td><b>③ 无选项按钮（只有自由输入）</b></td><td>关键节点给选项按钮（有引导、可预览），自由输入为进阶</td><td>玩家停顿时面对空白输入框——"我不知道该说什么"（老赵反馈过不知所措）</td><td class="warn">P1</td></tr>
+<tr><td><b>④ 无节奏控制</b></td><td>点击加速 / 已读 SKIP / 自动速度可调</td><td>无 SKIP、自动流速度固定、无点击加速</td><td class="warn">P1</td></tr>
+<tr><td><b>⑤ 关系维度单一</b></td><td>多维启发式（信任/依赖/敌意…）比单一好感值更真实</td><td>relations 是单一数值（♥值）+ 记忆辅助——接近"数值决定"下乘设计边缘</td><td class="warn">P1</td></tr>
+<tr><td><b>⑥ 无路线进度可视化</b></td><td>路线图/流程图（当前在哪条线、多少内容）</td><td>只有章节目标条——不知道自己在哪、还有多少</td><td class="warn">P2</td></tr>
+<tr><td><b>⑦ 历史回看弱</b></td><td>完整对话历史 + 滚轮回看</td><td>有场景历史但回看交互弱</td><td class="warn">P2</td></tr>
+<tr><td><b>⑧ 无 BGM/SE</b></td><td>氛围音乐/音效</td><td>只有语音，无声景</td><td class="warn">P2</td></tr>
+<tr><td><b>⑨ 无教程引导</b></td><td>开局教程期（可以做什么、目标是什么）</td><td>有背景卡但"玩法引导"缺失——第一次进互动的玩家不知道能说能行动</td><td class="warn">P2</td></tr>
+<tr><td><b>⑩ 有效情节密度无显式控制</b></td><td>密度公式 0.6-1.2（选择点与阅读时长平衡）</td><td>节点频率靠规则+LLM 试调，无数据化监控</td><td class="warn">P2</td></tr>
+</table>
+</div>
+
+<h2>三、问题根因分析</h2>
+<div class="card">
+<p><b>① 路线感缺失的根源：</b>当前架构是"大纲线性推进 + 状态扰动"——大纲是唯一主线，玩家选择写入状态（关系/承诺/记忆）但<b>没有"路线"这个概念</b>。Galgame 的路线感来自"你选择了谁/哪条价值观，后续内容跟着变"。当前变的是"细节"不是"内容"。这不是 bug，是架构定位：<b>互动 = 大纲的可玩演绎</b>。但可以通过"关键抉择显性化"增强路线感（见改进路线）。</p>
+<p><b>② 反馈延迟不足的根源：</b>记忆系统是"存储层"，缺"调用层"——角色很少在后续对话/场景中主动引用玩家的旧选择。Galgame 的做法：NPC 会"记得你之前的选择"并当面提及（回溯式影响）。需要：<b>记忆回响机制</b>——场景/对话生成时注入"玩家近期重要选择"，要求角色自然提及。</p>
+<p><b>③ 输入空白感根源：</b>自由输入是 AI 互动的优势（真实对话），但对新手是负担。Galgame 的选项按钮是"引导器"。需要：<b>节点处 AI 生成 2-3 个建议回应按钮</b>（按剧情/角色性格生成：答应/拒绝/追问/沉默…），自由输入始终可用。</p>
+<p><b>④-⑩</b> 均为"功能未做"而非"设计错误"，优先级低于 P0。</p>
+</div>
+
+<h2>四、改进路线图（对齐 GALGAME 范式）</h2>
+<div class="card">
+<table>
+<tr><th style="width:8%">优先级</th><th style="width:24%">改进项</th><th>方案</th><th style="width:18%">预期效果</th></tr>
+<tr><td class="bad">P0-1</td><td>记忆回响（延迟反馈）</td><td>场景/对话 prompt 注入"玩家近期重要选择"（3-5 条），要求角色在合适时机自然提及（"你当初答应我的事……"）——复用现有记忆系统，只加"调用层"</td><td>选择"被记住"的感觉——Galgame 式回溯影响</td></tr>
+<tr><td class="bad">P0-2</td><td>建议选项按钮</td><td>节点停顿时 LLM 生成 2-3 个建议回应（按角色性格/剧情状态），前端显示为按钮 + 自由输入始终可用</td><td>解决"不知所措"，新手也能顺畅互动</td></tr>
+<tr><td class="warn">P1-1</td><td>关系变化即时提示</td><td>关系/承诺变化时前端 toast（"💞 顾衍之对你的态度上升"）——延迟反馈的即时版</td><td>选择后果可感知</td></tr>
+<tr><td class="warn">P1-2</td><td>节奏控制</td><td>已读场景 SKIP 按钮 + 自动播放速度档位（快/中/慢）+ 点击任意处加速当前文本</td><td>重复游玩不煎熬</td></tr>
+<tr><td class="warn">P1-3</td><td>多维护关系</td><td>relations 从单值扩展为 {信任, 亲近, 敌意} 三维（内存小改，状态卡三维显示）</td><td>角色反应更细腻</td></tr>
+<tr><td class="warn">P2-1</td><td>路线进度可视化</td><td>章节地图（当前章/总章/关键抉择点标记）</td><td>玩家知道"我在哪、还有多少"</td></tr>
+<tr><td class="warn">P2-2</td><td>开局玩法引导</td><td>进入互动第一次时显示"你可以：说话/行动/@角色/继续"四个提示卡片（一次性）</td><td>新手零门槛</td></tr>
+<tr><td class="warn">P2-3</td><td>密度监控</td><td>记录每章节点数/场景数，产出"有效情节密度"指标，超 1.2 自动降频</td><td>节奏可数据化调优</td></tr>
+</table>
+</div>
+
+<h2>五、结论</h2>
+<div class="card">
+<p><b>总体判断：</b>当前互动模式在"角色/语音/文本/记忆"四个底层做得扎实（符合 GALGAME 对角色与文本的核心要求），但<b>缺少 GALGAME 的"交互外衣"</b>——选项引导、反馈回响、节奏控制、路线可视。这导致体验像"会对话的小说"而非"可玩的故事"。</p>
+<p><b>最值得做的两件事（P0）：</b></p>
+<p>① <b>记忆回响</b>——让角色主动提起玩家的旧选择（成本低，复用记忆系统，效果立竿见影："你当初答应我的事"比任何状态卡都更有代入感）；</p>
+<p>② <b>建议选项按钮</b>——节点处给 2-3 个 AI 生成的回应选项（解决老赵反馈的"不知所措"，同时保留自由输入的深度）。</p>
+<p>③ 其次：关系变化即时提示（反馈可见）+ 节奏控制（SKIP/速度）——补齐 Galgame 基础体验。</p>
+<p><b>架构定位提醒：</b>分支路线（共通线→个人线）与"大纲忠实演绎"存在设计冲突。建议保持"大纲主线 + 状态扰动 + 记忆回响"的定位——玩家的选择塑造<b>人物关系与剧情细节</b>，而非另开平行剧情。这更贴合"玩互动=写小说"的产品初衷。</p>
+</div>
+
+<div class="footer">NovelGenerator · GALGAME 范式对照审查 · 2026-08-02</div>
+</div></body></html>
