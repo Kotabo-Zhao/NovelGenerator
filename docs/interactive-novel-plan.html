@@ -76,6 +76,7 @@
   <a href="#s3">3. 与现有系统的复用关系</a>
   <a href="#s4">4. 总体架构设计</a>
   <a href="#s5">5. 核心机制：剧情引擎（对话驱动分支）</a>
+  <a href="#s56">5.6 Agenda 机制：对话轨道（v3.3 新增）</a>
   <a href="#s6">6. 核心机制：对话系统</a>
   <a href="#s7">7. 语音系统：人设→音色自动匹配 + 玩家自选</a>
   <a href="#s8">8. 质量保障体系（五问五答）</a>
@@ -281,7 +282,7 @@
 <tr><th>状态</th><th>触发时机</th><th>行为</th></tr>
 <tr><td><code>SCENE</code></td><td>开场 / 对话结束后</td><td>LLM 生成 300-600 字叙事段落（旁白 + 角色台词），流式输出</td></tr>
 <tr><td><code>NODE</code></td><td>每段 SCENE 完成后</td><td>LLM 判定（或规则兜底：每 2 段必出）是否为关键节点 → 是则进入 CHAT</td></tr>
-<tr><td><code>CHAT</code></td><td>关键节点</td><td>进入对话模式，玩家与在场角色自由对话（无轮数上限）</td></tr>
+<tr><td><code>CHAT</code></td><td>关键节点</td><td>进入对话模式，玩家与在场角色对话（无轮数上限）——<b>v3.3：带 Agenda 议程的受控对话</b>（目标/推进开关/边界/收尾，§5.6），角色主动推进话题</td></tr>
 <tr><td><code>PACT</code></td><td>玩家点「继续剧情」</td><td>PACT 提取：对话 → 剧情事实（承诺/行动/秘密，逐条带来源）+ 关系值/目标变更，写回剧情状态（§5.3）</td></tr>
 </table>
 
@@ -389,6 +390,61 @@ user:
 
 <div class="ok"><b>节奏设计：</b>目标锚定 = 每段都做（0.5 次 LLM 轻调用）；状态校验 = 每 3 段做一次（约 1 次调用）；熔断 = 罕见路径。平均每场景新增 ≈0.8 次轻量 LLM 调用，成本增加 <b>15%</b> 换主线不飘。</div>
 
+<h2 id="s56" style="margin-top:56px">5.6 Agenda 机制：对话轨道（v3.3 新增）</h2>
+
+<div class="card">
+<p><b>要解决的问题：</b>CHAT 是无轮数上限的自由对话，但早期实现有个致命设计——对话 prompt 明确要求"<b>不主动推进剧情</b>"，角色只会顺着玩家聊。结果：玩家闲聊 → 角色陪聊 → 剧情零推进 → 对话与主线脱节（走偏）。</p>
+<p><b>本质原因：</b>① 对话 prompt 没有"这场对话要达成什么"（无议程）；② 推进的责任全压在玩家身上（玩家不聊正事就空转）；③ PACT 提取在对话结束后才做（过程中 LLM 不知道哪句是关键话，事后提取天生漏检）。</p>
+<p><b>方案：Agenda 机制（对话轨道）</b>——对话不是"自由聊完再提取"，而是<b>对话前定议程、对话中受控推进、对话后校验钩子</b>。</p>
+</div>
+
+<h3>① Agenda 生成（NODE 命中时，1 次轻量 LLM 调用）</h3>
+<p>节点判定通过后、进入对话前，生成<code>agenda</code>写入 state：</p>
+<pre>{
+  <span class="s">"goal"</span>: <span class="s">"从苏晚处确认绣衣使失踪当晚见过谁"</span>,
+  <span class="s">"hooks"</span>: [
+    { <span class="s">"trigger"</span>: <span class="s">"读者说出'金吾卫'或威胁"</span>, <span class="s">"outcome"</span>: <span class="s">"苏晚松口给线索"</span> },
+    { <span class="s">"trigger"</span>: <span class="s">"读者答应替她办事"</span>, <span class="s">"outcome"</span>: <span class="s">"苏晚给出城隍庙地点"</span> }
+  ],
+  <span class="s">"boundaries"</span>: [<span class="s">"苏晚绝不主动承认与绣衣使的关系"</span>],
+  <span class="s">"exit"</span>: { <span class="s">"min_rounds"</span>: 3, <span class="s">"condition"</span>: <span class="s">"至少 1 个 hook 命中"</span> }
+}</pre>
+<ul>
+  <li><b>goal</b>：对话目标，必须与当前主线相关——角色带着目的聊天，不是陪聊</li>
+  <li><b>hooks</b>：2-4 条"推进开关"——读者说出/做出什么，剧情就向前走；<b>钩子 = 对话推进剧情的机关</b></li>
+  <li><b>boundaries</b>：角色绝不主动透露的事（保留剧情张力，追问时也可回避）</li>
+  <li><b>exit</b>：自然收尾条件——对话不是只能靠玩家点「继续剧情」结束，<b>目标达成后角色会自己收尾</b>（"天色不早了，后日亥时城隍庙见"），这本身就是剧情小弧线</li>
+</ul>
+
+<h3>② 对话轨道（DialogueEngine 注入，每轮）</h3>
+<p>agenda 注入对话 prompt：<b>「本次对话议程——目标 / 推进开关 / 你绝不主动透露 / 收尾条件」</b>，且硬约束：</p>
+<ul>
+  <li>对话围绕 goal 推进，不把 agenda 说破，自然引导读者</li>
+  <li>读者触发 hooks → 按 outcome 反应（松口/让步/反击…）</li>
+  <li><b>读者闲聊/跑题超过 2 轮 → 角色必须主动把话题拉回 goal</b>（自然："说回正事…"，或带情绪：着急/警惕/不耐烦，符合人设）——角色比玩家更急着推进剧情，张力自然产生</li>
+</ul>
+<p>这替代了原 prompt 中"不主动推进剧情"的规则——<b>从"被动陪聊"改为"主动引导"</b>。</p>
+
+<h3>③ 对话轨道轻校验（每 4 轮，几百 token）</h3>
+<p>对话过程中实时检测：<code>{"on_track": bool, "drift_rounds": 2, "drift_reason": "…", "hooks_hit": [...]}</code></p>
+<ul>
+  <li><code>on_track=false</code>（跑偏）→ 下一轮 prompt 注入「⚠ 检测到话题跑偏：…——本轮必须自然拉回议程目标」</li>
+  <li><code>hooks_hit</code> 供结束后钩子核对交叉验证</li>
+  <li>前端可展示跑偏提示（可选），让玩家感知对话有方向</li>
+</ul>
+
+<h3>④ 钩子核对（end-chat 时，1 次轻量调用）</h3>
+<p>PACT 提取之后，对 agenda 的 hooks 逐条核对：<code>{"hook_hits": [{hook_index, trigger, hit, evidence}], "all_hit", "missing"}</code></p>
+<ul>
+  <li><b>missing = 没推进的剧情开关</b>——返回给前端（"这场对话没有推动剧情"），并作为下一段场景生成的软约束（目标锚定注入时参考）</li>
+  <li>钩子核对完成 → agenda 清除，下一节点重新生成（<b>轨道使命一次一换</b>）</li>
+  <li>hook 触发不强制"必须命中"——<b>玩家明确拒绝/谈崩也是合法结果</b>（角色拒绝 → 剧情走拒绝分支），核对只保证"对话有下落，不是白聊"</li>
+</ul>
+
+<div class="ok"><b>成本：</b>Agenda 生成 1 次调用（≈500 tokens，NODE 命中才调）+ 轻校验每 4 轮 1 次（≈300 tokens）+ 钩子核对 1 次（≈500 tokens，end-chat 时）。单场对话平均新增 ≈1.5 次轻调用，<b>成本增幅 &lt;10%</b>，换来对话从"可能走偏的自由区"变成"有轨道的剧情推进器"。</div>
+
+<div class="ok"><b>玩家自由度怎么保住：</b>防走偏 ≠ 剥夺自由，分三层——① 闲聊层：1-2 轮内角色乐意陪聊（符合人设），超过就拉回；② 剧情层：hooks 有保护，关键信息不是玩家问了才给，是角色按 agenda 引导玩家去问；③ 兜底层：玩家死活不配合 → 角色的 agenda 允许失败（谈崩/拒绝交易），这本身就是剧情分支；「继续剧情」随时可点，不变。</div>
+
 <!-- ═══════════ 6 ═══════════ -->
 <h2 id="s6">6. 核心机制：对话系统</h2>
 
@@ -401,6 +457,7 @@ user:
   <span class="fnode hl">角色卡（蒸馏）</span><span class="farrow">+</span>
   <span class="fnode">声音卡</span><span class="farrow">+</span>
   <span class="fnode">剧情状态摘要</span><span class="farrow">+</span>
+  <span class="fnode hl">Agenda 议程（v3.3）</span><span class="farrow">+</span>
   <span class="fnode">最近 10 轮消息</span><span class="farrow">=</span>
   <span class="fnode">≈3-4k tokens/轮</span>
 </div>
@@ -410,6 +467,7 @@ user:
   <li>对话采用 SSE 流式（复用 <code>_sse_with_heartbeat</code>），打字机效果 + 心跳保活</li>
   <li>角色扮演 System Prompt 约束：忠于人设卡、禁 OOC、按声音卡说话</li>
   <li>玩家输入自由文本（可含动作描写，如"（压低声音）…"）</li>
+  <li><b>v3.3：Agenda 议程注入</b>（目标/推进开关/边界/收尾条件 + 跑偏拉回提示）——对话带目标推进，详见 <a href="#s56">§5.6</a></li>
 </ul>
 
 <h3>6.2 对话中的多角色处理</h3>
@@ -736,6 +794,7 @@ user:
 <tr><td>对话轮数失控（用户无限聊）</td><td><span class="tag t-reuse">低</span></td><td>无上限但每轮成本仅 ~1.5k tokens；50 轮摘要压缩防膨胀；「继续剧情」随时可点</td></tr>
 <tr><td>Android WebView 自动播放限制</td><td><span class="tag t-part">中</span></td><td>首句由用户点击触发；后续播放延续同一手势上下文；失败显示 🔊 手动播放</td></tr>
 <tr><td>对话内容没作用到剧情（提取遗漏/注入被无视）</td><td><span class="tag t-part">中</span></td><td>PACT 因果闭环五环节：结构化提取（防漏）+ 事实生命周期（active→fulfilled/expired/broken）+ 双通道注入（硬挂钩必回扣）+ 回扣验证器（三方一致）+ 玩家可见（面板/高亮/推送），任何环节失效都会暴露给玩家（§5.3 / §8.6）</td></tr>
+<tr><td><b>对话走偏/空转（玩家闲聊，剧情零推进）</b></td><td><span class="tag t-part">中</span></td><td><b>Agenda 对话轨道（v3.3，§5.6）</b>：对话前生成议程（目标/推进开关/边界/收尾）→ 角色带目标对话，跑题超 2 轮主动拉回 → 每 4 轮轻校验注入拉回提示 → 结束后钩子核对（对话必有下落，白聊会被标记）</td></tr>
 <tr><td>互动存档损坏</td><td><span class="tag t-reuse">低</span></td><td>原子写（tmp+rename）+ 每段快照（保留 10 份）+ scene_logs 重放重建，存档永不丢失（§8.4）</td></tr>
 <tr><td>质量保障增加 LLM 成本</td><td><span class="tag t-reuse">低</span></td><td>全部用轻量调用（几百 token）+ 规则预筛减少 LLM 判定次数，总增幅 ~20-25%，每场景仍不到 ¥0.002</td></tr>
 </table>
@@ -750,6 +809,7 @@ user:
 <ul>
   <li><b>暂停节点合适</b> → 规则预筛（保节奏下限）+ LLM 精判（防注水）+ 玩家主动介入（完全兜底），三层叠加，任何一层失误都不影响体验；</li>
   <li><b>剧情不偏移</b> → 目标锚定每段回扣 + 状态校验器扫矛盾 + 偏离熔断回调 + 快照回退，主线漂移有 4 道拦截；</li>
+  <li><b>对话不空转/不走偏</b> → Agenda 对话轨道（v3.3）：对话前生成议程（目标/推进开关/边界）→ 角色带目标对话、跑题 2 轮主动拉回 → 每 4 轮轻校验注入拉回 → 结束后钩子核对——对话必有下落，推进与否一目了然（§5.6）；</li>
   <li><b>人设不崩</b> → 人设卡三明治（含反模式禁止项）+ 动态行为档案 + OOC 抽检打回 + 玩家标记纠正，OOC 有 4 道防线；</li>
   <li><b>内容不出 bug</b> → 标记语言硬约束 + 超时熔断 + 原子写/快照/日志重放 + 6 组压力剧本测试，工程防御 4 类护栏全覆盖；</li>
   <li><b>对话真实作用到剧情</b> → PACT 因果闭环：结构化提取（承诺/行动/秘密逐条不遗漏）→ 事实生命周期（待兑现/已兑现/破裂）→ 双通道注入（硬挂钩必回扣 + 软影响角色态度）→ 回扣验证（三方一致才闭环）→ 玩家可见（面板/高亮/推送）——<b>说了的话必被提取、必被注入、必被回扣、必被看见</b>。</li>

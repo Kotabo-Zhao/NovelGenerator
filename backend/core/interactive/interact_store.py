@@ -95,6 +95,7 @@ def new_state(novel_id: str, title: str, genre: str, style: str,
         "recent_chat": [],
         "pending_node": False,  # 是否等待进入对话（NODE 判定结果）
         "node_chars": [],       # 节点出场角色
+        "agenda": None,         # v3.3: 对话议程（goal/hooks/boundaries/exit）
     }
 
 

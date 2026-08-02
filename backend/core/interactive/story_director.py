@@ -74,6 +74,31 @@ PACT_SYSTEM = """你是互动小说因果提取器。从读者与角色的对话
 {"facts": [{"id": "f1", "type": "promise/action/secret/change", "subject": "player/角色名", "target": "角色名/player", "content": "一句话描述", "severity": "high/medium/low", "source_chat": 轮次序号}], "relations": {"角色名": "+/-数值或描述"}, "objective_update": "更新后的目标或空", "tone": "对话基调（试探/交易/亲昵/敌对…）"}
 只输出 JSON。"""
 
+AGENDA_SYSTEM = """你是互动小说对话编排师。为即将开始的角色对话制定议程（Agenda）。
+
+**Agenda 的目的**：让对话有方向——角色带着目的聊天，而不是陪读者闲聊。对话结束后剧情必须因这场对话而推进。
+
+设计规则：
+1. goal：这场对话要达成的目标（获取信息/说服读者/建立关系/考验读者），一句话，必须与当前主线目标相关
+2. hooks：2-4 条"推进开关"——读者说出/做出什么，剧情就向前走（如"读者提到金吾卫 → 苏晚松口给线索"）。钩子是对话推进剧情的机关
+3. boundaries：角色在这场对话中绝不主动透露/绝不做的事（1-3 条，如"苏晚绝不主动承认认识绣衣使"）——保留剧情张力
+4. exit：对话自然收尾条件（min_rounds 最少轮数、condition 何时可以收尾）
+
+输出 JSON:
+{"goal": "一句话目标", "hooks": [{"trigger": "读者行为/话语", "outcome": "剧情推进结果"}], "boundaries": ["角色绝不主动做的事"], "exit": {"min_rounds": 3, "condition": "收尾条件"}}
+只输出 JSON。"""
+
+HOOK_VERIFY_SYSTEM = """你是互动小说钩子核对器。判断读者与角色的对话中，议程（Agenda）的"推进开关"（hooks）是否已被触发。
+
+判断标准：
+- hook 触发 = 对话中读者说/做了与 trigger 实质相符的事（包含威胁、交易、承诺、追问关键信息等）
+- 读者明确拒绝/回避该话题 → hit=false，记入拒绝
+- 只有闲聊寒暄 → 全部 hit=false
+
+输出 JSON:
+{"hook_hits": [{"hook_index": 0, "hit": true/false, "evidence": "对话原文摘录或'未触发'"}], "all_hit": true/false}
+只输出 JSON。"""
+
 
 def _parse_json(content: str) -> Optional[dict]:
     """容错 JSON 解析（复用项目通用模式）"""
@@ -286,6 +311,11 @@ class StoryDirector:
             state["pending_node"] = is_node
             state["node_chars"] = node_chars
             state["node_rounds"] = rounds
+            agenda = None
+            if is_node:
+                # v3.3: Agenda 机制——对话前生成议程（目标/推进开关/边界），对话围绕它推进
+                agenda = self._generate_agenda(novel_id, node_chars, state)
+                state["agenda"] = agenda
             self.store.save_state(novel_id, state)
             yield {
                 "type": "node_check",
@@ -293,6 +323,7 @@ class StoryDirector:
                 "chars": node_chars,
                 "suggested_rounds": rounds,
                 "reason": reason,
+                "agenda": agenda,   # 前端可展示"这场对话要谈什么"
             }
 
         yield {"type": "done"}
@@ -355,6 +386,99 @@ class StoryDirector:
         )
         raw = self._llm(NODE_SYSTEM, user, temperature=0.3, max_tokens=300)
         return _parse_json(raw) if raw else None
+
+    # ── Agenda 机制（v3.3：对话轨道）──
+    def _generate_agenda(self, novel_id: str, chars: list, state: dict) -> Optional[dict]:
+        """对话前生成议程：goal（目标）/ hooks（推进开关）/ boundaries（边界）/ exit（收尾条件）
+
+        对话引擎据此"带目标对话"，PACT 提取后据此核对钩子是否命中——
+        对话从自由漫游变为受控推进。
+        """
+        if not chars:
+            return None
+        s = state.get("state", {})
+        casts = state.get("casts", {})
+        char_briefs = []
+        for name in chars[:3]:
+            prof = (casts.get(name) or {}).get("profile", {})
+            dna = prof.get("expression_dna", [])[:2]
+            brief = "；".join(
+                str(d.get("name", d))[:50] if isinstance(d, dict) else str(d)[:50] for d in dna
+            ) or "（人设未蒸馏）"
+            char_briefs.append(f"- {name}: {brief}")
+        facts = [f for f in state.get("facts", []) if f.get("status") == "active"]
+        user = (
+            f"主线目标: {s.get('objective', '') or '（未定）'}\n"
+            f"剧情标记: {'、'.join(s.get('flags', [])[-5:]) or '（无）'}\n"
+            f"待兑现事实: {'；'.join(f.get('content', '') for f in facts[:5]) or '（无）'}\n"
+            f"最近剧情: {state.get('summary', '')[:200]}\n"
+            f"对话角色:\n{chr(10).join(char_briefs)}\n"
+            f"请为这场对话制定议程（goal 必须与主线相关，hooks 是剧情推进开关）。"
+        )
+        raw = self._llm(AGENDA_SYSTEM, user, temperature=0.4, max_tokens=500)
+        agenda = _parse_json(raw) if raw else None
+        if not isinstance(agenda, dict):
+            log.warning(f"Agenda 生成失败，使用默认议程: {novel_id}")
+            agenda = {
+                "goal": f"推进主线：{s.get('objective', '继续旅程')}",
+                "hooks": [],
+                "boundaries": [],
+                "exit": {"min_rounds": 3, "condition": "读者已了解当前处境"},
+            }
+        # 规范化
+        agenda.setdefault("goal", s.get("objective", "") or "继续旅程")
+        agenda["hooks"] = [h for h in agenda.get("hooks", []) if isinstance(h, dict)][:4]
+        agenda["boundaries"] = [str(b)[:80] for b in agenda.get("boundaries", [])[:3]]
+        ex = agenda.get("exit") or {}
+        try:
+            min_rounds = max(2, min(int(ex.get("min_rounds", 3) or 3), 10))
+        except (TypeError, ValueError):
+            min_rounds = 3
+        agenda["exit"] = {"min_rounds": min_rounds,
+                          "condition": str(ex.get("condition", ""))[:100] or "目标已达成"}
+        return agenda
+
+    def verify_hooks(self, novel_id: str, agenda: dict) -> dict:
+        """钩子核对：对话结束后检查议程的推进开关是否被触发（1 次轻量 LLM 调用）
+
+        返回: {hook_hits: [{hook_index, hit, evidence}], all_hit, missing: [未触发钩子]}
+        """
+        hooks = (agenda or {}).get("hooks", [])
+        if not hooks:
+            return {"hook_hits": [], "all_hit": True, "missing": []}
+        chat = self.store.recent_chats(novel_id, 40)
+        transcript = []
+        for i, e in enumerate(chat):
+            role = "读者" if e.get("role") == "user" else f"角色{e.get('speaker', '')}"
+            transcript.append(f"[{i}] {role}: {e.get('content', '')[:150]}")
+        hook_lines = "\n".join(
+            f"- hook[{i}] trigger: {h.get('trigger', '')} → outcome: {h.get('outcome', '')}"
+            for i, h in enumerate(hooks)
+        )
+        user = f"对话记录:\n" + "\n".join(transcript[-30:]) + f"\n\nAgenda 推进开关:\n{hook_lines}\n请逐条核对。"
+        raw = self._llm(HOOK_VERIFY_SYSTEM, user, temperature=0.2, max_tokens=500)
+        result = _parse_json(raw) if raw else None
+        if not isinstance(result, dict):
+            return {"hook_hits": [], "all_hit": False, "missing": [h.get("trigger", "") for h in hooks]}
+        hits = result.get("hook_hits", []) or []
+        hit_map = {}
+        for hh in hits:
+            if isinstance(hh, dict) and "hook_index" in hh:
+                hit_map[int(hh["hook_index"])] = bool(hh.get("hit"))
+        hook_hits = []
+        missing = []
+        for i, h in enumerate(hooks):
+            evidence = ""
+            hit = hit_map.get(i, False)
+            for hh in hits:
+                if isinstance(hh, dict) and hh.get("hook_index") == i:
+                    evidence = str(hh.get("evidence", ""))[:80]
+                    break
+            hook_hits.append({"hook_index": i, "trigger": h.get("trigger", ""),
+                              "hit": hit, "evidence": evidence})
+            if not hit:
+                missing.append(h.get("trigger", ""))
+        return {"hook_hits": hook_hits, "all_hit": len(missing) == 0, "missing": missing}
 
     @staticmethod
     def _scene_chars(blocks: list) -> list:

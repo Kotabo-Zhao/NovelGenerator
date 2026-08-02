@@ -144,7 +144,7 @@ async def interactive_chat(novel_id: str, req: ChatRequest):
 # ── end-chat：PACT 提取 ──
 @router.post("/api/novels/{novel_id}/interactive/end-chat")
 async def interactive_end_chat(novel_id: str):
-    """结束对话：PACT 提取对话 → 剧情事实（facts）+ 关系更新"""
+    """结束对话：PACT 提取对话 → 剧情事实（facts）+ 关系更新 + Agenda 钩子核对"""
     _validate_novel_id(novel_id)
     if not _store.exists(novel_id):
         raise HTTPException(404, "互动存档不存在，请先 start")
@@ -156,12 +156,23 @@ async def interactive_end_chat(novel_id: str):
     result = await asyncio.to_thread(_story.extract_pact, novel_id, chat_entries)
 
     state = _store.load_state(novel_id)
+    # v3.3: Agenda 钩子核对（对话是否推进了剧情开关）
+    agenda = state.get("agenda")
+    hooks_result = {}
+    if agenda:
+        hooks_result = await asyncio.to_thread(_story.verify_hooks, novel_id, agenda)
+    # 核对完成后清除议程（本轮对话的轨道使命结束，下一节点重新生成）
+    if agenda:
+        state.pop("agenda", None)
+        state.pop("drift_note", None)
+        _store.save_state(novel_id, state)
     return {
         "ok": True,
         "facts": state.get("facts", [])[-10:],
         "relations": state.get("state", {}).get("relations", {}),
         "objective": state.get("state", {}).get("objective", ""),
         "tone": result.get("tone", ""),
+        "hooks": hooks_result,   # {hook_hits, all_hit, missing}
     }
 
 
