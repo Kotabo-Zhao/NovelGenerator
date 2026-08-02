@@ -421,6 +421,14 @@ class DialogueEngine:
                            "ts": time.strftime("%H:%M:%S")}
         self.store.append_chat(novel_id, entry_assistant)
 
+        # v3.5.42: 对话回复同步进 recent_blocks（切回时进度恢复完整）
+        try:
+            rb = state.get("recent_blocks") or []
+            rb.append({"type": "dialogue", "speaker": target, "content": reply})
+            state["recent_blocks"] = rb[-260:]
+            self.store.save_state(novel_id, state)
+        except Exception:
+            pass
         yield {"type": "chat_end", "speaker": target, "content": reply, "segments": segments,
                "snapshot": _state_snapshot(state)}
 

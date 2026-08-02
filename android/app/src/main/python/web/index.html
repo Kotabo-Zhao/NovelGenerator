@@ -1251,6 +1251,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                   </div>
                 </div>
               </template>
+              <!-- v3.5.42: 生成指示入对话流——紧跟内容末尾，滚动到底即可见（不用回顶部） -->
+              <div v-if="interactive.generating" class="inter-generating" style="margin-top:12px">
+                <span class="gen-spinner"></span>
+                <span>{{ interactive.generating }}</span>
+              </div>
             </div>
 
             <!-- v3.1: 音色选择器 -->

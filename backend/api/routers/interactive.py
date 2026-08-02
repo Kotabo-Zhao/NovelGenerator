@@ -344,6 +344,18 @@ async def interactive_state(novel_id: str):
     state = _store.load_state(novel_id)
     if state is None:
         raise HTTPException(404, "互动存档不存在，请先 start")
+    # v3.5.42: 旧存档迁移——recent_blocks 明显不完整（少于场景数）时从 scene_logs 重建
+    try:
+        _scene_count = len(_store.recent_scenes(novel_id, 60))
+        if _scene_count > 3 and len(state.get("recent_blocks") or []) < _scene_count:
+            _rb = []
+            for _sc in _store.recent_scenes(novel_id, 30):
+                _rb.extend(_sc.get("blocks") or [])
+            if _rb:
+                state["recent_blocks"] = _rb[-260:]
+                _store.save_state(novel_id, state)
+    except Exception as e:
+        log.warning(f"recent_blocks migrate failed: {e}")
     # 精简返回（不含过大的 profile）
     out = dict(state)
     casts = {}
@@ -359,19 +371,10 @@ async def interactive_state(novel_id: str):
         cc.pop("profile", None)
         casts[name] = cc
     out["casts"] = casts
-    # v3.2: 返回最近场景的完整 blocks（前端切回时恢复显示）
-    try:
-        scenes = _store.recent_scenes(novel_id, 1)
-        if scenes:
-            out["recent_blocks"] = scenes[-1].get("blocks", [])
-            out["recent_scene_num"] = scenes[-1].get("scene_num", 0)
-        else:
-            out["recent_blocks"] = []
-            out["recent_scene_num"] = 0
-    except Exception as e:
-        log.warning(f"recent_blocks failed: {e}")
-        out["recent_blocks"] = []
-        out["recent_scene_num"] = 0
+    # v3.5.42: 返回完整 recent_blocks（场景+对话+行动，切回时恢复全部进度；
+    # 旧逻辑只返回最近 1 场景——切回剧情对不上的根因）
+    out["recent_blocks"] = state.get("recent_blocks") or []
+    out["recent_scene_num"] = state.get("scene_num", 0) or 0
     return {"ok": True, "state": out}
 
 

@@ -715,6 +715,17 @@ class StoryDirector:
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         self.store.append_scene(novel_id, scene_record)
+        # v3.5.42: 进度恢复——场景 blocks 同步入 state（前端切走再切回时
+        # 从 state.recent_blocks 恢复完整剧情，不再空白/对不上）
+        try:
+            rb = state.get("recent_blocks") or []
+            rb.extend(blocks)
+            if len(rb) > 260:
+                rb = rb[-260:]
+            state["recent_blocks"] = rb
+            self.store.save_state(novel_id, state)
+        except Exception as e:
+            log.warning(f"recent_blocks save failed: {e}")
         # v3.5.28: 大纲章节推进——每章约 3 个场景后切下一章，目标随章更新
         try:
             self._advance_outline(novel_id, state)

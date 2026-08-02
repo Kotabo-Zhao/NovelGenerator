@@ -512,5 +512,13 @@ class ActionEngine:
             "content": text, "action": action.get("type", "other"),
             "ts": time.strftime("%H:%M:%S"),
         })
+        # v3.5.42: 行动结果同步进 recent_blocks（切回时进度恢复完整）
+        try:
+            rb = state.get("recent_blocks") or []
+            rb.append({"type": "narration", "speaker": "", "content": text})
+            state["recent_blocks"] = rb[-260:]
+            self.store.save_state(novel_id, state)
+        except Exception:
+            pass
         yield {"type": "action_end", "content": text, "action": action,
                "snapshot": _state_snapshot(state)}
