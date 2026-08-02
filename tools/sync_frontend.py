@@ -28,10 +28,9 @@ SYNC_FILES = [
     "test-crash.html",
 ]
 
-SYNC_DIRS = [
-    "public",
-    "src",
-]
+# v3.5.23: 空目录残留（public/src 从未被 git 跟踪、无文件、零引用）——移除硬编码检查，
+# 否则 CI checkout 后必然报"缺失目录"（本地工作区有、git 仓库没有）
+SYNC_DIRS = []
 
 
 def md5(path: Path) -> str:
