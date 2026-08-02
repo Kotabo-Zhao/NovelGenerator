@@ -1125,6 +1125,15 @@ class StoryDirector:
             log.info(f"Chapter {ch_num} synced from interactive ({len(scenes)} scenes, {len(body)} chars)")
         except Exception as e:
             log.warning(f"_sync_chapter_from_interactive failed: {type(e).__name__}: {str(e)[:100]}")
+        # v3.5.31: 章节结束 → 滚动压缩角色记忆（后台，LLM 提炼旧记忆为长期摘要）
+        try:
+            from .char_memory import compress_all_memories
+            _st = self.store.load_state(novel_id)
+            if _st and compress_all_memories(_st, self._llm):
+                self.store.save_state(novel_id, _st)
+                log.info("Memories compressed after chapter sync")
+        except Exception as e:
+            log.warning(f"memory compress failed: {type(e).__name__}: {str(e)[:80]}")
 
     def attach_cast_profiles(self, novel_id: str, char_names: list):
         """为出场角色挂载人设卡（有蒸馏数据则用，无则留空由对话引擎即时蒸馏兜底）"""
