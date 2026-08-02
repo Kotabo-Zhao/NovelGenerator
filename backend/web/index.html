@@ -451,19 +451,41 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .sg-relation-svg-wrap{height:380px}
   .sg-timeline-svg-wrap{height:340px}
 
-  /* ── v3.0: 互动模式 ── */
+  /* ── v3.0: 互动模式（v3.5 Galgame 风格 UI）── */
   .interactive-shell{display:flex;flex-direction:column;gap:14px}
-  .interactive-story{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px 22px;min-height:280px;max-height:52vh;overflow-y:auto;line-height:1.85;font-size:15px}
-  .inter-narr{color:var(--text);margin:10px 0;text-indent:2em}
-  .inter-action{color:var(--text3);font-style:italic;margin:8px 0;text-indent:2em;font-size:14px}
-  .inter-line{margin:10px 0;display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
-  .inter-speaker{color:#f778ba;font-weight:700;min-width:56px;white-space:nowrap}
-  .inter-dialogue{flex:1;color:var(--text)}
+  .interactive-story{background:linear-gradient(180deg,var(--bg2) 0%,#12151c 100%);border:1px solid var(--border);border-radius:18px;padding:24px 26px 30px;min-height:300px;max-height:54vh;overflow-y:auto;line-height:1.9;font-size:15px;position:relative}
+  .interactive-story::-webkit-scrollbar{width:6px}
+  .interactive-story::-webkit-scrollbar-thumb{background:rgba(212,175,55,.25);border-radius:3px}
+  /* 旁白：居中衬线，小说感 */
+  .inter-narr{color:#c9c2b4;margin:16px 30px;text-align:center;font-family:"STKaiti","KaiTi","SimSun",serif;font-size:14.5px;letter-spacing:.5px;animation:interRise .5s ease both}
+  .inter-action{color:#8a8375;font-style:italic;margin:10px 30px;text-align:center;font-size:13.5px;animation:interRise .5s ease both}
+  /* 对话气泡：角色左、玩家右 */
+  .inter-line{margin:12px 0;display:flex;align-items:flex-start;gap:10px;animation:interRise .45s ease both}
+  .inter-line.inter-player{flex-direction:row-reverse}
+  .inter-avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);margin-top:2px;background:rgba(255,255,255,.06)}
+  .inter-bubble{max-width:78%;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px 16px;font-size:14.5px;line-height:1.8;color:var(--text)}
+  .inter-player .inter-bubble{background:rgba(212,175,55,.08);border-color:rgba(212,175,55,.35)}
+  .inter-player .inter-avatar{background:rgba(212,175,55,.15);border-color:rgba(212,175,55,.4)}
+  .inter-dialogue{word-break:break-word}
+  .inter-speaker{display:none}  /* 角色名进徽章，不再独立显示 */
   .inter-voice{font-size:11px;color:var(--text3);white-space:nowrap;align-self:center}
-  .inter-typing{color:var(--accent);animation:blink 1s infinite}
+  .inter-actions{display:flex;gap:4px;align-items:center;align-self:center;margin-top:2px}
+  .voice-btn{background:var(--card);border:1px solid var(--border);border-radius:8px;width:26px;height:26px;font-size:12px;cursor:pointer;color:var(--text2);transition:all .2s}
+  .voice-btn:hover{border-color:var(--accent);color:var(--accent);transform:scale(1.08)}
+  /* 播放中：气泡金边呼吸 */
+  .inter-line.playing .inter-bubble{border-color:var(--accent);box-shadow:0 0 0 1px rgba(212,175,55,.25),0 0 18px rgba(212,175,55,.12);animation:interPlaying 1.2s ease-in-out infinite}
+  .inter-typing{color:var(--accent);animation:blink 1s infinite;font-size:15px}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-  .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
-  .interactive-facts{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  @keyframes interRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @keyframes interPlaying{0%,100%{box-shadow:0 0 0 1px rgba(212,175,55,.25)}50%{box-shadow:0 0 0 1px rgba(212,175,55,.55),0 0 22px rgba(212,175,55,.2)}}
+  /* 行动块：左侧金边 + 淡金底 */
+  .inter-action-desc{display:flex;align-items:center;gap:8px;margin:14px 18px;padding:8px 16px;border-left:3px solid var(--gold);background:rgba(212,175,55,.06);border-radius:8px;color:#d9bc7a;font-size:13.5px;animation:interRise .45s ease both}
+  .inter-action-result{margin:14px 30px;padding:12px 18px;border-left:3px solid var(--gold);background:rgba(212,175,55,.04);border-radius:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi",serif;font-size:14px;text-align:center;animation:interRise .5s ease both}
+  /* 轨道提示条 */
+  .inter-track-note{border-radius:10px;padding:8px 14px;font-size:12.5px;margin-bottom:12px;animation:interRise .4s ease both}
+  .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;transition:border-color .3s, box-shadow .3s}
+  .interactive-input:focus-within{border-color:rgba(212,175,55,.5);box-shadow:0 0 0 3px rgba(212,175,55,.08)}
+  .interactive-facts{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px}
   .fact-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;flex-wrap:wrap}
   .fact-badge{font-size:13px}
   .fact-text{flex:1;color:var(--text)}
@@ -472,11 +494,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .fact-fulfilled{color:var(--green)}
   .fact-expired{color:var(--text3)}
   .fact-broken{color:var(--red)}
-  .inter-actions{display:flex;gap:4px;align-items:center}
-  .voice-btn{background:var(--card);border:1px solid var(--border);border-radius:6px;width:26px;height:26px;font-size:12px;cursor:pointer;color:var(--text2)}
-  .voice-btn:hover{border-color:var(--accent);color:var(--accent)}
-  .inter-line.playing .inter-dialogue{color:var(--accent)}
-  .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 16px}
   .sg-relation-svg-wrap svg,.sg-timeline-svg-wrap svg{width:100%;height:100%}
 
   /* ── 导出列表 ── */
@@ -998,6 +1016,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </div>
               <div class="flex gap-6">
                 <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
+                <span v-if="interactive.emotionAvailable" style="display:flex;gap:6px;align-items:center">
+                  <button class="btn btn-xs" :class="interactive.emotionVoice?'btn-primary':''" @click="interactive.emotionVoice=!interactive.emotionVoice" :disabled="interactive.busy" title="IndexTTS-2 本地情感引擎（角色音色+情感，免费离线）">🎭 {{ interactive.emotionVoice?'情感开':'情感关' }}</button>
+                  <select v-if="interactive.emotionVoice" v-model="interactive.emotion" style="min-height:30px;font-size:12px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:2px 6px">
+                    <option v-for="em in ['平静','愤怒','悲伤','喜悦','紧张','冷漠']" :key="em" :value="em">{{ em }}</option>
+                  </select>
+                </span>
                 <button class="btn btn-xs btn-ghost" @click="interactiveRollback" :disabled="interactive.busy" title="回退到上一场景">↩ 回退</button>
                 <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
               </div>
@@ -1013,19 +1037,24 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <template v-for="(blk, i) in interactive.blocks" :key="i">
                 <div v-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
                 <div v-else-if="blk.type==='action'" class="inter-action">{{ blk.content }}</div>
-                <div v-else-if="blk.type==='action_desc'" class="inter-action" style="color:var(--gold)">{{ blk.content }}</div>
-                <div v-else-if="blk.type==='action_result'" class="inter-narr" style="border-left:3px solid var(--gold);padding-left:10px">{{ blk.content }}</div>
-                <div v-else class="inter-line" :class="{playing: interactive.speakingLine===i}">
-                  <span class="inter-speaker">{{ blk.speaker }}</span>
-                  <span class="inter-dialogue">{{ blk.content }}</span>
-                  <span class="inter-voice" v-if="interactive.voices[blk.speaker]">🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</span>
-                  <span class="inter-actions" v-if="blk.type==='dialogue'||blk.type==='chat'">
-                    <button class="voice-btn" @click="speakLine(blk, i)" :title="interactive.speakingLine===i?'停止':'播放语音'">{{ interactive.speakingLine===i?'⏹':'🔊' }}</button>
-                    <button class="voice-btn" @click="openVoicePicker(blk.speaker)" title="更换音色">🎙</button>
-                  </span>
+                <div v-else-if="blk.type==='action_desc'" class="inter-action-desc">⚡ {{ blk.content }}</div>
+                <div v-else-if="blk.type==='action_result'" class="inter-action-result">{{ blk.content }}</div>
+                <div v-else-if="blk.type==='typing'" class="inter-typing" style="text-align:center;padding:8px 0">▋</div>
+                <div v-else class="inter-line" :class="{'playing': interactive.speakingLine===i, 'inter-player': blk.type==='player'}">
+                  <div class="inter-avatar" :style="avatarStyle(blk.speaker)">{{ (blk.speaker||'?').slice(0,1) }}</div>
+                  <div class="inter-bubble">
+                    <div v-if="blk.type!=='player'" style="font-size:11px;color:var(--accent);margin-bottom:2px;opacity:.85">{{ blk.speaker }}</div>
+                    <span class="inter-dialogue">{{ blk.content }}</span>
+                    <div style="display:flex;gap:8px;align-items:center;margin-top:4px" v-if="blk.type==='dialogue'||blk.type==='chat'">
+                      <span class="inter-voice" v-if="interactive.voices[blk.speaker]">🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</span>
+                      <span class="inter-actions">
+                        <button class="voice-btn" @click="speakLine(blk, i)" :title="interactive.speakingLine===i?'停止':'播放语音'">{{ interactive.speakingLine===i?'⏹':'🔊' }}</button>
+                        <button class="voice-btn" @click="openVoicePicker(blk.speaker)" title="更换音色">🎙</button>
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </template>
-              <div v-if="interactive.typing" class="inter-typing">▋</div>
             </div>
 
             <!-- v3.1: 音色选择器 -->
@@ -3552,6 +3581,10 @@ const app = createApp({
       driftNote: '',          // 话题跑偏提示（drift_check 事件）
       naturalEnd: false,      // 对话目标已达成提示
       hookSummary: '',        // end-chat 钩子核对摘要（推进/未谈成）
+      // v3.5: 情感语音（IndexTTS-2 本地引擎）
+      emotionVoice: false,    // 情感引擎开关
+      emotion: '平静',        // 当前情感（平静/愤怒/悲伤/喜悦/紧张/冷漠）
+      emotionAvailable: false, // 引擎是否可用
     });
     let interactiveAbort = null;
     let interactiveAudio = null;   // 当前播放的 Audio
@@ -3589,6 +3622,24 @@ const app = createApp({
       const rate = v.rate || '+0%';
       const pitch = v.pitch || '+0Hz';
       try{
+        // v3.5: 情感引擎开启且可用 → IndexTTS 情感合成（角色音色+情感），失败降级 edge
+        if(interactive.emotionVoice && interactive.emotionAvailable){
+          const er = await fetch(API+'/api/tts/emotion', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ text, char_name: blk.speaker||'角色',
+              emotion: interactive.emotion||'平静', voice, rate, pitch }),
+          });
+          if(er.ok){
+            const blob = await er.blob();
+            const url = URL.createObjectURL(blob);
+            interactiveAudio = new Audio(url);
+            interactiveAudio.onended = () => { interactive.speakingLine = null; URL.revokeObjectURL(url); interactiveAudio = null; };
+            interactiveAudio.onerror = () => { interactive.speakingLine = null; URL.revokeObjectURL(url); interactiveAudio = null; };
+            interactiveAudio.play().catch(()=>{ interactive.speakingLine = null; });
+            return;
+          }
+          // 引擎报错 → 降级普通 TTS
+        }
         const r = await fetch(API+'/api/tts', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ text, voice, rate, pitch }),
@@ -3798,6 +3849,14 @@ const app = createApp({
       });
     }
 
+    // v3.5: 角色头像徽章配色（角色名 hash → 色相，同角色同色）
+    function avatarStyle(name) {
+      if (!name || name === '你') return {background:'rgba(212,175,55,.16)', borderColor:'rgba(212,175,55,.45)', color:'#e8c85a'};
+      let h = 0;
+      for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+      return {background:`hsla(${h},55%,42%,.28)`, borderColor:`hsla(${h},60%,62%,.55)`, color:`hsl(${h},72%,76%)`};
+    }
+
     async function loadInteractiveState() {
       if (!activeNovel.value) return;
       const id = encodeURIComponent(activeNovel.value.id);
@@ -3823,6 +3882,14 @@ const app = createApp({
           if (data.ok) interactive.voices = data.voices || {};
         }
       } catch(e) { console.warn('loadInteractiveVoices failed:', e); }
+      // v3.5: 情感引擎状态（可用则显示 🎭 开关）
+      try {
+        const r = await fetch(API+'/api/tts/emotion/status');
+        if (r.ok) {
+          const d = await r.json();
+          interactive.emotionAvailable = !!d.available;
+        }
+      } catch(e) { interactive.emotionAvailable = false; }
     }
 
     async function sendInteractiveChat() {
@@ -4334,6 +4401,8 @@ const app = createApp({
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
       speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,previewVoice,
+      // v3.5: 角色头像徽章配色
+      avatarStyle,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
       switchToStoryGraph,loadStoryGraph,
