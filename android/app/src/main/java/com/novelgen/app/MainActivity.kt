@@ -94,6 +94,9 @@ class MainActivity : AppCompatActivity() {
             allowFileAccess = false; allowContentAccess = false
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             useWideViewPort = true; loadWithOverviewMode = true
+            // v2.5.15: 禁缓存——升级 APK 后 WebView 必加载新前端（否则缓存旧页面
+            // 导致功能"没生效"的假象）
+            cacheMode = WebSettings.LOAD_NO_CACHE
         }
         binding.webView.addJavascriptInterface(WebAppInterface(this), "AndroidBridge")
 
