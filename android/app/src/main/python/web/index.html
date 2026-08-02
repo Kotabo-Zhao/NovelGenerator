@@ -1308,6 +1308,16 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                  style="display:flex;align-items:center;gap:8px;background:rgba(212,175,55,.08);border:1px solid rgba(212,175,55,.3);border-radius:8px;padding:7px 14px;margin-top:10px;font-size:13px;color:#d9bc7a">
               <span>📌</span><span>{{ interactive.pendingReason }}</span>
             </div>
+            <!-- v3.5.40: 建议选项（Galgame 式）——点一下直接回应，也可自己输入 -->
+            <div v-if="interactive.pendingNode && !interactive.inChat && interactive.suggestions.length"
+                 style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+              <button v-for="(s, si) in interactive.suggestions" :key="si"
+                      class="btn btn-sm" :disabled="interactive.busy"
+                      @click="sendInteractiveChat(s)"
+                      style="border:1px solid rgba(212,175,55,.5);color:var(--gold);background:rgba(212,175,55,.06)">
+                💬 {{ s }}
+              </button>
+            </div>
 
             <!-- 输入区 -->
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
@@ -3797,7 +3807,7 @@ const app = createApp({
       loading: false, loadingMsg: '', error: '',
       state: { scene_num:0, facts:[], casts:{}, state:{relations:{}} },
       blocks: [], typing: false, busy: false,
-      pendingNode: false, pendingReason: '', inChat: false, message: '',
+      pendingNode: false, pendingReason: '', suggestions: [], inChat: false, message: '',
       voices: {},
       // v3.1: 语音
       autoVoice: true,        // 对话台词自动播放
@@ -4113,6 +4123,7 @@ const app = createApp({
             }
           } else if (evt.type==='node_check') {
             interactive.pendingReason = evt.reason || '';
+            interactive.suggestions = evt.suggestions || [];
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
             interactive.typing = false;
@@ -4242,6 +4253,7 @@ const app = createApp({
             interactive.state = data.state;
             interactive.pendingNode = !!data.state.pending_node;
             interactive.pendingReason = data.state.pending_reason || '';  // v3.5.35
+            interactive.suggestions = data.state.suggestions || [];       // v3.5.40
           }
         }
       } catch(e) { console.warn('loadInteractiveState failed:', e); }
@@ -4273,9 +4285,11 @@ const app = createApp({
       } catch(e) { interactive.emotionAvailable = false; }
     }
 
-    async function sendInteractiveChat() {
-      if (!interactive.message.trim() || interactive.busy) return;
+    async function sendInteractiveChat(prefill) {
+      if (interactive.busy) return;
       if (!activeNovel.value) return;
+      if (prefill) interactive.message = prefill;    // v3.5.40: 建议选项直接发送
+      if (!interactive.message.trim()) return;
       cancelAuto();                                  // v3.5.7: 玩家输入打断自动流
       _setPhase('💭 正在发送…', 30000);               // v3.5.19: 生成提示
       const id = encodeURIComponent(activeNovel.value.id);
@@ -4547,6 +4561,7 @@ const app = createApp({
             }
           } else if (evt.type==='node_check') {
             interactive.pendingReason = evt.reason || '';
+            interactive.suggestions = evt.suggestions || [];
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
             // v3.3: 议程展示（这场对话要谈什么）

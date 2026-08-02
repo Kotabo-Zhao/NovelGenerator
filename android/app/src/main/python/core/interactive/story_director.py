@@ -62,6 +62,17 @@ PLAYER_STATE_SYSTEM = """你是互动小说状态追踪器。根据最新场景�
   "situation": "主角当前处境一句话（正在做什么/刚发生了什么）"}}
 规则：location 必须精确到场景级（不是城市名）；未发生的地点/时间变化保持旧值；场景中明确的变化必须更新。"""
 
+# ── v3.5.40: 建议选项生成（Galgame 式真两难）──
+SUGGESTION_SYSTEM = """你是互动小说的选项设计师。为读者生成 3 个建议回应选项。
+
+要求：
+1. 每个选项必须是有分量的【真两难】——答应/拒绝/追问/试探/沉默/转移话题，
+   没有明显"正确"答案，玩家会停顿犹豫
+2. 选项来自当前角色的处境与关系（不是通用敷衍句），符合在场角色的性格
+3. 每个选项 4-15 字，口语化，第一人称（读者视角）
+4. 输出 JSON: {"options": ["选项1", "选项2", "选项3"]}
+只输出 JSON。"""
+
 # ── System Prompts ──
 SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时与读者对话的互动小说。
 
@@ -520,7 +531,7 @@ class StoryDirector:
         # 待兑现事实（硬挂钩）
         facts = [f for f in state.get("facts", []) if f.get("status") == "active"]
         if facts:
-            parts.append("待兑现事实（本段必须自然回扣至少 1 个）:")
+            parts.append("玩家的重要选择（Galgame 式延迟回响：存在自然时机时让角色提起这些旧承诺/共同经历——'你当初答应我的事'，不要每段都提，也不要装作不记得）:")
             for f in facts[:6]:
                 parts.append(f"- [{f.get('type')}] {f.get('content')}")
         # v3.3.1: 上一场对话未达成的目标（missing hooks）——软约束：后果显现/角色惦记
@@ -767,6 +778,12 @@ class StoryDirector:
                 yield {"type": "phase", "label": "📋 正在安排这场对话…"}
                 agenda = self._generate_agenda(novel_id, node_chars, state)
                 state["agenda"] = agenda
+                # v3.5.40: 建议选项（Galgame 式真两难）——玩家不知所措时一键可答
+                try:
+                    state["suggestions"] = self._generate_suggestions(novel_id, state, node_chars)
+                except Exception as e:
+                    log.warning(f"suggestions failed: {e}")
+                    state["suggestions"] = []
             self.store.save_state(novel_id, state)
             yield {
                 "type": "node_check",
@@ -775,6 +792,7 @@ class StoryDirector:
                 "suggested_rounds": rounds,
                 "reason": reason,
                 "agenda": agenda,   # 前端可展示"这场对话要谈什么"
+                "suggestions": state.get("suggestions", []),  # v3.5.40
                 "snapshot": _state_snapshot(state),
             }
 
@@ -854,6 +872,33 @@ class StoryDirector:
         )
         raw = self._llm(NODE_SYSTEM, user, temperature=0.3, max_tokens=300)
         return _parse_json(raw) if raw else None
+
+    # ── v3.5.40: 建议选项（Galgame 式）──
+    def _generate_suggestions(self, novel_id: str, state: dict, chars: list) -> list:
+        """节点停顿时生成 2-3 个建议回应——真两难（有分量），非敷衍选项"""
+        try:
+            s = state.get("state", {}) or {}
+            ps = state.get("player_state") or {}
+            agenda = state.get("agenda") or {}
+            user = (
+                f"剧情目标: {s.get('objective', '')}\n"
+                f"当前处境: {ps.get('situation', '') or '（未知）'}\n"
+                f"在场角色: {', '.join(chars)}\n"
+                f"对话议程: {str(agenda.get('goal', ''))[:100]}\n"
+                f"请为读者生成 3 个建议回应（Galgame 风格选项）——"
+                f"必须是有分量的真两难（答应/拒绝/追问/试探/沉默/转移话题…），"
+                f"每个选项 4-15 字，口语化，符合当前角色的处境与关系。"
+            )
+            raw = self._llm(SUGGESTION_SYSTEM, user, temperature=0.7, max_tokens=300)
+            result = _parse_json(raw) if raw else None
+            opts = (result or {}).get("options") or []
+            if isinstance(opts, list):
+                cleaned = [str(o)[:30] for o in opts if str(o).strip()][:3]
+                if cleaned:
+                    return cleaned
+        except Exception as e:
+            log.warning(f"suggestions gen failed: {e}")
+        return []
 
     # ── Agenda 机制（v3.3：对话轨道）──
     def _generate_agenda(self, novel_id: str, chars: list, state: dict) -> Optional[dict]:

@@ -174,7 +174,9 @@ def memory_brief(state: dict, char: str, n: int = 8) -> str:
             tag = {"promise": "承诺", "event": "事件", "secret": "秘密",
                    "attitude": "态度", "info": "见闻"}.get(m.get("type", "event"), "事件")
         lines.append(f"- [{tag}] {m.get('content', '')}")
-    return "你记得的事（必须真实反映在态度和回应里，读者做过的事你不能装作不知道）:\n" + "\n".join(lines)
+    return ("你记得的事（v3.5.40 记忆回响：这些必须真实反映在态度里；存在自然时机时"
+            "可以主动提起——旧承诺、共同经历、读者做过的事，'你当初答应我的事'这类"
+            "延迟回响比装作不记得更有戏；但不要每轮都提）:\n" + "\n".join(lines))
 
 
 def events_brief(state: dict, n: int = 4) -> str:
