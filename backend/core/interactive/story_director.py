@@ -207,6 +207,102 @@ class StoryDirector:
         self.store = store
         self.engine = engine  # NovelEngine 引用（人设蒸馏/读取用，避免重复实例化）
         self._resilient = ResilientLLMClient(client, model)
+        self._tracker = None   # v3.5.22: 复用小说模式 CharacterStateTracker（懒加载）
+        self._supervisor = None  # v3.5.22: 复用小说模式 LogicSupervisor（懒加载）
+
+    # ── v3.5.22: 复用小说模式逻辑引擎（不另起炉灶）──
+    def _logic_tracker(self):
+        """角色状态追踪器（小说模式 CharacterStateTracker）——跟踪角色位置/状态，
+        保证互动场景的空间连续性有结构化依据"""
+        if self._tracker is None and self.engine is not None:
+            try:
+                from ..character_state import CharacterStateTracker
+                self._tracker = CharacterStateTracker(
+                    self.engine.client, self.engine.model, self.engine.memory)
+            except Exception as e:
+                log.warning(f"CharacterStateTracker init failed: {e}")
+        return self._tracker
+
+    def _logic_supervisor(self):
+        """逻辑监督器（小说模式 LogicSupervisor）——L1 规则引擎检查
+        时间线/空间/行为/物品矛盾"""
+        if self._supervisor is None and self.engine is not None:
+            self._supervisor = getattr(self.engine, "logic_supervisor", None)
+        return self._supervisor
+
+    def _logic_context(self, novel_id: str) -> str:
+        """复用角色状态追踪：返回当前角色状态文本（位置/健康等）供场景注入"""
+        try:
+            tr = self._logic_tracker()
+            if tr is None:
+                return ""
+            tr.init_from_plan(novel_id)  # 幂等：已有状态不覆盖
+            return tr.build_context(novel_id) or ""
+        except Exception as e:
+            log.warning(f"logic_context failed: {e}")
+            return ""
+
+    def _post_scene_logic_check(self, novel_id: str, scene_num: int, scene_text: str):
+        """场景生成后（后台）：复用小说模式引擎做状态更新 + 矛盾检查"""
+        try:
+            # 1) 角色状态更新（提取位置/状态变化 → global_state.json）
+            tr = self._logic_tracker()
+            if tr is not None:
+                import asyncio
+                asyncio.run(tr.update_from_chapter(novel_id, scene_num, scene_text))
+            # 2) L1 逻辑监督（时间线/空间/行为/物品矛盾，规则引擎零 LLM 成本）
+            sup = self._logic_supervisor()
+            if sup is not None:
+                plan = None
+                gs = None
+                try:
+                    plan = self.engine.memory.read("plan", novel_id)
+                    gs = self.engine.memory.read("global_state", novel_id) or {}
+                except Exception:
+                    pass
+                prev = {}
+                if scene_num > 1:
+                    last_scenes = self.store.recent_scenes(novel_id, 1) or []
+                    if last_scenes:
+                        prev[scene_num - 1] = str(last_scenes[0].get("scene_text", ""))
+                res = sup.validate_chapter(scene_text, scene_num, plan or {},
+                                           prev, gs, run_deep=False)
+                # 视角适配：互动模式第二人称（"你"指代主角），小说模式的
+                # "主角全名未出现"类检查是误报——过滤
+                is_second_person = scene_text.count("你") > 10
+                violations = [v for v in (res.get("violations") or [])
+                              if not (is_second_person and
+                                      "未出现" in str(v.get("description", "")))]
+                p0 = [v for v in violations if v.get("severity") == "P0"]
+                if p0:
+                    cats = [f"{v.get('category', '?')}:{v.get('description', '')[:40]}" for v in p0[:3]]
+                    log.warning(f"[逻辑监督] 场景{scene_num} P0 矛盾: {' | '.join(cats)}")
+                    try:
+                        st = self.store.load_state(novel_id)
+                        if st:
+                            from .char_memory import add_event
+                            add_event(st, f"⚠ 检测到剧情矛盾（已记录待修正）: {p0[0].get('description', '')[:40]}", "warning")
+                            self.store.save_state(novel_id, st)
+                    except Exception:
+                        pass
+        except Exception as e:
+            log.warning(f"post_scene_logic_check failed: {type(e).__name__}: {str(e)[:100]}")
+        # 3) AI 痕迹检测（复用小说模式 AIDetector 离线规则，零 LLM 成本）
+        try:
+            from ..ai_detector import AIDetector
+            det = AIDetector._offline_detect(scene_text)
+            if det.get("ai_score", 0) >= 60:
+                log.warning(f"[AI检测] 场景{scene_num} AI 痕迹 {det.get('ai_score')}/100")
+                try:
+                    st = self.store.load_state(novel_id)
+                    if st:
+                        from .char_memory import add_event
+                        add_event(st, f"⚠ 本段 AI 腔较重（{det.get('ai_score')}/100）", "warning")
+                        self.store.save_state(novel_id, st)
+                except Exception:
+                    pass
+        except Exception as e:
+            log.warning(f"ai_detect failed: {e}")
 
     # ── LLM 基础 ──
     def _llm(self, system: str, user: str, temperature: float = 0.8,
@@ -270,6 +366,12 @@ class StoryDirector:
         fs = state.get("foreshadows_brief") or ""
         if fs:
             parts.append(f"未揭晓的伏笔（剧情中可自然铺垫/呼应，不必强行回收）: {fs[:200]}")
+        # v3.5.22: 复用小说模式角色状态追踪——当前角色位置/状态（结构化，防瞬移）
+        nid = state.get("novel_id", "")
+        if nid:
+            ctx = self._logic_context(nid)
+            if ctx:
+                parts.append(f"当前角色状态（必须遵守，场景中角色的位置/状态以此为准）:\n{ctx[:300]}")
         parts.append(f"当前场景号: {state.get('scene_num', 0)}")
         if s.get("location"):
             parts.append(f"地点: {s['location']}")
@@ -460,6 +562,16 @@ class StoryDirector:
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         self.store.append_scene(novel_id, scene_record)
+        # v3.5.22: 复用小说模式逻辑引擎（后台，不阻塞场景流）——
+        # 角色状态更新 + L1 矛盾检查
+        try:
+            import threading
+            threading.Thread(
+                target=self._post_scene_logic_check,
+                args=(novel_id, scene_num, scene_text),
+                daemon=True).start()
+        except Exception:
+            pass
 
         # 更新状态：场景号、摘要、最近场景
         state["scene_num"] = scene_num
