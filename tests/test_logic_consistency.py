@@ -281,6 +281,56 @@ def test_advance_outline_unit():
         check(f'P6 {name}', ok, '')
 
 
+def test_beats_unit():
+    """v3.5.49: 章节事件序列 beats——拆解兜底/规则推进/章节对齐"""
+    sys.path.insert(0, os.path.join(ROOT, 'backend'))
+    from core.interactive.story_director import StoryDirector
+
+    class FakeStore:
+        def __init__(self):
+            self.saved = {}
+
+        def save_state(self, nid, st):
+            self.saved[nid] = json.loads(json.dumps(st))
+
+        def load_state(self, nid):
+            return self.saved.get(nid)
+
+    d = StoryDirector.__new__(StoryDirector)
+    d.store = FakeStore()
+    cases = []
+
+    # 用例1: LLM 不可用时兜底为章节目标
+    st1 = {'outline_chapters': [{'number': 1, 'title': 'T', 'summary': '酒会上羞辱',
+                                 'target_words': 2000}],
+           'outline_progress': {'idx': 0, 'scene_in_chapter': 1, 'scene_start': 1},
+           'scene_num': 1}
+    d.store.saved['t'] = st1
+    beats = d._ensure_chapter_beats('t', st1)
+    cases.append(('beats兜底', len(beats) >= 1 and beats[0]['status'] == 'current'))
+
+    # 用例2: 规则推进——每场景一个事件
+    d._advance_beat(st1)
+    cases.append(('beats规则推进', st1['chapter_beats']['beats'][0]['status'] == 'done'))
+
+    # 用例3: 章节索引绑定（切章后旧 beats 不误用）
+    st2 = {'outline_chapters': [{'number': 1, 'title': 'A', 'summary': 's1', 'target_words': 2000},
+                                {'number': 2, 'title': 'B', 'summary': 's2', 'target_words': 2000}],
+           'outline_progress': {'idx': 1, 'scene_in_chapter': 0, 'scene_start': 4},
+           'scene_num': 4}
+    d.store.saved['t2'] = st2
+    beats2 = d._ensure_chapter_beats('t2', st2)
+    cases.append(('beats章节绑定', st2['chapter_beats']['chapter_idx'] == 1))
+
+    # 用例4: 已生成不重复生成（force=False 走缓存）
+    _before = st2['chapter_beats']['beats'][0]['desc']
+    d._ensure_chapter_beats('t2', st2)
+    cases.append(('beats缓存复用', st2['chapter_beats']['beats'][0]['desc'] == _before))
+
+    for name, ok in cases:
+        check(f'P7 {name}', ok, '')
+
+
 def main():
     targets = sys.argv[1:] if len(sys.argv) > 1 else None
     nids = [d for d in os.listdir(NOVELS)
@@ -304,6 +354,11 @@ def main():
         test_advance_outline_unit()
     except Exception as e:
         check('P6 _advance_outline 单元测试', False, f'异常: {e}')
+    # v3.5.49: beats 事件序列单元测试
+    try:
+        test_beats_unit()
+    except Exception as e:
+        check('P7 beats 单元测试', False, f'异常: {e}')
     print()
     for line in REPORT:
         print(line)

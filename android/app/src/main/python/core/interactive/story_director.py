@@ -373,6 +373,34 @@ AGENDA_SYSTEM = """你是互动小说对话编排师。为即将开始的角色�
 {"goal": "一句话目标", "hooks": [{"trigger": "读者行为/话语", "outcome": "剧情推进结果"}], "boundaries": ["角色绝不主动做的事"], "exit": {"min_rounds": 3, "condition": "收尾条件"}}
 只输出 JSON。"""
 
+# ── v3.5.49: 章节事件序列（beats）——每场景推进 1 个事件，杜绝重复生成 ──
+BEAT_SYSTEM = """你是互动小说的剧情拆解师。把本章目标拆解为 N 个前后连贯的事件节点（beats）。
+
+规则：
+1. 输出恰好 {n} 个事件，每个事件对应后续的 1 个场景——事件与场景一一对应
+2. 事件必须：因果递进（前一个事件的结果引发后一个事件）、覆盖本章目标、
+   每个事件都有明确的新进展（严禁事件之间是同义反复）
+3. 每个事件一句话（15-40 字），聚焦"发生了什么"，如："签约酒会上陆廷深当众羞辱你的作品"
+4. 最后一个事件必须让本章目标达成或留下明确的下章引子
+
+输出 JSON: {{"beats": [{{"id": 1, "desc": "事件描述"}}, ...]}}
+只输出 JSON。"""
+
+# ── v3.5.49: 角色行为边界——生成前约束"绝不做的行为"，防行为脱离人设 ──
+BOUNDARY_SYSTEM = """你是角色行为约束师。根据角色人设，提取该角色【绝不会做出的行为】（行为级，不是台词级）。
+
+规则：
+1. 输出 3 条，每条一句话（5-20 字），聚焦"以这个角色的性格/身份/原则，绝对做不出的事"
+2. 必须与角色人设强相关（来自其身份、性格、价值观、过往经历），禁止空泛套话
+3. 示例："当众向敌人示弱"、"背叛结拜兄弟"、"在公开场合失态痛哭"、"承认自己用肮脏手段"
+4. 边界要具体到可判断：LLM 生成场景时能据此否决违规行为
+
+角色人设:
+{profile}
+
+输出 JSON: {{"boundaries": ["绝不做的行为1", "绝不做的行为2", "绝不做的行为3"]}}
+只输出 JSON。"""
+
 HOOK_VERIFY_SYSTEM = """你是互动小说钩子核对器。判断读者与角色的对话中，议程（Agenda）的"推进开关"（hooks）是否已被触发。
 
 判断标准：
@@ -753,6 +781,35 @@ class StoryDirector:
             parts.append(f"当前剧情章节（本章目标，场景必须围绕它推进）: "
                          f"第{ch.get('number', ci + 1)}章《{ch.get('title', '')}》"
                          f"（{ch.get('volume', '')}）—— {ch.get('summary', '')}")
+            # v3.5.49: 本章事件进度（beats）——本场景只能推进"进行中"事件，
+            # 已完成事件严禁重演（只在对话中可被提及）。beats 由切章时后台
+            # 预生成（_ensure_chapter_beats），这里只读缓存，零额外延迟
+            try:
+                _cb = state.get("chapter_beats") or {}
+                beats = _cb.get("beats") or [] if _cb.get("chapter_idx") == ci else []
+                if beats:
+                    _b_lines = []
+                    for _b in beats:
+                        _mk = {"done": "已完成", "current": "进行中(本场景推进)",
+                               "pending": "未开始"}.get(_b.get("status"), "未开始")
+                        _b_lines.append(f"  [{_mk}] {_b.get('desc', '')}")
+                    parts.append("## 本章事件进度（P0 硬约束——防重复生成）:\n"
+                                 + "\n".join(_b_lines)
+                                 + "\n规则: 每个事件只演一次；进行中事件是本场景的唯一焦点；"
+                                   "已完成事件不得重新上演（最多在台词中被提及作为铺垫）；"
+                                   "未开始事件不提前发生。")
+            except Exception as e:
+                log.warning(f"beats inject failed: {e}")
+        # v3.5.49: 目标仲裁——主线（当前事件）优先，玩家方向只能产生分支不能夺主线
+        parts.append("主线规则（P0）: 主线=本章目标与事件进度，必须持续推进；"
+                     "玩家在对话/行动中表达的方向是分支张力——改变实现方式，"
+                     "不改变主线方向；玩家明确拒绝当前事件时，以'拒绝及其后果'"
+                     "推进事件（如拒绝交易→对方翻脸），而不是跳过事件另起炉灶。")
+        # v3.5.49: 对话结论落地——上一场对话解决了什么，本场景必须承接
+        _cc = state.get("chat_conclusion") or ""
+        if _cc:
+            parts.append(f"刚结束的对话结论（本场景必须承接其成果/后果，不得当没发生过）: {str(_cc)[:150]}")
+            state["chat_conclusion"] = ""  # 只承接一次，用后即清
         if s.get("location"):
             parts.append(f"地点: {clean_location(s['location'])}")
         # v3.5.37: 主角状态卡（精确位置/时间/同行/物品/处境——LLM 结构化识别）
@@ -855,6 +912,10 @@ class StoryDirector:
                 anti = prof.get("anti_patterns", [])[:2]
                 for a in anti:
                     brief.append(f"禁:{a.get('pattern', a) if isinstance(a, dict) else a}"[:60])
+                # v3.5.49: 行为边界（P0）——角色绝不会做的行为，生成前硬约束
+                bounds = prof.get("boundaries") or []
+                if bounds:
+                    brief.append("行为边界(绝不会做出):" + "、".join(str(b)[:24] for b in bounds[:3]))
                 if brief:
                     parts.append(f"- {name}: {'；'.join(brief)}")
         return "\n".join(parts)
@@ -1006,6 +1067,12 @@ class StoryDirector:
             self._advance_outline(novel_id, state)
         except Exception as e:
             log.warning(f"advance_outline failed: {e}")
+        # v3.5.49: 事件序列推进——本场景已演完，当前事件标记 done，下一事件置 current
+        try:
+            self._advance_beat(state)
+            self.store.save_state(novel_id, state)
+        except Exception as e:
+            log.warning(f"advance_beat failed: {e}")
         # v3.5.22: 复用小说模式逻辑引擎（后台，不阻塞场景流）——
         # 角色状态更新 + L1 矛盾检查（v3.5.47: 走串行队列，不与主流程抢 LLM）
         try:
@@ -1387,9 +1454,11 @@ class StoryDirector:
                     rel_map[k] = v
             except (TypeError, ValueError):
                 rel_map[k] = v
-        # objective 更新
+        # v3.5.49: 目标仲裁——对话结论不再覆盖主线 objective（主线=大纲章节目标/
+        # 事件序列），降级为 chat_conclusion 注入下一场景强制承接。
+        # 玩家方向是分支张力，不是主线；主线被闲聊绑架是"剧情无法按大纲推进"的根因之一
         if result.get("objective_update"):
-            state["state"]["objective"] = result["objective_update"]
+            state["chat_conclusion"] = str(result["objective_update"])[:150]
         # v3.5.9: 对话沉淀为角色记忆——PACT facts 同步进目标角色的专属记忆
         from .char_memory import add_event, add_memory
         for f in state.get("facts", []):
@@ -1475,6 +1544,65 @@ class StoryDirector:
             "worldbuilding": novel.get("worldbuilding", {}),
         }
 
+    def _ensure_chapter_beats(self, novel_id: str, state: dict, force: bool = False) -> list:
+        """v3.5.49: 章节事件序列（beats）——把本章目标拆成 N 个事件，每场景推进 1 个。
+
+        切章时生成（同步，一次 LLM 调用）。事件与场景一一对应，场景 prompt 注入
+        "本章事件进度"，已完成事件严禁重演 → 结构性杜绝重复生成。
+        返回 beats 列表（未就绪返回空，调用方用章节目标兜底）。
+        """
+        op = state.get("outline_progress") or {}
+        idx = int(op.get("idx", 0))
+        chs = state.get("outline_chapters") or []
+        if not chs:
+            return []
+        ch = chs[min(idx, len(chs) - 1)]
+        cb = state.get("chapter_beats") or {}
+        if (not force and cb.get("chapter_idx") == idx and cb.get("beats")):
+            return cb["beats"]
+        tw = int(ch.get("target_words", 0) or 0)
+        n = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
+        n = max(2, min(n, 4))
+        try:
+            user = (f"本章目标: 第{ch.get('number', idx + 1)}章《{ch.get('title', '')}》"
+                    f"—— {ch.get('summary', '')}\n"
+                    f"请拆解为 {n} 个事件节点。")
+            raw = self._llm(BEAT_SYSTEM, user, temperature=0.4, max_tokens=500)
+            import re as _re3
+            m = _re3.search(r"\{.*\}", raw or "", _re3.S)
+            data = json.loads(m.group(0)) if m else {}
+            beats = [{"id": int(b.get("id", i + 1)), "desc": str(b.get("desc", ""))[:60],
+                      "status": "pending"} for i, b in enumerate((data.get("beats") or [])[:n])]
+            if len(beats) < 2:  # 拆解失败兜底：目标本身就是事件
+                beats = [{"id": 1, "desc": str(ch.get("summary", ""))[:60], "status": "pending"}]
+        except Exception as e:
+            log.warning(f"beats extract failed: {type(e).__name__}: {str(e)[:80]}")
+            beats = [{"id": 1, "desc": str(ch.get("summary", ""))[:60], "status": "pending"}]
+        if beats:
+            beats[0]["status"] = "current"
+            state["chapter_beats"] = {"chapter_idx": idx, "beats": beats}
+            try:
+                self.store.save_state(novel_id, state)
+            except Exception:
+                pass
+        return beats
+
+    def _advance_beat(self, state: dict):
+        """v3.5.49: 场景生成后推进当前事件（每场景 1 个 beat）——规则推进，零 LLM"""
+        try:
+            cb = state.get("chapter_beats") or {}
+            beats = cb.get("beats") or []
+            if not beats:
+                return
+            cur_i = next((i for i, b in enumerate(beats) if b.get("status") == "current"), None)
+            if cur_i is None:
+                return
+            beats[cur_i]["status"] = "done"
+            if cur_i + 1 < len(beats):
+                beats[cur_i + 1]["status"] = "current"
+        except Exception as e:
+            log.warning(f"advance_beat failed: {e}")
+
     def _advance_outline(self, novel_id: str, state: dict):
         """v3.5.28: 大纲章节推进——场景数达阈值切下一章，objective 随章更新
 
@@ -1519,6 +1647,13 @@ class StoryDirector:
                 # v3.5.48: 修复——nch 从未定义（NameError 导致切章状态保存被跳过）
                 _nch = chs[min(idx, len(chs) - 1)]
                 log.info(f"Outline advanced → 第{_nch.get('number', idx + 1)}章《{_nch.get('title', '')}》")
+                # v3.5.49: 后台预生成新章事件序列（beats）——下个场景生成时
+                # 注入"本章事件进度"，每场景推进 1 个事件，杜绝重复生成
+                try:
+                    _st_new = self.store.load_state(novel_id) or state
+                    enqueue_background(self._ensure_chapter_beats, novel_id, _st_new, True, critical=True)
+                except Exception as e:
+                    log.warning(f"beats pregen failed: {e}")
                 # v3.5.48: 非最后一章不设 final_done（否则下一场景直接 return 再次卡死）
                 state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
                                              "scene_start": state.get("scene_num", 0) or 0}
@@ -1646,8 +1781,49 @@ class StoryDirector:
                 if prof and "error" not in prof:
                     casts.setdefault(name, {})["profile"] = prof
                     changed = True
+                    # v3.5.49: 异步提取角色行为边界（人设级"绝不做的行为"，
+                    # 场景生成前注入——行为前置约束，防角色做出违背人设的事）
+                    try:
+                        enqueue_background(self._attach_char_boundaries, novel_id, name)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         if changed:
             state["casts"] = casts
             self.store.save_state(novel_id, state)
+
+    def _attach_char_boundaries(self, novel_id: str, char_name: str):
+        """v3.5.49: 从角色人设提取行为边界（后台，一次 LLM 调用，结果缓存）"""
+        try:
+            state = self.store.load_state(novel_id)
+            if not state:
+                return
+            casts = state.get("casts") or {}
+            c = casts.get(char_name) or {}
+            prof = c.get("profile") or {}
+            if prof.get("boundaries"):
+                return  # 已提取过
+            _brief = []
+            if prof.get("identity"):
+                _brief.append(f"身份: {str(prof['identity'])[:100]}")
+            if prof.get("personality_brief"):
+                _brief.append(f"性格: {str(prof['personality_brief'])[:150]}")
+            _dna = prof.get("expression_dna") or []
+            for _d in _dna[:3]:
+                _brief.append(f"特质: {str(_d.get('name', _d) if isinstance(_d, dict) else _d)[:80]}")
+            if not _brief:
+                return
+            raw = self._llm(BOUNDARY_SYSTEM.format(profile="\n".join(_brief)),
+                            "请提取该角色的行为边界。", temperature=0.3, max_tokens=300)
+            import re as _re4
+            m = _re4.search(r"\{.*\}", raw or "", _re4.S)
+            data = json.loads(m.group(0)) if m else {}
+            bounds = [str(b)[:30] for b in (data.get("boundaries") or [])[:3] if str(b).strip()]
+            if bounds:
+                prof["boundaries"] = bounds
+                state["casts"][char_name]["profile"] = prof
+                self.store.save_state(novel_id, state)
+                log.info(f"boundaries for {char_name}: {bounds}")
+        except Exception as e:
+            log.warning(f"attach_boundaries failed: {type(e).__name__}: {str(e)[:80]}")
