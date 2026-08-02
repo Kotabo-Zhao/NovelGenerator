@@ -19,7 +19,7 @@ import time
 from typing import AsyncIterator, Optional
 
 from ..resilient_client import ResilientLLMClient
-from .action_engine import ActionEngine, _state_snapshot
+from .action_engine import ActionEngine, _state_snapshot, clean_location  # v3.5.36
 
 log = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ class DialogueEngine:
         s = state.get("state", {}) or {}
         loc = s.get("location", "") or ""
         if loc:
-            parts.append(f"## 当前环境: {str(loc)[:80]}")
+            parts.append(f"## 当前环境: {clean_location(loc)}")
         # v3.5.27: 角色白名单——本轮只有你与读者，严禁其他人出现
         parts.append(f"## 对话对象: 你（{target_char}）与读者（{((state.get('player_char') or {}).get('name', '你'))}）"
                      "两人。其他角色一律不得出现、插话或提及在场（读者主动提起时只回应其内容）。")

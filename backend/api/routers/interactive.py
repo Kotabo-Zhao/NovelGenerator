@@ -96,7 +96,16 @@ async def interactive_start(novel_id: str):
             _geo = _geo[0] if isinstance(_geo[0], str) else json.dumps(_geo[0], ensure_ascii=False)
         elif isinstance(_geo, dict):
             _geo = json.dumps(_geo, ensure_ascii=False)
-        st["state"]["location"] = wb.get("starting_location") or str(_geo)[:60] or ""
+        _loc = wb.get("starting_location") or str(_geo) or ""
+        # v3.5.36: 地点清洗——geography 常是'城市，区域A、区域B…'列表式字符串，
+        # 只取第一段（城市+首个区域），防止整串地点注入导致'场景切到列表里别的地点'
+        if _loc:
+            _loc = str(_loc).strip()
+            for _sep in ("，", ",", "；", ";"):
+                if _sep in _loc:
+                    _loc = _loc.split(_sep)[0].strip()
+                    break
+        st["state"]["location"] = _loc[:60]
         core_conflict = wb.get("core_conflict", "")
         if isinstance(core_conflict, (dict, list)):
             core_conflict = json.dumps(core_conflict, ensure_ascii=False)

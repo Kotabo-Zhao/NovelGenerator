@@ -21,7 +21,7 @@ import uuid
 from typing import AsyncIterator, Optional
 
 from ..resilient_client import ResilientLLMClient
-from .action_engine import _state_snapshot
+from .action_engine import _state_snapshot, clean_location
 
 log = logging.getLogger(__name__)
 
@@ -443,7 +443,7 @@ class StoryDirector:
                          f"第{ch.get('number', ci + 1)}章《{ch.get('title', '')}》"
                          f"（{ch.get('volume', '')}）—— {ch.get('summary', '')}")
         if s.get("location"):
-            parts.append(f"地点: {s['location']}")
+            parts.append(f"地点: {clean_location(s['location'])}")
         if s.get("objective"):
             parts.append(f"主线目标（必须推进）: {s['objective']}")
         if s.get("flags"):
