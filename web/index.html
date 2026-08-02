@@ -472,6 +472,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .fact-fulfilled{color:var(--green)}
   .fact-expired{color:var(--text3)}
   .fact-broken{color:var(--red)}
+  .inter-actions{display:flex;gap:4px;align-items:center}
+  .voice-btn{background:var(--card);border:1px solid var(--border);border-radius:6px;width:26px;height:26px;font-size:12px;cursor:pointer;color:var(--text2)}
+  .voice-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .inter-line.playing .inter-dialogue{color:var(--accent)}
+  .voice-picker{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
   .sg-relation-svg-wrap svg,.sg-timeline-svg-wrap svg{width:100%;height:100%}
 
   /* ── 导出列表 ── */
@@ -990,6 +995,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <span v-else class="badge">📖 剧情中</span>
               </div>
               <div class="flex gap-6">
+                <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy" title="对话台词自动语音（旁白静默）">🔊 {{ interactive.autoVoice?'语音开':'语音关' }}</button>
                 <button class="btn btn-xs btn-ghost" @click="interactiveRollback" :disabled="interactive.busy" title="回退到上一场景">↩ 回退</button>
                 <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开互动（备份旧存档）">🔄 重开</button>
               </div>
@@ -1000,13 +1006,34 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <template v-for="(blk, i) in interactive.blocks" :key="i">
                 <div v-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
                 <div v-else-if="blk.type==='action'" class="inter-action">{{ blk.content }}</div>
-                <div v-else class="inter-line">
+                <div v-else class="inter-line" :class="{playing: interactive.speakingLine===i}">
                   <span class="inter-speaker">{{ blk.speaker }}</span>
                   <span class="inter-dialogue">{{ blk.content }}</span>
                   <span class="inter-voice" v-if="interactive.voices[blk.speaker]">🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</span>
+                  <span class="inter-actions" v-if="blk.type==='dialogue'||blk.type==='chat'">
+                    <button class="voice-btn" @click="speakLine(blk, i)" :title="interactive.speakingLine===i?'停止':'播放语音'">{{ interactive.speakingLine===i?'⏹':'🔊' }}</button>
+                    <button class="voice-btn" @click="openVoicePicker(blk.speaker)" title="更换音色">🎙</button>
+                  </span>
                 </div>
               </template>
               <div v-if="interactive.typing" class="inter-typing">▋</div>
+            </div>
+
+            <!-- v3.1: 音色选择器 -->
+            <div v-if="interactive.voicePicker" class="voice-picker">
+              <div class="flex justify-between items-center" style="margin-bottom:8px">
+                <div class="card-title" style="font-size:13px;margin:0">🎙 更换「{{ interactive.voicePicker }}」的音色</div>
+                <button class="btn btn-xs btn-ghost" @click="interactive.voicePicker=null">✕</button>
+              </div>
+              <div class="flex gap-6" style="flex-wrap:wrap;align-items:center">
+                <select class="voice-select" style="flex:1;min-height:34px;font-size:13px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 8px">
+                  <option v-for="vc in interactive.voiceCandidates" :key="vc" :value="vc" :selected="(interactive.voices[interactive.voicePicker]||{}).voice===vc">{{ vc.replace('zh-CN-','').replace('Neural','') }}</option>
+                </select>
+                <label class="text-xs muted">语速 <input type="range" min="-50" max="100" v-model.number="interactive.voiceRate" style="width:80px;vertical-align:middle"></label>
+                <label class="text-xs muted">音调 <input type="range" min="-50" max="50" v-model.number="interactive.voicePitch" style="width:80px;vertical-align:middle"></label>
+                <button class="btn btn-xs btn-primary" @click="saveVoiceOverride">保存</button>
+                <button class="btn btn-xs btn-ghost" @click="resetVoiceOverride">恢复默认</button>
+              </div>
             </div>
 
             <!-- 输入区 -->
@@ -3497,8 +3524,114 @@ const app = createApp({
       blocks: [], typing: false, busy: false,
       pendingNode: false, inChat: false, message: '',
       voices: {},
+      // v3.1: 语音
+      autoVoice: true,        // 对话台词自动播放
+      speakingLine: null,     // 正在播放的台词 index
+      voicePicker: null,      // 正在调音色的角色名
+      voiceCandidates: [],    // 可选音色列表
+      voiceRate: '+0%', voicePitch: '+0Hz',
     });
     let interactiveAbort = null;
+    let interactiveAudio = null;   // 当前播放的 Audio
+
+    // ── v3.1: 互动对话语音 ──
+    function stopInteractiveVoice(){
+      if(interactiveAudio){ interactiveAudio.pause(); interactiveAudio = null; }
+      interactive.speakingLine = null;
+    }
+    async function speakLine(blk, idx){
+      if(!blk || blk.type!=='dialogue' && blk.type!=='chat') return;
+      stopInteractiveVoice();
+      const text = (blk.content||'').trim();
+      if(!text) return;
+      interactive.speakingLine = idx;
+      // 取该角色音色（玩家覆盖 > 人设规则映射 > 默认）
+      const v = (interactive.voices && interactive.voices[blk.speaker]) || {};
+      const voice = v.voice || 'zh-CN-XiaoxiaoNeural';
+      const rate = v.rate || '+0%';
+      const pitch = v.pitch || '+0Hz';
+      try{
+        const r = await fetch(API+'/api/tts', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text: text.slice(0, 500), voice, rate, pitch }),
+        });
+        if(!r.ok) throw new Error('TTS '+r.status);
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        interactiveAudio = new Audio(url);
+        interactiveAudio.onended = () => { interactive.speakingLine = null; URL.revokeObjectURL(url); interactiveAudio = null; };
+        interactiveAudio.onerror = () => { interactive.speakingLine = null; URL.revokeObjectURL(url); interactiveAudio = null; };
+        interactiveAudio.play().catch(()=>{ interactive.speakingLine = null; });
+      }catch(e){
+        // 降级: 系统 TTS
+        try{
+          if(window.speechSynthesis){
+            const u = new SpeechSynthesisUtterance(text.slice(0, 500));
+            u.lang = 'zh-CN'; u.rate = 1.0;
+            u.onend = () => { interactive.speakingLine = null; };
+            u.onerror = () => { interactive.speakingLine = null; };
+            speechSynthesis.speak(u);
+            return;
+          }
+        }catch(_){}
+        interactive.speakingLine = null;
+      }
+    }
+    async function loadVoiceCandidates(){
+      try{
+        const r = await fetch(API+'/api/tts/voices');
+        if(r.ok){
+          const d = await r.json();
+          if(d && d.voices) interactive.voiceCandidates = d.voices.map(v=>v.name);
+        }
+      }catch(e){}
+      if(!interactive.voiceCandidates.length){
+        interactive.voiceCandidates = ['zh-CN-XiaoxiaoNeural','zh-CN-XiaoyiNeural','zh-CN-XiaoxuanNeural','zh-CN-YunxiNeural','zh-CN-YunxiaNeural','zh-CN-YunjianNeural','zh-CN-YunyangNeural'];
+      }
+    }
+    function openVoicePicker(charName){
+      interactive.voicePicker = charName;
+      const v = (interactive.voices && interactive.voices[charName]) || {};
+      interactive.voiceRate = v.rate || '+0%';
+      interactive.voicePitch = v.pitch || '+0Hz';
+      loadVoiceCandidates();
+    }
+    async function saveVoiceOverride(){
+      if(!interactive.voicePicker || !activeNovel.value) return;
+      const charName = interactive.voicePicker;
+      const id = encodeURIComponent(activeNovel.value.id);
+      const sel = document.querySelector('.voice-select');
+      const voice = sel ? sel.value : 'zh-CN-XiaoxiaoNeural';
+      try{
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/voices/'+encodeURIComponent(charName), {
+          method:'PUT', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ voice, rate: interactive.voiceRate, pitch: interactive.voicePitch }),
+        });
+        if(r.ok){
+          if(!interactive.voices) interactive.voices = {};
+          interactive.voices[charName] = { voice, rate: interactive.voiceRate, pitch: interactive.voicePitch, source:'player' };
+          showToast('已为该角色设置音色','音色已保存','🎙️');
+        }
+      }catch(e){ showToast('保存失败: '+e.message,'音色设置','⚠️'); }
+      interactive.voicePicker = null;
+    }
+    async function resetVoiceOverride(){
+      if(!interactive.voicePicker || !activeNovel.value) return;
+      const charName = interactive.voicePicker;
+      const id = encodeURIComponent(activeNovel.value.id);
+      try{
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/voices/'+encodeURIComponent(charName), { method:'DELETE' });
+        if(r.ok){
+          delete interactive.voices[charName];
+          showToast('已恢复人设默认音色','音色已重置','↩️');
+        }
+      }catch(e){}
+      interactive.voicePicker = null;
+    }
+    function toggleAutoVoice(){
+      interactive.autoVoice = !interactive.autoVoice;
+      if(!interactive.autoVoice) stopInteractiveVoice();
+    }
 
     function openInteractive() {
       if (!activeNovel.value || isBusy.value) return;
@@ -3633,6 +3766,10 @@ const app = createApp({
             const last = interactive.blocks[interactive.blocks.length-1];
             if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
             _scrollStory();
+            // v3.1: 对话台词自动播放（旁白静默，只对话题生效）
+            if (interactive.autoVoice && last && (last.type==='chat' || last.type==='dialogue')) {
+              speakLine(last, interactive.blocks.length-1);
+            }
           } else if (evt.type==='error') {
             interactive.blocks.push({type:'error', speaker:'', content: evt.message});
           }
@@ -4053,6 +4190,7 @@ const app = createApp({
       // v3.0: 互动模式
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
+      speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
       switchToStoryGraph,loadStoryGraph,
