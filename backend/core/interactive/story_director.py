@@ -535,7 +535,9 @@ class StoryDirector:
             # ── 主角状态卡 ──
             ps = data.get("player") or {}
             clean = {
-                "location": str(ps.get("location", old_ps.get("location", "")))[:80],
+                # v3.5.51: location 必须过 clean_location——LLM 偶尔输出对象/数组
+                # （JSON 片段被 str() 强转进字段），导致场景地点脏数据
+                "location": clean_location(str(ps.get("location", old_ps.get("location", ""))))[:80],
                 "time": str(ps.get("time", old_ps.get("time", "")))[:20],
                 "with": [str(x)[:20] for x in (ps.get("with") or [])][:4],
                 "holding": [str(x)[:30] for x in (ps.get("holding") or [])][:5],
@@ -553,7 +555,8 @@ class StoryDirector:
                     continue
                 clean_cs[str(name)[:20]] = {
                     "present": bool(c.get("present", old_cs.get(str(name), {}).get("present", True))),
-                    "location": str(c.get("location", ""))[:60],
+                    # v3.5.51: 同样清洗 NPC 位置（防 JSON 脏数据污染场景地点）
+                    "location": clean_location(str(c.get("location", "")))[:60],
                     "mood": str(c.get("mood", ""))[:20],
                     "stance": str(c.get("stance", ""))[:30],
                     "knows": [str(k)[:50] for k in (c.get("knows") or [])][:4],
@@ -893,6 +896,12 @@ class StoryDirector:
                 # v3.5.50: 全维度消费角色蒸馏——行为规则（决策启发式）是人设
                 # 的核心，之前只注入台词碎片（dna+anti 各2条）导致行为脱人设
                 segs = []
+                mm = prof.get("mental_models", [])[:1]
+                for m in mm:
+                    if isinstance(m, dict):
+                        segs.append(f"心智[{str(m.get('name', ''))[:16]}:{str(m.get('principle', m.get('description', '')))[:36]}]")
+                    else:
+                        segs.append(f"心智[{str(m)[:50]}]")
                 heur = prof.get("decision_heuristics", [])[:2]
                 for h in heur:
                     if isinstance(h, dict):
@@ -918,6 +927,22 @@ class StoryDirector:
                     segs.append(f"底线[{str(r)[:60]}]")
                 if segs:
                     parts.append(f"- {name}: " + "；".join(segs))
+        # v3.5.51: 在场角色记忆注入——角色记得的旧事（承诺/共同经历/秘密）必须
+        # 在场景行为中体现。之前只有对话引擎消费记忆，场景生成对角色记忆一无所知
+        # → 场景里角色行为与记忆矛盾（该记得的不记得/凭空忘记承诺）
+        try:
+            from .char_memory import get_memories
+            _mem_lines = []
+            for name in list(_whitelist.keys())[:4]:
+                mems = get_memories(state, name, 3)
+                if mems:
+                    _ms = "；".join(str(m.get("content", ""))[:45] for m in mems)
+                    _mem_lines.append(f"- {name}: {_ms}")
+            if _mem_lines:
+                parts.append("在场角色记忆（角色明确记得的事——行为/台词必须与之吻合，"
+                             "不得装作不记得，也不得每场景都重提）:\n" + "\n".join(_mem_lines))
+        except Exception as e:
+            log.warning(f"mem inject failed: {e}")
         return "\n".join(parts)
 
     # ── 开场背景介绍（v3.5.13：玩家打开互动模式先知道"我是谁/在哪/要做什么"）──
@@ -1008,6 +1033,27 @@ class StoryDirector:
         if state is None:
             yield {"type": "error", "message": "互动存档不存在，请先 start"}
             return
+
+        # v3.5.51: 存量脏 location 自愈（早期版本 LLM 输出 JSON 片段进字段）
+        try:
+            _ps_old = state.get("player_state") or {}
+            _loc_old = str(_ps_old.get("location", "") or "")
+            if _loc_old and any(_c in _loc_old for _c in ('{', '[', ':', '"', 'null')):
+                _ps_old["location"] = clean_location(_loc_old)
+                state["player_state"] = _ps_old
+                _cs_old = state.get("cast_states") or {}
+                for _n, _c in _cs_old.items():
+                    _cl = str(_c.get("location", "") or "")
+                    if _cl and any(_c2 in _cl for _c2 in ('{', '[', ':', '"', 'null')):
+                        _c["location"] = clean_location(_cl)
+                state["cast_states"] = _cs_old
+                try:
+                    self.store.save_state(novel_id, state)
+                    log.info(f"存量脏 location 已清洗: {_loc_old[:30]} → {_ps_old['location'][:30]}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         # 快照（生成前备份）
         self.store.snapshot(novel_id)
@@ -1122,10 +1168,18 @@ class StoryDirector:
         _cs = state.get("cast_states") or {}
         _my_loc = clean_location(ps.get("location") or "")
         for sp in speakers:
-            if sp and sp in _cs:
+            if not sp:
+                continue
+            if sp in _cs:
                 _cs[sp]["present"] = True
                 if not _cs[sp].get("location") and _my_loc:
                     _cs[sp]["location"] = _my_loc
+            else:
+                # v3.5.51: 说了话但状态卡缺失（后台提取失败/队列丢弃）→
+                # 兜底建条目，防 LLM 对无状态角色自由发挥
+                _cs[sp] = {"present": True, "location": _my_loc or "",
+                           "mood": "", "stance": "", "knows": [],
+                           "condition": "健康", "agenda": ""}
         state["cast_states"] = _cs
         self.store.save_state(novel_id, state)
 

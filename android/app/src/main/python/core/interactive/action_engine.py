@@ -484,8 +484,24 @@ class ActionEngine:
         char_briefs = []
         for name in chars[:3]:
             prof = (state.get("casts", {}).get(name) or {}).get("profile", {})
+            # v3.5.51: 行动结果场景人设全维度（对齐场景生成——行为准则/风格/绝不）
+            _segs = []
+            heur = prof.get("decision_heuristics", [])[:1]
+            for h in heur:
+                if isinstance(h, dict):
+                    _tr = str(h.get("trigger", ""))[:20]
+                    if _tr.startswith("当"):
+                        _tr = _tr[1:]
+                    _segs.append(f"当{_tr}→{str(h.get('action', ''))[:30]}")
+                else:
+                    _segs.append(str(h)[:40])
             dna = prof.get("expression_dna", [])[:1]
-            brief = str(dna[0].get("name", dna[0]))[:40] if dna else "（人设未蒸馏）"
+            for d in dna:
+                _segs.append(f"风格[{str(d.get('name', d) if isinstance(d, dict) else d)[:20]}]")
+            anti = prof.get("anti_patterns", [])[:2]
+            for a in anti:
+                _segs.append(f"绝不[{a.get('pattern', a) if isinstance(a, dict) else a}"[:36] + "]")
+            brief = "；".join(_segs) if _segs else "（人设未蒸馏）"
             char_briefs.append(f"- {name}: {brief}")
         user = (
             f"小说: 《{state.get('title', '')}》 {state.get('genre', '')}·{state.get('style', '')}\n"
