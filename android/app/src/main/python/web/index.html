@@ -1303,6 +1303,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </button>
             </div>
 
+            <!-- v3.5.35: 停顿理由——告诉玩家为什么停、可以做什么 -->
+            <div v-if="interactive.pendingNode && !interactive.inChat && interactive.pendingReason"
+                 style="display:flex;align-items:center;gap:8px;background:rgba(212,175,55,.08);border:1px solid rgba(212,175,55,.3);border-radius:8px;padding:7px 14px;margin-top:10px;font-size:13px;color:#d9bc7a">
+              <span>📌</span><span>{{ interactive.pendingReason }}</span>
+            </div>
+
             <!-- 输入区 -->
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
@@ -3791,7 +3797,7 @@ const app = createApp({
       loading: false, loadingMsg: '', error: '',
       state: { scene_num:0, facts:[], casts:{}, state:{relations:{}} },
       blocks: [], typing: false, busy: false,
-      pendingNode: false, inChat: false, message: '',
+      pendingNode: false, pendingReason: '', inChat: false, message: '',
       voices: {},
       // v3.1: 语音
       autoVoice: true,        // 对话台词自动播放
@@ -4106,6 +4112,7 @@ const app = createApp({
               });
             }
           } else if (evt.type==='node_check') {
+            interactive.pendingReason = evt.reason || '';
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
             interactive.typing = false;
@@ -4234,6 +4241,7 @@ const app = createApp({
           if (data.ok) {
             interactive.state = data.state;
             interactive.pendingNode = !!data.state.pending_node;
+            interactive.pendingReason = data.state.pending_reason || '';  // v3.5.35
           }
         }
       } catch(e) { console.warn('loadInteractiveState failed:', e); }
@@ -4538,6 +4546,7 @@ const app = createApp({
               if (firstDia >= 0) speakLine(blocks[firstDia], firstDia);
             }
           } else if (evt.type==='node_check') {
+            interactive.pendingReason = evt.reason || '';
             interactive.pendingNode = evt.is_node;
             interactive.inChat = false;
             // v3.3: 议程展示（这场对话要谈什么）

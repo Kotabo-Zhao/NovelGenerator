@@ -97,6 +97,10 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
    - 台词克制：每个角色 1-2 句，点到为止，让玩家有接话空间
    - 禁止：大段环境铺陈、多段连续心理活动、重复描述已知信息
    玩家要在移动端快速读完，宁可少写不可啰嗦。
+15. v3.5.35 停顿衔接（节奏关键）：场景若含角色对话或情节冲突，结尾用角色的
+    一个发问/邀请/等待自然收尾（1 句）——让读者清楚"该我回应了"，停顿不突兀；
+    纯推进场景（无对话）结尾则正常收束，不要硬塞提问（停顿由系统节奏兜底，
+    读者可用「我要说话」随时介入）。
 只输出标记语言文本，不要输出解释。"""
 
 INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份简洁的开场背景介绍（250-350 字），
@@ -685,6 +689,9 @@ class StoryDirector:
             state["pending_node"] = is_node
             state["node_chars"] = node_chars
             state["node_rounds"] = rounds
+            # v3.5.35: 停顿理由存入 state——前端展示"为什么停、要做什么"，
+            # 玩家不再不知所措
+            state["pending_reason"] = str(reason or "")[:80]
             agenda = None
             if is_node:
                 # v3.3: Agenda 机制——对话前生成议程（目标/推进开关/边界），对话围绕它推进
@@ -737,7 +744,7 @@ class StoryDirector:
                 for sc in last_three[-3:]
             )
             if no_dialogue:
-                return True, chars, 4, "连续三段无对话"
+                return True, chars, 4, "剧情已推进一段，给你一个说话的机会（不想说可直接继续剧情）"
         # 规则 3：强冲突事件（真正需要玩家抉择的时刻）
         text = " ".join(b["content"] for b in blocks)
         strong_kw = ["拔剑", "刀架", "生死", "追杀", "真相大白", "身份暴露", "决裂", "挟持",
