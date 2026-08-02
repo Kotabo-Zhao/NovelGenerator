@@ -5044,7 +5044,11 @@ app.config.warnHandler = () => {};  // 静默 V3 兼容性警告
 app.mount('#app');
 </script>
 <script>
-if ('serviceWorker' in navigator) {
+// v2.5.41: 安卓 App（WebView）内【彻底不注册 SW】——SW 注册 + MainActivity
+// onPageFinished 注入的 unregister+reload 会形成死循环（reload→注册→再 reload→
+// 疯狂闪烁）。安卓端由 LOAD_NO_CACHE + 原生清理兜底，不需要 SW。
+// PC 浏览器保留 SW（离线阅读功能）。
+if (!window.AndroidBridge && 'serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').then(r => {
     console.log('SW registered:', r.scope);
     // 检测 SW 更新，有新版自动刷

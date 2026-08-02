@@ -20,6 +20,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val handler = Handler(Looper.getMainLooper())
     private var frontendLoaded = false
+    private var mainFrameErrorCount = 0  // v2.5.41: 主 frame 加载错误重试上限（防无限 reload 闪烁）
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -106,8 +107,12 @@ class MainActivity : AppCompatActivity() {
                 binding.swipeRefresh.isRefreshing = false  // v2.27: 修复下拉刷新动画停不下来
                 // v2.5.38: 彻底禁用 Service Worker——SW 缓存独立于 HTTP 缓存，
                 // LOAD_NO_CACHE 管不到它（覆盖安装仍可能用旧页面）
+                // v2.5.41: 防死循环——sessionStorage 标记同 tab reload 保留，
+                // 一次启动只清理一次；App 冷启动清空 → 每次启动仍清理一次旧 SW。
+                // （否则 unregister→reload→页面重注册 SW→再 reload 无限循环闪烁）
                 binding.webView.evaluateJavascript(
-                    "if ('serviceWorker' in navigator) {" +
+                    "if ('serviceWorker' in navigator && !sessionStorage.getItem('__ng_sw_cleaned')) {" +
+                    "sessionStorage.setItem('__ng_sw_cleaned', '1');" +
                     "navigator.serviceWorker.getRegistrations().then(rs => {" +
                     "if (rs.length) { Promise.all(rs.map(r => r.unregister())).then(() => {" +
                     "caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k))))" +
@@ -119,7 +124,11 @@ class MainActivity : AppCompatActivity() {
             override fun onReceivedError(view: WebView?, req: WebResourceRequest?, err: WebResourceError?) {
                 binding.swipeRefresh.isRefreshing = false  // 错误时也停止刷新动画
                 if (req?.isForMainFrame == true) {
-                    handler.postDelayed({ binding.webView.reload() }, 1000)
+                    // v2.5.41: 最多重试 3 次，防止后端暂不可用时无限 reload 闪烁
+                    mainFrameErrorCount++
+                    if (mainFrameErrorCount <= 3) {
+                        handler.postDelayed({ binding.webView.reload() }, 1000)
+                    }
                 }
             }
         }
