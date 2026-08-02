@@ -111,6 +111,32 @@ async def interactive_start(novel_id: str):
             elif isinstance(v, list) and v:
                 wb_brief.append(f"{k}: {'、'.join(str(x)[:40] for x in v[:4])[:120]}")
         st["worldbuilding_brief"] = "\n".join(wb_brief)[:800]
+        # v3.5.20: 复用全局状态资源——时间线摘要 + 未回收伏笔（剧情呼应）
+        try:
+            import os
+            from config import NOVELS_DIR
+            gs_path = os.path.join(NOVELS_DIR, novel_id, "global_state.json")
+            if os.path.exists(gs_path):
+                with open(gs_path, "r", encoding="utf-8") as f:
+                    gs = json.load(f)
+                tl = gs.get("timeline") or []
+                if isinstance(tl, list) and tl:
+                    st["timeline_brief"] = " → ".join(str(x)[:40] for x in tl[-5:])
+                chs = gs.get("chapters_summary") or ""
+                if isinstance(chs, str) and chs.strip():
+                    st["chapters_brief"] = str(chs)[:200]
+            fs_path = os.path.join(NOVELS_DIR, novel_id, "foreshadowing.json")
+            if os.path.exists(fs_path):
+                with open(fs_path, "r", encoding="utf-8") as f:
+                    fs = json.load(f)
+                if isinstance(fs, list):
+                    unclosed = [x for x in fs if isinstance(x, dict) and not x.get("resolved")]
+                    if unclosed:
+                        st["foreshadows_brief"] = "；".join(
+                            str(x.get("content") or x.get("seed") or "")[:50]
+                            for x in unclosed[:3])
+        except Exception as e:
+            log.warning(f"global resources load failed: {e}")
         _store.save_state(novel_id, st)
 
     async def event_stream():
