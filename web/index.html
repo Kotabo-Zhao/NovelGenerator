@@ -460,6 +460,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .interactive-story::-webkit-scrollbar-thumb{background:rgba(212,175,55,.25);border-radius:3px}
   /* 旁白：居中衬线，小说感 */
   .inter-narr{color:#c9c2b4;margin:16px 30px;text-align:center;font-family:"STKaiti","KaiTi","SimSun",serif;font-size:14.5px;letter-spacing:.5px;animation:interRise .5s ease both}
+  /* v3.5.10: 场景分隔线（历史流定位） */
+  .inter-scene-div{color:#6b6458;font-size:11.5px;text-align:center;margin:22px 0 6px;letter-spacing:3px;position:relative}
+  .inter-scene-div::before,.inter-scene-div::after{content:"";position:absolute;top:50%;width:28%;height:1px;background:rgba(255,255,255,.07)}
+  .inter-scene-div::before{left:8%}
+  .inter-scene-div::after{right:8%}
   .inter-action{color:#8a8375;font-style:italic;margin:10px 30px;text-align:center;font-size:13.5px;animation:interRise .5s ease both}
   /* 对话气泡：角色左、玩家右 */
   .inter-line{margin:12px 0;display:flex;align-items:flex-start;gap:10px;animation:interRise .45s ease both}
@@ -1120,10 +1125,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <div v-else-if="interactive.naturalEnd" class="inter-track-note" style="background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.35);color:#3fb950;border-radius:8px;padding:6px 12px;font-size:12px;margin-bottom:10px">✅ {{ interactive.naturalEnd }} —— 可以「继续剧情」了</div>
             <div v-else-if="interactive.hookSummary" class="inter-track-note" style="background:rgba(188,140,255,.08);border:1px solid rgba(188,140,255,.35);color:#bc8cff;border-radius:8px;padding:6px 12px;font-size:12px;margin-bottom:10px">🔗 {{ interactive.hookSummary }}</div>
 
-            <!-- 叙事区（打字机） -->
-            <div class="interactive-story" ref="storyBox">
+            <!-- 叙事区（打字机）v3.5.10: @scroll 智能滚动（回看不抢） -->
+            <div class="interactive-story" ref="storyBox" @scroll="interactiveStoryScroll">
               <template v-for="(blk, i) in interactive.blocks" :key="i">
-                <div v-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
+                <!-- v3.5.10: 场景分隔（历史回看定位用） -->
+                <div v-if="blk.type==='scene_div'" class="inter-scene-div">── 场景 {{ blk.content }} ──</div>
+                <div v-else-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
                 <div v-else-if="blk.type==='action'" class="inter-action">{{ blk.content }}</div>
                 <div v-else-if="blk.type==='action_desc'" class="inter-action-desc">⚡ {{ blk.content }}</div>
                 <div v-else-if="blk.type==='action_result'" class="inter-action-result">{{ blk.content }}</div>
@@ -3953,8 +3960,8 @@ const app = createApp({
             _appendTyping(evt.content);
           } else if (evt.type==='scene_end') {
             interactive.typing = false;
-            interactive.blocks = evt.blocks || [];
-            _scrollStory();
+            // v3.5.10: 历史保留——新场景 append 到历史流（带场景分隔），不清空
+            _appendSceneBlocks(evt.blocks || [], evt.scene_num);
             // v3.5.8: 场景结束 → 状态卡实时更新
             if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.5: 场景内角色台词预合成（情感引擎开启时）
@@ -4042,11 +4049,36 @@ const app = createApp({
       _prewarming = false;
     }
 
+    // v3.5.10: 智能滚动——玩家在底部才自动跟随；回看历史时不抢滚动
+    let _userAtBottom = true;
+    function interactiveStoryScroll() {
+      const box = document.querySelector('.interactive-story');
+      if (!box) return;
+      _userAtBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 120;
+    }
     function _scrollStory() {
       nextTick(() => {
         const box = document.querySelector('.interactive-story');
-        if (box) box.scrollTop = box.scrollHeight;
+        if (!box) return;
+        if (_userAtBottom) box.scrollTop = box.scrollHeight;
       });
+    }
+    // v3.5.10: 场景历史保留——新场景 append 到历史流（带场景分隔），不替换
+    function _appendSceneBlocks(blocks, sceneNum) {
+      // 移除残留的打字机块（新场景已落盘）
+      while (interactive.blocks.length &&
+             interactive.blocks[interactive.blocks.length - 1].type === 'typing') {
+        interactive.blocks.pop();
+      }
+      if (interactive.blocks.length) {
+        interactive.blocks.push({ type: 'scene_div', speaker: '', content: sceneNum || '' });
+      }
+      (blocks || []).forEach(b => interactive.blocks.push({ ...b }));
+      // 历史上限：超过 400 块时截断到最近 260 块（保留可回看，防无限膨胀）
+      if (interactive.blocks.length > 400) {
+        interactive.blocks.splice(0, interactive.blocks.length - 260);
+      }
+      _scrollStory();
     }
 
     // v3.5: 角色头像徽章配色（角色名 hash → 色相，同角色同色）
@@ -4183,7 +4215,7 @@ const app = createApp({
             if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.5.7: 行动后剧情自动衔接（行动有后果，顺势走下一段；force 无视 pendingNode）
             cancelAuto();
-            _scheduleAutoNext(2200, true);
+            _scheduleAutoNext(4000, true);
           } else if (evt.type==='error') {
             interactive.blocks.push({type:'error', speaker:'', content: evt.message});
           }
@@ -4262,10 +4294,15 @@ const app = createApp({
       _autoTimer = setTimeout(async () => {
         _autoTimer = null;
         if (!interactive.autoPlay || interactive.busy || interactive.pendingNode) return;
+        // v3.5.10: 玩家正在回看历史（不在底部）→ 稍后再试，不抢滚动
+        if (!_userAtBottom) {
+          _scheduleAutoNext(delayMs || 5000);
+          return;
+        }
         _autoStreak++;
         try { await continueInteractive(); }
         catch(e) { /* 自动推进失败静默，玩家可手动 */ }
-      }, delayMs || 1600);
+      }, delayMs || 5000);
     }
     // 对话中角色回复完 → 若玩家已说过话且 12s 未输入 → 自动收尾对话并推进
     function _scheduleAutoEndChat() {
@@ -4325,9 +4362,9 @@ const app = createApp({
             _scrollStory();
           } else if (evt.type==='scene_end') {
             interactive.typing = false;
-            interactive.blocks = evt.blocks || [];
             interactive.pendingNode = false;
-            _scrollStory();
+            // v3.5.10: 历史保留——新场景 append 到历史流（带场景分隔），不清空
+            _appendSceneBlocks(evt.blocks || [], evt.scene_num);
             // v3.5.8: 场景结束 → 状态卡实时更新
             if (evt.snapshot) _applySnapshot(evt.snapshot);
             // v3.2: 场景内的角色台词自动播放（只播 dialogue，旁白静默）
@@ -4349,7 +4386,7 @@ const app = createApp({
             if (evt.is_node) {
               cancelAuto();
             } else {
-              _scheduleAutoNext(2000);
+              _scheduleAutoNext(5000);
             }
           } else if (evt.type==='error') {
             interactive.error = evt.message;
@@ -4728,6 +4765,8 @@ const app = createApp({
       interactiveRollback,interactiveRestart,
       // v3.5.7: 剧情自动流
       cancelAuto,
+      // v3.5.10: 智能滚动
+      interactiveStoryScroll,
       // v3.5.8: 状态卡变化高亮
       statusFlash,
       speakLine,stopInteractiveVoice,toggleAutoVoice,openVoicePicker,saveVoiceOverride,resetVoiceOverride,previewVoice,

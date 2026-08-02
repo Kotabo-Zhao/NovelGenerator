@@ -290,46 +290,59 @@ class InteractStore:
         novel_dir = os.path.join(self.novels_dir, novel_id)
         backup = os.path.join(novel_dir, f"interactive-backup-{ts}")
         try:
-            # 1) 复制备份（读源写目标，不触发删除钩子）
+            # 1) 复制备份（读源写目标，不触发删除钩子；排除 checkpoints——快照可重建，
+            #    且备份目录含几十个快照会让后续'保留3份'的清理触发批量删除保护）
             if os.path.exists(backup):
                 return False
-            shutil.copytree(base, backup, dirs_exist_ok=False)
+            shutil.copytree(base, backup, dirs_exist_ok=False,
+                            ignore=shutil.ignore_patterns("checkpoints"))
             # 2) 覆盖清空：写合法空状态（scene_num=0 触发 start 重新初始化）
             _atomic_write_json(st_path, new_state(novel_id, novel_id, "", "", ""))
             for log_f in (self._scenes_path(novel_id), self._chats_path(novel_id)):
                 with open(log_f, "w", encoding="utf-8") as f:
                     f.write("")
             cp_dir = self._checkpoint_dir(novel_id)
-            for fn in os.listdir(cp_dir):
-                try:
-                    os.remove(os.path.join(cp_dir, fn))
-                except OSError:
-                    pass
+            # v3.5.10: BaseException 兜底——safe-delete 钩子可能 raise SystemExit(1)
+            # （快照批量删除触发保护），穿透 except Exception 会打穿 to_thread 杀 uvicorn；
+            # 快照可重建，删不完直接跳过，不影响 restart 功能
+            try:
+                for fn in os.listdir(cp_dir):
+                    try:
+                        os.remove(os.path.join(cp_dir, fn))
+                    except BaseException:
+                        pass
+            except BaseException:
+                pass
         except Exception as e:
             log.warning(f"restart backup failed: {e}")
             return False
         # 3) 只保留最近 3 份备份（清理更旧的，文件级删除避免 safe-delete 钩子）
+        #    v3.5.10: 用 BaseException 防御——Windows safe-delete 钩子可能 raise
+        #    SystemExit(1)（批量删除保护），未捕获会打穿 to_thread 杀死 uvicorn
         try:
             backups = sorted(
                 [os.path.join(novel_dir, d) for d in os.listdir(novel_dir)
                  if d.startswith("interactive-backup-")],
                 key=lambda p: os.path.getmtime(p), reverse=True)
             for old in backups[3:]:
-                for root, dirs, files in os.walk(old, topdown=False):
-                    for f in files:
-                        try:
-                            os.remove(os.path.join(root, f))
-                        except OSError:
-                            pass
-                    for dd in dirs:
-                        try:
-                            os.rmdir(os.path.join(root, dd))
-                        except OSError:
-                            pass
                 try:
-                    os.rmdir(old)
-                except OSError:
-                    pass
+                    for root, dirs, files in os.walk(old, topdown=False):
+                        for f in files:
+                            try:
+                                os.remove(os.path.join(root, f))
+                            except OSError:
+                                pass
+                        for dd in dirs:
+                            try:
+                                os.rmdir(os.path.join(root, dd))
+                            except OSError:
+                                pass
+                    try:
+                        os.rmdir(old)
+                    except OSError:
+                        pass
+                except BaseException as e:  # SystemExit 等：清理失败不影响 restart
+                    log.warning(f"旧备份清理跳过（{type(e).__name__}）: {old}")
         except Exception as e:
             log.warning(f"restart old-backup cleanup failed: {e}")
         self._dir_cache.pop(novel_id, None)
