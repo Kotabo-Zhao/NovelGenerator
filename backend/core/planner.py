@@ -338,6 +338,13 @@ class Planner:
                 content = response.choices[0].message.content
                 last_raw = content or ""
                 plan = self._parse_json(content)
+                # v3.5.24: 关键字段完整性校验——LLM 输出缺 title/outline 视为失败重试
+                # （此前解析成功但缺字段 → create_novel 后续 KeyError 崩溃）
+                if plan and not (plan.get("title") and isinstance(plan.get("outline"), dict)):
+                    log.warning(f"Plan: parsed but missing key fields "
+                                f"(title={bool(plan.get('title'))}, "
+                                f"outline={isinstance(plan.get('outline'), dict)}), retrying...")
+                    plan = None
                 if plan:
                     if attempt > 0:
                         log.info(f"Plan: OK on retry #{attempt}")
@@ -361,6 +368,11 @@ class Planner:
                 log.warning("Plan: using force-extracted result")
         
         if plan:
+            # v3.5.24: LLM 输出缺 outline 时兜底（解析成功但字段缺失——修复 KeyError 崩溃）
+            if not isinstance(plan.get("outline"), dict):
+                log.warning("Plan: missing/invalid outline, using fallback structure")
+                plan["outline"] = {"volumes": [], "total_chapters": 0,
+                                   "three_act_map": "", "rhythm_notes": ""}
             # 标准化章节号
             for vol in plan.get("outline", {}).get("volumes", []):
                 if not isinstance(vol, dict):

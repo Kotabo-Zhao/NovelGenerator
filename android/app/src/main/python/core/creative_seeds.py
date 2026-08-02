@@ -24,21 +24,25 @@ log = logging.getLogger(__name__)
 # 1. 金手指种子 — 拒绝「系统+面板」套路
 CHEAT_SEEDS = [
     # 知识降维型
-    {"id": "statistics_cheat", "category": "金手指", "type": "知识降维",
-     "seed": "主角用统计学/概率论分析修仙世界——灵气分布是正态分布，突破境界需要置信区间达到95%",
+    {"id": "statistics_cheat",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "知识降维",
+     "seed": "主角用统计学/概率论分析本作核心体系——（玄幻示例：灵气分布是正态分布、突破需要置信区间95%；都市示例：用统计规律看穿资本运作与人群博弈）",
      "constraint": "金手指必须是主角原有的专业知识，不能是系统赐予的超自然力量",
      "why": "区别于「捡到一个系统」的套路，读者的智力参与感更强"},
 
-    {"id": "thermo_cheat", "category": "金手指", "type": "知识降维",
-     "seed": "主角用热力学/工程学重构力量体系——炼气是熵减过程，突破需要最小化自由能",
+    {"id": "thermo_cheat",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "知识降维",
+     "seed": "主角用热力学/工程学重构本作力量/运转体系——（玄幻示例：炼气是熵减过程；都市示例：用工程思维重构商业系统或城市规则）",
      "constraint": "力量的代价必须用学科公式量化，不能靠「消耗寿命/灵力」这种模糊描述"},
 
-    {"id": "game_theory_cheat", "category": "金手指", "type": "知识降维",
-     "seed": "主角用博弈论在修真界政治中翻云覆雨——每个宗门的策略都是博弈矩阵的一格",
+    {"id": "game_theory_cheat",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "知识降维",
+     "seed": "主角用博弈论在权力场中翻云覆雨——（玄幻示例：每个宗门的策略都是博弈矩阵的一格；都市示例：商场、职场、家族博弈）",
      "constraint": "必须展现主角的计算过程，读者能跟着推理"},
 
-    {"id": "forensic_cheat", "category": "金手指", "type": "知识降维",
-     "seed": "主角是法医/刑侦出身，在修仙界用解剖学+痕迹学破案——修士的死亡也能被尸检",
+    {"id": "forensic_cheat",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "知识降维",
+     "seed": "主角是法医/刑侦出身，用解剖学+痕迹学破案——（玄幻示例：修士的死亡也能被尸检；都市示例：连环案的现场还原）",
      "constraint": "关键线索必须通过解剖/检验过程展现，不能靠「灵识一扫就知道了」"},
 
     # 代价型
@@ -47,12 +51,14 @@ CHEAT_SEEDS = [
      "constraint": "每章必须明确展示一次「失去」的具体后果",
      "why": "对比「无限开挂」的零代价金手指，读者会关心主角的每次选择"},
 
-    {"id": "time_cost", "category": "金手指", "type": "代价型",
-     "seed": "主角的能力消耗的不是灵力而是「存在时间」——用一次少活一天，最终寿命是可量化的",
+    {"id": "time_cost",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "代价型",
+     "seed": "主角的能力消耗的不是常规资源而是「存在时间」——用一次少活一天，剩余寿命始终可量化",
      "constraint": "必须在第一章就明确告知读者剩余天数，之后每用一次能力就扣减"},
 
-    {"id": "identity_cost", "category": "金手指", "type": "代价型",
-     "seed": "主角每次突破都会失去一种情感——越强越不像人，最后要面对「我还是我吗」的存在危机",
+    {"id": "identity_cost",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "代价型",
+     "seed": "主角每次变强都会失去一种情感——越强越不像人，最后要面对「我还是我吗」的存在危机",
      "constraint": "失去的情感必须通过「他人视角」来表现（如爱人发现主角眼神空洞）"},
 
     # 误解型（迪化流）
@@ -60,8 +66,9 @@ CHEAT_SEEDS = [
      "seed": "主角只想躺平摸鱼，但所有巧合都被外界解读为深谋远虑的大佬布局",
      "constraint": "主角的真实意图与外界解读必须有明确反差展示，不能模糊处理"},
 
-    {"id": "fake_expert", "category": "金手指", "type": "误解型",
-     "seed": "主角是个江湖骗子，靠忽悠混进正道宗门，结果每次忽悠都歪打正着变成了预言",
+    {"id": "fake_expert",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "误解型",
+     "seed": "主角是个江湖骗子，靠忽悠混进核心圈层，结果每次忽悠都歪打正着变成了现实",
      "constraint": "必须展现主角骗局差点穿帮的紧张时刻"},
 
     # 反套路型
@@ -73,18 +80,42 @@ CHEAT_SEEDS = [
      "seed": "主角得到一个「反系统」——别人的系统面板在他眼前都是可修改的文本框，他可以篡改别人的数据",
      "constraint": "篡改必须有反噬/被发现的风险，不能无限改"},
 
-    {"id": "trader_cheat", "category": "金手指", "type": "反套路型",
-     "seed": "主角的能力是「交易」而非「修炼」——用已有的东西等价交换未有的东西，修炼是商科而非武学",
+    {"id": "trader_cheat",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "反套路型",
+     "seed": "主角的核心能力是「交易」——用已有的东西等价交换未有的东西（玄幻里修炼是商科而非武学，都市里谈判与资源置换是核心玩法）",
      "constraint": "每笔交易必须有明确的代价和逻辑，不能空手套白狼"},
 
     # 轮回/信息差型
-    {"id": "hundred_lives", "category": "金手指", "type": "轮回型",
-     "seed": "主角轮回百世积累的不是力量而是「信息」——知道每个人的秘密、每条隐藏的任务线",
+    {"id": "hundred_lives",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "金手指", "type": "轮回型",
+     "seed": "主角轮回/重生积累的不是力量而是「信息」——知道每个人的秘密、每条隐藏的线索",
      "constraint": "每次使用前世记忆必须注明是第几世获取的，体现积累感"},
 
     {"id": "save_load", "category": "金手指", "type": "轮回型",
      "seed": "主角的能力类似游戏存档——可以读档重来，但存档位有限（比如只有3个），每个选择都有不可逆的代价",
      "constraint": "存档选择必须是真正的两难，读者应该能理解为什么选A不选B也会后悔"},
+
+    # ── v3.5.24: 都市/现实题材种子（补题材缺口，都市小说不再只能抽修仙种子）──
+    {"id": "urban_info_cheat", "category": "金手指", "type": "信息差",
+     "genres": ["都市", "现实", "职场", "言情"],
+     "seed": "主角掌握行业底层规则的漏洞——别人看不到的缝隙他能看到（职场潜规则、资本运作、人情网络的暗线）",
+     "constraint": "金手指必须落地到现实的行业规则与信息差，不能超自然；主角的每个操作都要让读者觉得「原来还能这样」",
+     "why": "都市文的爽感来自「看穿规则」而非超能力"},
+    {"id": "urban_network_cheat", "category": "金手指", "type": "人脉型",
+     "genres": ["都市", "现实", "职场", "言情"],
+     "seed": "主角靠人脉网络而非个人力量破局——每个看似无关的人都可能是关键棋子，人情债是要还的",
+     "constraint": "人脉的获得与消耗必须等价——帮忙有代价，人情有期限，不能无限白嫖",
+     "why": "现实向博弈：关系本身就是资源"},
+    {"id": "urban_second_life", "category": "金手指", "type": "身份型",
+     "genres": ["都市", "现实", "悬疑", "言情"],
+     "seed": "主角在都市里过着双重人生——白天与黑夜是两个身份，两条线即将交汇，秘密面临被揭开",
+     "constraint": "两个身份都必须有完整的现实逻辑（职业/住址/社交圈），身份冲突推动核心剧情而非点缀",
+     "why": "身份危机自带张力与悬念"},
+    {"id": "urban_cold_case", "category": "金手指", "type": "悬疑型",
+     "genres": ["都市", "现实", "悬疑", "刑侦"],
+     "seed": "多年前的一桩都市悬案突然与主角身边的生活重新交汇——旧档案里的细节开始在现实中重现",
+     "constraint": "案件真相必须是人性的秘密（利益/隐瞒/误判），不能是超自然力量；所有线索都有现实依据",
+     "why": "都市悬疑：真相在人心，不在灵异"},
 ]
 
 # 2. 角色关系种子 — 拒绝「主角+工具人+反派」三角
@@ -160,7 +191,8 @@ PLOT_CONSTRAINTS = [
 
 # 4. 跨类型融合种子
 FUSION_SEEDS = [
-    {"id": "cultivation_folk_horror", "category": "跨类型融合",
+    {"id": "cultivation_folk_horror",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "跨类型融合",
      "combo": "修仙 + 民俗悬疑",
      "seed": "不是打怪升级的修仙，而是在湘西、苗疆、东北出马仙这些真实民俗基础上的诡异修仙",
      "constraint": "所有民俗元素必须有至少一处可考证的真实来源"},
@@ -175,7 +207,8 @@ FUSION_SEEDS = [
      "seed": "外星文明降临后，人类组建了「星际事务管理办公室」——主角是基层公务员，日常是处理星际贸易纠纷和外星人签证",
      "constraint": "体制内的荒诞感必须通过具体细节展现（表格、流程、层层审批）"},
 
-    {"id": "xianxia_lawsuit", "category": "跨类型融合",
+    {"id": "xianxia_lawsuit",
+     "genres": ["玄幻", "仙侠", "修仙", "奇幻"], "category": "跨类型融合",
      "combo": "仙侠 + 律政",
      "seed": "修仙界有「天道法则」→ 自然衍生出「天道法典」和「修士律师」——主角是修真界的法律工作者",
      "constraint": "每个案件必须基于修仙世界观的合理性（如「夺舍算不算谋杀」）"},
@@ -256,32 +289,44 @@ class CreativeSeedEngine:
             抽取的种子列表
         """
         available = []
-        
+
+        # v3.5.24: 题材过滤——都市小说绝不抽修仙专属种子（老赵：都市大纲出现玄幻内容）
+        def _match(seed: dict) -> bool:
+            gs = seed.get("genres")
+            if not gs or "*" in gs:
+                return True  # 未标注/通配 = 全题材适用
+            return any(g in genre or genre in g for g in gs)
+
         # 每类至少抽1个（保证多样性）
         # 金手指: 2个（核心差异化）
-        cheat_pool = [s for s in CHEAT_SEEDS if s["id"] not in self._used_ids["used_global"]]
+        cheat_pool = [s for s in CHEAT_SEEDS
+                      if s["id"] not in self._used_ids["used_global"] and _match(s)]
         if cheat_pool:
             available.extend(random.sample(cheat_pool, min(2, len(cheat_pool))))
         
         # 人物关系: 1个
-        char_pool = [s for s in CHARACTER_SEEDS if s["id"] not in self._used_ids["used_global"]]
+        char_pool = [s for s in CHARACTER_SEEDS
+                     if s["id"] not in self._used_ids["used_global"] and _match(s)]
         if char_pool:
             available.append(random.choice(char_pool))
         
         # 剧情约束: 1个
-        plot_pool = [s for s in PLOT_CONSTRAINTS if s["id"] not in self._used_ids["used_global"]]
+        plot_pool = [s for s in PLOT_CONSTRAINTS
+                     if s["id"] not in self._used_ids["used_global"] and _match(s)]
         if plot_pool:
             available.append(random.choice(plot_pool))
         
         # 跨类型融合: 1个（如果pool够大）
-        fusion_pool = [s for s in FUSION_SEEDS if s["id"] not in self._used_ids["used_global"]]
+        fusion_pool = [s for s in FUSION_SEEDS
+                       if s["id"] not in self._used_ids["used_global"] and _match(s)]
         if fusion_pool and len(available) < count:
             available.append(random.choice(fusion_pool))
         
-        # 如果还不够，从任意池补
+        # 如果还不够，从任意池补（v3.5.24: 补抽同样题材过滤；宁可少抽不硬塞）
         if len(available) < count:
             all_remaining = [s for s in CHEAT_SEEDS + CHARACTER_SEEDS + PLOT_CONSTRAINTS + FUSION_SEEDS
                            if s["id"] not in self._used_ids["used_global"]
+                           and _match(s)
                            and s not in available]
             needed = count - len(available)
             if all_remaining:
@@ -318,6 +363,10 @@ class CreativeSeedEngine:
             parts.append("")
         
         parts.append("⚠️ 这些约束与大纲的所有其他要求具有同等优先级。执行这些约束是你的核心任务。\n")
+        # v3.5.24: 题材适配豁免——种子示例题材仅作参考，必须落地到本作题材
+        parts.append("⚠️ 题材适配（重要）：种子中的示例场景/设定（如修仙、魔法、异界）仅作灵感参考。"
+                     "若与本作题材不符，必须将核心创意落地到本作题材——严禁照搬示例设定"
+                     "（都市现实题材禁止出现灵气、宗门、修炼境界、魔法等超自然设定）。\n")
         
         return "\n".join(parts)
     
