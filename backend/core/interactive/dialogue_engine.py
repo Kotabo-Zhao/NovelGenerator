@@ -36,18 +36,20 @@ CHAT_SYSTEM = """你是小说角色扮演引擎。你扮演小说中的角色，
    - 对话围绕 goal 推进，不把 agenda 直接说破，自然引导读者
    - 读者触发了 hooks 的推进开关 → 按 outcome 给出相应反应（松口/让步/反击…）
    - 遵守 boundaries：boundaries 里的事你绝不主动透露，读者追问时也可回避
-   - 读者闲聊/跑题超过 2 轮 → 你必须主动把话题拉回 goal（可自然："说回正事…"，也可带情绪：着急、警惕、不耐烦——符合人设）
-8. 对话不是闲聊——但单轮回复仍是自然的角色回应，不要变成任务汇报
+   - 读者闲聊/跑题不超过 3 轮就顺着聊（人情味），超过 3 轮才主动拉回 goal
+     （可自然："说回正事…"，也可带情绪：着急、警惕、不耐烦——符合人设）
+8. 对话不是任务汇报——单轮回复仍是自然的角色回应；目标达成后不拖泥带水，尽快收尾
 只输出你的台词。"""
 
 DRIFT_SYSTEM = """你是对话轨道检测器。判断最近几轮对话是否偏离本次对话的目标（Agenda 的 goal），以及推进开关（hooks）是否已被读者触发。
 
-判断标准：
-- on_track=false：对话连续在闲聊/无关话题上，超过 2 轮未触及 goal 相关话题
-- on_track=true：对话围绕 goal 推进，或刚被拉回
+判断标准（v3.5.3 放宽）：
+- on_track=false：连续 3 轮以上纯粹闲聊/无关话题，且未触及 goal 相关话题
+- on_track=true：对话围绕 goal 推进，或刚被拉回，或虽在闲聊但已接近 3 轮上限
+- 读者明确拒绝/回避 → 不算跑偏（拒绝也是剧情选择），on_track=true
 - hooks_hit：读者已做出与 hook.trigger 实质相符的行为（威胁/承诺/追问/交易…）
 
-输出 JSON: {"on_track": true/false, "drift_rounds": 2, "drift_reason": "一句话原因", "hooks_hit": [{"trigger": "已触发的开关", "evidence": "对话原文摘录"}]}
+输出 JSON: {"on_track": true/false, "drift_rounds": 3, "drift_reason": "一句话原因", "hooks_hit": [{"trigger": "已触发的开关", "evidence": "对话原文摘录"}]}
 只输出 JSON。"""
 
 OOC_SYSTEM = """你是角色一致性检测器。检查最近 10 轮对话中，角色台词是否符合其人设卡。
