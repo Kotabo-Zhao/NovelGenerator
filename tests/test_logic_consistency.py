@@ -225,6 +225,62 @@ def test_compute_present_unit():
         check(f'P5 {name}', ok, '')
 
 
+def test_advance_outline_unit():
+    """v3.5.48: _advance_outline 切章推进单元测试——卡死自愈/正常节奏/final_done"""
+    sys.path.insert(0, os.path.join(ROOT, 'backend'))
+    from core.interactive.story_director import StoryDirector
+
+    class FakeStore:
+        def save_state(self, nid, st):
+            pass
+
+    d = StoryDirector.__new__(StoryDirector)
+    d.store = FakeStore()
+    chs = [{'number': i + 1, 'title': f'章{i+1}', 'summary': f'目标{i+1}',
+            'target_words': 3000} for i in range(5)]
+    cases = []
+
+    # 用例1: 卡死存档自愈（scene_in_chapter 停滞但场景数已深 → 自动切章）
+    st1 = {'outline_chapters': chs,
+           'outline_progress': {'idx': 0, 'scene_in_chapter': 1, 'scene_start': 1},
+           'scene_num': 28}
+    d._advance_outline('t', st1)
+    op1 = st1['outline_progress']
+    cases.append(('卡死自愈切章', op1['idx'] >= 1 and 'final_done' not in op1))
+
+    # 用例2: 正常切章节奏（每章约 3 场景）
+    st2 = {'outline_chapters': chs,
+           'outline_progress': {'idx': 0, 'scene_in_chapter': 2, 'scene_start': 1},
+           'scene_num': 3}
+    d._advance_outline('t', st2)
+    op2 = st2['outline_progress']
+    cases.append(('正常切章', op2['idx'] == 1 and op2['scene_in_chapter'] == 0
+                  and 'final_done' not in op2))
+
+    # 用例3: 最后一章 final_done 且保持 idx
+    st3 = {'outline_chapters': chs,
+           'outline_progress': {'idx': 4, 'scene_in_chapter': 2, 'scene_start': 40},
+           'scene_num': 42}
+    d._advance_outline('t', st3)
+    op3 = st3['outline_progress']
+    cases.append(('最后一章final_done', op3.get('final_done') is True and op3['idx'] == 4))
+
+    # 用例4: final_done 后不再推进
+    d._advance_outline('t', st3)
+    cases.append(('final_done后冻结', st3['outline_progress'] == op3))
+
+    # 用例5: 无大纲不崩
+    st5 = {'outline_chapters': [], 'outline_progress': {}, 'scene_num': 5}
+    try:
+        d._advance_outline('t', st5)
+        cases.append(('无大纲不崩', True))
+    except Exception:
+        cases.append(('无大纲不崩', False))
+
+    for name, ok in cases:
+        check(f'P6 {name}', ok, '')
+
+
 def main():
     targets = sys.argv[1:] if len(sys.argv) > 1 else None
     nids = [d for d in os.listdir(NOVELS)
@@ -243,6 +299,11 @@ def main():
         test_compute_present_unit()
     except Exception as e:
         check('P5 compute_present 单元测试', False, f'异常: {e}')
+    # v3.5.48: _advance_outline 切章推进单元测试
+    try:
+        test_advance_outline_unit()
+    except Exception as e:
+        check('P6 _advance_outline 单元测试', False, f'异常: {e}')
     print()
     for line in REPORT:
         print(line)

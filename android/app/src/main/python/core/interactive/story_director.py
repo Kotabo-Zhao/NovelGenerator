@@ -352,6 +352,8 @@ PACT_SYSTEM = """你是互动小说因果提取器。从读者与角色的对话
 5. 读者明确说过的话必须逐条提取，一条都不能漏；宁可多提 low severity 项
 6. 空泛客套（"改天请你喝茶"）标记 severity=low，不强制回扣
 7. 与世界观冲突的荒诞要求（"我是皇帝"）不提取为事实，只记录为角色反应
+8. v3.5.48 防重复：若输入中给出"已有事实"清单，**不得重复提取同一事件/承诺**
+   （同一件事换个说法也算重复，如"透露把柄"与"准备拿把柄说事"是同一件事）——只提取新进展
 
 输出 JSON:
 {"facts": [{"id": "f1", "type": "promise/action/secret/change", "subject": "player/角色名", "target": "角色名/player", "content": "一句话描述", "severity": "high/medium/low", "source_chat": 轮次序号}], "relations": {"角色名": "+/-数值或描述"}, "objective_update": "更新后的目标或空", "tone": "对话基调（试探/交易/亲昵/敌对…）"}
@@ -1323,6 +1325,14 @@ class StoryDirector:
             role = "读者" if e.get("role") == "user" else f"角色{e.get('speaker', '')}"
             transcript.append(f"[{i}] {role}: {e.get('content', '')[:200]}")
         user = "对话记录:\n" + "\n".join(transcript[-40:])
+        # v3.5.48: 注入已有 facts——LLM 知道哪些事件已记录，防止同一件事反复提取
+        try:
+            _prev = self.store.load_state(novel_id) or {}
+            _pf = [str(f.get("content", ""))[:60] for f in (_prev.get("facts") or [])[-8:]]
+            if _pf:
+                user += "\n\n已有事实（不得重复提取同一事件）:\n- " + "\n- ".join(_pf)
+        except Exception:
+            pass
         raw = self._llm(PACT_SYSTEM, user, temperature=0.3, max_tokens=1500)
         result = _parse_json(raw) if raw else {}
         if not isinstance(result, dict):
@@ -1470,6 +1480,8 @@ class StoryDirector:
 
         每章约 3 个场景（场景数/章按章节 target_words 微调：<2500 字 2 场景，>=5000 字 4 场景）
         v3.5.29: 切章时后台把本章互动剧情沉淀为小说章节正文（互动→章节回流）
+        v3.5.48: 修复切章卡死——nch 未定义 NameError + final_done 误标记导致
+        剧情永远停在第 1 章目标，一件事反复生成；增加场景号自愈（旧存档自动校准）
         """
         chs = state.get("outline_chapters") or []
         if not chs:
@@ -1479,7 +1491,11 @@ class StoryDirector:
         # v3.5.30: 最后一章已回流过（final_done）→ 不再触发
         if op.get("final_done"):
             return
-        cnt = int(op.get("scene_in_chapter", 0)) + 1
+        sn = int(state.get("scene_num") or 0)
+        ss = int(op.get("scene_start") or 1)
+        # v3.5.48: 用场景号差校准章节内计数——即使状态保存失败/旧存档卡死
+        # （scene_in_chapter 停滞），也能按实际已玩场景数推进，自动自愈
+        cnt = max(int(op.get("scene_in_chapter", 0)) + 1, sn - ss + 1)
         ch = chs[min(idx, len(chs) - 1)]
         tw = int(ch.get("target_words", 0) or 0)
         per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
@@ -1500,17 +1516,24 @@ class StoryDirector:
             if idx < len(chs) - 1:
                 idx += 1
                 cnt = 0
-                # v3.5.30: 不再覆盖 objective——目标字段由 PACT 维护（玩家对话产生的方向），
-                # 大纲章节目标已在场景 prompt 单独注入"当前剧情章节"，两轨并行不冲突
-                log.info(f"Outline advanced → 第{nch.get('number', idx + 1)}章《{nch.get('title', '')}》")
-            # 最后一章完成：保持 idx 不变，标记 final_done 防重复回流
-            state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
-                                         "scene_start": state.get("scene_num", 0) or 0,
-                                         "final_done": True}
+                # v3.5.48: 修复——nch 从未定义（NameError 导致切章状态保存被跳过）
+                _nch = chs[min(idx, len(chs) - 1)]
+                log.info(f"Outline advanced → 第{_nch.get('number', idx + 1)}章《{_nch.get('title', '')}》")
+                # v3.5.48: 非最后一章不设 final_done（否则下一场景直接 return 再次卡死）
+                state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
+                                             "scene_start": state.get("scene_num", 0) or 0}
+            else:
+                # 最后一章完成：保持 idx 不变，标记 final_done 防重复回流
+                state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
+                                             "scene_start": state.get("scene_num", 0) or 0,
+                                             "final_done": True}
         else:
             state["outline_progress"] = {"idx": idx, "scene_in_chapter": cnt,
                                          "scene_start": op.get("scene_start", 1) or 1}
-        self.store.save_state(novel_id, state)
+        try:
+            self.store.save_state(novel_id, state)
+        except Exception as e:
+            log.warning(f"advance_outline save failed: {e}")
 
     def _sync_chapter_from_interactive(self, novel_id: str, chapter_idx: int,
                                        scene_start: int, scene_end: int):
