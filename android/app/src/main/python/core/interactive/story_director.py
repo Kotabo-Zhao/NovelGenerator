@@ -564,9 +564,11 @@ class StoryDirector:
             parts.append(f"最近发生的事（承接时间线，不要时间倒流）: {ev_brief}")
         # 角色卡（v3.5.12: 主角标注，防止 LLM 替主角写台词/用第三人称转述）
         casts = state.get("casts", {})
-        if casts:
+        # v3.5.41: temp 角色（临时登场）不入白名单人设——防乱入合法化
+        _whitelist = {n: c for n, c in casts.items() if not (c or {}).get("temp")}
+        if _whitelist:
             parts.append("在场角色人设（说话必须符合）:")
-            for name, c in casts.items():
+            for name, c in _whitelist.items():
                 if name == player_name:
                     parts.append(f"- {name}（主角，由读者扮演——不要替 TA 写台词，TA 的言行由读者决定）")
                     continue
@@ -747,9 +749,24 @@ class StoryDirector:
         speakers = {b["speaker"] for b in blocks if b["type"] == "dialogue"}
         casts = state.get("casts", {})
         state["casts"] = {k: casts.get(k, {"present": True}) for k in casts}
+        # v3.5.41: 新角色标记 temp（临时登场，不自动转正）；本场景出场角色 present=True
         for sp in speakers:
             if sp and sp not in casts:
-                casts[sp] = {"present": True, "profile": {}}
+                casts[sp] = {"present": True, "profile": {}, "temp": True}
+        for name, c in casts.items():
+            if name in speakers:
+                c["present"] = True
+        # v3.5.41: temp 角色连续 3 个场景未出场自动清理（防 casts 膨胀导致乱入合法化）
+        ps = state.get("player_state") or {}
+        with_chars = set(ps.get("with") or [])
+        for name in list(casts.keys()):
+            c = casts.get(name) or {}
+            if c.get("temp") and name not in speakers and name not in with_chars:
+                c["absent_count"] = int(c.get("absent_count", 0)) + 1
+                if c.get("absent_count", 0) >= 3:
+                    casts.pop(name, None)
+            elif c.get("temp"):
+                c["absent_count"] = 0
         state["casts"] = casts
         self.store.save_state(novel_id, state)
 

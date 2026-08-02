@@ -36,6 +36,8 @@ CHAT_SYSTEM = """你是小说角色扮演引擎。你扮演小说中的角色，
    - 严禁让其他角色突然出现、插话或加入对话（哪怕他们"在场"）
    - 只有读者主动提及/召唤其他角色时，才可在下一轮自然回应相关情况
    - 严禁生成读者（主角）的台词——读者的言行由读者自己决定
+   - 【v3.5.41 输出格式】只输出你的台词，【严禁使用【角色名】分段标记】——
+     不要写"【陈默】xxx"这种格式，你不是群像剧导演，你是剧中人
 7. 【对话议程（Agenda）】这场对话你是有目的的（见 agenda）：
    - 对话围绕 goal 推进，不把 agenda 直接说破，自然引导读者
    - 读者触发了 hooks 的推进开关 → 按 outcome 给出相应反应（松口/让步/反击…）
@@ -292,13 +294,33 @@ class DialogueEngine:
             target = self._detect_target(state, user_input)
         if not target:
             casts = state.get("casts", {})
+            # v3.5.41: 架构级在场约束——默认对话对象只从【当前在场角色】中选：
+            # player_state.with（同行）+ 最近场景实际说话人 + 节点候选，排除 temp 角色
+            ps = state.get("player_state") or {}
+            with_chars = [str(x) for x in (ps.get("with") or [])]
+            recent_speakers = []
+            try:
+                for sc in self.store.recent_scenes(novel_id, 2):
+                    for b in (sc.get("blocks") or []):
+                        sp = b.get("speaker", "")
+                        if sp and sp not in recent_speakers:
+                            recent_speakers.append(sp)
+            except Exception:
+                pass
+            node_cands = [n for n in (state.get("node_chars") or []) if n != player_name]
+            candidates = []
+            for n in (with_chars + recent_speakers + node_cands):
+                if n and n != player_name and n not in candidates:
+                    c = casts.get(n) or {}
+                    if not c.get("temp"):   # 临时登场角色不可作默认对话对象
+                        candidates.append(n)
             # 默认当前在场第一个有 profile 的 NPC 角色（跳过玩家自己）
-            for name, c in casts.items():
-                if name == player_name:
-                    continue
-                if c.get("profile"):
+            for name in candidates:
+                if (casts.get(name) or {}).get("profile"):
                     target = name
                     break
+            if not target and candidates:
+                target = candidates[0]
         if not target:
             node_chars = [n for n in (state.get("node_chars") or []) if n != player_name]
             target = node_chars or [n for n in casts.keys() if n != player_name]
@@ -372,6 +394,25 @@ class DialogueEngine:
         if not reply:
             reply = "（沉默片刻）……你说什么？"
             yield {"type": "chat_chunk", "speaker": target, "content": reply}
+
+        # v3.5.41: 架构级兜底——剥离非目标角色的【名字】台词段（不靠 LLM 自觉）
+        # 只保留：目标角色的台词 + 旁白/动作描述；其他角色段删除
+        # （非目标段中可能混有目标角色的动作描写（（…）），动作部分保留）
+        if "【" in reply:
+            import re as _re2
+            _segs = _re2.split(r"【([^】]+)】", reply)
+            _kept = [str(_segs[0])]
+            for _i in range(1, len(_segs), 2):
+                _nm = (_segs[_i] or "").strip()
+                _ct = _segs[_i + 1] if _i + 1 < len(_segs) else ""
+                if _nm in (target, "旁白", "叙述", "动作", "描写"):
+                    _kept.append(_ct)
+                else:
+                    # 非目标段：保留可能混入的动作描写（（…）），丢弃台词
+                    _kept.extend(_re2.findall(r"（[^）]*）", _ct))
+            _new = "".join(_kept).strip()
+            if _new and _new != reply:
+                reply = _new
 
         # 多角色分段解析（【角色名】...）
         segments = self._parse_segments(reply, target)
