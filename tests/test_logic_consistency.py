@@ -280,6 +280,72 @@ def validate_novel(nid: str):
     check('P8b 场景无主角台词', not _p_blocks2, f'{_p_blocks2[:2]}' if _p_blocks2 else '')
 
 
+def test_frontend_template_funcs():
+    """v3.5.56: 前端模板函数一致性——模板调用的函数必须已定义且暴露给 setup return
+
+    背景: v3.5.54 加 isLongBlk 折叠函数，忘在 setup return 里暴露 → Vue 渲染报
+    'isLongBlk is not a function'。此测试静态扫描 index.html，任何模板函数
+    缺 return 暴露/缺定义都会直接失败。
+    """
+    html = open(os.path.join(ROOT, 'web', 'index.html'), encoding='utf-8').read()
+    # 模板区 = createApp 之前（setup/模板分离）
+    cut = html.split('const app = createApp({')[0]
+    # 提取属性绑定中的函数调用（v-if="isLongBlk(blk)" / :class="avatarStyle(x)" / @click="foo()"）
+    # 负向后顾 (?<![.\w])：排除 obj.method( 与 Math.min( 这类方法调用
+    calls = set()
+    for m in re.finditer(
+            r'(?:v-[\w:.-]+|:[\w.-]+|@[\w:.-]+)="[^"]*?(?<![.\w])([A-Za-z_$][\w$]*)\s*\(',
+            cut):
+        calls.add(m.group(1))
+    # 排除 JS 内置/对象方法/浏览器 API/CSS 函数（linear-gradient/rotate/translate 等）
+    builtin = {'Math', 'JSON', 'Date', 'Number', 'String', 'Array', 'Object',
+               'Boolean', 'parseInt', 'parseFloat', 'isNaN', 'encodeURIComponent',
+               'decodeURIComponent', 'confirm', 'alert', 'setTimeout', 'setInterval',
+               'clearTimeout', 'clearInterval', 'console', 'Promise', 'Symbol',
+               'RegExp', 'document', 'window', 'navigator', 'location', 'localStorage',
+               'sessionStorage', 'fetch', 'FormData', 'URL', 'Blob', 'FileReader',
+               'encodeURI', 'decodeURI', 'Error', 'undefined', 'null', 'true', 'false',
+               'typeof', 'new', 'for', 'if', 'else', 'while', 'return', 'var', 'let',
+               'const', 'function', 'this', 'in', 'of', 'catch', 'try', 'finally',
+               'switch', 'case', 'break', 'continue', 'default', 'throw', 'async',
+               'await', 'import', 'export', 'class', 'extends', 'super', 'instanceof',
+               'delete', 'void', 'do', 'arguments', 'eval', 'with', 'yield',
+               'v-if', 'v-else', 'v-show', 'v-for', 'v-model', 'v-on', 'v-bind', 'v-html',
+               'v-cloak', 'v-pre', 'v-once', 'v-slot', 'v-memo', 'v-text',
+               # CSS 函数（模板 style 绑定里常见）
+               'gradient', 'rotate', 'translate', 'scale', 'skew', 'url', 'rgba', 'rgb',
+               'hsl', 'hsla', 'var', 'calc', 'min', 'max', 'clamp', 'repeat', 'linear', 'radial'}
+    # setup return 暴露的名单（取【最长】的 return 块——setup 主 return 属性最多；
+    # setup 尾部 catch 错误分支有 return {} 会干扰 rfind，不能取最后一个）
+    after = html.split('const app = createApp({')[1]
+    ret_block = after.split('setup() {', 1)[1] if 'setup() {' in after else after
+    best_body = ''
+    for _m in re.finditer(r'return \{', ret_block):
+        _start = _m.end()
+        _depth = 1
+        _i = _start
+        while _depth > 0 and _i < len(ret_block):
+            if ret_block[_i] == '{':
+                _depth += 1
+            elif ret_block[_i] == '}':
+                _depth -= 1
+            _i += 1
+        _body = ret_block[_start:_i - 1]
+        if len(_body) > len(best_body):
+            best_body = _body
+    exposed = set(re.findall(r'([A-Za-z_$][\w$]*)\s*,', best_body)) if best_body else set()
+    # 定义存在性（function 声明 / const x = / x: ( 箭头）
+    defined = set(re.findall(r'function\s+([A-Za-z_$][\w$]*)\s*\(', html))
+    defined |= set(re.findall(r'const\s+([A-Za-z_$][\w$]*)\s*=', html))
+    defined |= set(re.findall(r'([A-Za-z_$][\w$]*)\s*:\s*(?:function|\([^)]*\)\s*=>)', html))
+
+    missing_return = sorted(c for c in calls if c not in builtin and c not in exposed)
+    missing_def = sorted(c for c in calls if c not in builtin and c not in defined)
+    if missing_return or missing_def:
+        raise AssertionError(
+            f'模板函数缺失暴露: {missing_return[:8]} | 缺失定义: {missing_def[:8]}')
+
+
 def test_clean_location_unit():
     """v3.5.52: clean_location JSON 片段剥离单元测试——12 用例"""
     sys.path.insert(0, os.path.join(ROOT, 'backend'))
@@ -519,6 +585,12 @@ def main():
         check('P9 第1章 beats 兜底', True, '3 用例')
     except Exception as e:
         check('P9 第1章 beats 兜底', False, f'异常: {e}')
+    # v3.5.56: 前端模板函数一致性静态检查
+    try:
+        test_frontend_template_funcs()
+        check('P10 前端模板函数一致性', True, '静态扫描')
+    except Exception as e:
+        check('P10 前端模板函数一致性', False, f'异常: {e}')
     print()
     # v3.5.46: compute_present 纯逻辑单元测试（不依赖存档）
     try:

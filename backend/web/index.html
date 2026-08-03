@@ -5010,6 +5010,10 @@ const app = createApp({
       fmtText,
       // v3.5: 角色头像徽章配色
       avatarStyle,
+      // v3.5.54: 长消息折叠判定（必须暴露给模板，否则 Vue 渲染报 isLongBlk is not a function）
+      isLongBlk,
+      // v3.5.56: showToast 模板有调用但未暴露（P10 静态检查抓出，@click 点击才触发未爆）
+      showToast,
       sgStats,sgThreads,sgForeshadows,sgCharSnapshots,charProfiles,distillCharProfile,charProfiling,chapterRating,chapterReason,chapterFeedbackDone,submitChapterFeedback,
       statusColor,statusBg,statusLabel,tensionGradient,fsStatusColor,fsStatusBg,fsStatusLabel,
       switchToStoryGraph,loadStoryGraph,
