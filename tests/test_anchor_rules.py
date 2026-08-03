@@ -26,9 +26,11 @@ from core.interactive.story_director import (
     promise_anchor_of,
     promise_ledger_update,
     promise_conflict_check,
+    state_context_brief,
     PACT_SYSTEM,
     StoryDirector,
 )
+from core.interactive.dialogue_engine import pact_need_extract
 
 PASS, FAIL = 0, 0
 def check(name, cond, detail=''):
@@ -472,6 +474,46 @@ r6 = promise_ledger_update(st9i, [
 ])
 check('角色邀约 → who=subject 进台账', len(st9i.get('pending_promises', [])) == 1
       and st9i['pending_promises'][0]['who'] == '林听雪', f"got {st9i.get('pending_promises')}")
+
+# ═══════════════ 10. 增量 PACT 预筛 + 世界状态简报 ═══════════════
+print('▶ 增量提取预筛 pact_need_extract / 状态简报 state_context_brief')
+
+# 10.1 预筛：承诺/约定类 → 触发
+check('玩家承诺 → 触发', pact_need_extract('我答应你，周五晚上一起吃饭', '好，说定了') is True)
+check('角色邀约时间词 → 触发', pact_need_extract('你什么时候有空？', '周五晚上我有空，一起吃饭吧') is True)
+check('约定词 → 触发', pact_need_extract('就这么说定了', '嗯，一言为定') is True)
+# 10.2 预筛：威胁/秘密/交易 → 触发
+check('威胁 → 触发', pact_need_extract('你再靠近一步，别怪我不客气', '你不敢') is True)
+check('秘密 → 触发', pact_need_extract('告诉你一个秘密，其实我见过他', '……') is True)
+check('交易 → 触发', pact_need_extract('我们做个交易，你帮我拿到文件', '什么条件') is True)
+# 10.3 预筛：纯闲聊 → 不触发
+check('闲聊 → 不触发', pact_need_extract('今天天气不错', '是啊，难得的好天气') is False)
+check('问候 → 不触发', pact_need_extract('你最近好吗', '还好，谢谢关心') is False)
+check('情绪表达 → 不触发', pact_need_extract('我有点难过', '别难过，有我呢') is False)
+# 10.4 预筛：异常 → 不炸
+check('空输入 → 不触发', pact_need_extract('', '') is False)
+check('None → 不触发', pact_need_extract(None, None) is False)
+
+# 10.5 状态简报：玩家状态卡 + 角色情绪 + 关系 全量组装
+st10 = {
+    'player_state': {'location': '顾宅大厅', 'time': '夜晚', 'condition': '轻伤',
+                     'situation': '刚被周太太泼酒', 'holding': ['信物'], 'money': '拮据'},
+    'cast_states': {'周太太': {'present': True, 'location': '顾宅大厅', 'mood': '得意',
+                               'stance': '敌视', 'agenda': '逼你出丑'},
+                    '顾衍之': {'present': True, 'location': '顾宅大厅', 'mood': '冷淡',
+                               'stance': '暧昧', 'agenda': '观察你'}},
+    'state': {'relations': {'周太太': 20, '顾衍之': 70}},
+    'events': [{'ts': '20:00', 'summary': '周太太泼了你一杯红酒'}],
+}
+b = state_context_brief(st10)
+check('简报含玩家状况', '轻伤' in b and '泼酒' in b)
+check('简报含角色情绪', '得意' in b and '冷淡' in b)
+check('简报含角色态度', '敌视' in b and '暧昧' in b)
+check('简报含关系值', '周太太' in b and '70' in b)
+check('简报含最近事件', '泼了你一杯红酒' in b)
+# 10.6 简报：空状态 → 不炸返回空串
+check('空状态 → 空串', state_context_brief({}) == '')
+check('None → 空串', state_context_brief(None) == '')
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')
