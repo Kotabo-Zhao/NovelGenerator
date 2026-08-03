@@ -131,6 +131,12 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
         if isinstance(core_conflict, (dict, list)):
             core_conflict = json.dumps(core_conflict, ensure_ascii=False)
         st["state"]["objective"] = str(core_conflict) or "踏上你的旅程"
+        # v3.6: 世界状态三支柱初始化（时间/地点/人物 + 地点图谱构建）
+        try:
+            from core.interactive.world_state import ensure_world
+            ensure_world(st)
+        except Exception as e:
+            log.warning(f"world init failed: {e}")
         wb_brief = []
         for k in ("era", "geography", "power_system", "core_conflict", "factions"):
             v = wb.get(k)

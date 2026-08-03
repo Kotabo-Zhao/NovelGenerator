@@ -21,7 +21,7 @@ from typing import AsyncIterator, Optional
 
 from ..resilient_client import ResilientLLMClient
 from .action_engine import ActionEngine, _state_snapshot, clean_location  # v3.5.36
-
+from .world_state import CONFIRM_RE, DENY_RE  # v3.6: 移动确认流
 log = logging.getLogger(__name__)
 
 # v2.5.58: 增量 PACT 提取预筛——对话中命中承诺/邀约/威胁/秘密/交易信号才触发 LLM 提取
@@ -401,6 +401,54 @@ class DialogueEngine:
 
         # v3.4: 行动识别——玩家输入是"剧情操作"（上车/推门/答应/拒绝…）→ 直接推进剧情
         action = self.action.detect_action(clean_input, state)
+        # v3.6: 待确认移动流——上轮"去图谱外地点"已反问，本轮玩家确认/取消
+        pending = state.get("pending_travel") or {}
+        if pending and not action:
+            _ptgt = pending.get("target", "")
+            if CONFIRM_RE.match(clean_input):
+                state.pop("pending_travel", None)
+                self.store.save_state(novel_id, state)
+                action = {"intent": "travel", "type": "travel",
+                          "summary": f"前往{_ptgt}", "target": _ptgt,
+                          "end_chat": True, "confirmed": True}
+            elif DENY_RE.match(clean_input):
+                state.pop("pending_travel", None)
+                state["last_action"] = {"type": "travel_cancel",
+                                        "summary": f"取消了前往{_ptgt}的打算",
+                                        "ts": time.strftime("%H:%M:%S")}
+                self.store.save_state(novel_id, state)
+                reply_cancel = f"【旁白】你打消了去{_ptgt}的念头，留了下来。"
+                yield {"type": "action_chunk", "content": reply_cancel}
+                self.store.append_chat(novel_id, {"role": "assistant", "speaker": "旁白",
+                                                  "type": "action_result",
+                                                  "content": reply_cancel,
+                                                  "ts": time.strftime("%H:%M:%S")})
+                yield {"type": "action_end", "content": reply_cancel, "action": {"type": "cancel"},
+                       "snapshot": _state_snapshot(state)}
+                yield {"type": "done"}
+                return
+        # v3.6: travel 到图谱外地点 → 回问确认流（不静默执行，也不静默退回对话）
+        if action and action.get("intent") == "travel" and action.get("need_confirm") \
+                and not action.get("confirmed"):
+            _tgt = action.get("target", "")
+            state["pending_travel"] = {"target": _tgt,
+                                       "from": clean_location(state.get("state", {}).get("location", "")),
+                                       "ts": time.strftime("%H:%M:%S")}
+            self.store.save_state(novel_id, state)
+            confirm_msg = f"【旁白】「{_tgt}」离这里有些路程，你确定现在出发吗？（回复「嗯/走」确认，「算了」取消）"
+            yield {"type": "action_detect", "action_type": "travel",
+                   "summary": action.get("summary", ""), "end_chat": True,
+                   "blocked": False, "need_confirm": True, "target": _tgt}
+            yield {"type": "action_chunk", "content": confirm_msg}
+            self.store.append_chat(novel_id, {"role": "assistant", "speaker": "旁白",
+                                              "type": "action_result", "content": confirm_msg,
+                                              "action": "travel_confirm",
+                                              "ts": time.strftime("%H:%M:%S")})
+            yield {"type": "action_end", "content": confirm_msg,
+                   "action": {"type": "travel", "need_confirm": True, "target": _tgt},
+                   "snapshot": _state_snapshot(state)}
+            yield {"type": "done"}
+            return
         if action:
             yield {"type": "action_detect", "action_type": action.get("type", "other"),
                    "summary": action.get("summary", ""), "end_chat": action.get("end_chat", False),

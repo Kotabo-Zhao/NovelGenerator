@@ -89,6 +89,13 @@ def new_state(novel_id: str, title: str, genre: str, style: str,
             "relations": {},
             "inventory": [],
         },
+        # v3.6: 世界状态三支柱（时间/地点/人物）——确定性规则驱动，LLM 只填内容
+        "world": {
+            "time": {"label": "正午", "slot": 2, "day": 1},
+            "location": "",
+            "chars": {},
+            "locations": {},
+        },
         "facts": [],          # PACT 剧情事实（对话→剧情的因果纽带）
         "casts": {},          # 出场角色 {name: {profile, voice, present}}
         "recent_scenes": [],
@@ -147,6 +154,13 @@ class InteractStore:
         if st is not None and not isinstance(st.get("state"), dict):
             log.warning(f"state.json 结构异常，尝试重放修复: {novel_id}")
             st = self._rebuild_from_logs(novel_id)
+        # v3.6: 旧存档迁移——世界三支柱补全（幂等）
+        if st is not None and "world" not in st:
+            try:
+                from .world_state import ensure_world
+                ensure_world(st)
+            except Exception as e:
+                log.warning(f"world migration failed: {e}")
         self._state_cache[novel_id] = st
         return st
 

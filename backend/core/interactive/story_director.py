@@ -540,6 +540,14 @@ def state_context_brief(state: dict, max_chars: int = 320) -> str:
         if not state:
             return ""
         segs = []
+        # v3.6: 三支柱确定性快照（时间/地点/在场——规则驱动，不依赖 LLM 记忆）
+        try:
+            from .world_state import world_brief
+            _wb = world_brief(state, max_chars=200)
+            if _wb:
+                segs.append(_wb)
+        except Exception:
+            pass
         # 玩家状态卡（现状/身体/物品/钱财）
         ps = state.get("player_state") or {}
         if ps:
@@ -1498,7 +1506,13 @@ class StoryDirector:
                 "disguise": str(ps.get("disguise", old_ps.get("disguise", "")))[:30],
                 "money": str(ps.get("money", old_ps.get("money", "")))[:30],
             }
-            st["player_state"] = clean
+            # v3.6: LLM 提取结果过规则校验（防幻觉）——location 过图谱/known 校验、
+            # with/holding 等采纳；world 三支柱同步（location 冲突时以 world 为准）
+            try:
+                from .world_state import validate_llm_state
+                st["player_state"] = validate_llm_state(st, clean)
+            except Exception:
+                st["player_state"] = clean
             # ── v3.5.43: NPC 状态卡（行为驱动更新，LLM 完整了解所有角色状态）──
             cs = data.get("casts") or {}
             clean_cs = {}

@@ -66,8 +66,9 @@ def clean_location(loc) -> str:
 
 # ── 规则预筛 ──
 # 括号动作描写（（压低声音）（沉默片刻）…）→ 必为行动
+# v3.6 修复：动词前 {0,30}（原 {1,30} 导致"（推门）"这种动词开头的括号动作漏检）
 ACTION_DESC_RE = re.compile(
-    r"（[^）]{1,30}(?:走|上|下|进|出|开|关|坐|站|拿|递|拔|放|看|推|跟|点|摇|转|跪|抱|拍|"
+    r"（[^）]{0,30}(?:走|上|下|进|出|开|关|坐|站|拿|递|拔|放|看|推|跟|点|摇|转|跪|抱|拍|"
     r"摸|掏|捡|踢|跳|冲|挡|闪|压|低|沉|默|笑|哭|叹|瞪|盯|握|拉|拽|扯|蹲|躺|跑|追|躲|藏|"
     r"翻|搜|查|找|问|答|说|讲|告|亲|吻|拥|搂|喝|吃|用)[^）]{0,30}）")
 
@@ -76,6 +77,7 @@ _ACTION_VERBS = (
     "上车|下车|上马|下马|上楼|下楼|上船|进去|进来|出去|出来|进屋|出屋|进城|出城|"
     "开门|推门|推开|关门|锁门|开窗|转身|回头|跟上|跟着|坐下|站起来|起身|"
     "走到|走进|走出|来到|到达|离开|逃走|逃跑|逃离|躲进|躲藏|藏进|尾随|追赶|追上|出发|"
+    "去(?:了|到|往|向)?|去|"
     "追(?:上|到|来|去)?|"
     "推开门|跟着走|跟着你|拔剑|拔刀|出手|攻击|跪下|叩头|低头|鞠躬|行礼|作揖|抱拳|点头|摇头|"
     "掏出|拿出|交出|交给|递上|接过|放回|收起|捡起|穿上|脱下|戴上|摘下|"
@@ -99,6 +101,11 @@ LOW_CONF_ACTION_RE = re.compile(r"^(?:好|行|可以|好的|行吧|好吧|嗯|�
 
 # 裸行动词（"上车" 两个字本身）
 NAKED_ACTION_RE = re.compile(r"^(?:上车|下车|进去|出来|走吧|开门|推门|跟上|坐下|过来|等等|停下|住手|别动|放手|松手|给|拿来|走开|退下|成交)[。！!]?$")
+
+# v3.6: 系统指令（零 LLM 直接识别，不进入剧情）
+META_RE = re.compile(
+    r"^(?:存档|存个档|保存|读档|读取存档|读取|设置|设定|音量|音量设置|调音量|"
+    r"帮助|攻略|玩法说明|重开|重新开始|退出|返回主界面|回退|撤销|上一步|攻略提示)[。！!]?$")
 
 # v3.5.7: 句首行动动词 + 补充内容（"我答应你，今晚就去"这类长句）→ LLM 精判
 # 之前整句匹配漏掉带补充的长句 → 全部当闲聊，剧情不动——这是"行为不推进剧情"的机制根因
@@ -126,37 +133,34 @@ DESTRUCTIVE_RE = re.compile(
 # 凭空获得类（防"我获得了一百万"状态污染）
 UNREAL_GAIN_RE = re.compile(r"(?:获得|得到|赚到|捡到|赢来)(?:了|到)?(?:一百[万两]|一千[万两]|一亿|一个亿|万两黄金|绝世武功|神功|内力大增|修为大涨)")
 
-ACTION_DETECT_SYSTEM = """你是互动小说行动识别器。判断读者刚输入的内容是"剧情行动"还是"普通对话"。
+ACTION_DETECT_SYSTEM = """你是互动小说输入意图识别器。判断读者刚输入的内容属于哪类"意图"。
 
-**剧情行动**：读者通过输入执行了改变剧情状态的动作——
-- 身体动作：上车/推门/离开/拔剑/跪下/跟上/躲藏…
-- 交易承诺：答应/拒绝/成交/签字/交出物品…
-- 物品使用：掏出/递上/服用/使用…
-- 态度行动：威胁/示好/坦白/隐瞒…
-
-**普通对话**：提问、陈述、闲聊、情绪表达、信息交换——不改变剧情状态。
+**intent 四分类（v3.6，替代旧的行动/对话二分类）**：
+1. "talk" 对话：提问、陈述、闲聊、情绪表达、信息交换——不改变剧情状态
+2. "act" 动作：改变剧情状态的实体操作——上车/推门/拔剑/跪下/跟上/答应/拒绝/交出物品/使用物品/威胁/坦白…
+3. "travel" 移动：玩家要离开当前地点去别处——回家/回府/回房/上楼/下楼/进城/出城/去X/到X/前往X/离开…
+   （判断要点：出现了明确的"目的地"或"回/去/到/离开"类移动动词 → travel，不是 act）
+4. "meta" 系统指令：存档/读档/设置/音量/重开等（不进入剧情）
 
 判断规则：
-1. 角色发出邀请/命令（"上车""跟我走"）后，读者输入"上车""好，上车""走" → 是行动（执行邀请）
-2. 纯回应词"好""行""可以"：若紧跟角色请求/交易 → 行动（accept）；若只是敷衍 → 对话
-3. 括号动作描写 → 行动
-4. 读者明确说"我要…/我想…" + 具体动作 → 行动
-5. 不确定时 is_action=false（宁可是对话，不打断体验）
+1. 角色发出邀请/命令（"上车""跟我走"）后，读者输入"上车""好，上车""走" → act（执行邀请）
+2. 纯回应词"好""行""可以"：若紧跟角色请求/交易 → act（accept）；若只是敷衍 → talk
+3. 括号动作描写（（推门）（沉默））→ act
+4. 读者明确说"我要…/我想…" + 具体动作 → 按动作类型分类（回家/去X → travel）
+5. "我要回家了/我想回家/回府/回去" → **travel**（这是移动意图，不是对话）
+6. 不确定时 intent="talk"（宁可是对话，不打断体验）
 
-【行动边界（必须遵守，v3.5.23 改为 LLM 裁决）】：
-- 越界判断要【结合本小说世界观】：修真/玄幻/奇幻世界里的飞行、瞬移、御剑、
-  法术可能是正常能力（不越界）；现实/都市/历史世界里这些才越界
-- 关键角色（主角/重要配角/反派）不可能被读者一句话杀死或重伤——他们的命运由剧情
-  推进决定；读者可"出手尝试"，结果通常是被拦下/失手/悬念
-- 读者不能凭空获得巨额财富/绝世能力（可以"索要/抢夺/寻找"，结果由剧情决定）
-- 违背主线 ≠ 越界：读者可以拒绝、背叛、逃跑——这是剧情分支，正常识别为行动
+【行动边界（必须遵守）】：
+- 越界判断要【结合本小说世界观】：修真/玄幻/奇幻世界里的飞行、瞬移、御剑、法术可能是正常能力
+- 关键角色（主角/重要配角/反派）不可能被读者一句话杀死或重伤
+- 读者不能凭空获得巨额财富/绝世能力
+- 违背主线 ≠ 越界：读者可以拒绝、背叛、逃跑——正常识别为行动
 - blocked=true 仅当行动【确定违反世界观且无合理解释】时输出
 
-输出 JSON:
-{"is_action": true/false, "type": "move/interact/accept/refuse/use/combat/leave/other",
- "summary": "一句话描述读者做了什么",
- "state_updates": {"location": "新地点或空", "flags": ["新flag或空"], "inventory": ["物品变化或空"],
-                   "relations": {"角色名": "关系变化描述或空"}},
+【输出（v3.6 收窄——不输出状态字段，状态由规则引擎管理）】:
+{"intent": "talk/act/travel/meta", "type": "move/interact/accept/refuse/use/combat/leave/other",
+ "summary": "一句话描述读者要做什么",
+ "target": "travel 意图时给目标地点（如'家''北山'），其他意图填空字符串",
  "end_chat": false, "blocked": false, "reason": "一句话依据"}
 只输出 JSON。"""
 
@@ -165,7 +169,8 @@ ACTION_SCENE_SYSTEM = """你是互动小说即时行动导演。读者刚刚执�
 要求：
 1. 1-3 句，标记语言：【旁白】叙事 / 【角色名】在场角色的反应台词
 2. 行动结果必须真实反映在叙事里（上车→车身晃动、车门合拢；拔剑→气氛骤变；答应→对方态度变化）
-3. 行动改变了场景（离开/进入新地点）→ 给新地点一笔环境描写（地点/氛围/光线）
+3. 【到达场景铁律（v3.6）】移动类行动（到达新地点）→ 必须给新地点的环境描写：
+   光线/声音/气味/视线所见（至少 1 句环境描写），再写角色反应——不许只用"你来到了X"一笔带过
 4. 保持小说文笔与世界观风格，不要机械描述
 5. 若【角色名】给了反应台词，该台词要符合角色人设
 6. v3.5.27 角色白名单：反应台词只来自"在场角色"名单，严禁名单外角色出现
@@ -301,20 +306,28 @@ class ActionEngine:
             if set_main_flow:
                 set_main_flow(False)
 
-    # ── 行动识别 ──
+    # ── 行动识别（v3.6：意图四分类 + 输出收窄）──
     def detect_action(self, user_input: str, state: dict) -> Optional[dict]:
-        """识别玩家输入是否行动。返回行动意图 dict 或 None（普通对话/判定失败）。
+        """识别玩家输入意图。返回 action dict 或 None（talk/判定失败）。
 
-        返回: {type, summary, state_updates, end_chat, reason, forced, blocked?}
+        返回: {intent, type, summary, target, end_chat, reason, forced, blocked?, need_confirm?}
+        - intent: talk/act/travel/meta
+        - travel: 附 target（规则解析）；图谱无此节点 → need_confirm=True（等玩家确认）
         - blocked=True：超现实/凭空获得——规则层拦截，结果场景按"尝试无果"生成
+        - v3.6 收窄：不再信任 LLM 输出的 state_updates——状态由规则引擎管理
         """
-        # v3.5.23: 护栏改 LLM 判断（世界观自适应）——硬编码词表只作【兜底】，
-        # AI 可用时绝不直接拦截：修真世界观里"御剑飞行/瞬移"可能完全合理，
-        # 一刀切会让小说死板。正则命中仅作为 prompt 提示让 LLM 结合世界观裁决。
         guard_hint = ""
         if UNREALISTIC_RE.search(user_input) or UNREAL_GAIN_RE.search(user_input):
             guard_hint = ("⚠ 预筛提示：输入含疑似超现实/凭空获得词汇"
                           "（瞬移/飞行/凭空造物/巨额财富等），请结合世界观判断是否越界")
+        # v3.6: 系统指令零成本识别（存档/读档等不进入剧情）
+        if META_RE.match(user_input.strip()):
+            return {
+                "intent": "meta", "type": "meta",
+                "summary": f"系统指令：{user_input.strip()[:30]}",
+                "target": "", "end_chat": True,
+                "reason": "规则识别（META_RE）", "forced": True,
+            }
         pre = rule_prescreen(user_input)
         if not pre["candidate"]:
             return None
@@ -339,9 +352,15 @@ class ActionEngine:
                     f"同行[{','.join(_ps.get('with') or []) or '无'}] "
                     f"身体[{_ps.get('condition', '健康')}] 身份[{_ps.get('disguise', '本名') or '本名'}] "
                     f"处境[{_ps.get('situation', '')}]\n") if _ps else ""
+        # v3.6: 三支柱快照注入（确定性，防幻觉依据）
+        try:
+            from .world_state import world_brief
+            _wb = world_brief(state)
+        except Exception:
+            _wb = ""
         user = (
             f"当前地点: {clean_location(s.get('location', '')) or '（未定）'}\n"
-            + _ps_line
+            + (_ps_line + f"世界状态:\n{_wb}\n" if _wb else _ps_line)
             + f"主线目标: {s.get('objective', '') or '（未定）'}\n"
             f"世界观边界: {wb or '（无，按现实世界逻辑）'}\n"
             f"在场角色: {', '.join(chars) or '（无）'}\n"
@@ -349,7 +368,7 @@ class ActionEngine:
             f"预筛: {pre['hint']}\n"
             + (guard_hint + "\n" if guard_hint else "")
             + f"读者输入: {user_input[:200]}\n"
-            f"请识别这是否是剧情行动。"
+            f"请识别这是什么意图（talk/act/travel/meta）。"
         )
         raw = self._llm(ACTION_DETECT_SYSTEM, user, temperature=0.2, max_tokens=400)
         result = _parse_json(raw) if raw else None
@@ -357,50 +376,68 @@ class ActionEngine:
             # LLM 不可用/解析失败 → 规则兜底（护栏优先，防状态污染）
             if guard_hint:
                 return {
-                    "type": "unrealistic", "summary": f"读者试图：{user_input[:40]}",
-                    "state_updates": {}, "end_chat": False,
+                    "intent": "act", "type": "unrealistic",
+                    "summary": f"读者试图：{user_input[:40]}",
+                    "target": "", "end_chat": False,
                     "reason": "超现实/凭空获得（LLM 不可用，规则兜底）",
                     "forced": True, "blocked": True,
                 }
             if pre.get("forced"):
                 return {
-                    "type": "other", "summary": user_input[:60],
-                    "state_updates": {}, "end_chat": False,
+                    "intent": "act", "type": "other", "summary": user_input[:60],
+                    "target": "", "end_chat": False,
                     "reason": "LLM 不可用，规则兜底", "forced": True,
                 }
             return None
-        is_action = bool(result.get("is_action"))
+        intent = str(result.get("intent", ""))[:10] or "talk"
         blocked = bool(result.get("blocked", False))
         # v3.5.23: LLM 结论为准——规则不再否决 LLM（forced 只用于 LLM 失败时兜底）
-        if not is_action:
+        if intent == "talk":
             return None
         action = {
+            "intent": intent,
             "type": str(result.get("type", "other"))[:20] or "other",
             "summary": str(result.get("summary", user_input[:60]))[:120],
-            "state_updates": result.get("state_updates") or {},
+            "target": str(result.get("target", ""))[:40],
             "end_chat": bool(result.get("end_chat", False)),
             "reason": str(result.get("reason", ""))[:100],
             "forced": pre["forced"],
             "blocked": blocked,
         }
-        # 规范化 state_updates
-        su = action["state_updates"]
-        if not isinstance(su, dict):
-            su = {}
-        action["state_updates"] = {
-            "location": clean_location(su.get("location"))[:60] if su.get("location") else "",
-            "flags": [str(f)[:60] for f in (su.get("flags") or [])[:3]],
-            "inventory": [str(i)[:60] for i in (su.get("inventory") or [])[:3]],
-            "relations": {str(k)[:30]: str(v)[:60] for k, v in (su.get("relations") or {}).items() if isinstance(k, str)},
-        }
+        # v3.6: travel 意图 → 规则解析目标（不信任 LLM target 字段）
+        if intent == "travel":
+            try:
+                from .world_state import resolve_travel_target
+                tgt, ok = resolve_travel_target(user_input, state)
+            except Exception:
+                tgt, ok = "", False
+            if not ok or not tgt:
+                # 规则解析不出（如"上楼"）→ 采用 LLM target 作候选，仍走图谱/确认流
+                tgt = action["target"]
+                if not tgt:
+                    return None
+                ok = True
+            action["target"] = tgt
+            # 图谱校验：不在图谱 → 需要确认（dialogue 层走确认流）
+            try:
+                from .world_state import clean_loc
+                _loc = state.get("world", {}).get("locations") or {}
+                if clean_loc(tgt) not in _loc:
+                    action["need_confirm"] = True
+            except Exception:
+                pass
+        # meta 意图：不进剧情（对话层给出系统提示）
+        if intent == "meta":
+            action["type"] = "meta"
         return action
 
-    # ── 行动执行：更新状态 ──
+    # ── 行动执行：更新状态（v3.6：travel 走确定性移动执行器）──
     def apply_action(self, novel_id: str, action: dict) -> dict:
         """把行动结果写回 state（location/flags/inventory/relations）
 
-        v3.4.1 护栏：状态变更 sanity check——location 只随移动类行动改、
-        物品只随物品类行动改、flags 限量、relations clamp。
+        v3.6 规则：travel 意图 → world_state.execute_travel（图谱校验/时间推进/
+        在场重算，同步更新三支柱，不依赖 LLM 输出）；其他意图 → 既有护栏
+        （LLM 输出仅候选，sanity check 后写回）。
         """
         if action.get("blocked"):
             # 超现实/凭空获得：不更新剧情状态，只记录尝试痕迹（结果场景按"无果"生成）
@@ -417,6 +454,29 @@ class ActionEngine:
         state = self.store.load_state(novel_id)
         if state is None:
             return {}
+        # v3.6: travel 意图 → 确定性移动执行器（目标已过图谱/确认流校验）
+        if action.get("intent") == "travel":
+            from .world_state import execute_travel, ensure_world
+            ensure_world(state)
+            target = action.get("target", "")
+            changes, ok = execute_travel(state, target, register_new=True)
+            state["last_action"] = {
+                "type": "travel", "summary": action.get("summary", f"前往{target}"),
+                "target": target, "ts": time.strftime("%H:%M:%S"),
+            }
+            if not ok:
+                changes = [f"移动未执行（{target or '目标不明'}）"]
+            self.store.save_state(novel_id, state)
+            return {"changed": changes, "state": state}
+        # meta 意图：不进剧情（无状态变化）
+        if action.get("intent") == "meta":
+            state["last_action"] = {
+                "type": "meta", "summary": action.get("summary", ""),
+                "ts": time.strftime("%H:%M:%S"),
+            }
+            self.store.save_state(novel_id, state)
+            return {"changed": [], "state": state}
+
         su = dict(action.get("state_updates") or {})
         a_type = action.get("type", "other")
         s = state.setdefault("state", {})
@@ -553,12 +613,23 @@ class ActionEngine:
             _ctx_brief = state_context_brief(state)
         except Exception:
             _ctx_brief = ""
+        # v3.6: travel 行动 → 注入新地点环境信息（到达场景环境描写的确定性依据）
+        _travel_brief = ""
+        if action.get("intent") == "travel":
+            try:
+                from .world_state import world_brief
+                _travel_brief = world_brief(state)
+            except Exception:
+                _travel_brief = ""
         user = (
             f"小说: 《{state.get('title', '')}》 {state.get('genre', '')}·{state.get('style', '')}\n"
             f"当前地点: {clean_location(s.get('location', '')) or '（未定）'}\n"
             f"你的行动（主角 {((state.get('player_char') or {}).get('name', '你'))} 刚刚做的）: {action.get('summary', '')}\n"
-            f"行动类型: {action.get('type', 'other')}\n"
+            f"行动类型: {action.get('intent', action.get('type', 'other'))}"
+            + (f"（移动 → 到达新地点，必须按铁律 3 给环境描写）" if action.get("intent") == "travel" else "")
+            + f"\n"
             f"状态变化: {'；'.join(changed) or '（无）'}\n"
+            + (f"世界状态快照（新地点）:\n{_travel_brief}\n" if _travel_brief else "")
             + (f"当前世界状态:\n{_ctx_brief}\n" if _ctx_brief else "")
             + f"在场角色:\n{chr(10).join(char_briefs) or '（无）'}\n"
             f"生成这段行动的结果场景（1-3 句）。"
