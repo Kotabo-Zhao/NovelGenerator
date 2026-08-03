@@ -25,6 +25,73 @@ from .action_engine import _state_snapshot, clean_location
 
 log = logging.getLogger(__name__)
 
+# ═══════════════════════════════════════════════════════════════
+# v1.1 锚点式剧情控制 — P0 纯规则函数（零 LLM，可离线测试）
+# ═══════════════════════════════════════════════════════════════
+
+def tension_update(tension, mode="neutral"):
+    """张力更新纯函数（0-10）。
+
+    mode: drift=偏离主线(+2) / neutral=中性(+1) / progress=推进主线(-1)
+    任何未知 mode 按 neutral 处理。clamp 到 [0, 10]。
+    """
+    try:
+        cur = max(0, min(10, int(tension)))
+    except (TypeError, ValueError):
+        cur = 0
+    if mode == "drift":
+        return min(10, cur + 2)
+    if mode == "progress":
+        return max(0, cur - 1)
+    return min(10, cur + 1)  # neutral / 未知
+
+
+def chapter_complete(state: dict, min_scenes: int = 2) -> bool:
+    """切章判定纯函数（v1.1 锚点式）。
+
+    优先：本章 beats 全部 done 且场景数 ≥ 2（消除 5 节点 vs 3 场景矛盾）
+    兜底：无 beats（旧存档/残缺）→ 场景数 ≥ min_scenes
+    任何异常 → False（不切章，不抛异常）
+    """
+    try:
+        op = state.get("outline_progress") or {}
+        cnt = max(int(op.get("scene_in_chapter", 0)), 0)
+        cb = state.get("chapter_beats") or {}
+        beats = cb.get("beats") or []
+        # beats 与当前章节匹配才生效（防切章后残留旧 beats 误判）
+        if beats and int(cb.get("chapter_idx", -1)) == int(op.get("idx", 0)):
+            if cnt < 2:
+                return False  # 最小场景数保护，防异常快速切章
+            return all(str(b.get("status", "")) == "done" for b in beats)
+        return cnt >= max(1, int(min_scenes))
+    except Exception:
+        return False
+
+
+def mainline_check(state: dict) -> dict:
+    """L0 主线健康度对账纯函数（v1.1 保险④）。
+
+    输入 state.mainline: {required_flags: [...], acquired: [...], expected_by_chapter: N}
+    输出 {shortcut: bool, gap: int}——进度落后 → shortcut=True（P4 注入捷径）
+    无配置/异常 → {shortcut: False, gap: 0}
+    """
+    try:
+        ml = state.get("mainline") or {}
+        required = ml.get("required_flags") or []
+        if not required:
+            return {"shortcut": False, "gap": 0}
+        acquired = set(ml.get("acquired") or [])
+        # expected 优先读 mainline，其次 outline_progress（随章节推进变化）
+        expected = int(ml.get("expected_by_chapter", 0) or 0)
+        if expected <= 0:
+            expected = int((state.get("outline_progress") or {}).get("expected_by_chapter", 0) or 0)
+        if expected <= 0:
+            expected = len(required)
+        gap = max(0, expected - len([f for f in required[:expected] if f in acquired]))
+        return {"shortcut": gap > 0, "gap": gap}
+    except Exception:
+        return {"shortcut": False, "gap": 0}
+
 # v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
 INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式的场景记录整合为正式的小说章节正文。
 
@@ -1159,6 +1226,15 @@ class StoryDirector:
             self.store.save_state(novel_id, state)
         except Exception as e:
             log.warning(f"advance_beat failed: {e}")
+        # v1.1 锚点式 P0: 张力更新（规则版）——玩家执行了行动但未触发锚点
+        # （beat 未全部推进）→ 视为偏离，张力 +2；否则中性 +1
+        # P2 引入条件检查器后改为精确偏离判定
+        try:
+            _t_mode = "drift" if (state.get("last_action") or {}).get("summary") else "neutral"
+            self._update_tension(state, _t_mode)
+            self.store.save_state(novel_id, state)
+        except Exception as e:
+            log.warning(f"tension update failed: {e}")
         # v3.5.22: 复用小说模式逻辑引擎（后台，不阻塞场景流）——
         # 角色状态更新 + L1 矛盾检查（v3.5.47: 走串行队列，不与主流程抢 LLM）
         try:
@@ -1722,6 +1798,20 @@ class StoryDirector:
         except Exception as e:
             log.warning(f"advance_beat failed: {e}")
 
+    def _update_tension(self, state: dict, mode: str = "neutral") -> int:
+        """v1.1 锚点式 P0: 场景后更新张力值（规则版，零 LLM）。
+
+        mode: drift=偏离 / neutral=中性 / progress=推进
+        写回 state["tension"]；张力跨章不清零（主线偏离度累积，P4 用）
+        """
+        try:
+            cur = int(state.get("tension", 0) or 0)
+            state["tension"] = tension_update(cur, mode)
+            return state["tension"]
+        except Exception as e:
+            log.warning(f"update_tension failed: {e}")
+            return int(state.get("tension", 0) or 0)
+
     def _advance_outline(self, novel_id: str, state: dict):
         """v3.5.28: 大纲章节推进——场景数达阈值切下一章，objective 随章更新
 
@@ -1745,15 +1835,20 @@ class StoryDirector:
         cnt = max(int(op.get("scene_in_chapter", 0)) + 1, sn - ss + 1)
         ch = chs[min(idx, len(chs) - 1)]
         tw = int(ch.get("target_words", 0) or 0)
-        # v3.5.54: Galgame 节点对齐——大纲有 scene_beats 时每章场景数=节点数
-        # （每场景推进 1 个节点，节点演完才切章 → 剧情按节点收束）
+        # v1.1 锚点式 P0: 切章判定——锚点完成度优先（beats 全 done），
+        # 场景数仅作无 beats 旧存档的兜底（消除 5 节点 vs 3 场景矛盾）
         _sb = ch.get("scene_beats") or []
         if _sb and any(str(b.get("key_action", "")).strip() for b in _sb if isinstance(b, dict)):
             per = max(2, min(len(_sb), 6))
         else:
             per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
+        # v1.1: 锚点式切章判定（有 beats 时以全 done 为准，场景数不再硬性提前切章）
+        _do_cut = chapter_complete(state, per)
+        # 跨章张力记录（v1.1 保险③）：切章时张力不清零，高位偏离跨章累积
+        if _do_cut and int(state.get("tension", 0) or 0) >= 3:
+            state["tension_drift_chapters"] = int(state.get("tension_drift_chapters", 0) or 0) + 1
         # v3.5.30: 最后一章也回流（原条件 idx < len-1 导致最后一章永远不生成章节正文）
-        if cnt >= per:
+        if _do_cut:
             # ── 本章完成：把 [scene_start, scene_num-1] 的互动剧情沉淀为章节正文 ──
             done_idx = idx
             scene_start = int(op.get("scene_start", 1) or 1)
