@@ -15,6 +15,7 @@ from core.interactive.story_director import (
     tension_update,
     chapter_complete,
     mainline_check,
+    StoryDirector,
 )
 
 PASS, FAIL = 0, 0
@@ -96,6 +97,64 @@ check('落后 3 flag → gap=3', r.get('gap') == 3 and r.get('shortcut') is True
 st = {'outline_progress': {'idx': 1}}
 r = mainline_check(st)
 check('无 mainline 配置 → 不炸不补', r.get('shortcut') is False)
+
+# ═══════════════ 4. P1 prompt 构造（_build_scene_prompt） ═══════════════
+print('▶ P1 prompt 构造 _build_scene_prompt')
+
+def mk_prompt_state(tension=0, beats_status=None, has_action=False):
+    """构造场景 prompt 测试用最小 state"""
+    st = {
+        'title': '测试小说', 'genre': '都市', 'style': '细腻',
+        'state': {'location': '咖啡馆', 'objective': '查明真相'},
+        'outline_chapters': [{'number': 1, 'title': '第一章', 'summary': '咖啡馆相遇',
+                              'volume': '', 'target_words': 3000}],
+        'outline_progress': {'idx': 0},
+        'tension': tension,
+        'player_state': {'location': '咖啡馆', 'time': '夜晚'},
+        'casts': {'林晚': {'profile': {}}},
+        'cast_states': {'林晚': {'location': '咖啡馆', 'mood': '平静', 'stance': '合作'}},
+        'facts': [], 'flags': [], 'npc_relations': {}, 'pending_missing_hooks': [],
+        'summary': '上一场景结尾：林晚约你在咖啡馆见面。',
+        'scene_num': 2,
+    }
+    if beats_status is not None:
+        st['chapter_beats'] = {'chapter_idx': 0, 'beats': [
+            {'id': i + 1, 'desc': f'事件{i + 1}', 'status': s}
+            for i, s in enumerate(beats_status)]}
+    if has_action:
+        st['last_action'] = {'type': 'move', 'summary': '你起身走向窗边', 'ts': '12:00'}
+    return st
+
+from unittest.mock import MagicMock
+sd = StoryDirector(MagicMock(), 'test-model', MagicMock())
+
+# 4.1 已删除硬约束段
+p = sd._build_scene_prompt(mk_prompt_state(), '')
+check('prompt 不含"必须持续推进"', '必须持续推进' not in p)
+check('prompt 不含"不改变主线方向"', '不改变主线方向' not in p)
+check('prompt 不含"只占本段开头（1-2 句）"', '1-2 句' not in p)
+
+# 4.2 已注入软引导段
+p = sd._build_scene_prompt(mk_prompt_state(), '')
+check('prompt 含"剧情引导"', '剧情引导' in p)
+check('prompt 含"本章终点"', '本章终点' in p)
+check('prompt 含引导原则"塑造过程"', '塑造过程' in p)
+
+# 4.3 张力差异注入：高位含世界推力，低位不含
+p_low = sd._build_scene_prompt(mk_prompt_state(tension=1), '')
+p_high = sd._build_scene_prompt(mk_prompt_state(tension=5), '')
+check('高位注入"剧情张力: 5/10"', '剧情张力: 5/10' in p_high)
+check('高位注入世界推力', '世界推力' in p_high)
+check('低位注入"剧情张力: 1/10"', '剧情张力: 1/10' in p_low)
+check('低位无世界推力', '世界推力' not in p_low)
+
+# 4.4 拒绝后果保留（拒绝也是推进）
+check('prompt 保留拒绝后果机制', '拒绝' in p and ('后果' in p or '翻脸' in p))
+
+# 4.5 SCENE_SYSTEM 硬回轨段已删除
+from core.interactive.story_director import SCENE_SYSTEM
+check('SCENE_SYSTEM 不含"回到主线轨道"', '回到主线轨道' not in SCENE_SYSTEM)
+check('SCENE_SYSTEM 不含"严禁剧情跟着闲聊"', '严禁剧情跟着闲聊' not in SCENE_SYSTEM)
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')
