@@ -111,6 +111,7 @@ PLANNER_SYSTEM = """你是一位资深的小说策划编辑，专精于网文和
   * 金手指/特殊能力（如有）
   * 关系网: 与3个最重要角色的关系本质
 - 配角: 4-6个，每人包含姓名、身份、与主角关系、性格特征、在主线中的作用、自身小弧线、对主角的意义（盟友/导师/镜子/对手/爱的对象）
+- v2.5.62 配角可扮演性: 每个配角必须补充 speak_style（说话风格/口头禅/语气，如"毒舌但心软，爱用反问"）和 initial_attitude（对主角的初始态度，如"表面客气实则戒备"）——互动模式玩家可选择扮演任意配角
 - 反派: 1-2个，包含动机、实力、与主角的冲突点、为什么反派认为自己是"对的"
 
 ### 大纲 (outline)
@@ -620,7 +621,7 @@ class Planner:
       "arc": "", "cheat": "", "secret": "", "catchphrase": "",
       "relationships": [{{"name":"","type":"盟友/导师/对手","dynamic":""}}]
     }},
-    "supporting": [{{"name":"","identity":"","relation":"","personality":"","role":"","mini_arc":"","meaning":""}}],
+    "supporting": [{{"name":"","identity":"","relation":"","personality":"","role":"","mini_arc":"","meaning":"","speak_style":"","initial_attitude":"对主角的初始态度"}}],
     "antagonist": [{{"name":"","motivation":"","power":"","conflict":"","humanity":""}}],
     "bible_summary": ""
   }}

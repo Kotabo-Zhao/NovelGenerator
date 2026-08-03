@@ -1073,6 +1073,46 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
         <!-- v3.0: 互动模式面板 -->
         <div v-if="writing.activeTab==='interactive'" style="margin-top:14px">
+          <!-- v2.5.62: 角色选择卡片（进入互动前，可选扮演角色） -->
+          <div v-if="interactive.charPicker" class="inter-char-picker" style="border:1px solid var(--border);border-radius:14px;padding:18px;background:var(--card)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div style="font-weight:600;font-size:15px;color:var(--text)">🎭 选择你要扮演的角色</div>
+              <div class="muted" style="font-size:12px">剧情主线不变，以所选角色的视角经历故事</div>
+            </div>
+            <div v-if="interactive.charLoading" class="text-center" style="padding:24px">
+              <div class="spinner" style="width:24px;height:24px"></div>
+              <p class="color-text2 mt-8 text-sm">正在加载角色…</p>
+            </div>
+            <div v-else-if="!interactive.charOptions.length" class="empty" style="padding:20px">
+              <div class="empty-icon">👤</div>
+              <p class="muted text-sm">暂无角色信息，将默认扮演主角</p>
+              <button class="btn btn-primary mt-12" @click="chooseAndStart">进入互动</button>
+            </div>
+            <div v-else style="display:flex;flex-direction:column;gap:10px">
+              <div v-for="opt in interactive.charOptions" :key="opt.name"
+                   @click="interactive.charChoice = opt.name"
+                   class="char-opt"
+                   :class="{'char-opt-active': interactive.charChoice === opt.name}"
+                   style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);cursor:pointer;transition:all .15s">
+                <div class="inter-avatar" style="width:38px;height:38px;font-size:15px;flex-shrink:0"
+                     :style="avatarStyle(opt.name)">{{ opt.name.slice(0,1) }}</div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;font-size:13.5px;color:var(--text)">
+                    {{ opt.name }}
+                    <span v-if="opt.role" class="muted" style="font-weight:400;font-size:11px;margin-left:6px">{{ opt.role === 'protagonist' ? '主角' : (opt.role === 'supporting' ? '配角' : '反派') }}</span>
+                  </div>
+                  <div class="muted" style="font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                    {{ opt.identity || opt.personality || opt.speakStyle || '身份未明' }}
+                  </div>
+                </div>
+                <div style="font-size:16px;color:var(--gold)" v-if="interactive.charChoice === opt.name">✓</div>
+              </div>
+              <div style="display:flex;gap:10px;margin-top:6px;justify-content:flex-end">
+                <button class="btn btn-primary" @click="chooseAndStart" :disabled="!interactive.charChoice">🚀 以{{ interactive.charChoice || '所选角色' }}开始</button>
+              </div>
+            </div>
+          </div>
+
           <div v-if="interactive.loading" class="text-center" style="padding:40px 20px">
             <div class="spinner" style="width:30px;height:30px"></div>
             <p class="color-text2 mt-16 text-sm">{{ interactive.loadingMsg || '初始化互动世界…' }}</p>
@@ -3886,6 +3926,11 @@ const app = createApp({
       statusOpen: false,
       // v3.5.19: 生成状态提示（生成中告知用户，避免以为卡住）
       generating: '',          // 当前生成阶段 label（空 = 无生成）
+      // v2.5.62: 角色选择（进入互动前可选扮演角色）
+      charPicker: false,       // 是否显示角色选择卡片
+      charOptions: [],         // 可选角色列表 [{name, identity, personality, role}]
+      charChoice: '',          // 玩家选中的角色名
+      charLoading: false,      // 角色列表加载中
     });
     // v3.5.5: 玩家状态卡计算属性
     // v3.5.18: 显示格式化——location/objective 可能是 JSON 数组字符串（如
@@ -4121,7 +4166,7 @@ const app = createApp({
         _scrollStory();
         return;
       }
-      // 已有存档 → 直接加载；否则 start
+      // 已有存档 → 直接加载；否则先选角色再 start
       interactive.loading = true; interactive.error = '';
       interactive.loadingMsg = '正在加载互动世界…';
       fetch(API+'/api/novels/'+id+'/interactive/state')
@@ -4141,20 +4186,52 @@ const app = createApp({
             loadInteractiveVoices();
             _scrollStory();
           } else {
-            interactiveStart(id);
+            openCharPicker(id);
           }
         })
         .catch(e => {
-          if (e && e.code===404) { interactiveStart(id); }
+          if (e && e.code===404) { openCharPicker(id); }
           else { interactive.loading=false; interactive.error='加载失败: '+(e.message||e); }
         });
     }
 
-    async function interactiveStart(id) {
+    // v2.5.62: 角色选择——进入互动前可选扮演角色（缺省主角）
+    async function openCharPicker(id) {
+      interactive.charPicker = true; interactive.charLoading = true;
+      interactive.charChoice = ''; interactive.error = '';
+      try {
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/cast-options');
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        const d = await r.json();
+        interactive.charOptions = (d.options || []).map(o => ({
+          name: o.name, identity: o.identity || '', personality: o.personality || '',
+          speakStyle: o.speak_style || '', role: o.role || '',
+        }));
+        // 默认选中主角（role=protagonist）
+        const proto = interactive.charOptions.find(o => o.role === 'protagonist');
+        interactive.charChoice = proto ? proto.name : (interactive.charOptions[0] || {}).name || '';
+      } catch(e) {
+        // 角色列表失败 → 直接默认主角进
+        interactive.charOptions = [];
+        interactive.charChoice = '';
+        interactiveStart(id, '');
+        return;
+      }
+      interactive.charLoading = false;
+    }
+
+    async function chooseAndStart() {
+      const id = encodeURIComponent(activeNovel.value.id);
+      interactive.charPicker = false;
+      interactiveStart(id, interactive.charChoice);
+    }
+
+    async function interactiveStart(id, character) {
       interactive.loading = true; interactive.loadingMsg = '正在创建互动世界（首次约 10-20s）…';
       interactive.error = '';
       try {
-        const r = await fetch(API+'/api/novels/'+id+'/interactive/start', {method:'POST', body:'{}', headers:{'Content-Type':'application/json'}});
+        const body = character ? JSON.stringify({character}) : '{}';
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/start', {method:'POST', body, headers:{'Content-Type':'application/json'}});
         if (!r.ok) throw new Error('HTTP '+r.status);
         interactive.blocks = [];
         await readSSE(r, (evt) => {
@@ -4680,7 +4757,9 @@ const app = createApp({
         if (r.ok) {
           interactive.blocks = [];
           interactive.state = { scene_num:0, facts:[], casts:{}, state:{relations:{}} };
-          interactiveStart(id);
+          interactive.intro = ''; interactive.introOpen = false;
+          // v2.5.62: 重开 → 重新选择角色
+          openCharPicker(id);
         }
       } catch(e) { console.warn('restart failed:', e); }
     }
@@ -5020,6 +5099,8 @@ const app = createApp({
       // v3.0: 互动模式
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
+      // v2.5.62: 角色选择
+      openCharPicker,chooseAndStart,
       // v3.5.7: 剧情自动流
       cancelAuto,
       // v3.5.10: 智能滚动

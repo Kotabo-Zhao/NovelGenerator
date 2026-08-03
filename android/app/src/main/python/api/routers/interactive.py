@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -51,11 +52,19 @@ class VoiceOverrideRequest(BaseModel):
     pitch: str = "+0Hz"
 
 
+class StartRequest(BaseModel):
+    character: Optional[str] = None   # v2.5.62: 玩家选择扮演的角色名（缺省 = 主角）
+
+
 # ── start：初始化 + 开场场景 ──
 @router.post("/api/novels/{novel_id}/interactive/start")
-async def interactive_start(novel_id: str):
-    """进入互动模式：初始化存档（或复用已有）+ 生成开场场景（SSE）"""
+async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
+    """进入互动模式：初始化存档（或复用已有）+ 生成开场场景（SSE）
+
+    v2.5.62: body 可带 character（玩家选择扮演的角色名，缺省=主角）
+    """
     _validate_novel_id(novel_id)
+    char_choice = (req.character if req else None) or None
     try:
         ctx = _story.build_context_from_bible(novel_id)
     except Exception as e:
@@ -67,26 +76,35 @@ async def interactive_start(novel_id: str):
         st = new_state(novel_id, ctx.get("title", novel_id),
                        ctx.get("genre", ""), ctx.get("style", ""),
                        ctx.get("protagonist_name", ""))
-        # v3.5.5: 玩家扮演角色（bible 主角）
-        proto = ctx.get("protagonist") or {}
-        if proto.get("name"):
-            p_ident = proto.get("identity", "")
-            p_pers = ""
-            pers = proto.get("personality") or {}
-            if isinstance(pers, dict):
-                p_pers = str(pers.get("true_self") or pers.get("surface") or "")[:120]
-            elif isinstance(pers, str):
-                p_pers = pers[:120]
-            st["player_char"] = {
-                "name": proto["name"],
-                "identity": str(p_ident)[:80],
-                "personality_brief": p_pers,
-            }
-        # 预置主要角色（从 bible 预览）
-        casts = st.get("casts", {})
-        for name, info in (ctx.get("casts_preview") or {}).items():
-            casts[name] = {"present": True, "profile": {}, "role": info.get("role", "")}
-        st["casts"] = casts
+        # v2.5.62: 角色选择扮演——全角色预设构建 + 选择应用（缺省=主角）
+        from core.interactive.story_director import cast_presets_build, choose_char_apply
+        _presets = cast_presets_build(_story._load_plan(novel_id)) if hasattr(_story, '_load_plan') else []
+        if not _presets:
+            # 兜底：从 ctx 构建（plan 缺失时）
+            _proto = ctx.get("protagonist") or {}
+            if _proto.get("name"):
+                _presets = [{
+                    "name": _proto["name"], "identity": str(_proto.get("identity", ""))[:80],
+                    "personality": str(_proto.get("personality", ""))[:120],
+                    "backstory": "", "motivation": "", "speak_style": "",
+                    "initial_attitude": "", "role": "protagonist",
+                }]
+        _presets_map = {p.get("name"): p for p in _presets if p.get("name")}
+        _target = char_choice or ctx.get("protagonist_name") or (
+            _presets[0]["name"] if _presets else "")
+        ok, msg = choose_char_apply(st, _target, _presets_map)
+        if not ok and char_choice:
+            # 玩家显式选择但角色不存在 → 拒绝启动（前端可重选）
+            raise HTTPException(400, f"角色选择失败: {msg}")
+        if not ok:
+            # 缺省角色也失败（数据异常）→ 保底直接设主角名
+            _proto = ctx.get("protagonist") or {}
+            if _proto.get("name"):
+                st["player_char"] = {"name": _proto["name"],
+                                     "identity": str(_proto.get("identity", ""))[:80],
+                                     "personality_brief": ""}
+        # v3.5.5: 玩家角色存档标记（场景 prompt 注入视角用）
+        st.setdefault("cast_choices", {"char": _target, "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
         # v3.2: 世界观注入（重开后剧情必须贴合本小说设定）
         wb = ctx.get("worldbuilding") or {}
         # v3.3.1: geography 可能是 str/dict/list，统一转字符串（修复 start 500）
@@ -211,6 +229,13 @@ async def interactive_start(novel_id: str):
                 _store.save_state(novel_id, _st3)
     except Exception as e:
         log.warning(f"style_brief failed: {e}")
+
+    # v2.5.61: 回流补漏——互动已完成但正式章节缺失的自动补（后台，幂等）
+    try:
+        import threading
+        threading.Thread(target=_story.backfill_sync, args=(novel_id,), daemon=True).start()
+    except Exception as e:
+        log.warning(f"backfill_sync trigger failed: {e}")
 
     async def event_stream():
         # 挂载出场角色人设（异步后台，不阻塞开场）
@@ -359,6 +384,42 @@ async def interactive_end_chat(novel_id: str):
 
 
 # ── state：读取存档 ──
+# ── v2.5.62: 可扮演角色列表（进入互动前选择）──
+@router.get("/api/novels/{novel_id}/interactive/cast-options")
+async def interactive_cast_options(novel_id: str):
+    """返回所有可扮演角色（从 plan.json 构建预设，供前端角色选择卡片）"""
+    _validate_novel_id(novel_id)
+    from core.interactive.story_director import cast_presets_build
+    plan = _story._load_plan(novel_id)
+    presets = cast_presets_build(plan)
+    if not presets:
+        # 兜底：从 bible 上下文取主角
+        ctx = _story.build_context_from_bible(novel_id)
+        _proto = ctx.get("protagonist") or {}
+        if _proto.get("name"):
+            presets = [{
+                "name": _proto["name"],
+                "identity": str(_proto.get("identity", ""))[:80],
+                "personality": str(_proto.get("personality", ""))[:120],
+                "role": "protagonist",
+            }]
+    opts = [{
+        "name": p.get("name", ""),
+        "identity": p.get("identity", ""),
+        "personality": p.get("personality", "")[:80],
+        "speak_style": p.get("speak_style", "")[:60],
+        "role": p.get("role", ""),
+    } for p in presets if p.get("name")]
+    # v2.5.62: 同名角色去重（supporting/antagonist 可能重复，保留第一个）
+    seen = set()
+    dedup = []
+    for o in opts:
+        if o["name"] not in seen:
+            seen.add(o["name"])
+            dedup.append(o)
+    return {"ok": True, "options": dedup}
+
+
 @router.get("/api/novels/{novel_id}/interactive/state")
 async def interactive_state(novel_id: str):
     """读取互动存档（断线重连/刷新恢复）"""
