@@ -26,6 +26,7 @@ from core.interactive.story_director import (
     promise_anchor_of,
     promise_ledger_update,
     promise_conflict_check,
+    promise_due_check,
     state_context_brief,
     PACT_SYSTEM,
     StoryDirector,
@@ -451,16 +452,19 @@ st9h = {'facts': [], 'pending_promises': [], 'events': []}
 check('台账空 → 不冲突', promise_conflict_check('周三晚上见面', st9h) is None)
 check('异常输入 → 不炸', promise_conflict_check(None, None) is None)
 
-# 9.10 prompt 注入断言：台账有 pending → 注入"未兑现约定"块 + when_raw
+# 9.10 prompt 注入断言：台账到期约定 → 注入"约定时间已到"块 + when_raw
 st9p = mk_prompt_state()
+st9p['scene_num'] = 3
 st9p['pending_promises'] = [{'who': '林听雪', 'what': '一起吃饭', 'when_raw': '周五晚上',
-                             'scene_num': 7, 'status': 'pending'}]
+                             'scene_num': 0, 'due_scene': 3, 'status': 'pending'}]
 p = sd._build_scene_prompt(st9p, '')
-check('prompt 注入未兑现约定块', '未兑现约定' in p and '周五晚上' in p)
+check('prompt 注入到期约定块', '约定时间已到' in p and '周五晚上' in p)
 st9q = mk_prompt_state()
-st9q['pending_promises'] = []
+st9q['scene_num'] = 1
+st9q['pending_promises'] = [{'who': '林听雪', 'what': '一起吃饭', 'when_raw': '周五晚上',
+                             'scene_num': 0, 'due_scene': 3, 'status': 'pending'}]
 p2 = sd._build_scene_prompt(st9q, '')
-check('台账空 → 无约定注入块', '未兑现约定' not in p2)
+check('未到期 → 无约定注入块', '未兑现约定' not in p2 and '约定时间已到' not in p2)
 
 # 9.11 PACT_SYSTEM prompt 断言：time_anchor 字段要求 + 慎用时间指引
 check('PACT_SYSTEM 含 time_anchor 字段', 'time_anchor' in PACT_SYSTEM)
@@ -514,6 +518,62 @@ check('简报含最近事件', '泼了你一杯红酒' in b)
 # 10.6 简报：空状态 → 不炸返回空串
 check('空状态 → 空串', state_context_brief({}) == '')
 check('None → 空串', state_context_brief(None) == '')
+
+# ═══════════════ 11. 约定推进时钟（promise_due_check） ═══════════════
+print('▶ 约定推进时钟 promise_due_check')
+
+def mk_pledge(when, due, status='pending'):
+    return {'who': '方瑜', 'what': '一起吃饭', 'when_raw': when,
+            'scene_num': 0, 'due_scene': due, 'status': status}
+
+# 11.1 未到期：场景数未到 due → 不提示（不刷存在感，防打转）
+r = promise_due_check({'pending_promises': [mk_pledge('周五晚上', 3)], 'scene_num': 1})
+check('未到期 → due 空', not r.get('due') and not r.get('overdue'), f"got {r}")
+# 11.2 到期：scene_num >= due → 推进指令
+r = promise_due_check({'pending_promises': [mk_pledge('周五晚上', 3)], 'scene_num': 3})
+check('到期 → due 含约定', len(r.get('due', [])) == 1)
+# 11.3 过期：scene_num >= due + 2 → NPC 追问/关系受损
+r = promise_due_check({'pending_promises': [mk_pledge('周五晚上', 3)], 'scene_num': 5})
+check('过期 → overdue 含约定', len(r.get('overdue', [])) == 1)
+# 11.4 多约定分级：一个到期一个未到期
+r = promise_due_check({'pending_promises': [
+    mk_pledge('周五晚上', 3), mk_pledge('周三下午', 8)], 'scene_num': 3})
+check('多约定分级', len(r.get('due', [])) == 1 and not r.get('overdue'))
+# 11.5 已兑现/违约的约定不参与到期判定
+r = promise_due_check({'pending_promises': [
+    mk_pledge('周五晚上', 1, 'fulfilled'), mk_pledge('周六', 2, 'broken')], 'scene_num': 5})
+check('非 pending 不参与', not r.get('due') and not r.get('overdue'))
+# 11.6 无台账/异常 → 不炸
+check('无台账 → 空结果', promise_due_check({}) == {'due': [], 'overdue': []})
+check('None → 空结果', promise_due_check(None) == {'due': [], 'overdue': []})
+
+# 11.7 ledger 写入带 due_scene（约定后 3 场景内推进）
+st11 = {'facts': [], 'pending_promises': [], 'events': [], 'scene_num': 7}
+promise_ledger_update(st11, [
+    {'type': 'promise', 'content': '周五晚上与林听雪一起吃饭', 'time_anchor': '周五晚上', 'target': '林听雪'},
+])
+check('写入含 due_scene=10', st11['pending_promises'][0].get('due_scene') == 10,
+      f"got {st11['pending_promises'][0].get('due_scene')}")
+
+# 11.8 prompt 分级注入断言
+# 未到期 → 不注入约定块（防 NPC 反复提起打转）
+stp = mk_prompt_state()
+stp['pending_promises'] = [mk_pledge('周五晚上', 99)]
+stp['scene_num'] = 1
+p = sd._build_scene_prompt(stp, '')
+check('未到期 → 无约定注入块', '未兑现约定' not in p)
+# 到期 → 注入推进指令
+stp2 = mk_prompt_state()
+stp2['pending_promises'] = [mk_pledge('周五晚上', 3)]
+stp2['scene_num'] = 3
+p2 = sd._build_scene_prompt(stp2, '')
+check('到期 → 注入推进指令', '约定时间已到' in p2 and '推进' in p2)
+# 过期 → 注入追问指令
+stp3 = mk_prompt_state()
+stp3['pending_promises'] = [mk_pledge('周五晚上', 3)]
+stp3['scene_num'] = 6
+p3 = sd._build_scene_prompt(stp3, '')
+check('过期 → 注入追问指令', '追问' in p3 or '失望' in p3 or '过期' in p3)
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')

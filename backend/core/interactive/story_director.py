@@ -467,6 +467,8 @@ def promise_ledger_update(state: dict, new_promises: list, action_summary: str =
                     "what": content[:60],
                     "when_raw": anchor[:20],
                     "scene_num": int(state.get("scene_num", 0) or 0),
+                    # v2.5.59: 推进时钟——约定后 3 个场景内必须推进兑现（防剧情打转）
+                    "due_scene": int(state.get("scene_num", 0) or 0) + 3,
                     "status": "pending",
                 })
                 added += 1
@@ -593,6 +595,85 @@ def state_context_brief(state: dict, max_chars: int = 320) -> str:
         return out[:max_chars] if len(out) > max_chars else out
     except Exception:
         return ""
+
+
+def promise_due_check(state: dict) -> dict:
+    """v2.5.59: 约定推进时钟（纯函数）——检查未兑现约定的到期/过期状态。
+
+    约定写入时带 due_scene（约定场景 + 3，3 个场景内必须推进兑现）。
+    - 未到期：不注入（防 NPC 反复提起同一约定导致剧情打转）
+    - 到期（scene_num >= due_scene）：注入推进指令，本场景必须推进兑现
+    - 过期（scene_num >= due_scene + 2）：注入追问指令，NPC 追问/关系受损
+    返回 {"due": [约定], "overdue": [约定]}；无台账/异常 → 空结构（不炸）。
+    """
+    try:
+        due, overdue = [], []
+        ledger = state.get("pending_promises") or []
+        if not isinstance(ledger, list):
+            return {"due": [], "overdue": []}
+        scene_num = int(state.get("scene_num", 0) or 0)
+        for p in ledger:
+            if not isinstance(p, dict) or p.get("status") != "pending":
+                continue
+            d = int(p.get("due_scene", 0) or 0)
+            if d <= 0:
+                continue  # 旧数据无时钟 → 不参与到期判定
+            if scene_num >= d + 2:
+                overdue.append(p)
+            elif scene_num >= d:
+                due.append(p)
+        return {"due": due, "overdue": overdue}
+    except Exception:
+        return {"due": [], "overdue": []}
+
+
+def generate_suggestions(client, model, store, state: dict, chars: list) -> list:
+    """v3.5.40/v2.5.59: 生成 3 个建议回应（真两难）。模块级——场景节点停顿 + 对话后刷新共用。
+
+    上下文增强（v2.5.59）：注入世界状态简报（玩家现状/角色情绪/关系）+ 最近事件
+    + 未兑现约定到期信息——选项贴合最新剧情进度，不再与现状脱节。
+    """
+    try:
+        from ..resilient_client import ResilientLLMClient
+        s = state.get("state", {}) or {}
+        ps = state.get("player_state") or {}
+        agenda = state.get("agenda") or {}
+        _ctx = state_context_brief(state, 220)
+        _due_state = promise_due_check(state)
+        _due = _due_state.get("due") or []
+        _due_line = ""
+        if _due:
+            _due_line = "待兑现（时间已到，剧情必须推进）: " + "；".join(
+                f"{p.get('when_raw', '?')}与{p.get('who', '?')}约定{p.get('what', '')}" for p in _due[:2])
+        user = (
+            f"剧情目标: {s.get('objective', '')}\n"
+            f"当前处境: {ps.get('situation', '') or '（未知）'}\n"
+            + (f"当前世界状态: {_ctx}\n" if _ctx else "")
+            + (f"{_due_line}\n" if _due_line else "")
+            + f"在场角色: {', '.join(chars)}\n"
+            f"对话议程: {str(agenda.get('goal', ''))[:100]}\n"
+            f"请为读者生成 3 个建议回应（Galgame 风格选项）——"
+            f"必须是有分量的真两难（答应/拒绝/追问/试探/沉默/转移话题…），"
+            f"每个选项 4-15 字，口语化，符合当前角色的处境、关系与最新剧情进度。"
+        )
+        _rc = ResilientLLMClient(client, model)
+        resp = _rc.create(
+            messages=[
+                {"role": "system", "content": SUGGESTION_SYSTEM},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.7, max_tokens=300,
+        )
+        raw = getattr(resp, "choices", [{}])[0].message.content if resp else None
+        result = _parse_json(raw) if raw else None
+        opts = (result or {}).get("options") or []
+        if isinstance(opts, list):
+            cleaned = [str(o)[:30] for o in opts if str(o).strip()][:3]
+            if cleaned:
+                return cleaned
+    except Exception as e:
+        log.warning(f"suggestions gen failed: {e}")
+    return []
 
 
 # v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
@@ -1494,14 +1575,25 @@ class StoryDirector:
             parts.append("玩家的重要选择（Galgame 式延迟回响：存在自然时机时让角色提起这些旧承诺/共同经历——'你当初答应我的事'，不要每段都提，也不要装作不记得）:")
             for f in facts[:6]:
                 parts.append(f"- [{f.get('type')}] {f.get('content')}")
-        # v2.5.57: 未兑现约定台账（时间已锚定——不得改写约定时间）
-        _prom = [p for p in (state.get("pending_promises") or [])
-                 if isinstance(p, dict) and p.get("status") == "pending"]
-        if _prom:
-            parts.append("未兑现约定（时间已锚定：任何场景不得改写/重设其时间，"
-                         "提到该约定必须沿用原始时间表述；除非玩家已赴约或明确拒绝）:")
-            for _p in _prom[-3:]:
-                parts.append(f"- [{_p.get('when_raw', '?')}] 与{_p.get('who', '?')}约定: {_p.get('what', '')}")
+        # v2.5.59: 未兑现约定——分级注入（推进时钟防打转）：
+        # 未到期不注入（NPC 不再每轮提起同一约定）；到期注入推进指令；
+        # 过期注入追问指令（NPC 追问/关系受损）
+        try:
+            _due_state = promise_due_check(state)
+            _due = _due_state.get("due") or []
+            _overdue = _due_state.get("overdue") or []
+            if _due:
+                parts.append("约定时间已到（本场景必须推进兑现——赴约/取消/变故，"
+                             "不能再停留在'约定好了'的状态，让剧情向前走）:")
+                for _p in _due[-2:]:
+                    parts.append(f"- [{_p.get('when_raw', '?')}] 与{_p.get('who', '?')}约定: {_p.get('what', '')}")
+            if _overdue:
+                parts.append("约定已过期未兑现（相关角色本场景必须追问/表达失望，"
+                             "或出现变故导致约定作废——约定不能再无限期挂着）:")
+                for _p in _overdue[-2:]:
+                    parts.append(f"- [{_p.get('when_raw', '?')}] 与{_p.get('who', '?')}约定: {_p.get('what', '')}")
+        except Exception:
+            pass
         if state.get("promise_conflict"):
             parts.append(f"⚠ 系统检测到上一场景时间表述与未兑现约定冲突（{state['promise_conflict']}）——"
                          f"本场景必须修正：提到该约定一律沿用原始时间，禁止再出现冲突的新时间表述")
@@ -2041,30 +2133,8 @@ class StoryDirector:
 
     # ── v3.5.40: 建议选项（Galgame 式）──
     def _generate_suggestions(self, novel_id: str, state: dict, chars: list) -> list:
-        """节点停顿时生成 2-3 个建议回应——真两难（有分量），非敷衍选项"""
-        try:
-            s = state.get("state", {}) or {}
-            ps = state.get("player_state") or {}
-            agenda = state.get("agenda") or {}
-            user = (
-                f"剧情目标: {s.get('objective', '')}\n"
-                f"当前处境: {ps.get('situation', '') or '（未知）'}\n"
-                f"在场角色: {', '.join(chars)}\n"
-                f"对话议程: {str(agenda.get('goal', ''))[:100]}\n"
-                f"请为读者生成 3 个建议回应（Galgame 风格选项）——"
-                f"必须是有分量的真两难（答应/拒绝/追问/试探/沉默/转移话题…），"
-                f"每个选项 4-15 字，口语化，符合当前角色的处境与关系。"
-            )
-            raw = self._llm(SUGGESTION_SYSTEM, user, temperature=0.7, max_tokens=300)
-            result = _parse_json(raw) if raw else None
-            opts = (result or {}).get("options") or []
-            if isinstance(opts, list):
-                cleaned = [str(o)[:30] for o in opts if str(o).strip()][:3]
-                if cleaned:
-                    return cleaned
-        except Exception as e:
-            log.warning(f"suggestions gen failed: {e}")
-        return []
+        """节点停顿时生成 2-3 个建议回应——真两难（有分量），非敷衍选项（v2.5.59 走模块级）"""
+        return generate_suggestions(self.client, self.model, self.store, state, chars)
 
     # ── Agenda 机制（v3.3：对话轨道）──
     def _generate_agenda(self, novel_id: str, chars: list, state: dict) -> Optional[dict]:
