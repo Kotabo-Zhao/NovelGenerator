@@ -597,6 +597,75 @@ def state_context_brief(state: dict, max_chars: int = 320) -> str:
         return ""
 
 
+def merge_cast_states(old_cs, new_cs) -> dict:
+    """v2.5.60: NPC 状态卡合并更新（纯函数）——修复整体覆盖丢失 bug。
+
+    _extract_player_state 的 LLM 只输出"本场景出场角色"的状态，旧实现整体覆盖
+    cast_states 导致未出场角色的情绪/立场/议程全部丢失 → 后续场景按初始状态生成
+    → 已完成事件重复触发。合并规则：LLM 输出的角色更新，未输出的角色保留旧状态。
+    异常 → 返回 {}（不炸，调用方自行兜底）。
+    """
+    try:
+        if not isinstance(old_cs, dict):
+            old_cs = {}
+        if not isinstance(new_cs, dict):
+            return dict(old_cs)
+        merged = {str(k): dict(v) for k, v in old_cs.items() if isinstance(v, dict)}
+        for name, c in new_cs.items():
+            if not isinstance(c, dict):
+                continue
+            key = str(name)
+            prev = merged.get(key, {})
+            if not isinstance(prev, dict):
+                prev = {}
+            # knows 是累积知识（知道了不会忘）——新旧并集；其他字段新值覆盖
+            _nc = dict(c)
+            if isinstance(_nc.get("knows"), list) and isinstance(prev.get("knows"), list):
+                _seen = []
+                for _k in list(prev.get("knows", [])) + list(_nc.get("knows", [])):
+                    if str(_k) not in _seen and len(_seen) < 6:
+                        _seen.append(str(_k))
+                _nc["knows"] = _seen
+            merged[key] = {**prev, **{str(k): v for k, v in _nc.items()}}
+        return merged
+    except Exception:
+        return {}
+
+
+# v2.5.60: 状态变化词检测——场景文本出现明确状态转折 → 规则层记录事件（零 LLM）
+_STATE_CHANGE_RE = re.compile(
+    r"答应|同意|接受|拒绝|决裂|翻脸|背叛|反目|摊牌|和好|言和|结盟|联手|原谅|"
+    r"求婚|表白|分手|辞职|离职|被捕|遇害|昏迷|苏醒|失踪|归来|越狱|投降|叛变"
+)
+
+
+def state_change_detect(scene_text) -> Optional[str]:
+    """v2.5.60: 检测场景中的明确状态变化（纯函数，零 LLM）。
+
+    命中变化词 → 返回一句话事件描述（供事件时间线记录）；
+    未命中/空/异常 → None。即使 LLM 状态提取失败，关键转折也不会丢。
+    """
+    try:
+        t = str(scene_text or "")
+        if not t:
+            return None
+        m = _STATE_CHANGE_RE.search(t)
+        if not m:
+            return None
+        # 取变化词附近的一句话作为事件描述
+        w = m.group(0)
+        start = max(0, t[:m.start()].rfind("。") + 1)
+        end = t.find("。", m.end())
+        if end == -1:
+            end = t.find("！", m.end())
+        if end == -1:
+            end = min(len(t), m.end() + 40)
+        seg = t[start:end + 1].strip()
+        return f"状态变化: {seg[:60]}"
+    except Exception:
+        return None
+
+
 def promise_due_check(state: dict) -> dict:
     """v2.5.59: 约定推进时钟（纯函数）——检查未兑现约定的到期/过期状态。
 
@@ -1228,8 +1297,9 @@ class StoryDirector:
                     "condition": str(c.get("condition", "健康"))[:20],
                     "agenda": str(c.get("agenda", ""))[:60],
                 }
-            if clean_cs:
-                st["cast_states"] = clean_cs
+            # v2.5.60: 合并更新（修复整体覆盖丢失 bug）——LLM 输出的角色更新，
+            # 未输出的角色保留旧状态（情绪/立场/议程不丢 → 已完成事件不重演）
+            st["cast_states"] = merge_cast_states(old_cs, clean_cs)
             # ── v3.5.43: NPC↔NPC 关系矩阵（防止 AI 搞错角色间恩怨）──
             rel = data.get("relations") or {}
             clean_rel = {str(k)[:40]: str(v)[:60] for k, v in rel.items() if isinstance(k, str)}
@@ -1311,6 +1381,17 @@ class StoryDirector:
                     log.warning(f"[承诺台账] 场景{scene_num} 时间冲突: {_conf}")
             except Exception as e:
                 log.warning(f"promise conflict failed: {e}")
+            # v2.5.60: 状态变化规则兜底——场景文本出现明确转折词（拒绝/决裂/翻脸…）
+            # → 强制记录事件时间线（零 LLM；即使 LLM 状态提取失败，关键事件也不丢）
+            try:
+                _chg = state_change_detect(scene_text)
+                if _chg:
+                    _st5 = self.store.load_state(novel_id) or {}
+                    from .char_memory import add_event
+                    add_event(_st5, _chg, "change")
+                    self.store.save_state(novel_id, _st5)
+            except Exception as e:
+                log.warning(f"state change detect failed: {e}")
             # 1) 角色状态更新（提取位置/状态变化 → global_state.json）
             tr = self._logic_tracker()
             if tr is not None:
@@ -1609,7 +1690,7 @@ class StoryDirector:
                           f"禁止复述其环境描写/台词/动作）: {summary[:600]}")
         # v2.5.55: 近期事件时间线注入（防重复治本——给 LLM 明确的"已发生"记忆）
         _evs = [(str(e.get("ts", "")), str(e.get("summary", ""))[:32])
-                for e in (state.get("events") or [])[-6:] if e.get("summary")]
+                for e in (state.get("events") or [])[-8:] if e.get("summary")]
         if _evs:
             parts.append("本互动最近已发生的事件（均已发生过，严禁重演——本场景必须推进新的事件）:\n"
                          + "\n".join(f"- [{ts}] {s}" for ts, s in _evs))
@@ -2543,6 +2624,13 @@ class StoryDirector:
                 append_change(state, {"field": f"relation.{_k}", "new": str(_v)[:60]}, "anchor:state_output")
             if cur_i + 1 < len(beats):
                 beats[cur_i + 1]["status"] = "current"
+            # v2.5.60: 锚点完成写入事件时间线——已完成的关键节点进 LLM 显式记忆，
+            # 防"已完成的剧情又触发一遍"（事件记忆窗口已扩容至 30）
+            try:
+                from .char_memory import add_event
+                add_event(state, f"本章节点完成: {str(beats[cur_i].get('desc', ''))[:50]}", "beat")
+            except Exception:
+                pass
             state.pop("anchor_triggered", None)
         except Exception as e:
             log.warning(f"advance_beat failed: {e}")
