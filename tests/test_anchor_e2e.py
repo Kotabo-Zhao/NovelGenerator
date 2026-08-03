@@ -60,6 +60,17 @@ def get(url):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def get_state():
+    """GET 互动存档（精简返回）"""
+    try:
+        with urllib.request.urlopen(
+                BASE + f"/api/novels/{NID}/interactive/state", timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return (data.get("state") or {}) if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def run_path(name, inputs, max_scenes=6):
     """跑一条路径：restart → start → 依次输入 → 断言"""
     print(f"▶ 路径: {name}")
@@ -82,12 +93,14 @@ def run_path(name, inputs, max_scenes=6):
             snap = e.get("snapshot") or {}
             if snap.get("scene_num"):
                 scenes.append(snap["scene_num"])
-    st = get(f"/api/novels/{NID}/interactive/state") if False else {}
-    try:
-        r2 = post(f"/api/novels/{NID}/interactive/state", {})
-        st = r2.get("state", r2) if isinstance(r2, dict) else {}
-    except Exception:
-        pass
+        # 完整互动循环：每 2 轮对话 → 生成下一场景（锚点检查/张力更新在场景生成时触发）
+        if (i + 1) % 2 == 0:
+            t0 = time.time()
+            evs = post_sse(f"/api/novels/{NID}/interactive/scene")
+            d = time.time() - t0
+            stext = "".join(e.get("content", "") for e in evs if e.get("type") == "scene_chunk")
+            check(f"[{name}] 场景{i//2+2} 生成", len(stext) > 100, f"{len(stext)}字 {d:.1f}s")
+    st = get_state()
     return st
 
 

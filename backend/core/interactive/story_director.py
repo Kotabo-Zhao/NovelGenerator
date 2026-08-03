@@ -973,12 +973,11 @@ class StoryDirector:
                         prev[scene_num - 1] = str(last_scenes[0].get("scene_text", ""))
                 res = sup.validate_chapter(scene_text, scene_num, plan or {},
                                            prev, gs, run_deep=False)
-                # 视角适配：互动模式第二人称（"你"指代主角），小说模式的
-                # "主角全名未出现"类检查是误报——过滤
-                is_second_person = scene_text.count("你") > 10
+                # 视角适配：互动模式恒为第二人称（"你"指代主角），小说模式的
+                # "主角全名未出现"类检查是无条件误报——直接过滤（v1.1 修复：
+                # 原 count("你")>10 阈值在 300 字场景下不稳定导致误报反复出现）
                 violations = [v for v in (res.get("violations") or [])
-                              if not (is_second_person and
-                                      "未出现" in str(v.get("description", "")))]
+                              if "未出现" not in str(v.get("description", ""))]
                 p0 = [v for v in violations if v.get("severity") == "P0"]
                 if p0:
                     cats = [f"{v.get('category', '?')}:{v.get('description', '')[:40]}" for v in p0[:3]]
