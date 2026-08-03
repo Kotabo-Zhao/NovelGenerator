@@ -523,6 +523,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   @keyframes genBreath{0%,100%{opacity:.75}50%{opacity:1}}
   .gen-spinner{width:13px;height:13px;border:2px solid rgba(212,175,55,.25);border-top-color:#d9bc7a;border-radius:50%;animation:genSpin .8s linear infinite;flex-shrink:0}
   @keyframes genSpin{to{transform:rotate(360deg)}}
+  /* v2.5.58: 互动状态徽章（显眼——玩家随时知道系统在干什么、能不能操作） */
+  .inter-state-badge{display:flex;align-items:center;gap:8px;margin-top:10px;padding:9px 14px;border-radius:10px;font-size:13px;font-weight:600;border:1px solid;letter-spacing:.3px}
+  .inter-state-badge.bs-busy{background:rgba(212,175,55,.13);border-color:rgba(212,175,55,.5);color:#e2c57a}
+  .inter-state-badge.bs-ready{background:rgba(63,185,80,.12);border-color:rgba(63,185,80,.45);color:#3fb950}
+  .inter-state-badge.bs-idle{background:rgba(88,166,255,.10);border-color:rgba(88,166,255,.4);color:#58a6ff}
+  .inter-state-badge .badge-dot{width:8px;height:8px;border-radius:50%;background:currentColor;animation:badgeBlink 1.2s infinite;flex-shrink:0}
+  @keyframes badgeBlink{0%,100%{opacity:1}50%{opacity:.3}}
+  .inter-state-badge .badge-hint{font-weight:400;font-size:11.5px;opacity:.8;margin-left:auto;white-space:nowrap}
   .inter-intro{background:linear-gradient(180deg,rgba(212,175,55,.06),rgba(212,175,55,.02));border:1px solid rgba(212,175,55,.28);border-radius:14px;padding:10px 16px;cursor:pointer;transition:border-color .2s}
   .inter-intro:hover{border-color:rgba(212,175,55,.5)}
   .inter-intro-head{display:flex;justify-content:space-between;align-items:center;color:#d9bc7a}
@@ -1341,12 +1349,23 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </button>
             </div>
 
-            <!-- v3.5.45: 可操作状态提示——任何时刻明确当前能否操作 -->
-            <div v-if="interactive.busy || interactive.typing || interactive.pendingNode || interactive.inChat"
-                 style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px">
-              <span v-if="interactive.busy" style="color:#d9bc7a">⏳ 正在生成，请稍候…</span>
-              <span v-else-if="interactive.typing" style="color:#d9bc7a">📢 剧情播放中…</span>
-              <span v-else style="color:#3fb950">💬 可以回应（输入或点建议选项）</span>
+            <!-- v2.5.58: 当前状态显眼徽章——任何时刻玩家都清楚系统在干什么、能不能操作 -->
+            <div v-if="interactive.busy || interactive.typing || interactive.pendingNode || interactive.inChat || interactive.generating"
+                 class="inter-state-badge" :class="interStateClass">
+              <span class="badge-dot"></span>
+              <span v-if="interactive.generating">{{ interactive.generating }}</span>
+              <span v-else-if="interactive.busy">⏳ 正在生成，请稍候…</span>
+              <span v-else-if="interactive.typing">📢 剧情播放中…</span>
+              <span v-else>💬 等待你的回应</span>
+              <span class="badge-hint" v-if="interactive.busy || interactive.typing">操作按钮暂不可用</span>
+              <span class="badge-hint" v-else>可输入文字或点建议选项</span>
+            </div>
+            <!-- v2.5.58: 自动推进中（无待办）的安静提示 -->
+            <div v-if="!interactive.busy && !interactive.typing && !interactive.pendingNode && !interactive.inChat && !interactive.generating && interactive.autoPlay"
+                 class="inter-state-badge bs-idle">
+              <span class="badge-dot"></span>
+              <span>📖 剧情自动推进中</span>
+              <span class="badge-hint">随时可输入打断</span>
             </div>
 
             <!-- 输入区 -->
@@ -3896,6 +3915,12 @@ const app = createApp({
       }).slice(0, 6);
     });
     const playerName = computed(() => (interactive.state.player_char || {}).name || '你');
+    // v2.5.58: 状态徽章样式——生成中金色 / 等待回应绿色 / 其余蓝色
+    const interStateClass = computed(() => {
+      if (interactive.generating || interactive.busy || interactive.typing) return 'bs-busy';
+      if (interactive.pendingNode || interactive.inChat) return 'bs-ready';
+      return 'bs-idle';
+    });
     // v3.5.9: 待兑现承诺（active facts，状态卡显眼展示）
     const activeFacts = computed(() => {
       return (interactive.state.facts || []).filter(f => f.status === 'active').slice(-4).reverse();
@@ -5002,6 +5027,8 @@ const app = createApp({
       setRealVoice,clearRealVoice,realVoiceName,
       // v3.5.5: 玩家状态卡
       relCount,presentChars,playerName,
+      // v2.5.58: 互动状态徽章样式
+      interStateClass,
       // v3.5.9: 承诺清单
       activeFacts,
       // v3.5.23: 剧情概况（任务条副行）

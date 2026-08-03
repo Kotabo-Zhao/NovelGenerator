@@ -547,13 +547,20 @@ class ActionEngine:
                 _segs.append(f"绝不[{a.get('pattern', a) if isinstance(a, dict) else a}"[:36] + "]")
             brief = "；".join(_segs) if _segs else "（人设未蒸馏）"
             char_briefs.append(f"- {name}: {brief}")
+        # v2.5.58: 世界状态简报（玩家现状/角色情绪态度/关系/最近事件——行为后果生成的依据）
+        try:
+            from .story_director import state_context_brief
+            _ctx_brief = state_context_brief(state)
+        except Exception:
+            _ctx_brief = ""
         user = (
             f"小说: 《{state.get('title', '')}》 {state.get('genre', '')}·{state.get('style', '')}\n"
             f"当前地点: {clean_location(s.get('location', '')) or '（未定）'}\n"
             f"你的行动（主角 {((state.get('player_char') or {}).get('name', '你'))} 刚刚做的）: {action.get('summary', '')}\n"
             f"行动类型: {action.get('type', 'other')}\n"
             f"状态变化: {'；'.join(changed) or '（无）'}\n"
-            f"在场角色:\n{chr(10).join(char_briefs) or '（无）'}\n"
+            + (f"当前世界状态:\n{_ctx_brief}\n" if _ctx_brief else "")
+            + f"在场角色:\n{chr(10).join(char_briefs) or '（无）'}\n"
             f"生成这段行动的结果场景（1-3 句）。"
         )
         collected = []

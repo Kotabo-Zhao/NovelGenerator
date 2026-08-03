@@ -526,6 +526,75 @@ ADAPT_OUTLINE_SYSTEM = """你是互动小说大纲微调师。玩家的自由行
 trigger/reject_outcome/state_output/entry_hook）] 或 null, "reason": "一句话依据"}
 只输出 JSON。"""
 
+
+def state_context_brief(state: dict, max_chars: int = 320) -> str:
+    """v2.5.58: 当前世界状态简报——玩家状态 + 角色情绪/态度 + 关系 + 最近事件。
+
+    供行动结果场景/场景生成注入 prompt，让 LLM 生成行为后果时
+    真正考虑玩家处境与角色的状态和性格（mood/stance/agenda）。
+    空状态/异常 → 空串（不炸）。
+    """
+    try:
+        if not state:
+            return ""
+        segs = []
+        # 玩家状态卡（现状/身体/物品/钱财）
+        ps = state.get("player_state") or {}
+        if ps:
+            _c = str(ps.get("condition", "") or "")
+            _sit = str(ps.get("situation", "") or "")
+            _h = "、".join(ps.get("holding") or []) or ""
+            _m = str(ps.get("money", "") or "")
+            _parts = [f"位置[{clean_location(ps.get('location'))}]"]
+            if _c and _c != "健康":
+                _parts.append(f"身体[{_c}]")
+            if _m:
+                _parts.append(f"钱财[{_m}]")
+            if _h:
+                _parts.append(f"随身[{_h}]")
+            _line = " ".join(_parts)
+            if _sit:
+                _line += f"；处境: {_sit[:60]}"
+            segs.append(f"主角现状: {_line}")
+        # 在场角色情绪/态度/议程（cast_states 全维度）
+        cs = state.get("cast_states") or {}
+        moods = []
+        if isinstance(cs, dict):
+            for _n, _c in list(cs.items())[:4]:
+                if not isinstance(_c, dict) or _c.get("present") is False:
+                    continue
+                _mood = str(_c.get("mood", "") or "")
+                _st = str(_c.get("stance", "") or "")
+                _ag = str(_c.get("agenda", "") or "")
+                _parts = []
+                if _mood:
+                    _parts.append(f"情绪[{_mood}]")
+                if _st:
+                    _parts.append(f"态度[{_st}]")
+                if _ag:
+                    _parts.append(f"意图[{_ag[:24]}]")
+                if _parts:
+                    moods.append(f"{_n}{' '.join(_parts)}")
+        if moods:
+            segs.append("在场角色: " + "；".join(moods[:3]))
+        # 关系值（状态矩阵）
+        rel = (state.get("state") or {}).get("relations") or {}
+        if isinstance(rel, dict) and rel:
+            rels = [f"{k}♥{v}" for k, v in list(rel.items())[:4]
+                    if isinstance(v, (int, float))]
+            if rels:
+                segs.append("关系值: " + " ".join(rels))
+        # 最近事件（刚发生的事——后果生成要承接）
+        evs = [(str(e.get("summary", ""))[:40]) for e in (state.get("events") or [])[-2:]
+               if e.get("summary")]
+        if evs:
+            segs.append("最近: " + "；".join(evs))
+        out = "\n".join(segs)
+        return out[:max_chars] if len(out) > max_chars else out
+    except Exception:
+        return ""
+
+
 # v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
 INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式的场景记录整合为正式的小说章节正文。
 
@@ -1342,6 +1411,13 @@ class StoryDirector:
               "张力较高时，让世界事件/角色主动推动剧情（事件找上门）；"
               "玩家明确拒绝当前事件时，以'拒绝及其后果'推进事件"
               "（如拒绝交易→对方翻脸），而不是跳过事件另起炉灶。")
+        # v2.5.58: 世界状态简报（玩家现状/角色情绪态度/关系/最近事件——角色反应与剧情展开的依据）
+        try:
+            _wctx = state_context_brief(state)
+            if _wctx:
+                parts.append(f"## 当前世界状态（生成角色反应/剧情后果必须基于此）:\n{_wctx}")
+        except Exception:
+            pass
         # v1.1 P2: 锚点触发进入方式（entry_hook）——本场景以它开场，事件找上门
         _at = state.get("anchor_triggered")
         if _at and _at.get("hook"):

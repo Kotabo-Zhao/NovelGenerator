@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import AsyncIterator, Optional
 
@@ -22,6 +23,51 @@ from ..resilient_client import ResilientLLMClient
 from .action_engine import ActionEngine, _state_snapshot, clean_location  # v3.5.36
 
 log = logging.getLogger(__name__)
+
+# v2.5.58: 增量 PACT 提取预筛——对话中命中承诺/邀约/威胁/秘密/交易信号才触发 LLM 提取
+_PACT_TRIGGER_RE = (
+    r"答应|承诺|保证|约定|约好|说定|说好|一言为定|我请|请客|邀约|一起.{0,6}(?:吃饭|见面|去|走|喝酒|喝茶)"
+    r"|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|明天|后天|今晚|改天"
+    r"|威胁|别怪|小心点|走着瞧|你等着"
+    r"|秘密|其实我|告诉你|实话告诉你|真相"
+    r"|交易|交换|条件|代价|成交"
+)
+
+
+def pact_need_extract(user_text, reply_text) -> bool:
+    """v2.5.58: 规则预筛——本轮对话是否值得增量 PACT 提取（零 LLM）。
+
+    玩家输入或角色回复命中承诺/邀约/时间约定/威胁/秘密/交易信号 → True。
+    纯闲聊（问候/天气/情绪）→ False，省一次 LLM 调用。
+    空/异常 → False（不炸）。
+    """
+    try:
+        u = str(user_text or "")
+        r = str(reply_text or "")
+        return bool(re.search(_PACT_TRIGGER_RE, u + r))
+    except Exception:
+        return False
+
+
+def _run_incremental_pact(client, model, store, engine, novel_id, user_text, reply, target):
+    """v2.5.58: 后台增量 PACT 提取（模块级函数——to_thread 执行，不阻塞 SSE）。
+
+    只传本轮对话，结果合并进 facts + 承诺台账（extract_pact 内部已有防重复）。
+    异常不外抛（后台任务），只记日志。
+    """
+    try:
+        from .story_director import StoryDirector
+        sd = StoryDirector(client, model, store, engine)
+        entries = [
+            {"role": "user", "content": str(user_text or "")[:200], "speaker": "player"},
+            {"role": "assistant", "content": str(reply or "")[:200], "speaker": target},
+        ]
+        r = sd.extract_pact(novel_id, entries)
+        n = len(r.get("facts") or []) if isinstance(r, dict) else -1
+        log.info(f"incremental pact done: facts={n} target={target}")
+    except Exception as e:
+        log.warning(f"incremental pact failed: {type(e).__name__}: {str(e)[:120]}")
+
 
 CHAT_SYSTEM = """你是小说角色扮演引擎。你扮演小说中的角色，与读者（玩家的化身）对话。
 
@@ -439,6 +485,20 @@ class DialogueEngine:
             self.store.save_state(novel_id, state)
         except Exception:
             pass
+        # v2.5.58: 增量 PACT 提取——对话中命中承诺/邀约/威胁/秘密/交易信号 → 后台即时提取
+        # （历史问题修复：不再依赖玩家点"结束对话"，时间约定等关键对话即时入账）
+        # 注意：必须在 chat_end yield 之前触发——SSE 消费者收完 chat_end 即关闭生成器，
+        # yield 之后的代码永远不会执行。
+        try:
+            if pact_need_extract(clean_input, reply):
+                import asyncio
+                loop = asyncio.get_event_loop()
+                loop.create_task(asyncio.to_thread(
+                    _run_incremental_pact, self.client, self.model, self.store, self.engine,
+                    novel_id, clean_input, reply, target))
+                log.info(f"incremental pact triggered: {target}")
+        except Exception as e:
+            log.warning(f"incremental pact trigger failed: {e}")
         yield {"type": "chat_end", "speaker": target, "content": reply, "segments": segments,
                "snapshot": _state_snapshot(state)}
 
