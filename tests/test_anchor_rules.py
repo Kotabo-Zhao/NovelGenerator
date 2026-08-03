@@ -15,6 +15,7 @@ from core.interactive.story_director import (
     tension_update,
     chapter_complete,
     mainline_check,
+    anchor_trigger_check,
     StoryDirector,
 )
 
@@ -155,6 +156,96 @@ check('prompt 保留拒绝后果机制', '拒绝' in p and ('后果' in p or '�
 from core.interactive.story_director import SCENE_SYSTEM
 check('SCENE_SYSTEM 不含"回到主线轨道"', '回到主线轨道' not in SCENE_SYSTEM)
 check('SCENE_SYSTEM 不含"严禁剧情跟着闲聊"', '严禁剧情跟着闲聊' not in SCENE_SYSTEM)
+
+# ═══════════════ 5. P2 条件检查器（anchor_trigger_check） ═══════════════
+print('▶ P2 条件检查器 anchor_trigger_check')
+
+def mk_anchor_state(tension=0, location='青云山', flags=None, relations=None,
+                    inventory=None, scene_num=3, timeout_scenes=0, trigger_type='event'):
+    """构造锚点触发检查用最小 state"""
+    beats = [{
+        'id': 1, 'desc': '开篇钩子：老人试探',
+        'status': 'current',
+        'trigger': {
+            'type': trigger_type,
+            'conditions': [
+                {'field': 'tension', 'op': '>=', 'value': 3},
+                {'field': 'flag', 'op': 'has', 'value': '见过神秘老人'},
+            ],
+            'timeout_scenes': timeout_scenes,
+        },
+        'entry_hook': '深夜酒馆，老人坐到对面',
+    }, {'id': 2, 'desc': '冲突升级', 'status': 'pending',
+        'trigger': {'type': 'event', 'conditions': [], 'timeout_scenes': 0}}]
+    return {
+        'scene_num': scene_num,
+        'tension': tension,
+        'chapter_beats': {'chapter_idx': 0, 'beats': beats},
+        'outline_progress': {'idx': 0, 'scene_start': 1},
+        'state': {'location': location, 'flags': flags or [],
+                  'relations': relations or {}, 'inventory': inventory or []},
+    }
+
+# 5.1 event 型：tension ≥ 阈值 且 flag 满足 → 触发
+st = mk_anchor_state(tension=3, flags=['见过神秘老人'])
+r = anchor_trigger_check(st)
+check('event 型条件满足 → 触发', r is not None and r.get('reason') == 'condition')
+check('触发返回 entry_hook', r is not None and '老人坐到对面' in str(r.get('hook', '')))
+
+# 5.2 tension 不足 → 不触发
+st = mk_anchor_state(tension=2, flags=['见过神秘老人'])
+check('tension 不足 → 不触发', anchor_trigger_check(st) is None)
+
+# 5.3 flag 缺失 → 不触发（AND 语义）
+st = mk_anchor_state(tension=5, flags=[])
+check('flag 缺失 → 不触发', anchor_trigger_check(st) is None)
+
+# 5.4 scene 型：location 匹配 → 触发（替换默认条件）
+st = mk_anchor_state()
+st['chapter_beats']['beats'][0]['trigger'] = {
+    'type': 'scene',
+    'conditions': [{'field': 'location', 'op': '==', 'value': '青云山'}],
+    'timeout_scenes': 0}
+r = anchor_trigger_check(st)
+check('scene 型 location 匹配 → 触发', r is not None)
+
+# 5.5 relations 达标 → 触发
+st = mk_anchor_state()
+st['chapter_beats']['beats'][0]['trigger'] = {
+    'type': 'scene',
+    'conditions': [{'field': 'relations', 'op': '>=', 'value': 50, 'target': '老人'}],
+    'timeout_scenes': 0}
+st['state']['relations'] = {'老人': 80}
+check('relations 达标 → 触发', anchor_trigger_check(st) is not None)
+st['state']['relations'] = {'老人': 20}
+check('relations 不达标 → 不触发', anchor_trigger_check(st) is None)
+
+# 5.6 timeout 兜底：条件不满足但场景数超限 → 强制触发
+st = mk_anchor_state(tension=1, flags=[], scene_num=8, timeout_scenes=5)
+r = anchor_trigger_check(st)
+check('timeout 强制触发', r is not None and r.get('reason') == 'timeout')
+
+# 5.7 未到 timeout → 仍不触发
+st = mk_anchor_state(tension=1, flags=[], scene_num=3, timeout_scenes=5)
+check('timeout 未到 → 不触发', anchor_trigger_check(st) is None)
+
+# 5.8 只有 current beat 被检查：pending 的条件再满足也不触发
+st = mk_anchor_state(tension=3, flags=['见过神秘老人'])
+st['chapter_beats']['beats'][0]['status'] = 'done'
+st['chapter_beats']['beats'][1]['status'] = 'current'
+r = anchor_trigger_check(st)  # current=冲突升级，conditions=[] → 无条件即触发
+check('current 无条件 conditions → 视为满足触发', r is not None)
+
+# 5.9 旧存档无 trigger → legacy 无条件触发（保持旧行为不卡死）
+st = mk_anchor_state()
+st['chapter_beats']['beats'][0].pop('trigger', None)
+r = anchor_trigger_check(st)
+check('无 trigger → legacy 无条件触发', r is not None and r.get('reason') == 'legacy')
+
+# 5.10 无 beats / 章节不符 → None
+st = {'outline_progress': {'idx': 0}, 'chapter_beats': {'chapter_idx': 1, 'beats': []}}
+check('beats 章节不符 → None', anchor_trigger_check(st) is None)
+check('残缺 state → 不抛异常', anchor_trigger_check({}) is None)
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')

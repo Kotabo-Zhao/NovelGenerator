@@ -92,6 +92,107 @@ def mainline_check(state: dict) -> dict:
     except Exception:
         return {"shortcut": False, "gap": 0}
 
+
+def _cond_match(field, op, value, state: dict, s: dict, tension: int, target=None) -> bool:
+    """锚点触发条件单项匹配（纯规则，零 LLM）。任何异常 → False。"""
+    try:
+        if field == "tension":
+            v = tension
+            if op == ">=":
+                return v >= int(value)
+            if op == "<=":
+                return v <= int(value)
+            return v == int(value)
+        if field == "flag":
+            flags = [str(f) for f in (s.get("flags") or [])]
+            if op == "has":
+                return str(value) in flags
+            if op == "not_has":
+                return str(value) not in flags
+            return False
+        if field == "location":
+            loc = clean_location(s.get("location") or "")
+            if op == "==":
+                return loc == str(value)
+            if op == "!=":
+                return loc != str(value)
+            return False
+        if field == "relations":
+            rel = s.get("relations") or {}
+            v = rel.get(str(target or value))
+            if isinstance(v, (int, float)):
+                if op == ">=":
+                    return float(v) >= float(value)
+                if op == "<=":
+                    return float(v) <= float(value)
+                return float(v) == float(value)
+            return False
+        if field == "inventory":
+            inv = [str(i) for i in (s.get("inventory") or [])]
+            if op == "has":
+                return str(value) in inv
+            if op == "not_has":
+                return str(value) not in inv
+            return False
+        return False
+    except Exception:
+        return False
+
+
+def anchor_trigger_check(state: dict) -> Optional[dict]:
+    """锚点条件检查纯函数（v1.1 P2，零 LLM）。
+
+    只检查 status=current 的 beat：
+    - trigger.conditions 全部满足 → 触发（reason=condition）
+    - trigger.timeout_scenes 超限 → 强制触发（reason=timeout，防死锁）
+    返回 {beat_id, reason, hook} 或 None。任何异常 → None（不炸）。
+    """
+    try:
+        cb = state.get("chapter_beats") or {}
+        beats = cb.get("beats") or []
+        op = state.get("outline_progress") or {}
+        idx = int(op.get("idx", 0))
+        if int(cb.get("chapter_idx", -1)) != idx:
+            return None  # beats 与当前章节不符
+        cur = next((b for b in beats if b.get("status") == "current"), None)
+        if not cur:
+            return None
+        trigger = cur.get("trigger") or {}
+        if not trigger:
+            # 旧数据无 trigger（v1.1 前的 beats）→ legacy 无条件触发，
+            # 保持"每场景推进 1 个"的旧行为（不卡死）
+            return {"beat_id": int(cur.get("id", 0)), "reason": "legacy",
+                    "hook": str(cur.get("entry_hook", ""))[:120]}
+        s = state.get("state") or {}
+        tension = int(state.get("tension", 0) or 0)
+        # 1) 条件判定（conditions 空 = 无条件即触发）
+        conds = trigger.get("conditions") or []
+        matched = True
+        for c in conds:
+            if not isinstance(c, dict):
+                matched = False
+                break
+            if not _cond_match(c.get("field"), c.get("op"), c.get("value"),
+                               state, s, tension, c.get("target")):
+                matched = False
+                break
+        if matched:
+            return {"beat_id": int(cur.get("id", 0)),
+                    "reason": "condition",
+                    "hook": str(cur.get("entry_hook", ""))[:120]}
+        # 2) timeout 兜底（相对本章场景起点）
+        timeout = int(trigger.get("timeout_scenes", 0) or 0)
+        if timeout > 0:
+            sn = int(state.get("scene_num") or 0)
+            start = int(op.get("scene_start") or 1)
+            if sn - start >= timeout:
+                return {"beat_id": int(cur.get("id", 0)),
+                        "reason": "timeout",
+                        "hook": str(cur.get("entry_hook", ""))[:120]}
+        return None
+    except Exception:
+        return None
+
 # v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
 INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式的场景记录整合为正式的小说章节正文。
 
@@ -876,6 +977,10 @@ class StoryDirector:
               "张力较高时，让世界事件/角色主动推动剧情（事件找上门）；"
               "玩家明确拒绝当前事件时，以'拒绝及其后果'推进事件"
               "（如拒绝交易→对方翻脸），而不是跳过事件另起炉灶。")
+        # v1.1 P2: 锚点触发进入方式（entry_hook）——本场景以它开场，事件找上门
+        _at = state.get("anchor_triggered")
+        if _at and _at.get("hook"):
+            parts.append(f"当前剧情事件（本场景以此开场，自然引入，不得无视）: {_at['hook']}")
         # v3.5.49: 对话结论落地——上一场对话解决了什么，本场景必须承接
         _cc = state.get("chat_conclusion") or ""
         if _cc:
@@ -1169,6 +1274,14 @@ class StoryDirector:
         self.store.snapshot(novel_id)
         scene_num = state.get("scene_num", 0) + 1
         summary = state.get("summary", "")
+
+        # v1.1 P2: 锚点条件检查（场景生成前，规则零 LLM）——触发则本场景
+        # 以 entry_hook 开场（事件找上门），场景后推进锚点；未触发玩家自由
+        try:
+            self._check_anchor_trigger(state)
+            self.store.save_state(novel_id, state)
+        except Exception as e:
+            log.warning(f"anchor trigger check failed: {e}")
 
         prompt = self._build_scene_prompt(state, summary)
         collected = []
@@ -1754,10 +1867,14 @@ class StoryDirector:
                     continue
                 _act = str(_b.get("key_action", "")).strip()[:60]
                 _name = str(_b.get("name", "")).strip()[:20]
+                _trg = _b.get("trigger")
                 beats.append({
                     "id": int(_b.get("beat", _i + 1)),
                     "desc": f"{_name}：{_act}" if _name else _act,
                     "status": "pending",
+                    # v1.1 P2: 锚点触发字段（条件检查器消费）
+                    "trigger": (_trg if isinstance(_trg, dict) else None) or {},
+                    "entry_hook": str(_b.get("entry_hook", "") or _act)[:120],
                 })
             if beats:
                 beats[0]["status"] = "current"
@@ -1780,12 +1897,19 @@ class StoryDirector:
             m = _re3.search(r"\{.*\}", raw or "", _re3.S)
             data = json.loads(m.group(0)) if m else {}
             beats = [{"id": int(b.get("id", i + 1)), "desc": str(b.get("desc", ""))[:60],
-                      "status": "pending"} for i, b in enumerate((data.get("beats") or [])[:n])]
+                      "status": "pending",
+                      # v1.1 P2: 拆解路径补默认 trigger（timeout 兜底防死锁）
+                      "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3},
+                      "entry_hook": ""} for i, b in enumerate((data.get("beats") or [])[:n])]
             if len(beats) < 2:  # 拆解失败兜底：目标本身就是事件
-                beats = [{"id": 1, "desc": str(ch.get("summary", ""))[:60], "status": "pending"}]
+                beats = [{"id": 1, "desc": str(ch.get("summary", ""))[:60], "status": "pending",
+                          "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3},
+                          "entry_hook": ""}]
         except Exception as e:
             log.warning(f"beats extract failed: {type(e).__name__}: {str(e)[:80]}")
-            beats = [{"id": 1, "desc": str(ch.get("summary", ""))[:60], "status": "pending"}]
+            beats = [{"id": 1, "desc": str(ch.get("summary", ""))[:60], "status": "pending",
+                      "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3},
+                      "entry_hook": ""}]
         if beats:
             beats[0]["status"] = "current"
             state["chapter_beats"] = {"chapter_idx": idx, "beats": beats}
@@ -1795,9 +1919,36 @@ class StoryDirector:
                 pass
         return beats
 
-    def _advance_beat(self, state: dict):
-        """v3.5.49: 场景生成后推进当前事件（每场景 1 个 beat）——规则推进，零 LLM"""
+    def _check_anchor_trigger(self, state: dict) -> Optional[dict]:
+        """v1.1 P2: 锚点条件检查（规则，零 LLM）——场景生成前调用。
+
+        触发（条件满足/timeout 兜底）→ 记录 state["anchor_triggered"]
+        （场景 prompt 注入 entry_hook，场景后 _advance_beat 推进锚点）
+        未触发 → 清除标记（玩家自由，张力继续累积）
+        """
         try:
+            trig = anchor_trigger_check(state)
+            if trig:
+                state["anchor_triggered"] = trig
+                log.info(f"锚点触发: beat#{trig.get('beat_id')} reason={trig.get('reason')}")
+            else:
+                state.pop("anchor_triggered", None)
+            return trig
+        except Exception as e:
+            log.warning(f"check_anchor_trigger failed: {e}")
+            state.pop("anchor_triggered", None)
+            return None
+
+    def _advance_beat(self, state: dict):
+        """v1.1 P2: 锚点推进（替代 v3.5.49 无条件每场景推进 1 个 beat）。
+
+        仅当本场景触发了锚点（anchor_triggered）才推进 current → done；
+        未触发 → 不推进（玩家自由区，锚点保持 current，张力累积牵引）。
+        """
+        try:
+            trig = state.get("anchor_triggered")
+            if not trig:
+                return
             cb = state.get("chapter_beats") or {}
             beats = cb.get("beats") or []
             if not beats:
@@ -1806,8 +1957,20 @@ class StoryDirector:
             if cur_i is None:
                 return
             beats[cur_i]["status"] = "done"
+            # 触发结果写入（state_output：flags/relations/inventory——锚点产出）
+            _trigger = beats[cur_i].get("trigger") or {}
+            _so = _trigger.get("state_output") or {}
+            _s = state.setdefault("state", {})
+            for _f in (_so.get("flags") or []):
+                _fl = _s.setdefault("flags", [])
+                if str(_f) not in _fl and len(_fl) < 20:
+                    _fl.append(str(_f))
+            for _k, _v in (_so.get("relations") or {}).items():
+                _rel = _s.setdefault("relations", {})
+                _rel[str(_k)[:30]] = max(0, min(100, int(_v))) if isinstance(_v, (int, float)) else str(_v)[:60]
             if cur_i + 1 < len(beats):
                 beats[cur_i + 1]["status"] = "current"
+            state.pop("anchor_triggered", None)
         except Exception as e:
             log.warning(f"advance_beat failed: {e}")
 
