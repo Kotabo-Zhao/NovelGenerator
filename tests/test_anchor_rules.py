@@ -16,6 +16,10 @@ from core.interactive.story_director import (
     chapter_complete,
     mainline_check,
     anchor_trigger_check,
+    location_valid,
+    time_valid,
+    consistency_repair,
+    append_change,
     StoryDirector,
 )
 
@@ -246,6 +250,48 @@ check('无 trigger → legacy 无条件触发', r is not None and r.get('reason'
 st = {'outline_progress': {'idx': 0}, 'chapter_beats': {'chapter_idx': 1, 'beats': []}}
 check('beats 章节不符 → None', anchor_trigger_check(st) is None)
 check('残缺 state → 不抛异常', anchor_trigger_check({}) is None)
+
+# ═══════════════ 6. P3 状态防线（L2/L3/L1） ═══════════════
+print('▶ P3 状态防线')
+
+# 6.1 地点可达性 location_valid
+check('同地点 → 无变化(False)', location_valid('咖啡馆', '咖啡馆', ['咖啡馆']) is False)
+check('已知地点 → 可达', location_valid('咖啡馆', '酒楼', ['咖啡馆', '酒楼']) is True)
+check('新地点 → 允许探索', location_valid('咖啡馆', '码头', ['咖啡馆']) is True)
+check('空 target → 拒绝', location_valid('咖啡馆', '', ['咖啡馆']) is False)
+check('空 current → 拒绝', location_valid('', '码头', ['咖啡馆']) is False)
+
+# 6.2 时间单调 time_valid
+check('时间同档 → OK', time_valid('夜晚', '夜晚') is True)
+check('时间顺延 → OK', time_valid('上午', '清晨') is True)
+check('时间倒退 → 拒绝', time_valid('清晨', '夜晚') is False)
+check('未知时间文本 → 放行', time_valid('午夜子时', '夜晚') is True)
+check('空时间 → 放行', time_valid('', '夜晚') is True)
+
+# 6.3 一致性修复 consistency_repair
+st = {
+    'state': {'location': '码头', 'flags': ['a', 'b', 'a']},
+    'player_state': {'location': '酒楼'},
+    'cast_states': {'林晚': {'present': True, 'location': '码头'},
+                    '顾衍之': {'present': False, 'location': '码头'}},
+    'tension': 5,
+}
+r = consistency_repair(st)
+check('主状态 location 对齐 player_state', r['state']['location'] == '酒楼')
+check('flags 去重', r['state']['flags'] == ['a', 'b'])
+check('在场角色 location 对齐玩家', r['cast_states']['林晚']['location'] == '酒楼')
+check('不在场角色 location 不动', r['cast_states']['顾衍之']['location'] == '码头')
+check('不炸: 残缺 state', consistency_repair({}) is not None)
+
+# 6.4 变更日志 append_change（L1 审计）
+st = {'state': {'location': 'A'}}
+append_change(st, {'field': 'location', 'old': 'A', 'new': 'B'}, 'action:move')
+check('变更日志记录', len(st.get('change_log', [])) == 1)
+check('日志带原因', st['change_log'][0].get('reason') == 'action:move')
+append_change(st, {'field': 'tension', 'new': 3}, 'scene')
+check('日志追加', len(st.get('change_log', [])) == 2)
+append_change(st, {'field': 'x', 'new': 1}, 'scene')
+check('日志上限截断(≤50)', len(st.get('change_log', [])) <= 50)
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')

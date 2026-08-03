@@ -193,6 +193,101 @@ def anchor_trigger_check(state: dict) -> Optional[dict]:
     except Exception:
         return None
 
+
+def location_valid(current: str, target: str, known_locations: list) -> bool:
+    """P3 地点可达性（L2 领域约束，零 LLM）。
+
+    - 同地点/空值 → False（无变化/非法）
+    - 已知地点（去过）→ 可达；新地点 → 允许探索（调用方累积进 known_locations）
+    """
+    try:
+        cur = clean_location(current)
+        tgt = clean_location(target)
+        if not cur or not tgt or cur == tgt:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+_TIME_ORDER = ["清晨", "上午", "正午", "下午", "傍晚", "夜晚", "深夜"]
+
+
+def time_valid(new_time: str, old_time: str) -> bool:
+    """P3 时间单调校验（L2 领域约束，零 LLM）。
+
+    新旧时间都在档位表 → 新必须 >= 旧（防时间倒流）；
+    未知文本（如"午夜子时"）/空值 → 放行（LLM 自由表达不拦）。
+    """
+    try:
+        nt = str(new_time or "").strip()
+        ot = str(old_time or "").strip()
+        if not nt or not ot:
+            return True
+        if nt not in _TIME_ORDER or ot not in _TIME_ORDER:
+            return True  # 自由文本不拦
+        return _TIME_ORDER.index(nt) >= _TIME_ORDER.index(ot)
+    except Exception:
+        return True
+
+
+def consistency_repair(state: dict) -> dict:
+    """P3 状态一致性规则修复（L3，零 LLM）——切章时调用。
+
+    修复项：
+    1. state.state.location 与 player_state.location 不一致 → 对齐 player_state（玩家卡更准）
+    2. flags 去重
+    3. 在场角色（present=True）location 与玩家不一致 → 对齐
+    4. tension clamp 0-10
+    返回修复后的 state（原地修改 + 返回）。任何异常 → 原样返回。
+    """
+    try:
+        s = state.setdefault("state", {})
+        ps = state.get("player_state") or {}
+        # 1) location 对齐（player_state 为准）
+        _ps_loc = clean_location(ps.get("location") or "")
+        if _ps_loc:
+            _s_loc = clean_location(s.get("location") or "")
+            if _s_loc and _s_loc != _ps_loc:
+                s["location"] = _ps_loc
+        # 2) flags 去重
+        _fl = s.get("flags")
+        if isinstance(_fl, list):
+            s["flags"] = list(dict.fromkeys(str(f) for f in _fl))
+        # 3) 在场角色位置对齐
+        cs = state.get("cast_states")
+        if isinstance(cs, dict) and _ps_loc:
+            for _n, _c in cs.items():
+                if isinstance(_c, dict) and _c.get("present") is True:
+                    _cl = clean_location(_c.get("location") or "")
+                    if _cl and _cl != _ps_loc:
+                        _c["location"] = _ps_loc
+        # 4) tension clamp
+        try:
+            state["tension"] = max(0, min(10, int(state.get("tension", 0) or 0)))
+        except (TypeError, ValueError):
+            state["tension"] = 0
+        return state
+    except Exception:
+        return state
+
+
+def append_change(state: dict, change: dict, reason: str) -> None:
+    """P3 L1 统一写入审计——所有状态变更追加日志（带原因，上限 50 条）。
+
+    不拦截写入（写拦截由各领域约束负责），只保证可追溯。
+    """
+    try:
+        if not isinstance(change, dict):
+            return
+        log_ = state.setdefault("change_log", [])
+        log_.append({"ts": time.strftime("%H:%M:%S"), "reason": str(reason)[:40],
+                     "change": {str(k)[:24]: str(v)[:60] for k, v in change.items()}})
+        if len(log_) > 50:
+            state["change_log"] = log_[-50:]
+    except Exception:
+        pass
+
 # v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
 INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式的场景记录整合为正式的小说章节正文。
 
@@ -795,6 +890,19 @@ class StoryDirector:
                 self._extract_player_state(novel_id, scene_text)
             except Exception as e:
                 log.warning(f"ps extract failed: {e}")
+            # v1.1 P3: 时间单调校验（L2 领域约束）——LLM 提取时间不得倒流
+            try:
+                _st3 = self.store.load_state(novel_id) or {}
+                _ps3 = _st3.get("player_state") or {}
+                _prev_t = str(_st3.get("_prev_time", "") or "")
+                _cur_t = str(_ps3.get("time", "") or "")
+                if _prev_t and _cur_t and not time_valid(_cur_t, _prev_t):
+                    _ps3["time"] = _prev_t  # 时间倒流 → 保留旧值
+                    _st3["player_state"] = _ps3
+                _st3["_prev_time"] = _cur_t or _prev_t
+                self.store.save_state(novel_id, _st3)
+            except Exception as e:
+                log.warning(f"time valid failed: {e}")
             # 1) 角色状态更新（提取位置/状态变化 → global_state.json）
             tr = self._logic_tracker()
             if tr is not None:
@@ -1965,9 +2073,11 @@ class StoryDirector:
                 _fl = _s.setdefault("flags", [])
                 if str(_f) not in _fl and len(_fl) < 20:
                     _fl.append(str(_f))
+                    append_change(state, {"field": "flag", "new": str(_f)}, "anchor:state_output")
             for _k, _v in (_so.get("relations") or {}).items():
                 _rel = _s.setdefault("relations", {})
                 _rel[str(_k)[:30]] = max(0, min(100, int(_v))) if isinstance(_v, (int, float)) else str(_v)[:60]
+                append_change(state, {"field": f"relation.{_k}", "new": str(_v)[:60]}, "anchor:state_output")
             if cur_i + 1 < len(beats):
                 beats[cur_i + 1]["status"] = "current"
             state.pop("anchor_triggered", None)
@@ -2020,6 +2130,12 @@ class StoryDirector:
             per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
         # v1.1: 锚点式切章判定（有 beats 时以全 done 为准，场景数不再硬性提前切章）
         _do_cut = chapter_complete(state, per)
+        # v1.1 P3: 切章时状态一致性修复（L3 规则修复，零 LLM）——先修复再切章
+        if _do_cut:
+            try:
+                consistency_repair(state)
+            except Exception as e:
+                log.warning(f"consistency repair failed: {e}")
         # 跨章张力记录（v1.1 保险③）：切章时张力不清零，高位偏离跨章累积
         if _do_cut and int(state.get("tension", 0) or 0) >= 3:
             state["tension_drift_chapters"] = int(state.get("tension_drift_chapters", 0) or 0) + 1

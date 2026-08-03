@@ -428,8 +428,23 @@ class ActionEngine:
                 # v3.5.52: 写入前清洗——LLM 可能输出 JSON 对象/数组
                 su["location"] = clean_location(su["location"])
                 if old != su["location"]:
-                    s["location"] = su["location"]
-                    changed.append(f"地点: {old or '?'} → {su['location']}")
+                    # v1.1 P3: 地点可达性校验（L2 领域约束）+ 已知地点累积
+                    # + L1 变更审计（延迟导入防循环依赖）
+                    try:
+                        from .story_director import location_valid, append_change
+                    except Exception:
+                        location_valid, append_change = None, None
+                    known = state.setdefault("known_locations", [])
+                    if location_valid is None or location_valid(old, su["location"], known):
+                        s["location"] = su["location"]
+                        if su["location"] not in known:
+                            known.append(su["location"])
+                        changed.append(f"地点: {old or '?'} → {su['location']}")
+                        if append_change:
+                            append_change(state, {"field": "location", "old": old,
+                                                  "new": su["location"]}, "action:" + a_type)
+                    else:
+                        su["location"] = ""  # 非法移动 → 拒绝（保持原地点）
             else:
                 su["location"] = ""  # 其他类型行动不许改地点
         # 护栏 2：flags 限量（单次 ≤3，总量 ≤20）
