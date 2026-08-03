@@ -107,6 +107,8 @@ def validate_novel(nid: str):
     rb = st.get('recent_blocks') or []
     if len(rb) == 0 and scenes:
         soft('T3 recent_blocks 待迁移', False, f'{len(scenes)} 场景，0 块（API 读取时自动迁移）')
+    elif not scenes and not rb:
+        soft('T3 recent_blocks 中间态', False, 'restart 后尚未生成场景')
     else:
         check('T3 recent_blocks 覆盖场景', len(rb) >= max(len(scenes), 1),
               f'{len(rb)} 块 vs {len(scenes)} 场景')
@@ -157,14 +159,12 @@ def validate_novel(nid: str):
     # D2: temp 角色不残留（absent_count 机制工作）
     temp_left = [n for n, c in casts.items() if c.get('temp') and (c.get('absent_count') or 0) >= 3]
     check('D2 temp 角色清理', not temp_left, f'{temp_left}' if temp_left else '')
-    # D3: player_state 8 字段（旧存档未生成 → 软警告）
+    # D3: player_state 8 字段（旧存档未生成/中间态 → 软警告，场景后自动补齐）
     ps = st.get('player_state') or {}
     need = {'location', 'time', 'with', 'holding', 'condition', 'disguise', 'money', 'situation'}
     missing = need - set(ps.keys())
-    if not ps:
-        soft('D3 player_state 未生成（旧存档）', False, '新场景后自动补齐')
-    else:
-        check('D3 player_state 8 字段', not missing, f'缺 {missing}' if missing else '')
+    if not ps or missing:
+        soft('D3 player_state 未完整（旧存档/中间态）', not missing, '新场景后自动补齐')
     # D3b: cast_states（NPC 状态卡）
     cs = st.get('cast_states') or {}
     if cs:

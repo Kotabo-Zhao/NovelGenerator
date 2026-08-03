@@ -1097,8 +1097,9 @@ class StoryDirector:
         yield {"type": "phase", "label": "📖 正在展开剧情…"}
         yield {"type": "scene_chunk", "scene_num": scene_num, "content": ""}
         try:
-            # v3.5.54: max_tokens 420（≈280字）——对齐 150-280 字硬上限，LLM 生成即短
-            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=420):
+            # v3.5.55: max_tokens 300（≈200-280字）——架构级硬上限（API 物理截断，
+            # 不依赖 LLM 自觉）；配合落盘前长度校验双保险
+            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=300):
                 if chunk:
                     collected.append(chunk)
                     yield {"type": "scene_chunk", "scene_num": scene_num, "content": chunk}
@@ -1113,7 +1114,16 @@ class StoryDirector:
             scene_text = f"【旁白】夜色渐深，{state.get('title', '故事')}还在继续。远处传来更鼓声，故事尚未落幕。"
             yield {"type": "scene_chunk", "scene_num": scene_num, "content": scene_text}
 
-        # v3.5.33: 不硬截断——长度由 max_tokens(520)+prompt 规则控制（硬截断会切断语义）
+        # v3.5.55: 架构级长度兜底——即使 max_tokens 截断/API 超发，
+        # 落盘前按句子边界裁剪（只删尾部未完成内容，不切语义）
+        # （v3.5.33 旧注释：不硬截断——已被 v3.5.55 架构强制替代，
+        #   max_tokens 300 + 此处校验双保险，LLM 无法输出超长文本）
+        if len(scene_text) > 330:
+            _cut = scene_text[:330]
+            _last_end = max(_cut.rfind("。"), _cut.rfind("！"), _cut.rfind("？"),
+                            _cut.rfind("…"), _cut.rfind("”"), _cut.rfind("】"))
+            if _last_end > 200:  # 只在有完整句号边界时裁剪，避免切掉关键收尾
+                scene_text = _cut[:_last_end + 1]
 
         # 解析 + 持久化
         blocks = parse_scene_markup(scene_text)

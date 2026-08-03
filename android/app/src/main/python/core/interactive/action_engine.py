@@ -291,7 +291,7 @@ class ActionEngine:
                     {"role": "user", "content": user},
                 ],
                 temperature=temperature,
-                max_tokens=800,
+                max_tokens=400,  # v3.5.55: 架构级硬上限——行动结果场景精简（原 800 过大）
             ):
                 yield chunk
         except Exception as e:
