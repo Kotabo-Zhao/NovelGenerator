@@ -22,6 +22,7 @@ from core.interactive.story_director import (
     append_change,
     mainline_pressure,
     side_event_hint,
+    scene_repeat_check,
     StoryDirector,
 )
 
@@ -346,6 +347,32 @@ p = sd._build_scene_prompt(mk_p4_state(shortcut=True), '')
 check('捷径标记 prompt 注入捷径提示', '捷径' in p)
 p = sd._build_scene_prompt(mk_p4_state(shortcut=False), '')
 check('无捷径标记 prompt 无捷径', '捷径' not in p)
+
+# ═══════════════ 8. 防重复生成（scene_repeat_check） ═══════════════
+print('▶ 防重复 scene_repeat_check')
+
+# 真实场景级文本（同一泼酒事件两版重写 vs 完全不同事件）
+S_WINE_1 = "金碧辉煌的宴会厅里，水晶灯晃得人眼花。你攥着酒杯站在角落，杯壁上的水珠顺着指缝滑下来。周太太踩着高跟鞋走到你面前，嘴角挂着笑，声音却尖得像刀——哟，这不是恒远集团的前夫人么？怎么，离了婚，还赖在顾家的地盘上不肯走？不等你反应，一杯红酒已经泼在你脸上。酒液顺着脸颊淌下，浸湿了你精心挑选的珍珠白礼服。四周传来窃窃私语，有人笑，有人假装没看见。你抬手抹了一把脸，尝到嘴里又涩又苦的滋味。目光越过人群，落在不远处的顾衍之身上——他端着酒杯，神色平静，像在看一场与己无关的戏。"
+S_WINE_2 = "水晶灯的光刺得眼睛发酸。酒渍在你珍珠白的礼服上洇开一片暗红，像一道伤口。你抬手抹过脸颊，指尖沾着黏腻的酒液——周太太的话还在耳边嗡嗡作响，人群的窃语像潮水般涌来。你抬眼看向顾衍之。他站在几步外，白色西装笔挺，酒杯在指间轻轻转动。他的目光扫过你，又落回别处，像在看一幅无关紧要的画。周太太慢条斯理地晃着酒杯，声音不高不低——沈小姐，这礼服怕是不能穿了。要不要我叫人给你拿件服务生的围裙？周围有人轻笑。你攥紧了酒杯，指节泛白。"
+S_STREET = "夜风灌进衣领，你踩着高跟鞋沿梧桐影里的街沿走，路灯把影子拉得细长。陆家嘴的霓虹在身后碎成一片光斑，宴会厅的喧闹早被甩远。街角有家亮着暖光的小店，橱窗里摆着几件素银首饰。你脚步顿住，隔着玻璃看那枚缠枝纹的戒指。身后忽然传来一道清亮的女声——沈姐姐？真的是你！你回头，见一个穿米白风衣的年轻女孩小跑过来，杏眼弯弯。"
+
+# 8.1 明显重复（同事件改写重述）→ True
+check('同事件改写重述 → 判重复', scene_repeat_check(S_WINE_1, [S_WINE_2], 0.13) is True)
+# 8.2 完全不同事件 → False
+check('不同事件 → 不重复', scene_repeat_check(S_STREET, [S_WINE_2], 0.13) is False)
+# 8.3 与最近多个场景逐一比对：任一命中即重复
+check('多场景任一命中 → 重复', scene_repeat_check(S_WINE_1, [S_STREET, S_WINE_2], 0.13) is True)
+check('多场景全不命中 → 不重复', scene_repeat_check(S_STREET, [S_WINE_1, S_WINE_2], 0.13) is False)
+# 8.4 空输入/异常 → False（不炸）
+check('空文本 → 不重复', scene_repeat_check("", [S_WINE_2], 0.13) is False)
+check('空历史 → 不重复', scene_repeat_check(S_WINE_1, [], 0.13) is False)
+# 8.5 prompt 强化断言：严禁复述已写内容 + 事件时间线注入
+p = sd._build_scene_prompt(mk_prompt_state(), '上一场景结尾：林晚约你在咖啡馆见面。')
+check('prompt 含"禁止复述"', '禁止复述' in p)
+st_ev = mk_prompt_state()
+st_ev['events'] = [{'ts': '12:00', 'summary': '林晚泼了你一杯红酒'}, {'ts': '12:01', 'summary': '顾衍之开口制止'}]
+p = sd._build_scene_prompt(st_ev, '')
+check('prompt 注入事件时间线', '已发生的事件' in p and '严禁重演' in p)
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')

@@ -320,6 +320,49 @@ def side_event_hint(state: dict) -> Optional[str]:
         return None
 
 
+def scene_repeat_check(new_text: str, recent_texts: list, threshold: float = 0.13) -> bool:
+    """防重复生成规则兜底（纯函数，零 LLM）：语义级重复检测。
+
+    LLM 的重演是"改写式重述"（字符相似度仅 ~0.15，与不同事件几乎无异），
+    因此用【内容词 bigram 重叠比例】为主信号（同人物/物品/动作 → 重叠高），
+    字符相似度（前 200 字）≥ 0.4 为辅助信号。任一命中 → 判重复。
+    空输入/异常 → False（不误杀、不炸）。
+    """
+    try:
+        if not new_text or not recent_texts:
+            return False
+        grams_new = _content_bigrams(str(new_text))
+        if not grams_new:
+            return False
+        from difflib import SequenceMatcher
+        for old in recent_texts:
+            old_t = str(old or "")
+            grams_old = _content_bigrams(old_t)
+            if not grams_old:
+                continue
+            ov = len(grams_new & grams_old) / min(len(grams_new), len(grams_old))
+            if ov >= float(threshold):
+                return True
+            if SequenceMatcher(None, str(new_text)[:200], old_t[:200]).ratio() >= 0.4:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+_CONTENT_STOP = set(
+    "的了着在你是我他她它们和与把被对从向给让就都也很又再才只等这那一个不没有其之而于吧呢啊么"
+    "已已经将正在着过要会能可但却并或及若如虽然因为所以然后最后终于突然忽然仿佛好像似乎"
+)
+
+
+def _content_bigrams(text: str) -> set:
+    """提取文本的内容 bigram（去停用字后相邻 2 字对）——同人物/物品/动作的信号。"""
+    t2 = "".join(c for c in str(text)
+                 if c not in _CONTENT_STOP and "\u4e00" <= c <= "\u9fff")
+    return set(t2[i:i + 2] for i in range(len(t2) - 1))
+
+
 # v1.1 P4: 动态大纲微调——玩家自由行为导致锚点不合适时，目标等价替换
 ADAPT_OUTLINE_SYSTEM = """你是互动小说大纲微调师。玩家的自由行为可能让原大纲的某个锚点不再合适，
 你需要判断并给出替换锚点（目标等价——保持故事结构和最终目标不变，只换达成方式）。
@@ -578,9 +621,10 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
    若没有给定，则正常推进剧情
    v1.1 锚点式顺承（替代 v3.5.20 回轨）：玩家的行动塑造过程——永远不要否认
    玩家的行动，让它的后果与剧情推进相连（如玩家执意逛街 → 逛街中偶遇关键
-   人物/发现线索）；承接篇幅不限固定句数，以行动后果自然展开；玩家行动若远离
-   主线，其后果会自然产生新的张力（事件/人物主动找上门），严禁机械跳转或
-   无视玩家意图
+   人物/发现线索）；承接篇幅点到为止（1-2 句），随即展开新的进展；
+   v2.5.55 防重复铁律（P0）：严禁复述/重写【前情中已写过的任何内容】——
+   环境描写、台词、动作、事件，哪怕换措辞也不行；上一场景的结尾只作为
+   背景前提，本场景必须从新的事件/新的人物反应/新的进展开始写
 9. v3.5.12 视角规则（代入感核心）：
    - 主角（读者化身）是场景中心，旁白写 TA 的所见所闻、内心活动与身体感受
    - 指代主角一律用"你"（如"你推开门""你感到手心发凉"），严禁用"她/他/沈念薇"旁观式转述
@@ -1216,7 +1260,18 @@ class StoryDirector:
                 parts.append(f"- {str(m)[:60]}")
         if summary:
             parts.append(f"前情摘要（这是已发生的历史，严禁重演——本场景必须承接其后果并推进新的剧情事件，"
-                          f"不得把前情内容换个说法重新写一遍，特别是'上一场景结尾'只能作为背景铺垫）: {summary[:600]}")
+                          f"不得把前情内容换个说法重新写一遍，特别是'上一场景结尾'只能作为背景铺垫，"
+                          f"禁止复述其环境描写/台词/动作）: {summary[:600]}")
+        # v2.5.55: 近期事件时间线注入（防重复治本——给 LLM 明确的"已发生"记忆）
+        _evs = [(str(e.get("ts", "")), str(e.get("summary", ""))[:32])
+                for e in (state.get("events") or [])[-6:] if e.get("summary")]
+        if _evs:
+            parts.append("本互动最近已发生的事件（均已发生过，严禁重演——本场景必须推进新的事件）:\n"
+                         + "\n".join(f"- [{ts}] {s}" for ts, s in _evs))
+        # v2.5.55: 上一场景重复检测命中 → 强制本场景全新（规则兜底，LLM 约束不可靠时生效）
+        if state.get("scene_repeat"):
+            parts.append("⚠ 系统检测到上一场景与更早场景内容重复——本场景必须生成全新的剧情事件："
+                         "新地点/新人物/新冲突/时间推进，严禁延续或复述之前任何场景的内容！")
         # v3.5.7: 读者上一步行动（承接性——新场景必须从行动后果写起）
         la = state.get("last_action") or {}
         if la and la.get("summary"):
@@ -1490,6 +1545,19 @@ class StoryDirector:
                             _cut.rfind("…"), _cut.rfind("”"), _cut.rfind("】"))
             if _last_end > 200:  # 只在有完整句号边界时裁剪，避免切掉关键收尾
                 scene_text = _cut[:_last_end + 1]
+
+        # v2.5.55: 场景重复检测（规则兜底，零 LLM）——与最近 2 个旧场景比对，
+        # 命中 → 标记 scene_repeat（下一场景 prompt 强制全新事件）
+        try:
+            _recent_old = [s.get("scene_text", "") for s in self.store.recent_scenes(novel_id, 2)]
+            if scene_repeat_check(scene_text, _recent_old, 0.35):
+                state["scene_repeat"] = True
+                log.warning(f"场景{scene_num} 与最近场景重复（规则兜底触发，下一场景强制全新）")
+            else:
+                state.pop("scene_repeat", None)
+            self.store.save_state(novel_id, state)
+        except Exception as e:
+            log.warning(f"scene repeat check failed: {e}")
 
         # 解析 + 持久化
         blocks = parse_scene_markup(scene_text)
