@@ -12,8 +12,8 @@ android {
         applicationId = "com.novelgen.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "2.5.51"
+        versionCode = 44
+        versionName = "2.5.55"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -45,12 +45,12 @@ chaquopy {
     defaultConfig {
         version = "3.13"
         pip {
-            install("fastapi")
-            install("uvicorn")
-            install("openai>=1.0.0,<2.0")
-            install("pydantic")
-            install("httpx>=0.25.0,<0.28.0")
-            install("edge-tts")
+            install("fastapi==0.125.0")
+            install("uvicorn==0.52.1")
+            install("openai==1.39.0")
+            install("pydantic==1.10.26")
+            install("httpx==0.27.2")
+            install("edge-tts==6.1.12")
         }
     }
 }

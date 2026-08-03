@@ -279,11 +279,21 @@ class Planner:
             "conflict": "冲突描述与类型[IN内心/IR人际/EN环境/DE宿命]",
             "conflict_intensity": "冲突强度1-5（本章数值必须≥上一章，除非是缓冲章可降1级）",
             "scene_beats": [
-              {{"beat": 1, "name": "开篇钩子", "function": "用动作/对话/悬念立即抓住读者", "key_action": "具体发生了什么——必填本章第1关键节点的具体事件"}},
-              {{"beat": 2, "name": "冲突升级", "function": "障碍增加/信息揭露/矛盾激化", "key_action": "具体发生了什么——必填"}},
-              {{"beat": 3, "name": "转折/高潮", "function": "本章最重要的转折点或情绪爆发", "key_action": "具体发生了什么——必填"}},
-              {{"beat": 4, "name": "余波/收束", "function": "高潮后的缓冲和反应", "key_action": "具体发生了什么——必填"}},
-              {{"beat": 5, "name": "钩子", "function": "留下悬念或期待，引向下一章", "key_action": "具体发生了什么——必填"}}
+              {{"beat": 1, "name": "开篇钩子", "function": "用动作/对话/悬念立即抓住读者", "key_action": "具体发生了什么——必填本章第1关键节点的具体事件",
+                "trigger": {{"type": "event/scene", "conditions": [{{"field": "tension/location/flag/relations/inventory", "op": ">=/<=/==/!=/has/not_has", "value": "阈值或关键词", "target": "relations 条件时的角色名（可选）"}}], "timeout_scenes": 4}},
+                "reject_outcome": "玩家拒绝/反着来时后果（拒绝也是推进）", "state_output": {{"flags": ["触发后写入的flag"], "relations": {{"角色名": 数值}}}}, "entry_hook": "本节点触发时事件如何找上门（NPC登场/消息传来/意外发生）"}},
+              {{"beat": 2, "name": "冲突升级", "function": "障碍增加/信息揭露/矛盾激化", "key_action": "具体发生了什么——必填",
+                "trigger": {{"type": "event/scene", "conditions": [], "timeout_scenes": 4}},
+                "reject_outcome": "玩家拒绝时后果", "state_output": {{"flags": [], "relations": {{}}}}, "entry_hook": "本节点触发时事件如何找上门"}},
+              {{"beat": 3, "name": "转折/高潮", "function": "本章最重要的转折点或情绪爆发", "key_action": "具体发生了什么——必填",
+                "trigger": {{"type": "event/scene", "conditions": [], "timeout_scenes": 4}},
+                "reject_outcome": "玩家拒绝时后果", "state_output": {{"flags": [], "relations": {{}}}}, "entry_hook": "本节点触发时事件如何找上门"}},
+              {{"beat": 4, "name": "余波/收束", "function": "高潮后的缓冲和反应", "key_action": "具体发生了什么——必填",
+                "trigger": {{"type": "event/scene", "conditions": [], "timeout_scenes": 4}},
+                "reject_outcome": "玩家拒绝时后果", "state_output": {{"flags": [], "relations": {{}}}}, "entry_hook": "本节点触发时事件如何找上门"}},
+              {{"beat": 5, "name": "钩子", "function": "留下悬念或期待，引向下一章", "key_action": "具体发生了什么——必填",
+                "trigger": {{"type": "event/scene", "conditions": [], "timeout_scenes": 4}},
+                "reject_outcome": "玩家拒绝时后果", "state_output": {{"flags": [], "relations": {{}}}}, "entry_hook": "本节点触发时事件如何找上门"}}
             ],
             "characters": ["出场角色"],
             "hook": "本章结尾钩子（余韵态具体内容）",
@@ -302,7 +312,8 @@ class Planner:
 - 确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。
 - 大纲的卷结构和节奏必须严格匹配「{style_config['name']}」的风格要求。
 - **因果链是硬要求**: 每章的 cause_from_prev/bridge_to_next 必须填写，不能留空或写"无"。相邻章节不能是独立事件——必须是"因为A所以B"的因果链。
-- **scene_beats 是硬要求（v3.5.54 Galgame 节点）**: 每章必须输出全部 5 个 scene_beats，且每个 beat 的 key_action 必须填写本章该节点的具体事件（谁对谁做了什么），不能留空——互动模式按这 5 个节点收束剧情，节点缺失会导致互动剧情无法按大纲推进。
+- **scene_beats 是硬要求（v3.5.54 Galgame 节点 / v1.1 锚点式）**: 每章必须输出全部 5 个 scene_beats，且每个 beat 的 key_action 必须填写本章该节点的具体事件（谁对谁做了什么），不能留空——互动模式按这 5 个节点收束剧情，节点缺失会导致互动剧情无法按大纲推进。
+- **trigger 是硬要求（v1.1 锚点式）**: 每个 beat 的 trigger.conditions 必须填写至少 1 个状态条件（tension/location/flag/relations/inventory），timeout_scenes 填 3-5；entry_hook 必须写清楚"本节点如何找上门"（NPC登场/消息传来/意外发生），让剧情推进有合理动因；reject_outcome 必须写"玩家拒绝时会发生什么"（拒绝也是推进，不是死路）；state_output 写触发后要写入的 flag/关系变化（跨章因果链用）。
 - **冲突强度**: conflict_intensity 必须逐章递增（T2缓冲章除外），不能出现"3→2→4"这种上下跳。
 
 【章节标题多样性要求】
@@ -1462,6 +1473,23 @@ class Planner:
                     for _b in ch.get("scene_beats", []):
                         if isinstance(_b, dict) and not str(_b.get("key_action", "")).strip():
                             _b["key_action"] = _sum if _b.get("beat", 1) in (1, 2) else _hook
+                        # v1.1 P2: trigger 兜底——LLM 丢字段时补默认（timeout 触发，
+                        # 保证锚点式不卡死；entry_hook 用 key_action 兜底）
+                        if isinstance(_b, dict):
+                            _trg = _b.get("trigger")
+                            if not isinstance(_trg, dict):
+                                _b["trigger"] = {"type": "event", "conditions": [],
+                                                 "timeout_scenes": 4}
+                            else:
+                                _trg.setdefault("type", "event")
+                                _trg.setdefault("conditions", [])
+                                _trg.setdefault("timeout_scenes", 4)
+                            if not str(_b.get("entry_hook", "")).strip():
+                                _b["entry_hook"] = str(_b.get("key_action", ""))[:60]
+                            if not _b.get("reject_outcome"):
+                                _b["reject_outcome"] = "玩家拒绝 → 以'拒绝及其后果'推进（对方态度变化/线索转移）"
+                            if not isinstance(_b.get("state_output"), dict):
+                                _b["state_output"] = {"flags": [], "relations": {}}
                 if "conflict_intensity" not in ch:
                     # 从 conflict 字符串中尝试提取
                     cf = ch.get("conflict", "")
