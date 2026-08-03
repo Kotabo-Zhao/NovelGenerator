@@ -139,7 +139,7 @@ class DialogueEngine:
         # v3.5.37: 主角状态卡（对话发生在哪/何时/和谁/处境）
         ps = state.get("player_state") or {}
         if ps:
-            parts.append(f"## 当前状态: 位置[{ps.get('location', '')}] 时间[{ps.get('time', '')}] "
+            parts.append(f"## 当前状态: 位置[{clean_location(ps.get('location'))}] 时间[{ps.get('time', '')}] "
                          f"同行[{','.join(ps.get('with') or []) or '无'}] "
                          f"身体[{ps.get('condition', '健康')}] 身份[{ps.get('disguise', '本名') or '本名'}] "
                          f"处境[{ps.get('situation', '')}]")

@@ -27,11 +27,38 @@ from ..resilient_client import ResilientLLMClient
 log = logging.getLogger(__name__)
 
 
+# v3.5.52: JSON 片段剥离——LLM 把 {"name": "青冥山", "description": ...} 对象
+# 输出进 location 字段时，优先提取 name/location 键值，其次任意键值，
+# 最后无键结构（纯数组）取第一个字符串值
+_JSON_NAME_RE = re.compile(r'"(?:name|location)"\s*:\s*"([^"]+)"')
+_JSON_VAL_RE = re.compile(r':\s*"([^"{}]{1,40})"')
+_JSON_STR_RE = re.compile(r'"([^"{}]{1,40})"')
+
+
 def clean_location(loc) -> str:
-    """v3.5.36: 地点清洗——列表式字符串只取第一段（'上海，陆家嘴、前滩'→'上海'）"""
+    """v3.5.36: 地点清洗——列表式字符串只取第一段（'上海，陆家嘴、前滩'→'上海'）
+    v3.5.52: JSON 片段剥离——{"name": "青冥山", "description": ...} → 青冥山
+    （LLM 状态提取/行动更新可能把对象 str() 强转进字段）"""
     if not loc:
         return ""
     loc = str(loc).strip()
+    # JSON 对象/数组残留 → 提取引号内字符串值（键名优先 name/location）
+    if '{' in loc or '[' in loc or loc.startswith('null'):
+        m = _JSON_NAME_RE.search(loc)
+        if m:
+            loc = m.group(1).strip()
+        else:
+            m2 = _JSON_VAL_RE.search(loc)
+            if m2:
+                loc = m2.group(1).strip()
+            else:
+                m3 = _JSON_STR_RE.search(loc)
+                if m3:
+                    loc = m3.group(1).strip()
+                else:
+                    loc = (loc.replace('{', '').replace('}', '')
+                           .replace('[', '').replace(']', '')
+                           .replace('"', '').replace('null', '').strip())
     for sep in ("，", ",", "；", ";"):
         if sep in loc:
             return loc.split(sep)[0].strip()[:60]
@@ -308,7 +335,7 @@ class ActionEngine:
         wb = str(state.get("worldbuilding_brief", ""))[:400]
         # v3.5.37: 主角状态卡注入（精确位置/时间/同行/处境）
         _ps = state.get("player_state") or {}
-        _ps_line = (f"主角状态卡: 位置[{_ps.get('location', '')}] 时间[{_ps.get('time', '')}] "
+        _ps_line = (f"主角状态卡: 位置[{clean_location(_ps.get('location'))}] 时间[{_ps.get('time', '')}] "
                     f"同行[{','.join(_ps.get('with') or []) or '无'}] "
                     f"身体[{_ps.get('condition', '健康')}] 身份[{_ps.get('disguise', '本名') or '本名'}] "
                     f"处境[{_ps.get('situation', '')}]\n") if _ps else ""
@@ -361,7 +388,7 @@ class ActionEngine:
         if not isinstance(su, dict):
             su = {}
         action["state_updates"] = {
-            "location": str(su.get("location", ""))[:60] if su.get("location") else "",
+            "location": clean_location(su.get("location"))[:60] if su.get("location") else "",
             "flags": [str(f)[:60] for f in (su.get("flags") or [])[:3]],
             "inventory": [str(i)[:60] for i in (su.get("inventory") or [])[:3]],
             "relations": {str(k)[:30]: str(v)[:60] for k, v in (su.get("relations") or {}).items() if isinstance(k, str)},
@@ -398,6 +425,8 @@ class ActionEngine:
         if su.get("location"):
             if a_type in ("move", "leave", "interact", "combat"):
                 old = s.get("location", "")
+                # v3.5.52: 写入前清洗——LLM 可能输出 JSON 对象/数组
+                su["location"] = clean_location(su["location"])
                 if old != su["location"]:
                     s["location"] = su["location"]
                     changed.append(f"地点: {old or '?'} → {su['location']}")
@@ -428,7 +457,7 @@ class ActionEngine:
         # v3.5.37: 行动同步到主角状态卡（location/物品/处境更新）
         ps = state.get("player_state") or {}
         if action.get("type") in ("move", "leave", "interact") and su.get("location"):
-            ps["location"] = str(su["location"])[:80]
+            ps["location"] = clean_location(su["location"])[:80]
         if action.get("type") in ("use", "interact") and su.get("inventory"):
             ps["holding"] = [str(x)[:30] for x in su["inventory"]][:5]
         if action.get("type") in ("move", "leave"):

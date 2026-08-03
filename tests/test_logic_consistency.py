@@ -280,6 +280,29 @@ def validate_novel(nid: str):
     check('P8b 场景无主角台词', not _p_blocks2, f'{_p_blocks2[:2]}' if _p_blocks2 else '')
 
 
+def test_clean_location_unit():
+    """v3.5.52: clean_location JSON 片段剥离单元测试——12 用例"""
+    sys.path.insert(0, os.path.join(ROOT, 'backend'))
+    from core.interactive.action_engine import clean_location
+    cases = [
+        ('{"name": "青冥山", "description": "云雾缭绕的仙山"}', '青冥山'),
+        ('{"name": "青冥山"}', '青冥山'),
+        ('[{"name": "临江", "description": "江边小镇"}]', '临江'),
+        ('{"location": "医馆", "desc": "xxx"}', '医馆'),
+        ('["青冥山", "药王谷"]', '青冥山'),
+        ('[{"轮回"}]', '轮回'),
+        ('null', ''),
+        ('上海，陆家嘴、前滩', '上海'),
+        ('青冥山', '青冥山'),
+        ('', ''),
+        ('None', 'None'),
+        ('  ,  ', ''),
+    ]
+    bad = [f"{inp!r} → {clean_location(inp)!r}" for inp, exp in cases if clean_location(inp) != exp]
+    if bad:
+        raise AssertionError('FAIL: ' + '; '.join(bad))
+
+
 def test_compute_present_unit():
     """v3.5.46: compute_present 纯逻辑单元测试——在场/不在场推导 5 用例"""
     sys.path.insert(0, os.path.join(ROOT, 'backend'))
@@ -449,6 +472,13 @@ def main():
         return
     for nid in nids:
         validate_novel(nid)
+    # v3.5.52: clean_location JSON 剥离单元测试
+    try:
+        test_clean_location_unit()
+        check('P8 clean_location 单元测试', True, '12 用例')
+    except Exception as e:
+        check('P8 clean_location 单元测试', False, f'异常: {e}')
+    print()
     # v3.5.46: compute_present 纯逻辑单元测试（不依赖存档）
     try:
         test_compute_present_unit()

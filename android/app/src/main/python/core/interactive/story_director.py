@@ -804,7 +804,7 @@ class StoryDirector:
         ps = state.get("player_state") or {}
         if ps:
             parts.append(f"主角状态卡（以此为准，保持状态连续）: "
-                         f"位置[{ps.get('location', '')}] 时间[{ps.get('time', '')}] "
+                         f"位置[{clean_location(ps.get('location'))}] 时间[{ps.get('time', '')}] "
                          f"同行[{','.join(ps.get('with') or []) or '无'}] "
                          f"物品[{','.join(ps.get('holding') or []) or '无'}] "
                          f"身体[{ps.get('condition', '健康')}] 身份[{ps.get('disguise', '本名') or '本名'}] "
@@ -814,7 +814,7 @@ class StoryDirector:
         if cs:
             _cs_lines = []
             for _n, _c in cs.items():
-                _cs_lines.append(f"{_n}[位置{_c.get('location', '')} 情绪{_c.get('mood', '')} "
+                _cs_lines.append(f"{_n}[位置{clean_location(_c.get('location'))} 情绪{_c.get('mood', '')} "
                                  f"立场{_c.get('stance', '')} 身体{_c.get('condition', '健康')} "
                                  f"知道[{','.join(_c.get('knows') or []) or '无'}] "
                                  f"想[{_c.get('agenda', '')}]]")
@@ -1035,6 +1035,7 @@ class StoryDirector:
             return
 
         # v3.5.51: 存量脏 location 自愈（早期版本 LLM 输出 JSON 片段进字段）
+        # v3.5.52: 补 state.state.location + clean_location 升级为 JSON 剥离
         try:
             _ps_old = state.get("player_state") or {}
             _loc_old = str(_ps_old.get("location", "") or "")
@@ -1047,6 +1048,12 @@ class StoryDirector:
                     if _cl and any(_c2 in _cl for _c2 in ('{', '[', ':', '"', 'null')):
                         _c["location"] = clean_location(_cl)
                 state["cast_states"] = _cs_old
+                # v3.5.52: 主状态 location（prompt 注入"当前地点"用）一并清洗
+                _s_old = state.get("state") or {}
+                _sl = str(_s_old.get("location", "") or "")
+                if _sl and any(_c3 in _sl for _c3 in ('{', '[', ':', '"', 'null')):
+                    _s_old["location"] = clean_location(_sl)
+                    state["state"] = _s_old
                 try:
                     self.store.save_state(novel_id, state)
                     log.info(f"存量脏 location 已清洗: {_loc_old[:30]} → {_ps_old['location'][:30]}")
