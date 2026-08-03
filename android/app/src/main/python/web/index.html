@@ -4584,6 +4584,10 @@ const app = createApp({
         if (endRes.ok) {
           const data = await endRes.json();
           interactive.state = { ...interactive.state, facts: data.facts || interactive.state.facts };
+          // v2.5.59: 对话后刷新建议选项（贴合最新剧情进度）
+          if (data.suggestions && data.suggestions.length) {
+            interactive.suggestions = data.suggestions;
+          }
           // v3.3: 钩子核对摘要（这场对话推进了什么 / 没谈成什么）
           const hk = data.hooks;
           if (hk && hk.hook_hits && hk.hook_hits.length) {

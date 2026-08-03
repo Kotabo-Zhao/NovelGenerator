@@ -334,6 +334,19 @@ async def interactive_end_chat(novel_id: str):
             ).start()
     except Exception as e:
         log.warning(f"post-chat player_state update failed: {e}")
+    # v2.5.59: 对话后刷新建议选项（贴合最新剧情进度——旧选项与现状脱节问题）
+    _sug = None
+    try:
+        _st2 = _store.load_state(novel_id) or {}
+        _chars2 = _st2.get("node_chars") or []
+        if _st2.get("pending_node") and _chars2:
+            from core.interactive.story_director import generate_suggestions
+            _sug = generate_suggestions(engine.client, engine.model, _store, _st2, _chars2)
+            if _sug:
+                _st2["suggestions"] = _sug
+                _store.save_state(novel_id, _st2)
+    except Exception as e:
+        log.warning(f"post-chat suggestions refresh failed: {e}")
     return {
         "ok": True,
         "facts": state.get("facts", [])[-10:],
@@ -341,6 +354,7 @@ async def interactive_end_chat(novel_id: str):
         "objective": state.get("state", {}).get("objective", ""),
         "tone": result.get("tone", ""),
         "hooks": hooks_result,   # {hook_hits, all_hit, missing}
+        "suggestions": _sug or [],  # v2.5.59: 对话后刷新建议选项
     }
 
 
