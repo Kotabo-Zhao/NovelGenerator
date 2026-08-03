@@ -18,7 +18,7 @@ import time
 from typing import Optional
 
 MEMORY_LIMIT = 30
-EVENT_LIMIT = 8
+EVENT_LIMIT = 30  # v2.5.60: 8→30 扩容——关键事件（摊牌/决裂/约定）不被挤出记忆窗口
 SUMMARY_LIMIT = 6        # v3.5.31: 摘要条数上限（满后再合并最旧摘要）
 COMPRESS_KEEP = 5        # v3.5.31: 压缩时保留最近 N 条原始记忆（保鲜窗口）
 COMPRESS_BATCH = 12      # v3.5.31: 每次压缩处理最旧 N 条

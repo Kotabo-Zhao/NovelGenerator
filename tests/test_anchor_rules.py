@@ -27,11 +27,14 @@ from core.interactive.story_director import (
     promise_ledger_update,
     promise_conflict_check,
     promise_due_check,
+    merge_cast_states,
+    state_change_detect,
     state_context_brief,
     PACT_SYSTEM,
     StoryDirector,
 )
 from core.interactive.dialogue_engine import pact_need_extract
+from core.interactive.char_memory import EVENT_LIMIT
 
 PASS, FAIL = 0, 0
 def check(name, cond, detail=''):
@@ -574,6 +577,61 @@ stp3['pending_promises'] = [mk_pledge('周五晚上', 3)]
 stp3['scene_num'] = 6
 p3 = sd._build_scene_prompt(stp3, '')
 check('过期 → 注入追问指令', '追问' in p3 or '失望' in p3 or '过期' in p3)
+
+# ═══════════════ 12. 状态合并 + 事件保活（防事件重复触发） ═══════════════
+print('▶ 状态合并 merge_cast_states / 事件检测 state_change_detect')
+
+# 12.1 合并更新：LLM 输出的角色更新，未输出的角色保留（整体覆盖 bug 修复）
+old_cs = {
+    '方瑜': {'present': True, 'location': '宴会厅', 'mood': '温柔', 'stance': '亲近',
+             'knows': ['信物下落'], 'condition': '健康', 'agenda': '护住你'},
+    '周太太': {'present': True, 'location': '宴会厅', 'mood': '得意', 'stance': '敌视',
+               'knows': [], 'condition': '健康', 'agenda': '逼你出丑'},
+    '顾衍之': {'present': False, 'location': '书房', 'mood': '冷淡', 'stance': '暧昧',
+               'knows': [], 'condition': '健康', 'agenda': '观察你'},
+}
+new_cs = {
+    '方瑜': {'present': True, 'location': '宴会厅', 'mood': '愤怒', 'stance': '保护',
+             'knows': ['周太太把柄'], 'condition': '健康', 'agenda': '当众揭穿周太太'},
+}
+m = merge_cast_states(old_cs, new_cs)
+check('输出的角色状态更新', m['方瑜']['mood'] == '愤怒' and m['方瑜']['agenda'] == '当众揭穿周太太')
+check('未输出角色保留（周太太）', m['周太太']['mood'] == '得意' and m['周太太']['stance'] == '敌视')
+check('未输出角色保留（顾衍之，含不在场标记）', m['顾衍之']['present'] is False and m['顾衍之']['stance'] == '暧昧')
+check('knows 累积并集（旧+新都保留）', '信物下落' in (m.get('方瑜', {}).get('knows') or [])
+      and '周太太把柄' in (m.get('方瑜', {}).get('knows') or []))
+# 12.2 合并边界：空输出 → 全部保留；空旧态 → 只新增；异常 → 不炸
+check('空输出 → 全部保留', merge_cast_states(old_cs, {}) == old_cs)
+check('空旧态 → 只新增', merge_cast_states({}, new_cs) == new_cs)
+check('None 输入 → 不炸', merge_cast_states(None, None) in ({}, None) or isinstance(merge_cast_states(None, None), dict))
+check('异常字段 → 不炸', isinstance(merge_cast_states({'x': 'str'}, new_cs), dict))
+
+# 12.3 事件变化词检测：明确状态变化 → 检测到
+check('拒绝 → 检测', state_change_detect('方瑜冷着脸，你拒绝了她的提议') is not None)
+check('决裂 → 检测', state_change_detect('顾衍之与你彻底决裂，转身离去') is not None)
+check('答应/同意 → 检测', state_change_detect('你答应了方瑜的请求') is not None)
+check('翻脸 → 检测', state_change_detect('周太太当场翻脸，撕破了脸皮') is not None)
+# 12.4 无变化词 → None；空 → None
+check('纯描述 → 不检测', state_change_detect('宴会厅灯火通明，觥筹交错') is None)
+check('空文本 → 不检测', state_change_detect('') is None)
+check('None → 不检测', state_change_detect(None) is None)
+
+# 12.5 事件时间线上限扩容（关键记忆不被挤出窗口）
+check('EVENT_LIMIT >= 30（扩容）', EVENT_LIMIT >= 30, f"got {EVENT_LIMIT}")
+
+# 12.6 锚点触发后写事件时间线（已完成节点进 LLM 显式记忆）
+st12 = {'facts': [], 'pending_promises': [], 'events': [],
+        'chapter_beats': {'chapter_idx': 0, 'beats': [
+            {'id': 1, 'desc': '开篇：周太太泼酒羞辱你', 'status': 'current',
+             'trigger': {'state_output': {'flags': ['见过周太太'], 'relations': {'周太太': -10}}}},
+        ]},
+        'anchor_triggered': {'beat_id': 1, 'hook': '周太太当众泼酒'}}
+try:
+    sd._advance_beat(st12)
+    ev_sum = " ".join(str(e.get("summary", "")) for e in st12.get("events", []))
+    check('锚点触发 → 事件时间线记录', '开篇' in ev_sum or '泼酒' in ev_sum or '节点' in ev_sum, ev_sum[:60])
+except Exception as e:
+    check(f'锚点触发写事件异常: {e}', False)
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')
