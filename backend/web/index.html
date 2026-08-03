@@ -490,6 +490,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .inter-action-result{margin:14px 30px;padding:12px 18px;border-left:3px solid var(--gold);background:rgba(212,175,55,.04);border-radius:8px;color:#cfc6ae;font-family:"STKaiti","KaiTi","Noto Serif SC","Noto Serif CJK SC",serif;font-size:14px;text-align:center;animation:interRise .5s ease both}
   /* v3.5.8: 状态变化系统提示（对话流内，绿色轻提示） */
   .inter-sys-change{color:#8fd3a8;font-size:12.5px;margin:6px 30px;text-align:center;background:rgba(63,185,80,.07);border:1px solid rgba(63,185,80,.22);border-radius:6px;padding:4px 10px;animation:interRise .4s ease both;letter-spacing:.3px}
+  /* v3.5.54: 长消息折叠——限高+渐变遮罩+展开按钮 */
+  .inter-fold-toggle{display:inline-block;font-size:11px;color:var(--gold);opacity:.85;cursor:pointer;margin:4px auto 0;padding:2px 10px;border:1px solid rgba(212,175,55,.3);border-radius:10px;background:rgba(212,175,55,.06);user-select:none;transition:opacity .2s}
+  .inter-fold-toggle:hover{opacity:1}
+  .inter-folded{max-height:110px;overflow:hidden;position:relative;-webkit-mask-image:linear-gradient(180deg,#000 55%,transparent);mask-image:linear-gradient(180deg,#000 55%,transparent)}
   /* 轨道提示条 */
   .inter-track-note{border-radius:10px;padding:8px 14px;font-size:12.5px;margin-bottom:12px;animation:interRise .4s ease both}
   .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;transition:border-color .3s, box-shadow .3s}
@@ -1225,10 +1229,23 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <template v-for="(blk, i) in interactive.blocks" :key="i">
                 <!-- v3.5.10: 场景分隔（历史回看定位用） -->
                 <div v-if="blk.type==='scene_div'" class="inter-scene-div">── 场景 {{ blk.content }} ──</div>
-                <div v-else-if="blk.type==='narration'" class="inter-narr">{{ blk.content }}</div>
-                <div v-else-if="blk.type==='action'" class="inter-action">{{ blk.content }}</div>
-                <div v-else-if="blk.type==='action_desc'" class="inter-action-desc">⚡ {{ blk.content }}</div>
-                <div v-else-if="blk.type==='action_result'" class="inter-action-result">{{ blk.content }}</div>
+                <!-- v3.5.54: 长消息折叠——narration/action 超 260 字默认折叠，点击展开 -->
+                <div v-else-if="blk.type==='narration'" class="inter-narr">
+                  <div v-if="isLongBlk(blk)" class="inter-fold-toggle" @click.stop="blk.expanded=!blk.expanded">{{ blk.expanded?'▲ 收起':'▼ 展开全文' }}</div>
+                  <div :class="{'inter-folded': isLongBlk(blk) && !blk.expanded}">{{ blk.content }}</div>
+                </div>
+                <div v-else-if="blk.type==='action'" class="inter-action">
+                  <div v-if="isLongBlk(blk)" class="inter-fold-toggle" @click.stop="blk.expanded=!blk.expanded">{{ blk.expanded?'▲ 收起':'▼ 展开全文' }}</div>
+                  <div :class="{'inter-folded': isLongBlk(blk) && !blk.expanded}">{{ blk.content }}</div>
+                </div>
+                <div v-else-if="blk.type==='action_desc'" class="inter-action-desc">⚡
+                  <div v-if="isLongBlk(blk)" class="inter-fold-toggle" @click.stop="blk.expanded=!blk.expanded">{{ blk.expanded?'▲ 收起':'▼ 展开全文' }}</div>
+                  <div :class="{'inter-folded': isLongBlk(blk) && !blk.expanded}">{{ blk.content }}</div>
+                </div>
+                <div v-else-if="blk.type==='action_result'" class="inter-action-result">
+                  <div v-if="isLongBlk(blk)" class="inter-fold-toggle" @click.stop="blk.expanded=!blk.expanded">{{ blk.expanded?'▲ 收起':'▼ 展开全文' }}</div>
+                  <div :class="{'inter-folded': isLongBlk(blk) && !blk.expanded}">{{ blk.content }}</div>
+                </div>
                 <!-- v3.5.8: 状态变化系统提示（对话流内可见，免抬头） -->
                 <div v-else-if="blk.type==='sys_change'" class="inter-sys-change">✨ {{ blk.content }}</div>
                 <div v-else-if="blk.type==='typing'" class="inter-typing" style="text-align:center;padding:8px 0">▋</div>
@@ -4222,6 +4239,10 @@ const app = createApp({
       const box = document.querySelector('.interactive-story');
       if (!box) return;
       _userAtBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 120;
+    }
+    // v3.5.54: 长消息折叠判定——超 260 字视为长块（互动窗口内容越长越需要折叠）
+    function isLongBlk(blk) {
+      return typeof blk.content === 'string' && blk.content.length > 260;
     }
     function _scrollStory() {
       nextTick(() => {

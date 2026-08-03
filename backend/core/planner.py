@@ -279,11 +279,11 @@ class Planner:
             "conflict": "冲突描述与类型[IN内心/IR人际/EN环境/DE宿命]",
             "conflict_intensity": "冲突强度1-5（本章数值必须≥上一章，除非是缓冲章可降1级）",
             "scene_beats": [
-              {{"beat": 1, "name": "开篇钩子", "function": "用动作/对话/悬念立即抓住读者", "key_action": "具体发生了什么"}},
-              {{"beat": 2, "name": "冲突升级", "function": "障碍增加/信息揭露/矛盾激化", "key_action": ""}},
-              {{"beat": 3, "name": "转折/高潮", "function": "本章最重要的转折点或情绪爆发", "key_action": ""}},
-              {{"beat": 4, "name": "余波/收束", "function": "高潮后的缓冲和反应", "key_action": ""}},
-              {{"beat": 5, "name": "钩子", "function": "留下悬念或期待，引向下一章", "key_action": ""}}
+              {{"beat": 1, "name": "开篇钩子", "function": "用动作/对话/悬念立即抓住读者", "key_action": "具体发生了什么——必填本章第1关键节点的具体事件"}},
+              {{"beat": 2, "name": "冲突升级", "function": "障碍增加/信息揭露/矛盾激化", "key_action": "具体发生了什么——必填"}},
+              {{"beat": 3, "name": "转折/高潮", "function": "本章最重要的转折点或情绪爆发", "key_action": "具体发生了什么——必填"}},
+              {{"beat": 4, "name": "余波/收束", "function": "高潮后的缓冲和反应", "key_action": "具体发生了什么——必填"}},
+              {{"beat": 5, "name": "钩子", "function": "留下悬念或期待，引向下一章", "key_action": "具体发生了什么——必填"}}
             ],
             "characters": ["出场角色"],
             "hook": "本章结尾钩子（余韵态具体内容）",
@@ -302,6 +302,7 @@ class Planner:
 - 确保 JSON 是有效的（注意逗号、引号、括号匹配），不要包含注释。
 - 大纲的卷结构和节奏必须严格匹配「{style_config['name']}」的风格要求。
 - **因果链是硬要求**: 每章的 cause_from_prev/bridge_to_next 必须填写，不能留空或写"无"。相邻章节不能是独立事件——必须是"因为A所以B"的因果链。
+- **scene_beats 是硬要求（v3.5.54 Galgame 节点）**: 每章必须输出全部 5 个 scene_beats，且每个 beat 的 key_action 必须填写本章该节点的具体事件（谁对谁做了什么），不能留空——互动模式按这 5 个节点收束剧情，节点缺失会导致互动剧情无法按大纲推进。
 - **冲突强度**: conflict_intensity 必须逐章递增（T2缓冲章除外），不能出现"3→2→4"这种上下跳。
 
 【章节标题多样性要求】
@@ -1437,6 +1438,30 @@ class Planner:
                     ch["bridge_to_next"] = "（大纲生成时未包含因果链，建议重新生成）"
                 if "opening_scene" not in ch:
                     ch["opening_scene"] = "承接上章结尾"
+                # v3.5.54: scene_beats 兜底（Galgame 节点图）——LLM 常丢这个字段，
+                # 用 summary/cause_from_prev/hook 生成 3 节点，互动模式据此收束
+                if "scene_beats" not in ch or not ch.get("scene_beats"):
+                    _sum = str(ch.get("summary", ""))[:60]
+                    _hook = str(ch.get("hook", ""))[:60]
+                    _cfp = str(ch.get("cause_from_prev", ""))[:60]
+                    ch["scene_beats"] = [
+                        {"beat": 1, "name": "开篇钩子",
+                         "function": "承接前章，本章事件开场",
+                         "key_action": _cfp or _sum or "本章事件开场"},
+                        {"beat": 2, "name": "冲突升级",
+                         "function": "本章核心事件发生",
+                         "key_action": _sum or "核心冲突展开"},
+                        {"beat": 3, "name": "钩子",
+                         "function": "悬念收束，引向下一章",
+                         "key_action": _hook or "留下悬念"},
+                    ]
+                elif isinstance(ch.get("scene_beats"), list):
+                    # 补齐 key_action 为空的白板节点（LLM 常只填名称）
+                    _sum = str(ch.get("summary", ""))[:60]
+                    _hook = str(ch.get("hook", ""))[:60]
+                    for _b in ch.get("scene_beats", []):
+                        if isinstance(_b, dict) and not str(_b.get("key_action", "")).strip():
+                            _b["key_action"] = _sum if _b.get("beat", 1) in (1, 2) else _hook
                 if "conflict_intensity" not in ch:
                     # 从 conflict 字符串中尝试提取
                     cf = ch.get("conflict", "")

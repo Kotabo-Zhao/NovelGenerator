@@ -285,15 +285,18 @@ SCENE_SYSTEM = """你是互动小说导演。你正在导演一部可以随时�
 12. v3.5.27 角色白名单（P0）：本场景出场角色【仅限于】"在场角色人设"名单中的角色。
     严禁引入名单之外的角色——读者没有召唤的人不会凭空出现；若剧情确实需要
     新角色，先写环境暗示（脚步声/通报/敲门声），下一场景再登场。
-13. v3.5.27 环境交代（P0）：场景【开头必须】先用 1-3 句交代当前环境——
+13. v3.5.27 环境交代（P0）：场景【开头必须】先用 1-2 句交代当前环境——
     地点（街道名/房间/氛围）、时间（时辰/光线）、天气/声响等感官细节，
     让读者清楚"我在哪里、什么情况"。禁止一上来就抛对话或直接推进动作。
-14. v3.5.32 篇幅精简（P0）：单个场景总长度【200-350 字】（含旁白与台词），
-    严禁超过 400 字。一个场景只推进一个事件/一个对话回合：
-   - 旁白简洁：环境交代 1-3 句 + 事件推进 2-4 句，不堆砌长篇心理描写
+    环境交代最多 2 句，禁止大段铺陈。
+14. v3.5.32 篇幅精简（P0，v3.5.54 再收紧）：单个场景总长度【150-280 字】
+    （含旁白与台词），硬上限 300 字。一个场景只推进一个事件/一个对话回合：
+   - 旁白简洁：环境交代 1-2 句 + 事件推进 2-3 句，心理描写最多 1 句
    - 台词克制：每个角色 1-2 句，点到为止，让玩家有接话空间
-   - 禁止：大段环境铺陈、多段连续心理活动、重复描述已知信息
-   玩家要在移动端快速读完，宁可少写不可啰嗦。
+   - 禁止：大段环境铺陈、多段连续心理活动、重复描述已知信息、
+     形容词堆砌、无信息量的过渡句（"空气仿佛凝固了"这类删掉）
+   - 写完后自查：删掉一切不影响事件推进的句子
+   玩家要在移动端快速读完，宁可少写不可啰嗦——**剧情推进比描写重要**。
 15. v3.5.35 停顿衔接（节奏关键）：场景若含角色对话或情节冲突，结尾用角色的
     一个发问/邀请/等待自然收尾（1 句）——让读者清楚"该我回应了"，停顿不突兀；
     纯推进场景（无对话）结尾则正常收束，不要硬塞提问（停顿由系统节奏兜底，
@@ -1094,7 +1097,7 @@ class StoryDirector:
         yield {"type": "phase", "label": "📖 正在展开剧情…"}
         yield {"type": "scene_chunk", "scene_num": scene_num, "content": ""}
         try:
-            # v3.5.32: max_tokens 520（≈360字）——LLM 生成即短，流式显示与落盘一致
+            # v3.5.54: max_tokens 420（≈280字）——对齐 150-280 字硬上限，LLM 生成即短
             async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=420):
                 if chunk:
                     collected.append(chunk)
@@ -1630,6 +1633,8 @@ class StoryDirector:
 
         切章时生成（同步，一次 LLM 调用）。事件与场景一一对应，场景 prompt 注入
         "本章事件进度"，已完成事件严禁重演 → 结构性杜绝重复生成。
+        v3.5.54: 优先消费大纲 scene_beats（Galgame 节点图——大纲生成时就规划好的
+        关键节点），LLM 拆解仅作兜底；节点数=每章场景数（剧情按节点收束）。
         返回 beats 列表（未就绪返回空，调用方用章节目标兜底）。
         """
         op = state.get("outline_progress") or {}
@@ -1641,6 +1646,29 @@ class StoryDirector:
         cb = state.get("chapter_beats") or {}
         if (not force and cb.get("chapter_idx") == idx and cb.get("beats")):
             return cb["beats"]
+        # v3.5.54: 大纲节点优先（Galgame 关键节点——剧情收束的锚点）
+        _sb = ch.get("scene_beats") or []
+        if _sb and any(str(b.get("key_action", "")).strip() for b in _sb if isinstance(b, dict)):
+            beats = []
+            for _i, _b in enumerate(_sb):
+                if not isinstance(_b, dict):
+                    continue
+                _act = str(_b.get("key_action", "")).strip()[:60]
+                _name = str(_b.get("name", "")).strip()[:20]
+                beats.append({
+                    "id": int(_b.get("beat", _i + 1)),
+                    "desc": f"{_name}：{_act}" if _name else _act,
+                    "status": "pending",
+                })
+            if beats:
+                beats[0]["status"] = "current"
+                state["chapter_beats"] = {"chapter_idx": idx, "beats": beats}
+                try:
+                    self.store.save_state(novel_id, state)
+                except Exception:
+                    pass
+                log.info(f"Galgame 节点 beats: 第{ch.get('number', idx + 1)}章 {len(beats)} 节点")
+                return beats
         tw = int(ch.get("target_words", 0) or 0)
         n = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
         n = max(2, min(n, 4))
@@ -1707,7 +1735,13 @@ class StoryDirector:
         cnt = max(int(op.get("scene_in_chapter", 0)) + 1, sn - ss + 1)
         ch = chs[min(idx, len(chs) - 1)]
         tw = int(ch.get("target_words", 0) or 0)
-        per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
+        # v3.5.54: Galgame 节点对齐——大纲有 scene_beats 时每章场景数=节点数
+        # （每场景推进 1 个节点，节点演完才切章 → 剧情按节点收束）
+        _sb = ch.get("scene_beats") or []
+        if _sb and any(str(b.get("key_action", "")).strip() for b in _sb if isinstance(b, dict)):
+            per = max(2, min(len(_sb), 6))
+        else:
+            per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
         # v3.5.30: 最后一章也回流（原条件 idx < len-1 导致最后一章永远不生成章节正文）
         if cnt >= per:
             # ── 本章完成：把 [scene_start, scene_num-1] 的互动剧情沉淀为章节正文 ──

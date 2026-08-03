@@ -164,12 +164,20 @@ async def interactive_start(novel_id: str):
             _chs = []
             for _v in (_out.get("volumes") or []):
                 for _c in (_v.get("chapters") or []):
+                    _sb = _c.get("scene_beats") or []
                     _chs.append({
                         "number": int(_c.get("number", len(_chs) + 1)),
                         "title": str(_c.get("title", ""))[:30],
                         "summary": str(_c.get("summary", ""))[:180],
                         "volume": str(_v.get("title", ""))[:20],
                         "target_words": int(_c.get("target_words", 0) or 0),
+                        # v3.5.54: Galgame 节点图——大纲生成时规划的关键节点，
+                        # 互动模式据此收束剧情（每场景推进 1 个节点）
+                        "scene_beats": [{"beat": int(b.get("beat", i + 1)),
+                                         "name": str(b.get("name", ""))[:20],
+                                         "key_action": str(b.get("key_action", ""))[:80]}
+                                        for i, b in enumerate(_sb)
+                                        if isinstance(b, dict)][:6],
                     })
             if _chs:
                 _st2 = _store.load_state(novel_id) or {}
