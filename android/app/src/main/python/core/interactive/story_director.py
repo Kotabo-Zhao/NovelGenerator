@@ -854,7 +854,8 @@ class StoryDirector:
             for m in missing[:3]:
                 parts.append(f"- {str(m)[:60]}")
         if summary:
-            parts.append(f"前情摘要: {summary[:600]}")
+            parts.append(f"前情摘要（这是已发生的历史，严禁重演——本场景必须承接其后果并推进新的剧情事件，"
+                          f"不得把前情内容换个说法重新写一遍，特别是'上一场景结尾'只能作为背景铺垫）: {summary[:600]}")
         # v3.5.7: 读者上一步行动（承接性——新场景必须从行动后果写起）
         la = state.get("last_action") or {}
         if la and la.get("summary"):
@@ -1061,6 +1062,25 @@ class StoryDirector:
                     pass
         except Exception:
             pass
+
+        # v3.5.53: 本章事件序列（beats）同步兜底——beats 只在切章时后台预生成，
+        # 第 1 章（idx=0）从生成开始就没有 beats → 前 2-4 个场景无事件约束，
+        # LLM 只能复述上一场景 → 重复剧情（实测：新存档场景2 复刻场景1）。
+        # 场景生成前检查：beats 缺失/章节不符 → 同步生成（仅首次 +2~5s，之后走缓存）
+        try:
+            _op = state.get("outline_progress") or {}
+            _oc = state.get("outline_chapters") or []
+            if _oc:
+                _ci = min(int(_op.get("idx", 0)), len(_oc) - 1)
+                _cb = state.get("chapter_beats") or {}
+                if not _cb.get("beats") or _cb.get("chapter_idx") != _ci:
+                    self._ensure_chapter_beats(novel_id, state)
+                    try:
+                        self.store.save_state(novel_id, state)
+                    except Exception:
+                        pass
+        except Exception as e:
+            log.warning(f"beats sync ensure failed: {e}")
 
         # 快照（生成前备份）
         self.store.snapshot(novel_id)

@@ -303,6 +303,41 @@ def test_clean_location_unit():
         raise AssertionError('FAIL: ' + '; '.join(bad))
 
 
+def test_chapter1_beats_unit():
+    """v3.5.53: 第 1 章 beats 兜底单元测试——第 1 章开局无 beats 时自动生成"""
+    sys.path.insert(0, os.path.join(ROOT, 'backend'))
+    from core.interactive.story_director import StoryDirector
+
+    class FakeStore:
+        def __init__(self):
+            self.saved = {}
+        def save_state(self, nid, st):
+            self.saved[nid] = json.loads(json.dumps(st))
+        def load_state(self, nid):
+            return self.saved.get(nid)
+
+    d = StoryDirector.__new__(StoryDirector)
+    d.store = FakeStore()
+    chs = [{'number': 1, 'title': '第一章', 'summary': '顶楼宴会，主角被当众否认关系', 'target_words': 3000}]
+    st = {'outline_chapters': chs, 'outline_progress': {'idx': 0, 'scene_in_chapter': 0, 'scene_start': 1},
+          'scene_num': 1, 'title': 't', 'genre': 'g', 'style': 's'}
+    d.store.saved['t'] = st
+    # 无 LLM 环境 → 兜底 beats
+    beats = d._ensure_chapter_beats('t', st)
+    if not beats or beats[0].get('status') != 'current':
+        raise AssertionError(f'第1章 beats 未生成: {beats}')
+    if st.get('chapter_beats', {}).get('chapter_idx') != 0:
+        raise AssertionError('章节绑定错误')
+    # 场景后推进 → done
+    d._advance_beat(st)
+    if st['chapter_beats']['beats'][0]['status'] != 'done':
+        raise AssertionError('推进失败')
+    # 缓存复用保留推进状态
+    beats2 = d._ensure_chapter_beats('t', st)
+    if beats2[0]['status'] != 'done':
+        raise AssertionError('缓存未保留推进状态')
+
+
 def test_compute_present_unit():
     """v3.5.46: compute_present 纯逻辑单元测试——在场/不在场推导 5 用例"""
     sys.path.insert(0, os.path.join(ROOT, 'backend'))
@@ -478,6 +513,12 @@ def main():
         check('P8 clean_location 单元测试', True, '12 用例')
     except Exception as e:
         check('P8 clean_location 单元测试', False, f'异常: {e}')
+    # v3.5.53: 第 1 章 beats 兜底单元测试
+    try:
+        test_chapter1_beats_unit()
+        check('P9 第1章 beats 兜底', True, '3 用例')
+    except Exception as e:
+        check('P9 第1章 beats 兜底', False, f'异常: {e}')
     print()
     # v3.5.46: compute_present 纯逻辑单元测试（不依赖存档）
     try:
