@@ -23,6 +23,10 @@ from core.interactive.story_director import (
     mainline_pressure,
     side_event_hint,
     scene_repeat_check,
+    promise_anchor_of,
+    promise_ledger_update,
+    promise_conflict_check,
+    PACT_SYSTEM,
     StoryDirector,
 )
 
@@ -373,6 +377,101 @@ st_ev = mk_prompt_state()
 st_ev['events'] = [{'ts': '12:00', 'summary': '林晚泼了你一杯红酒'}, {'ts': '12:01', 'summary': '顾衍之开口制止'}]
 p = sd._build_scene_prompt(st_ev, '')
 check('prompt 注入事件时间线', '已发生的事件' in p and '严禁重演' in p)
+
+# ═══════════════ 9. 承诺台账 + 时间锚定（promise ledger） ═══════════════
+print('▶ 承诺台账 promise_anchor_of / promise_ledger_update / promise_conflict_check')
+
+# 9.1 时间锚提取：强锚（周几/具体日期）识别
+check('强锚: 周五晚上 → 提取', promise_anchor_of('周五晚上一起吃饭') == '周五晚上')
+check('强锚: 星期三下午 → 提取', promise_anchor_of('星期三下午见面') == '星期三下午')
+check('强锚: 下周一 → 提取', '周一' in (promise_anchor_of('下周一交货') or ''))
+check('强锚: 三天后 → 提取', '三天后' in (promise_anchor_of('三天后来取') or ''))
+check('弱锚: 改天 → 不提取', promise_anchor_of('改天请你吃饭') is None)
+check('弱锚: 明天/今晚 → 不提取', promise_anchor_of('明天再聊') is None)
+check('无时间 → 不提取', promise_anchor_of('我会保守秘密') is None)
+
+# 9.2 台账写入：时间锚定承诺 → pending
+st9 = {'facts': [], 'pending_promises': [], 'events': []}
+r = promise_ledger_update(st9, [
+    {'type': 'promise', 'content': '周五晚上与林听雪一起吃饭', 'time_anchor': '周五晚上', 'target': '林听雪'},
+])
+check('强锚承诺 → 写入台账', len(st9.get('pending_promises', [])) == 1)
+check('写入内容含 who/what/when_raw/status', all(k in st9['pending_promises'][0] for k in
+      ('who', 'what', 'when_raw', 'status', 'scene_num')))
+check('写入状态 pending', st9['pending_promises'][0]['status'] == 'pending')
+check('返回 added 计数', r.get('added') == 1)
+
+# 9.3 无时间锚承诺 → 不进台账
+st9b = {'facts': [], 'pending_promises': [], 'events': []}
+promise_ledger_update(st9b, [{'type': 'promise', 'content': '改天请你喝茶', 'time_anchor': '', 'target': '苏晚'}])
+check('弱锚承诺 → 不进台账', len(st9b.get('pending_promises', [])) == 0)
+
+# 9.4 防重复：同事件再次提取 → 不重复写入
+st9c = {'facts': [], 'pending_promises': [], 'events': []}
+promise_ledger_update(st9c, [{'type': 'promise', 'content': '周五晚上与林听雪一起吃饭', 'time_anchor': '周五晚上', 'target': '林听雪'}])
+r2 = promise_ledger_update(st9c, [{'type': 'promise', 'content': '周五晚上和林听雪吃饭（换个说法）', 'time_anchor': '周五晚上', 'target': '林听雪'}])
+check('同事件重复提取 → 不重复写入', len(st9c.get('pending_promises', [])) == 1)
+
+# 9.5 兑现闭环：行动匹配约定 → fulfilled + 写入事件时间线
+st9d = {'facts': [], 'pending_promises': [], 'events': []}
+promise_ledger_update(st9d, [{'type': 'promise', 'content': '周五晚上与林听雪一起吃饭', 'time_anchor': '周五晚上', 'target': '林听雪'}])
+r3 = promise_ledger_update(st9d, [], action_summary='你赴约前往餐厅，与林听雪共进晚餐')
+check('赴约行动 → 承诺 fulfilled', st9d['pending_promises'][0]['status'] == 'fulfilled')
+check('兑现后写入事件时间线', any('林听雪' in str(e.get('summary', '')) for e in st9d.get('events', [])))
+check('返回 fulfilled 计数', r3.get('fulfilled') == 1)
+
+# 9.6 违约闭环：明确拒绝 → broken
+st9e = {'facts': [], 'pending_promises': [], 'events': []}
+promise_ledger_update(st9e, [{'type': 'promise', 'content': '周五晚上与林听雪一起吃饭', 'time_anchor': '周五晚上', 'target': '林听雪'}])
+r4 = promise_ledger_update(st9e, [], action_summary='你拒绝了，说那天没空不去了')
+check('拒绝行动 → 承诺 broken', st9e['pending_promises'][0]['status'] == 'broken')
+check('返回 broken 计数', r4.get('broken') == 1)
+
+# 9.7 旧存档无台账 → 不炸
+st9f = {'facts': []}
+r5 = promise_ledger_update(st9f, [{'type': 'promise', 'content': '周五晚上见面', 'time_anchor': '周五晚上', 'target': '林听雪'}])
+check('无台账字段 → 自动建不炸', isinstance(st9f.get('pending_promises'), list) and r5.get('added') == 1)
+
+# 9.8 冲突检测：新时间表述 vs 台账
+st9g = {'facts': [], 'pending_promises': [], 'events': []}
+promise_ledger_update(st9g, [{'type': 'promise', 'content': '周五晚上与林听雪一起吃饭', 'time_anchor': '周五晚上', 'target': '林听雪'}])
+c1 = promise_conflict_check('周三晚上，你坐在餐厅里', st9g)
+check('新场景周三 vs 台账周五 → 冲突', c1 is not None and '周五' in c1)
+c2 = promise_conflict_check('周五晚上你们如约见面', st9g)
+check('新场景周五引用一致 → 不冲突', c2 is None)
+c3 = promise_conflict_check('夜色渐深，你们并肩走在街上', st9g)
+check('无时间表述 → 不冲突', c3 is None)
+c4 = promise_conflict_check('改天再约', st9g)
+check('弱锚表述 → 不冲突', c4 is None)
+
+# 9.9 台账为空 → 不冲突 / 异常 → 不炸
+st9h = {'facts': [], 'pending_promises': [], 'events': []}
+check('台账空 → 不冲突', promise_conflict_check('周三晚上见面', st9h) is None)
+check('异常输入 → 不炸', promise_conflict_check(None, None) is None)
+
+# 9.10 prompt 注入断言：台账有 pending → 注入"未兑现约定"块 + when_raw
+st9p = mk_prompt_state()
+st9p['pending_promises'] = [{'who': '林听雪', 'what': '一起吃饭', 'when_raw': '周五晚上',
+                             'scene_num': 7, 'status': 'pending'}]
+p = sd._build_scene_prompt(st9p, '')
+check('prompt 注入未兑现约定块', '未兑现约定' in p and '周五晚上' in p)
+st9q = mk_prompt_state()
+st9q['pending_promises'] = []
+p2 = sd._build_scene_prompt(st9q, '')
+check('台账空 → 无约定注入块', '未兑现约定' not in p2)
+
+# 9.11 PACT_SYSTEM prompt 断言：time_anchor 字段要求 + 慎用时间指引
+check('PACT_SYSTEM 含 time_anchor 字段', 'time_anchor' in PACT_SYSTEM)
+check('PACT_SYSTEM 含慎用时间指引', '不要轻易' in PACT_SYSTEM or '避免' in PACT_SYSTEM or '关键约定' in PACT_SYSTEM)
+
+# 9.12 角色发起的邀约（target=player）→ who=subject 进台账
+st9i = {'facts': [], 'pending_promises': [], 'events': []}
+r6 = promise_ledger_update(st9i, [
+    {'type': 'promise', 'content': '周五晚上一起吃饭', 'time_anchor': '周五晚上',
+     'subject': '林听雪', 'target': 'player'},
+])
+check('角色邀约 → who=subject 进台账', len(st9i.get('pending_promises', [])) == 1
+      and st9i['pending_promises'][0]['who'] == '林听雪', f"got {st9i.get('pending_promises')}")
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')

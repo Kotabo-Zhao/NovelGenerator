@@ -148,5 +148,35 @@ try:
 except Exception as e:
     check(f'adapt LLM 失败: {type(e).__name__}: {str(e)[:80]}', False)
 
+# ═══════════════ 4. PACT 时间锚提取（真实 LLM） ═══════════════
+print('▶ T2.4 PACT 时间锚提取（真实 LLM，约 20-40s）')
+try:
+    import tempfile
+    from core.interactive.interact_store import InteractStore
+    sd_pact = StoryDirector(engine.client, engine.model, InteractStore(tempfile.mkdtemp()))
+    chat_entries = [
+        {"role": "user", "content": "你什么时候有空，我们吃个饭？"},
+        {"role": "assistant", "speaker": "方瑜", "content": "周五晚上我有空，我们一起吃饭吧，说好了"},
+        {"role": "user", "content": "好，那就周五晚上"},
+    ]
+    r = sd_pact.extract_pact("test_novel", chat_entries)
+    check('PACT 返回 facts', isinstance(r, dict) and isinstance(r.get("facts"), list))
+    facts = r.get("facts") or []
+    prom = [f for f in facts if f.get("type") == "promise"]
+    check('提取出 promise 事实', len(prom) >= 1, f"{len(prom)} 条")
+    if prom:
+        # 角色邀约（subject=角色, target=player）带 time_anchor
+        npc_prom = [f for f in prom if f.get("subject") == "方瑜" and f.get("target") == "player"]
+        check('角色邀约方向正确 (subject=方瑜)', len(npc_prom) >= 1)
+        if npc_prom:
+            ta = str(npc_prom[0].get("time_anchor", "") or "")
+            check('角色邀约含 time_anchor=周五晚上', '五' in ta and ta == '周五晚上', ta)
+        player_prom = [f for f in prom if f.get("subject") == "player"]
+        check('玩家答应方向提取', len(player_prom) >= 1)
+        if player_prom:
+            check('玩家答应含 time_anchor', '五' in str(player_prom[0].get("time_anchor", "") or ""))
+except Exception as e:
+    check(f'PACT 时间锚 LLM 失败: {type(e).__name__}: {str(e)[:80]}', False)
+
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')
 sys.exit(0 if FAIL == 0 else 1)

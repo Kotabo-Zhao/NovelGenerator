@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from typing import AsyncIterator, Optional
@@ -361,6 +362,152 @@ def _content_bigrams(text: str) -> set:
     t2 = "".join(c for c in str(text)
                  if c not in _CONTENT_STOP and "\u4e00" <= c <= "\u9fff")
     return set(t2[i:i + 2] for i in range(len(t2) - 1))
+
+
+# ═══════════════ v2.5.57: 承诺台账 + 时间锚定（周五变周三 bug 修复） ═══════════════
+
+_TIME_SEG = ("晚上|下午|上午|中午|清晨|傍晚|深夜|夜里|凌晨|早上|午间|午后|夜里|夜间")
+_STRONG_ANCHOR_RE = re.compile(
+    r"(?:(?:下|本|这|上|大上|大下)?周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天])"
+    r"(?:" + _TIME_SEG + r")?"
+    r"|(?:[一二三四五六七八九十0-9]+(?:天|日)后)"
+    r"|(?:大后天|后天)"
+)
+_WEEKDAY_MAP = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "日": 7, "天": 7}
+
+
+def promise_anchor_of(text: str):
+    """提取文本中的强时间锚（周几/具体日期类），返回原始表述或 None。
+
+    强锚 = 周X/星期X/礼拜X（可带时段词）/ N日后 / 后天·大后天。
+    弱锚（明天/今晚/改天）不提取——可变性强，不进入台账校验，避免误杀。
+    """
+    try:
+        m = _STRONG_ANCHOR_RE.search(str(text or ""))
+        if not m:
+            return None
+        return m.group(0)
+    except Exception:
+        return None
+
+
+def _weekday_of(expr: str):
+    """周几归一化：'周五'/'星期五'/'礼拜五' → 5；无法归一化 → None。"""
+    try:
+        m = re.search(r"[一二三四五六日天]", str(expr or ""))
+        if m:
+            return _WEEKDAY_MAP.get(m.group(0))
+    except Exception:
+        pass
+    return None
+
+
+def promise_ledger_update(state: dict, new_promises: list, action_summary: str = "") -> dict:
+    """承诺台账写入/兑现/违约（纯函数，零 LLM）。
+
+    - 时间锚定承诺（type=promise 且 time_anchor 非空）→ 写入 pending_promises
+    - 同对象同时间同事件（去锚后内容相似）→ 防重复不写入
+    - action_summary 含赴约词 → 全部 pending 兑现（fulfilled）+ 写事件时间线
+    - action_summary 含拒绝词 → 全部 broken（违约）
+    返回 {"added": n, "fulfilled": m, "broken": k}
+    """
+    try:
+        ledger = state.setdefault("pending_promises", [])
+        if not isinstance(ledger, list):
+            ledger = state["pending_promises"] = []
+        added = fulfilled = broken = 0
+        # 兑现/违约判定（优先违约——"拒绝赴约"算拒绝）
+        as_ = str(action_summary or "")
+        if any(w in as_ for w in ("拒绝", "不去", "取消", "放鸽子", "失约", "爽约", "不去了")):
+            for p in ledger:
+                if p.get("status") == "pending":
+                    p["status"] = "broken"
+                    broken += 1
+            return {"added": 0, "fulfilled": 0, "broken": broken}
+        if any(w in as_ for w in ("赴约", "应约", "如约", "赴宴", "赴会", "赴饭局")):
+            for p in ledger:
+                if p.get("status") == "pending":
+                    p["status"] = "fulfilled"
+                    fulfilled += 1
+                    from .char_memory import add_event
+                    add_event(state, f"约定兑现: 与{p.get('who', '?')}{p.get('what', '')}"
+                                     f"（{p.get('when_raw', '')}）", "promise")
+            return {"added": 0, "fulfilled": fulfilled, "broken": 0}
+        # 写入：过滤时间锚定承诺
+        for f in (new_promises or []):
+            try:
+                if not isinstance(f, dict) or f.get("type") != "promise":
+                    continue
+                anchor = str(f.get("time_anchor", "") or "").strip()
+                if not anchor:
+                    continue
+                # who 判定：读者承诺 target=角色；角色邀约 target=player → who=subject
+                target = str(f.get("target", "") or "").strip()
+                subject = str(f.get("subject", "") or "").strip()
+                who = target if target and target != "player" else subject
+                content = str(f.get("content", "") or "").strip()
+                if not who or not content:
+                    continue
+                # 防重复：同 who 同 when_raw 且去锚后内容相似
+                dup = False
+                base = content.replace(anchor, "")
+                for p in ledger:
+                    if p.get("status") != "pending" or p.get("who") != who:
+                        continue
+                    if p.get("when_raw") != anchor:
+                        continue
+                    from difflib import SequenceMatcher
+                    if SequenceMatcher(None, base, str(p.get("what", "")).replace(anchor, "")).ratio() >= 0.3:
+                        dup = True
+                        break
+                if dup:
+                    continue
+                ledger.append({
+                    "who": who[:30],
+                    "what": content[:60],
+                    "when_raw": anchor[:20],
+                    "scene_num": int(state.get("scene_num", 0) or 0),
+                    "status": "pending",
+                })
+                added += 1
+            except Exception:
+                continue
+        return {"added": added, "fulfilled": fulfilled, "broken": broken}
+    except Exception:
+        return {"added": 0, "fulfilled": 0, "broken": 0}
+
+
+def promise_conflict_check(text: str, state: dict):
+    """新场景文本 vs 未兑现约定台账的时间冲突检测（纯函数）。
+
+    提取文本中所有强时间锚，与 pending 约定的 when_raw 做周几归一化比对：
+    周几不同 → 返回冲突描述（含约定原始时间）；无约定/无周几可比/异常 → None。
+    """
+    try:
+        if not text or not state:
+            return None
+        ledger = state.get("pending_promises") or []
+        if not isinstance(ledger, list) or not ledger:
+            return None
+        pending = [p for p in ledger if isinstance(p, dict) and p.get("status") == "pending"]
+        if not pending:
+            return None
+        anchors = re.findall(_STRONG_ANCHOR_RE, str(text))
+        if not anchors:
+            return None
+        for a in anchors:
+            wd = _weekday_of(a)
+            if wd is None:
+                continue  # N日后/后天类无法周几比对，保守放过
+            for p in pending:
+                pwd = _weekday_of(str(p.get("when_raw", "") or ""))
+                if pwd is not None and pwd != wd:
+                    return (f"时间冲突: 本场景出现'{a}'，但未兑现约定"
+                            f"'{p.get('when_raw', '?')}'与{p.get('who', '?')}约定{p.get('what', '')}"
+                            f"——约定时间已锚定不得改写")
+        return None
+    except Exception:
+        return None
 
 
 # v1.1 P4: 动态大纲微调——玩家自由行为导致锚点不合适时，目标等价替换
@@ -713,9 +860,18 @@ PACT_SYSTEM = """你是互动小说因果提取器。从读者与角色的对话
 7. 与世界观冲突的荒诞要求（"我是皇帝"）不提取为事实，只记录为角色反应
 8. v3.5.48 防重复：若输入中给出"已有事实"清单，**不得重复提取同一事件/承诺**
    （同一件事换个说法也算重复，如"透露把柄"与"准备拿把柄说事"是同一件事）——只提取新进展
+9. v2.5.57 时间锚（time_anchor）：约定/承诺若含**具体时间**（周几/星期几/几月几号/N日后）——
+   必须把原始表述填入 time_anchor（如"周五晚上"），这是该约定的唯一权威时间，后续剧情不得改写；
+   只有相对弱锚（明天/今晚/改天）或无时间 → time_anchor 留空
+10. v2.5.57 慎用具体时间：角色/读者**不要轻易约定具体周几或日期**——只有剧情关键约定
+    （必须特定时间发生的事件）才用具体时间；普通邀约（吃饭/见面/拜访）用"改天/明天"这类弱锚，
+    避免制造需要全局记忆的时间承诺
+11. v2.5.57 角色发起的约定：**角色主动向读者提出含具体时间的邀约/约定**
+    （"周五晚上一起吃饭吧"）→ 提取为 promise，subject=角色名，target="player"，
+    content 保留原始约定内容，time_anchor 必填原始时间表述
 
 输出 JSON:
-{"facts": [{"id": "f1", "type": "promise/action/secret/change", "subject": "player/角色名", "target": "角色名/player", "content": "一句话描述", "severity": "high/medium/low", "source_chat": 轮次序号}], "relations": {"角色名": "+/-数值或描述"}, "objective_update": "更新后的目标或空", "tone": "对话基调（试探/交易/亲昵/敌对…）"}
+{"facts": [{"id": "f1", "type": "promise/action/secret/change", "subject": "player/角色名", "target": "角色名/player", "content": "一句话描述", "severity": "high/medium/low", "source_chat": 轮次序号, "time_anchor": "含具体时间时的原始表述，否则空字符串"}], "relations": {"角色名": "+/-数值或描述"}, "objective_update": "更新后的目标或空", "tone": "对话基调（试探/交易/亲昵/敌对…）"}
 只输出 JSON。"""
 
 AGENDA_SYSTEM = """你是互动小说对话编排师。为即将开始的角色对话制定议程（Agenda）。
@@ -995,6 +1151,16 @@ class StoryDirector:
                 self.store.save_state(novel_id, _st3)
             except Exception as e:
                 log.warning(f"time valid failed: {e}")
+            # v2.5.57: 承诺时间冲突检测——新场景时间表述 vs 未兑现约定台账
+            try:
+                _st4 = self.store.load_state(novel_id) or {}
+                _conf = promise_conflict_check(scene_text, _st4)
+                if _conf:
+                    _st4["promise_conflict"] = str(_conf)[:120]
+                    self.store.save_state(novel_id, _st4)
+                    log.warning(f"[承诺台账] 场景{scene_num} 时间冲突: {_conf}")
+            except Exception as e:
+                log.warning(f"promise conflict failed: {e}")
             # 1) 角色状态更新（提取位置/状态变化 → global_state.json）
             tr = self._logic_tracker()
             if tr is not None:
@@ -1252,6 +1418,17 @@ class StoryDirector:
             parts.append("玩家的重要选择（Galgame 式延迟回响：存在自然时机时让角色提起这些旧承诺/共同经历——'你当初答应我的事'，不要每段都提，也不要装作不记得）:")
             for f in facts[:6]:
                 parts.append(f"- [{f.get('type')}] {f.get('content')}")
+        # v2.5.57: 未兑现约定台账（时间已锚定——不得改写约定时间）
+        _prom = [p for p in (state.get("pending_promises") or [])
+                 if isinstance(p, dict) and p.get("status") == "pending"]
+        if _prom:
+            parts.append("未兑现约定（时间已锚定：任何场景不得改写/重设其时间，"
+                         "提到该约定必须沿用原始时间表述；除非玩家已赴约或明确拒绝）:")
+            for _p in _prom[-3:]:
+                parts.append(f"- [{_p.get('when_raw', '?')}] 与{_p.get('who', '?')}约定: {_p.get('what', '')}")
+        if state.get("promise_conflict"):
+            parts.append(f"⚠ 系统检测到上一场景时间表述与未兑现约定冲突（{state['promise_conflict']}）——"
+                         f"本场景必须修正：提到该约定一律沿用原始时间，禁止再出现冲突的新时间表述")
         # v3.3.1: 上一场对话未达成的目标（missing hooks）——软约束：后果显现/角色惦记
         missing = state.get("pending_missing_hooks") or []
         if missing:
@@ -2008,6 +2185,13 @@ class StoryDirector:
             add_memory(state, target, "promise",
                        f"读者{tag}了你：{f.get('content', '')}",
                        source="pact")
+        # v2.5.57: 承诺台账同步——时间锚定承诺进 pending_promises（周五变周三 bug 防护）
+        # 覆盖两类：读者承诺（target=角色） + 角色邀约（target=player，who=subject）
+        try:
+            _act_sum = str((state.get("last_action") or {}).get("summary", "") or "")
+            promise_ledger_update(state, state.get("facts", []), action_summary=_act_sum)
+        except Exception as e:
+            log.warning(f"promise ledger failed: {e}")
         # 关系变化 → 事件时间线
         if result.get("relations"):
             rel_changed = [f"{k} ♥{v}" for k, v in result.get("relations", {}).items()
