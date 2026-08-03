@@ -108,5 +108,45 @@ if beats:
     check('beat1 status=current', beats[0].get('status') == 'current')
     check('beat2 空 entry_hook 兜底为 key_action', '赴约' in str(beats[1].get('entry_hook', '')))
 
+# ═══════════════ 3. _adapt_outline 动态大纲微调（真实 LLM） ═══════════════
+print('▶ T2.3 _adapt_outline 动态大纲微调（真实 LLM，约 30-60s）')
+try:
+    sd_real = StoryDirector(engine.client, engine.model, MagicMock())
+    state2 = {
+        'outline_progress': {'idx': 0},
+        'outline_chapters': [
+            {'number': 1, 'title': '第一章', 'summary': '收到信物'},
+            {'number': 2, 'title': '第二章', 'summary': '凭信物进入地下城',
+             'scene_beats': [
+                 {'beat': 1, 'name': '开篇', 'key_action': '用信物打开地下城大门',
+                  'trigger': {'type': 'scene', 'conditions': [
+                      {'field': 'inventory', 'op': 'has', 'value': '信物'}],
+                      'timeout_scenes': 4}},
+                 {'beat': 2, 'name': '冲突', 'key_action': '遭遇守卫', 'trigger': {
+                     'type': 'event', 'conditions': [{'field': 'tension', 'op': '>=', 'value': 3}],
+                     'timeout_scenes': 4}},
+             ]},
+        ],
+        'state': {'location': '废墟', 'flags': ['信物已毁'], 'inventory': []},
+        'player_state': {'location': '废墟', 'situation': '信物被烧毁，陷入困境'},
+        'last_action': {'summary': '你烧毁了信物'},
+        'mainline': {'required_flags': ['信物'], 'acquired': [], 'expected_by_chapter': 1},
+    }
+    r = sd_real._adapt_outline('test', state2)
+    check('adapt 返回 dict', isinstance(r, dict))
+    if isinstance(r, dict):
+        if r.get('appropriate') is False:
+            repl = r.get('replacement')
+            check('替换锚点非空', isinstance(repl, list) and len(repl) >= 1)
+            if isinstance(repl, list) and repl:
+                b0 = repl[0]
+                check('替换锚点含 key_action', bool(str(b0.get('key_action', '')).strip()))
+                check('替换锚点触发条件不再依赖已毁信物',
+                      '信物' not in json.dumps(b0.get('trigger', {}), ensure_ascii=False))
+        else:
+            check('LLM 判定合适（玩家信物已毁场景应判不合适）', False, 'appropriate=True')
+except Exception as e:
+    check(f'adapt LLM 失败: {type(e).__name__}: {str(e)[:80]}', False)
+
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')
 sys.exit(0 if FAIL == 0 else 1)

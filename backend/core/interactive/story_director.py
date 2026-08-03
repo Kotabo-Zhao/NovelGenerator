@@ -288,6 +288,54 @@ def append_change(state: dict, change: dict, reason: str) -> None:
     except Exception:
         pass
 
+
+def mainline_pressure(state: dict) -> Optional[str]:
+    """P4 跨章张力介入（保险③）：连续 ≥2 章高位偏离 → 主线势力施压文案。
+
+    返回介入文案（注入场景 prompt）或 None。
+    """
+    try:
+        dc = int(state.get("tension_drift_chapters", 0) or 0)
+        if dc >= 2:
+            return ("世界施压（主线势力正在逼近）：与核心冲突相关的人物/组织已经"
+                    "注意到你，正在寻找你——他们在推动剧情走向主线。")
+        return None
+    except Exception:
+        return None
+
+
+def side_event_hint(state: dict) -> Optional[str]:
+    """P4 填充事件（节奏调节）：张力 ≥6 且本场景未触发锚点 → 节奏事件动因。
+
+    返回填充事件提示（注入场景 prompt）或 None。张力高位不触发锚点时，
+    用填充事件维持节奏（偶遇/冲突/消息），避免玩家在自由区失去方向感。
+    """
+    try:
+        t = int(state.get("tension", 0) or 0)
+        if t >= 6 and not state.get("anchor_triggered"):
+            return ("剧情张力很高：周围的世界正在产生新的事件（偶遇/冲突/消息），"
+                    "与主线相关或关键人物登场——让事件自然发生。")
+        return None
+    except Exception:
+        return None
+
+
+# v1.1 P4: 动态大纲微调——玩家自由行为导致锚点不合适时，目标等价替换
+ADAPT_OUTLINE_SYSTEM = """你是互动小说大纲微调师。玩家的自由行为可能让原大纲的某个锚点不再合适，
+你需要判断并给出替换锚点（目标等价——保持故事结构和最终目标不变，只换达成方式）。
+
+判断原则：
+1. 玩家现状（位置/处境/已有关键标记/最近行动）与锚点明显冲突（关键物品已毁/关键角色关系破裂/
+   地点已不可达）→ 不合适
+2. 轻微偏离 → 合适（不替换，玩家路径自由是设计核心）
+3. 替换锚点必须目标等价：同样的叙事功能（冲突升级/信息揭露/转折收束），
+   但达成方式贴合玩家现状（信物毁了 → 发现副本/敌人手中的另一条线索）
+
+输出 JSON:
+{"appropriate": true/false, "replacement": [5个锚点数组（同 scene_beats 结构：beat/name/function/key_action/
+trigger/reject_outcome/state_output/entry_hook）] 或 null, "reason": "一句话依据"}
+只输出 JSON。"""
+
 # v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
 INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式的场景记录整合为正式的小说章节正文。
 
@@ -1089,6 +1137,24 @@ class StoryDirector:
         _at = state.get("anchor_triggered")
         if _at and _at.get("hook"):
             parts.append(f"当前剧情事件（本场景以此开场，自然引入，不得无视）: {_at['hook']}")
+        # v1.1 P4: 跨章张力介入（保险③）——连续 2 章偏离，主线势力施压
+        try:
+            _mp = mainline_pressure(state)
+            if _mp:
+                parts.append(f"## 世界施压:\n{_mp}")
+        except Exception:
+            pass
+        # v1.1 P4: 填充事件（节奏调节）——张力高位未触发锚点时维持节奏
+        try:
+            _se = side_event_hint(state)
+            if _se:
+                parts.append(f"## 填充事件:\n{_se}")
+        except Exception:
+            pass
+        # v1.1 P4: 主线健康度捷径（保险④）——切章对账落后，注入捷径提示
+        if state.get("mainline_shortcut"):
+            parts.append("## 主线捷径: 一位与主线相关的角色主动向你提供关键线索"
+                         "（帮你补上错过的进度），自然地出现在本场景。")
         # v3.5.49: 对话结论落地——上一场对话解决了什么，本场景必须承接
         _cc = state.get("chat_conclusion") or ""
         if _cc:
@@ -2098,6 +2164,51 @@ class StoryDirector:
             log.warning(f"update_tension failed: {e}")
             return int(state.get("tension", 0) or 0)
 
+    def _adapt_outline(self, novel_id: str, state: dict) -> Optional[dict]:
+        """v1.1 P4: 动态大纲微调（保险②）——下一章锚点与玩家现状冲突时
+        目标等价替换（终点不变，达成工具可换：信物毁→副本线索）。
+
+        触发时机：切章时（mainline 落后或跨章偏离 ≥1 章）。
+        成本：一次 LLM 调用。LLM 失败/合适 → 返回 None（保持原大纲）。
+        """
+        try:
+            chs = state.get("outline_chapters") or []
+            op = state.get("outline_progress") or {}
+            idx = int(op.get("idx", 0))
+            if idx + 1 >= len(chs):
+                return None
+            nch = chs[idx + 1]
+            ps = state.get("player_state") or {}
+            s = state.get("state") or {}
+            _beats_json = json.dumps(
+                nch.get("scene_beats", [])[:3], ensure_ascii=False)[:800]
+            user = (
+                f"下一章: 第{nch.get('number', idx + 2)}章《{nch.get('title', '')}》\n"
+                f"下一章锚点(前3): {_beats_json or '（无）'}\n\n"
+                f"玩家现状: 位置[{ps.get('location', '')}] 处境[{ps.get('situation', '')}]\n"
+                f"已有关键标记: {('、'.join((s.get('flags') or [])[-5:])) or '（无）'}\n"
+                f"最近行动: {(state.get('last_action') or {}).get('summary', '')}\n"
+                f"主线健康度: {json.dumps(state.get('mainline', {}), ensure_ascii=False)[:300]}\n\n"
+                f"这些锚点是否仍与玩家现状相容？不相容 → 给出目标等价的替换锚点。"
+            )
+            raw = self._llm(ADAPT_OUTLINE_SYSTEM, user, temperature=0.3, max_tokens=1200)
+            if not raw:
+                return None
+            start, end = raw.find("{"), raw.rfind("}")
+            if start < 0 or end <= start:
+                return None
+            data = json.loads(raw[start:end + 1])
+            if not isinstance(data, dict):
+                return None
+            repl = data.get("replacement")
+            if isinstance(repl, list) and repl and data.get("appropriate") is False:
+                log.info(f"动态大纲微调: {str(data.get('reason', ''))[:80]}")
+                return {"appropriate": False, "replacement": repl}
+            return {"appropriate": True, "replacement": None}
+        except Exception as e:
+            log.warning(f"adapt_outline failed: {type(e).__name__}: {str(e)[:80]}")
+            return None
+
     def _advance_outline(self, novel_id: str, state: dict):
         """v3.5.28: 大纲章节推进——场景数达阈值切下一章，objective 随章更新
 
@@ -2136,6 +2247,26 @@ class StoryDirector:
                 consistency_repair(state)
             except Exception as e:
                 log.warning(f"consistency repair failed: {e}")
+        # v1.1 P4: 主线健康度对账（保险④）——进度落后 → 捷径标记（下一场景注入）
+        if _do_cut:
+            try:
+                _mc = mainline_check(state)
+                if _mc.get("shortcut"):
+                    state["mainline_shortcut"] = True
+                    log.info(f"主线健康度落后 gap={_mc.get('gap')}，注入捷径")
+                else:
+                    state.pop("mainline_shortcut", None)
+                # v1.1 P4: 动态大纲微调——玩家现状与下一章锚点冲突时替换（终点不变）
+                if _mc.get("shortcut") or int(state.get("tension_drift_chapters", 0) or 0) >= 1:
+                    _adapt = self._adapt_outline(novel_id, state)
+                    if _adapt and _adapt.get("appropriate") is False and _adapt.get("replacement"):
+                        _nch = (state.get("outline_chapters") or [])[int((state.get("outline_progress") or {}).get("idx", 0)) + 1] \
+                            if len(state.get("outline_chapters") or []) > int((state.get("outline_progress") or {}).get("idx", 0)) + 1 else None
+                        if _nch:
+                            _nch["scene_beats"] = _adapt["replacement"]
+                            log.info(f"动态大纲微调: 第{_nch.get('number', '?')}章锚点已替换")
+            except Exception as e:
+                log.warning(f"mainline/adapt failed: {e}")
         # 跨章张力记录（v1.1 保险③）：切章时张力不清零，高位偏离跨章累积
         if _do_cut and int(state.get("tension", 0) or 0) >= 3:
             state["tension_drift_chapters"] = int(state.get("tension_drift_chapters", 0) or 0) + 1

@@ -20,6 +20,8 @@ from core.interactive.story_director import (
     time_valid,
     consistency_repair,
     append_change,
+    mainline_pressure,
+    side_event_hint,
     StoryDirector,
 )
 
@@ -292,6 +294,58 @@ append_change(st, {'field': 'tension', 'new': 3}, 'scene')
 check('日志追加', len(st.get('change_log', [])) == 2)
 append_change(st, {'field': 'x', 'new': 1}, 'scene')
 check('日志上限截断(≤50)', len(st.get('change_log', [])) <= 50)
+
+# ═══════════════ 7. P4 进化层（跨章张力/填充事件/捷径注入） ═══════════════
+print('▶ P4 进化层')
+
+# 7.1 跨章张力介入 mainline_pressure
+check('drift 0 章 → 不介入', mainline_pressure({'tension_drift_chapters': 0}) is None)
+check('drift 1 章 → 不介入', mainline_pressure({'tension_drift_chapters': 1}) is None)
+r = mainline_pressure({'tension_drift_chapters': 2})
+check('drift 2 章 → 介入', r is not None and '主线势力' in r)
+check('drift 3 章 → 介入', mainline_pressure({'tension_drift_chapters': 3}) is not None)
+check('无字段 → 不介入', mainline_pressure({}) is None)
+
+# 7.2 填充事件 side_event_hint
+check('张力 5 未触发 → 无填充', side_event_hint({'tension': 5}) is None)
+r = side_event_hint({'tension': 6})
+check('张力 6 未触发 → 填充事件', r is not None and '新的事件' in r)
+check('张力 6 已触发锚点 → 无填充', side_event_hint({'tension': 6, 'anchor_triggered': {'beat_id': 1}}) is None)
+check('张力 10 → 填充', side_event_hint({'tension': 10}) is not None)
+check('无张力字段 → 无填充', side_event_hint({}) is None)
+
+# 7.3 prompt 注入断言（跨章施压 + 捷径 + 填充事件）
+def mk_p4_state(drift=0, tension=0, shortcut=False):
+    st = {
+        'title': '测试', 'genre': '都市', 'style': '细腻',
+        'state': {'location': '咖啡馆', 'objective': '查明真相'},
+        'outline_chapters': [{'number': 1, 'title': '第一章', 'summary': '咖啡馆',
+                              'volume': '', 'target_words': 3000}],
+        'outline_progress': {'idx': 0},
+        'tension': tension,
+        'tension_drift_chapters': drift,
+        'player_state': {'location': '咖啡馆', 'time': '夜晚'},
+        'casts': {'林晚': {'profile': {}}},
+        'cast_states': {'林晚': {'location': '咖啡馆', 'mood': '平静', 'stance': '合作'}},
+        'facts': [], 'flags': [], 'npc_relations': {}, 'pending_missing_hooks': [],
+        'summary': '', 'scene_num': 2,
+    }
+    if shortcut:
+        st['mainline_shortcut'] = True
+    return st
+
+p = sd._build_scene_prompt(mk_p4_state(drift=2), '')
+check('drift≥2 prompt 注入"主线势力"', '主线势力' in p)
+p = sd._build_scene_prompt(mk_p4_state(drift=1), '')
+check('drift<2 prompt 无施压', '主线势力' not in p)
+p = sd._build_scene_prompt(mk_p4_state(tension=6), '')
+check('张力≥6 prompt 注入填充事件', '新的事件' in p)
+p = sd._build_scene_prompt(mk_p4_state(tension=4), '')
+check('张力<6 prompt 无填充', '新的事件' not in p)
+p = sd._build_scene_prompt(mk_p4_state(shortcut=True), '')
+check('捷径标记 prompt 注入捷径提示', '捷径' in p)
+p = sd._build_scene_prompt(mk_p4_state(shortcut=False), '')
+check('无捷径标记 prompt 无捷径', '捷径' not in p)
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')
