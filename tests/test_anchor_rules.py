@@ -34,6 +34,8 @@ from core.interactive.story_director import (
     sync_mark_record,
     backfill_list,
     gs_merge_sync,
+    cast_presets_build,
+    choose_char_apply,
     PACT_SYSTEM,
     StoryDirector,
 )
@@ -707,6 +709,75 @@ check('已有时序保留', r2['timeline']['chapters']['3'].get('days_elapsed') 
 # 13.7 gs_merge_sync：异常输入不炸
 check('空 gs → 不炸', isinstance(gs_merge_sync(None, 1, '', '', ''), dict) or gs_merge_sync(None, 1, '', '', '') is None)
 check('异常 gs → 不炸', gs_merge_sync({'timeline': 'bad'}, 1, 't', 'b', 's') is not None)
+
+# ═══════════════ 14. 角色选择扮演（v2.5.62：全角色预设 + 可选扮演） ═══════════════
+print('▶ 角色预设 cast_presets_build / choose_char_apply')
+
+# 14.1 cast_presets_build：从 plan 构建全角色标准化档案
+plan14 = {
+    'characters': {
+        'protagonist': {
+            'name': '秦昭', 'age': '24', 'identity': '交易法则的篡改者',
+            'personality': {'surface': '冷静', 'true_self': '执着', 'flaw': '多疑'},
+            'backstory': '被主神空间选中', 'motivation': {'want': '活下去', 'need': '信任'},
+            'arc': '学会信任', 'catchphrase': '一切皆可交易',
+        },
+        'supporting': [
+            {'name': '方瑜', 'identity': '医术天才', 'relation': '挚友', 'personality': '温柔坚定', 'role': '盟友', 'mini_arc': '走出阴影', 'meaning': '盟友'},
+            {'name': '顾衍之', 'identity': '商会会长', 'relation': '对手', 'personality': '城府深', 'role': '对手', 'mini_arc': '立场转变', 'meaning': '对手'},
+        ],
+        'antagonist': [
+            {'name': '周太太', 'motivation': '夺产', 'power': '权势', 'conflict': '遗产之争', 'humanity': '丧子之痛'},
+        ],
+    },
+}
+presets = cast_presets_build(plan14)
+check('全角色进入预设', len(presets) == 4, f"n={len(presets)}")
+names = [p['name'] for p in presets]
+check('主角在预设', '秦昭' in names)
+check('配角在预设', '方瑜' in names and '顾衍之' in names)
+check('反派在预设', '周太太' in names)
+p0 = presets[names.index('秦昭')]
+check('主角身份完整', p0.get('identity') == '交易法则的篡改者' and p0.get('role') == 'protagonist')
+check('主角性格完整(表面+真我)', '冷静' in str(p0.get('personality')) and '执着' in str(p0.get('personality')))
+check('主角 speak_style 兜底(性格)', str(p0.get('speak_style'))[:2] != '' or str(p0.get('personality')) != '')
+p_sup = presets[names.index('方瑜')]
+check('配角 speak_style 兜底', str(p_sup.get('speak_style'))[:2] != '', f"ss={p_sup.get('speak_style')}")
+check('配角 initial_attitude 兜底(关系)', str(p_sup.get('initial_attitude'))[:2] != '', f"ia={p_sup.get('initial_attitude')}")
+check('配角 backstory 兜底', str(p_sup.get('backstory'))[:2] != '', f"bs={p_sup.get('backstory')}")
+
+# 14.2 cast_presets_build：异常/空输入不炸
+check('空 plan → 空列表', cast_presets_build({}) == [] or isinstance(cast_presets_build({}), list))
+check('None → 空列表', cast_presets_build(None) == [] or isinstance(cast_presets_build(None), list))
+
+# 14.3 choose_char_apply：选择配角 → player_char 设置 + 主角 NPC 化 + casts 初始化
+st14 = {
+    'novel_id': 'test', 'scene_num': 0,
+    'casts': {},
+    'player_char': {},  # 初始空（start 前）
+}
+presets_map = {p['name']: p for p in presets}
+ok, msg = choose_char_apply(st14, '方瑜', presets_map)
+check('选择配角 → 成功', ok is True, msg)
+pc = st14.get('player_char') or {}
+check('player_char 设为方瑜', pc.get('name') == '方瑜', str(pc))
+check('player_char 带完整档案', pc.get('identity') == '医术天才' and pc.get('role') == 'supporting')
+check('主角 NPC 化进 casts', '秦昭' in st14.get('casts', {}), str(st14.get('casts', {}).keys()))
+check('被选角色不进 casts（玩家控制）', '方瑜' not in st14.get('casts', {}), str(st14.get('casts', {}).keys()))
+check('casts 带角色档案', 'profile' in st14.get('casts', {}).get('秦昭', {}) or st14.get('casts', {}).get('秦昭', {}).get('role') == 'protagonist')
+
+# 14.4 choose_char_apply：选主角 → 主角不进 casts（原本就扮演主角）
+st14b = {'novel_id': 'test', 'casts': {}, 'player_char': {}}
+ok2, _ = choose_char_apply(st14b, '秦昭', presets_map)
+check('选择主角 → 成功', ok2 is True)
+check('选主角时主角不进 casts', '秦昭' not in st14b.get('casts', {}))
+check('其他角色进 casts', '方瑜' in st14b.get('casts', {}) and '周太太' in st14b.get('casts', {}))
+
+# 14.5 choose_char_apply：非法角色名 → 失败不炸
+st14c = {'novel_id': 'test', 'casts': {}, 'player_char': {}}
+ok3, msg3 = choose_char_apply(st14c, '不存在的人', presets_map)
+check('非法角色 → 拒绝', ok3 is False and msg3 != '', msg3)
+check('非法角色不污染状态', not st14c.get('player_char') and not st14c.get('casts'))
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')

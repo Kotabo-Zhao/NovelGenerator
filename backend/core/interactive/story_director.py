@@ -857,6 +857,112 @@ def gs_merge_sync(gs: dict, chapter_num: int, title: str, body: str, summary: st
         return gs or None
 
 
+# ── v2.5.62: 角色选择扮演——全角色预设 / 选择应用 ──
+
+def cast_presets_build(plan: dict) -> list:
+    """从 plan.json 构建全角色可扮演预设（纯函数，零 LLM）。
+
+    输入 plan.characters {protagonist, supporting[], antagonist[]}，
+    输出标准化档案列表：
+    [{name, identity, personality, backstory, motivation, speak_style,
+      initial_attitude, role}]——speak_style/initial_attitude/backstory 缺失时
+    从既有字段推导兜底（配角档案常缺这三项）。
+    异常/空输入 → []（不炸）。
+    """
+    try:
+        chars = (plan or {}).get("characters") or {}
+        out = []
+
+        def _push(name, identity, personality, backstory, motivation, role, relation=""):
+            name = str(name or "").strip()
+            if not name:
+                return
+            pers = personality if isinstance(personality, str) else (
+                " ".join(str(v) for v in (personality or {}).values()) if isinstance(personality, dict) else "")
+            speak = f"说话风格贴合性格「{pers[:40]}」" if pers else f"说话风格符合{role}身份"
+            att = f"与主角关系：{relation}" if relation else f"以{role}身份与玩家相处"
+            out.append({
+                "name": name[:30],
+                "identity": str(identity or "")[:80],
+                "personality": pers[:200],
+                "backstory": str(backstory or "")[:200] or (f"{name}的过往（{pers[:30]}）" if pers else ""),
+                "motivation": str(motivation or "")[:150] if isinstance(motivation, str) else
+                              " ".join(str(v) for v in (motivation or {}).values())[:150],
+                "speak_style": speak[:120],
+                "initial_attitude": att[:120],
+                "role": role,
+            })
+
+        proto = chars.get("protagonist") or {}
+        if isinstance(proto, dict):
+            _push(proto.get("name"), proto.get("identity"),
+                  proto.get("personality"), proto.get("backstory"),
+                  proto.get("motivation"), "protagonist",
+                  relation="主角")
+        for c in chars.get("supporting") or []:
+            if isinstance(c, dict):
+                _push(c.get("name"), c.get("identity"), c.get("personality"),
+                      c.get("backstory"), c.get("motivation"), "supporting",
+                      relation=c.get("relation") or c.get("meaning") or "")
+        for c in chars.get("antagonist") or []:
+            if isinstance(c, dict):
+                # 反派 schema 无 identity/personality 字段 → 用 conflict/motivation/humanity 兜底
+                _ident = c.get("identity") or c.get("conflict") or f"反派·{c.get('power', '')}"
+                _pers = c.get("personality") or c.get("humanity") or c.get("motivation") or "立场坚定的对手"
+                _push(c.get("name"), _ident, _pers,
+                      c.get("backstory"), c.get("motivation"), "antagonist",
+                      relation=c.get("conflict") or "")
+        return out
+    except Exception:
+        return []
+
+
+def choose_char_apply(state: dict, char_name: str, presets_map: dict) -> tuple:
+    """应用角色选择（纯函数）：玩家扮演 char_name，其余角色 NPC 化进 casts。
+
+    规则：
+    - 角色必须在 presets_map 中，否则返回 (False, 原因)
+    - player_char 设为该角色完整档案（name/identity/personality/backstory/
+      motivation/speak_style/initial_attitude/role）
+    - 该角色不进 casts（玩家控制）；其余角色进 casts 并挂 role（NPC 化）
+    - 返回 (True, '') 或 (False, 原因)
+    """
+    try:
+        name = str(char_name or "").strip()
+        if not name:
+            return False, "未选择角色"
+        p = presets_map.get(name)
+        if not p:
+            return False, f"角色不存在: {name}"
+        st = state or {}
+        st["player_char"] = {
+            "name": p["name"],
+            "identity": p.get("identity", ""),
+            "personality_brief": p.get("personality", "")[:120],
+            "backstory": p.get("backstory", "")[:200],
+            "motivation": p.get("motivation", "")[:150],
+            "speak_style": p.get("speak_style", ""),
+            "initial_attitude": p.get("initial_attitude", ""),
+            "role": p.get("role", ""),
+        }
+        casts = st.setdefault("casts", {})
+        casts.pop(name, None)  # 被选角色由玩家控制，不 NPC 化
+        for other, cp in presets_map.items():
+            if other != name:
+                casts.setdefault(other, {
+                    "present": True,
+                    "profile": {
+                        "identity": cp.get("identity", ""),
+                        "personality": cp.get("personality", "")[:120],
+                        "speak_style": cp.get("speak_style", ""),
+                    },
+                    "role": cp.get("role", ""),
+                })
+        return True, ""
+    except Exception as e:
+        return False, f"角色选择失败: {str(e)[:60]}"
+
+
 # v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
 INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式的场景记录整合为正式的小说章节正文。
 
@@ -1613,14 +1719,23 @@ class StoryDirector:
         if _sb:
             parts.append("## 文风要求（必须严格遵守）:\n" + _sb[:400])
         # v3.5.12: 玩家角色扮演——读者化身是主角，场景以 TA 视角写（代入感核心）
+        # v2.5.62: 角色选择扮演——玩家可扮演任意角色（主角/配角/反派），注入完整档案
         pc = state.get("player_char") or {}
         if pc.get("name"):
-            parts.append(f"## 你扮演的主角（读者化身）: {pc['name']}")
+            parts.append(f"## 你扮演的角色（读者化身）: {pc['name']}")
             if pc.get("identity"):
                 parts.append(f"身份: {pc['identity']}")
             if pc.get("personality_brief"):
                 parts.append(f"性格: {pc['personality_brief'][:120]}")
-            parts.append("本场景完全以这位主角的视角展开：旁白用'你'指代 TA，TA 是场景中心，"
+            if pc.get("speak_style"):
+                parts.append(f"说话风格: {pc['speak_style'][:100]}")
+            if pc.get("initial_attitude"):
+                parts.append(f"初始处境: {pc['initial_attitude'][:100]}")
+            if pc.get("backstory"):
+                parts.append(f"过往: {pc['backstory'][:100]}")
+            if pc.get("motivation"):
+                parts.append(f"动机: {pc['motivation'][:100]}")
+            parts.append("本场景完全以这位角色的视角展开：旁白用'你'指代 TA，TA 是场景中心，"
                          "事件发生在 TA 身上/眼前，严禁旁观者视角")
         # v3.2: 世界观注入（保证剧情贴合本小说设定）
         wb = state.get("worldbuilding_brief") or ""
@@ -2547,6 +2662,19 @@ class StoryDirector:
     # 以及状态校验器（每 3 段由前端触发 scene 时附带 summary 比对，v1 简化）。
 
     # ── 工具 ──
+    def _load_plan(self, novel_id: str) -> dict:
+        """读取 plan.json（v2.5.62 角色预设构建用）——失败返回 {}"""
+        try:
+            import os
+            from config import NOVELS_DIR
+            plan_path = os.path.join(NOVELS_DIR, novel_id, "plan.json")
+            if os.path.exists(plan_path):
+                with open(plan_path, "r", encoding="utf-8") as f:
+                    return json.load(f) or {}
+        except Exception as e:
+            log.warning(f"_load_plan failed: {type(e).__name__}: {str(e)[:80]}")
+        return {}
+
     def build_context_from_bible(self, novel_id: str) -> dict:
         """从 character_bible / plan 构建初始互动上下文
 
