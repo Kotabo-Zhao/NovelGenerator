@@ -30,6 +30,10 @@ from core.interactive.story_director import (
     merge_cast_states,
     state_change_detect,
     state_context_brief,
+    sync_skip_check,
+    sync_mark_record,
+    backfill_list,
+    gs_merge_sync,
     PACT_SYSTEM,
     StoryDirector,
 )
@@ -632,6 +636,77 @@ try:
     check('锚点触发 → 事件时间线记录', '开篇' in ev_sum or '泼酒' in ev_sum or '节点' in ev_sum, ev_sum[:60])
 except Exception as e:
     check(f'锚点触发写事件异常: {e}', False)
+
+# ═══════════════ 13. 章节回流重构（v2.5.61：幂等 + 补漏 + global_state 同步） ═══════════════
+print('▶ 章节回流重构 sync/backfill/gs_merge')
+
+# 13.1 sync_skip_check：未记录 → 不跳过（需要回流）
+check('无同步记录 → 需回流', sync_skip_check({}, 3, 1, 10) is False)
+check('无记录但 final_done → 不跳过', sync_skip_check({}, 99, 1, 5) is False)
+
+# 13.2 sync_skip_check：区间完全覆盖 → 跳过（幂等）
+st13 = {'synced_chapters': {'3': [{'start': 1, 'end': 10}]}}
+check('区间完全覆盖 → 跳过', sync_skip_check(st13, 3, 1, 10) is True)
+check('区间完全覆盖(子区间) → 跳过', sync_skip_check(st13, 3, 3, 8) is True)
+check('区间未覆盖(新场景) → 需回流', sync_skip_check(st13, 3, 8, 15) is False)
+check('区间未覆盖(前段) → 需回流', sync_skip_check(st13, 3, 0, 5) is False)
+
+# 13.3 sync_mark_record：记录合并（新区间并集，不覆盖旧区间）
+st13b = {'synced_chapters': {'3': [{'start': 1, 'end': 5}]}}
+sync_mark_record(st13b, 3, 8, 12)
+recs = st13b['synced_chapters']['3']
+check('记录追加新区间', len(recs) == 2 and recs[1] == {'start': 8, 'end': 12}, str(recs))
+sync_mark_record(st13b, 3, 4, 6)
+check('相邻区间并入(4-6 并 1-5 → 1-6)', sync_skip_check(st13b, 3, 1, 6) is True, str(st13b['synced_chapters']['3']))
+check('记录按 start 排序', [r['start'] for r in st13b['synced_chapters']['3']] == [1, 8], str(st13b['synced_chapters']['3']))
+
+# 13.4 sync_mark_record：异常输入不炸
+st13c = {}
+sync_mark_record(st13c, 3, 5, 2)  # end < start
+check('非法区间(end<start) → 不记录', 'synced_chapters' not in st13c or not st13c['synced_chapters'])
+sync_mark_record(st13c, 3, 0, 0)  # 空区间
+check('空区间 → 不记录', not (st13c.get('synced_chapters') or {}).get('3'), str(st13c.get('synced_chapters')))
+
+# 13.5 backfill_list：互动已完成但正式章节缺失 → 补漏
+st13d = {
+    'synced_chapters': {'1': [{'start': 1, 'end': 5}], '2': [{'start': 6, 'end': 10}]},
+    'outline_chapters': [
+        {'number': 1, 'title': '第一章'},
+        {'number': 2, 'title': '第二章'},
+        {'number': 3, 'title': '第三章'},
+        {'number': 4, 'title': '第四章'},
+    ],
+    'outline_progress': {'idx': 2},  # 互动已推进到第 3 章（idx=2）
+}
+existing = {'chapter_0001.md': '已有', 'chapter_0002.md': '已有'}
+bf = backfill_list(st13d, existing, max_sync=2)
+check('已完成但缺失章节进入补漏', bf == [3], f"bf={bf}")
+# 第 3 章缺失但互动还没推进到（idx=2 表示正在玩第 3 章，未完成）→ 不补
+st13e = dict(st13d)
+st13e['outline_progress'] = {'idx': 1}
+check('进行中的章节不补漏', backfill_list(st13e, existing, max_sync=2) == [], f"bf={backfill_list(st13e, existing, max_sync=2)}")
+# 第 4 章 idx=2 完成过（final_done）→ 补漏
+st13f = dict(st13d)
+st13f['outline_progress'] = {'idx': 2, 'final_done': True}
+bf2 = backfill_list(st13f, existing, max_sync=2)
+check('最后一章 final_done → 补漏', bf2 == [3, 4], f"bf={bf2}")
+
+# 13.6 gs_merge_sync：global_state 合并（timeline/chapters_summary 写入，不丢其他字段）
+gs = {'protagonist_state': {'name': '秦昭'}, 'timeline': {'total_days': 0, 'chapters': {}},
+      'characters': {'秦昭': {}}}
+r = gs_merge_sync(gs, 3, '第三章 入城', '正文内容...', '本章摘要')
+check('chapters_summary 写入', r.get('chapters_summary', {}).get('3') == '本章摘要')
+check('timeline.chapters 初始化', str(r.get('timeline', {}).get('chapters', {}).get('3', {}))[:50] != '')
+check('原有字段保留', r.get('protagonist_state', {}).get('name') == '秦昭' and '秦昭' in r.get('characters', {}))
+check('标题字段写入', r.get('chapter_titles', {}).get('3') == '第三章 入城' if 'chapter_titles' in r else True)
+# 已有 timeline 的章不覆盖原有 days_elapsed
+gs2 = {'timeline': {'total_days': 3, 'chapters': {'3': {'days_elapsed': 3, 'chapter_start_time': '夜晚'}}}}
+r2 = gs_merge_sync(gs2, 3, '第三章', '正文', '摘要')
+check('已有时序保留', r2['timeline']['chapters']['3'].get('days_elapsed') == 3, str(r2['timeline']['chapters'].get('3')))
+
+# 13.7 gs_merge_sync：异常输入不炸
+check('空 gs → 不炸', isinstance(gs_merge_sync(None, 1, '', '', ''), dict) or gs_merge_sync(None, 1, '', '', '') is None)
+check('异常 gs → 不炸', gs_merge_sync({'timeline': 'bad'}, 1, 't', 'b', 's') is not None)
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')

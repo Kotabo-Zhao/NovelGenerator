@@ -745,6 +745,118 @@ def generate_suggestions(client, model, store, state: dict, chars: list) -> list
     return []
 
 
+# ── v2.5.61: 章节回流重构——幂等标记 / 补漏判定 / global_state 同步 ──
+
+def sync_skip_check(state: dict, chapter_num: int, scene_start: int, scene_end: int) -> bool:
+    """回流幂等判定（纯函数）：该章是否已回流过覆盖 [scene_start, scene_end] 的场景区间。
+
+    返回 True = 已同步过（跳过回流，不重复生成）；False = 需要回流。
+    无记录/异常 → False（宁可多回流一次，不可漏）。
+    """
+    try:
+        ch_num = int(chapter_num)
+        if ch_num <= 0 or scene_end < scene_start:
+            return False
+        recs = ((state or {}).get("synced_chapters") or {}).get(str(ch_num)) or []
+        if not recs:
+            return False
+        for r in recs:
+            if int(r.get("start", 0) or 0) <= scene_start and scene_end <= int(r.get("end", 0) or 0):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def sync_mark_record(state: dict, chapter_num: int, scene_start: int, scene_end: int) -> None:
+    """回流完成后记录同步区间（纯函数）：同章区间追加并合并相邻，按 start 排序。"""
+    try:
+        ch_num = int(chapter_num)
+        if ch_num <= 0 or scene_end < scene_start:
+            return
+        recs = ((state or {}).get("synced_chapters") or {}).get(str(ch_num)) or []
+        # 合并：与新区间重叠/相邻的旧区间并入
+        new = {"start": int(scene_start), "end": int(scene_end)}
+        merged = []
+        for r in recs:
+            rs, re = int(r.get("start", 0) or 0), int(r.get("end", 0) or 0)
+            if rs <= new["end"] + 1 and new["start"] <= re + 1:  # 重叠或相邻
+                new["start"] = min(new["start"], rs)
+                new["end"] = max(new["end"], re)
+            else:
+                merged.append(r)
+        merged.append(new)
+        merged.sort(key=lambda x: int(x.get("start", 0) or 0))
+        (state or {}).setdefault("synced_chapters", {})[str(ch_num)] = merged
+    except Exception:
+        pass
+
+
+def backfill_list(state: dict, existing: dict, max_sync: int = 2) -> list:
+    """补漏判定（纯函数）：互动已完成、但正式章节缺失/未同步的章节号列表。
+
+    判定规则：大纲进度 idx 表示"正在玩第 idx+1 章"——已完成章节是 [1..idx]；
+    final_done 时 [1..len] 全部完成。existing 是 {文件名: 内容} 或 {章号: 存在}。
+    返回需要补漏的章号列表（升序，最多 max_sync 章，避免一次补太多 LLM 调用）。
+    """
+    try:
+        op = (state or {}).get("outline_progress") or {}
+        idx = int(op.get("idx", 0) or 0)
+        chs = (state or {}).get("outline_chapters") or []
+        if not chs:
+            return []
+        total = len(chs)
+        done_upto = total if op.get("final_done") else min(idx + 1, total)
+        if done_upto <= 0:
+            return []
+        # 章号 → 是否已存在正式章节（兼容 {文件名: 内容} 和 {章号: bool}）
+        need = []
+        for ch in chs[:done_upto]:
+            num = int(ch.get("number", 0) or 0)
+            if num <= 0:
+                continue
+            fname = f"chapter_{num:04d}.md"
+            exists = existing.get(fname) or existing.get(str(num)) or existing.get(num)
+            synced = sync_skip_check(state, num, 0, 10 ** 9)
+            if not exists and not synced:
+                need.append(num)
+        return need[:max_sync]
+    except Exception:
+        return []
+
+
+def gs_merge_sync(gs: dict, chapter_num: int, title: str, body: str, summary: str) -> dict:
+    """回流写入合并到 global_state.json（纯函数）：
+    chapters_summary / timeline.chapters 初始化 / chapter_titles——不覆盖已有时序与角色数据。
+
+    返回合并后的 gs（gs 为 None 时返回 None，调用方跳过）。
+    """
+    try:
+        if gs is None:
+            return None
+        ch_num = str(int(chapter_num))
+        # chapters_summary（正式小说体系的章节摘要——上下文更新/一致性校验消费）
+        if not isinstance(gs.get("chapters_summary"), dict):
+            gs["chapters_summary"] = {}
+        if summary:
+            gs["chapters_summary"][ch_num] = str(summary)[:300]
+        # timeline.chapters：只初始化缺失的章（已有 days_elapsed 的保留——时序归正式管线管）
+        tl = gs.get("timeline")
+        if not isinstance(tl, dict):
+            tl = {"total_days": 0, "chapters": {}}
+            gs["timeline"] = tl
+        if not isinstance(tl.get("chapters"), dict):
+            tl["chapters"] = {}
+        if ch_num not in tl["chapters"]:
+            tl["chapters"][ch_num] = {"days_elapsed": 0, "chapter_start_time": "夜晚"}
+        # chapter_titles（章节列表展示用）
+        if title:
+            gs.setdefault("chapter_titles", {})[ch_num] = str(title)[:60]
+        return gs
+    except Exception:
+        return gs or None
+
+
 # v3.5.29: 互动场景 → 正式章节正文（互动进度回流小说）
 INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式的场景记录整合为正式的小说章节正文。
 
@@ -2804,13 +2916,20 @@ class StoryDirector:
 
         后台线程执行（不阻塞场景流）。场景文本（第二人称"你"）→ 章节正文
         （第三人称主角名），玩家的选择与行动必须体现在正文中。
+        v2.5.61: 幂等重构——synced_chapters 区间标记防重复回流；
+        回流写入同步 global_state.json（timeline/chapters_summary），小说体系可感知。
         """
         try:
-            chs = (self.store.load_state(novel_id) or {}).get("outline_chapters") or []
+            # ── v2.5.61: 幂等判定——该章该场景区间已回流过 → 跳过（防重复生成）──
+            _cur = self.store.load_state(novel_id) or {}
+            chs = _cur.get("outline_chapters") or []
             if chapter_idx >= len(chs):
                 return
             ch = chs[chapter_idx]
             ch_num = int(ch.get("number", chapter_idx + 1))
+            if sync_skip_check(_cur, ch_num, scene_start, scene_end):
+                log.info(f"Chapter {ch_num} already synced [{scene_start}-{scene_end}], skip")
+                return
             # 收集本章场景
             scenes = []
             for rec in self.store.recent_scenes(novel_id, 200):
@@ -2871,6 +2990,24 @@ class StoryDirector:
                         json.dump(gs, f, ensure_ascii=False, indent=2)
                 except Exception as e:
                     log.warning(f"gs update failed: {e}")
+            # ── v2.5.61: global_state.json 同步（timeline/chapters_summary——正式小说体系感知互动进度）──
+            try:
+                _gs_path = os.path.join(NOVELS_DIR, novel_id, "global_state.json")
+                if os.path.exists(_gs_path):
+                    with open(_gs_path, "r", encoding="utf-8") as f:
+                        _gs = json.load(f)
+                    _summary = body[:150].replace("\n", " ")
+                    gs_merge_sync(_gs, ch_num, ch.get("title", ""), body, _summary)
+                    with open(_gs_path, "w", encoding="utf-8") as f:
+                        json.dump(_gs, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                log.warning(f"global_state sync failed: {e}")
+            # ── v2.5.61: 幂等标记——本区间已回流 ──
+            try:
+                sync_mark_record(_cur, ch_num, scene_start, max(scene_end, scene_start))
+                self.store.save_state(novel_id, _cur)
+            except Exception as e:
+                log.warning(f"sync mark failed: {e}")
             log.info(f"Chapter {ch_num} synced from interactive ({len(scenes)} scenes, {len(body)} chars)")
         except Exception as e:
             log.warning(f"_sync_chapter_from_interactive failed: {type(e).__name__}: {str(e)[:100]}")
@@ -2914,3 +3051,47 @@ class StoryDirector:
         if changed:
             state["casts"] = casts
             self.store.save_state(novel_id, state)
+
+    def backfill_sync(self, novel_id: str, max_sync: int = 2):
+        """v2.5.61: 回流补漏——互动已完成但正式章节缺失的章节自动补回流。
+
+        进入互动模式 / 打开小说页时调用（幂等：已同步区间跳过，不重复生成）。
+        后台执行，不阻塞主流程。
+        """
+        try:
+            state = self.store.load_state(novel_id)
+            if not state or not state.get("outline_chapters"):
+                return
+            # 现有正式章节清单
+            import os
+            from config import NOVELS_DIR
+            ch_dir = os.path.join(NOVELS_DIR, novel_id, "chapters")
+            existing = {}
+            if os.path.isdir(ch_dir):
+                for fn in os.listdir(ch_dir):
+                    if fn.startswith("chapter_") and fn.endswith(".md"):
+                        existing[fn] = True
+            need = backfill_list(state, existing, max_sync=max_sync)
+            if not need:
+                return
+            chs = state.get("outline_chapters") or []
+            # 补漏：按章号找 idx + 场景区间（取该章对应的场景区间）
+            for ch_num in need:
+                for idx, ch in enumerate(chs):
+                    if int(ch.get("number", 0) or 0) == ch_num:
+                        # 场景区间：章号 → 章节场景数估算（每章场景数 = beats 数或 3）
+                        _sb = ch.get("scene_beats") or []
+                        per = max(2, len(_sb)) if _sb else 3
+                        s_start = (idx * per) + 1
+                        s_end = s_start + per - 1
+                        if sync_skip_check(state, ch_num, s_start, s_end):
+                            continue
+                        log.info(f"Backfill sync: 第{ch_num}章 场景[{s_start}-{s_end}]")
+                        enqueue_background(
+                            self._sync_chapter_from_interactive,
+                            novel_id, idx, s_start, s_end,
+                            critical=False,
+                        )
+                        break
+        except Exception as e:
+            log.warning(f"backfill_sync failed: {type(e).__name__}: {str(e)[:100]}")

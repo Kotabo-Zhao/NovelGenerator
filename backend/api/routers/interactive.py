@@ -212,6 +212,13 @@ async def interactive_start(novel_id: str):
     except Exception as e:
         log.warning(f"style_brief failed: {e}")
 
+    # v2.5.61: 回流补漏——互动已完成但正式章节缺失的自动补（后台，幂等）
+    try:
+        import threading
+        threading.Thread(target=_story.backfill_sync, args=(novel_id,), daemon=True).start()
+    except Exception as e:
+        log.warning(f"backfill_sync trigger failed: {e}")
+
     async def event_stream():
         # 挂载出场角色人设（异步后台，不阻塞开场）
         try:
