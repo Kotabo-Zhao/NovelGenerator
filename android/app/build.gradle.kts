@@ -45,6 +45,8 @@ chaquopy {
     defaultConfig {
         version = "3.13"
         pip {
+            // v3.6.3: 禁用 pip cache 防 safe-delete 拦截
+            options("--no-cache-dir", "--no-clean")
             install("fastapi==0.125.0")
             install("uvicorn==0.52.1")
             install("openai==1.39.0")

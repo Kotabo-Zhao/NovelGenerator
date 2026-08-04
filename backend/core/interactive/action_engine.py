@@ -385,10 +385,43 @@ class ActionEngine:
                     "forced": True, "blocked": True,
                 }
             if pre.get("forced"):
+                # v3.6.2: 兜底也先跑零 LLM travel 解析——"我要回家了"在 LLM 故障时
+                # 也必须能移动（用户最初痛点的故障态重现：LLM 挂 → 退化成"只对话不换场景"）
+                try:
+                    from .world_state import resolve_travel_target
+                    _tgt, _ok = resolve_travel_target(user_input, state)
+                except Exception:
+                    _tgt, _ok = "", False
+                if _tgt:
+                    # 图谱外目标（ok=False）→ 仍走确认流，绝不静默降级
+                    return {
+                        "intent": "travel", "type": "travel",
+                        "summary": f"前往{_tgt}", "target": _tgt,
+                        "end_chat": True,
+                        "reason": "LLM 不可用，规则 travel 解析兜底", "forced": True,
+                        "need_confirm": not _ok,
+                    }
                 return {
                     "intent": "act", "type": "other", "summary": user_input[:60],
                     "target": "", "end_chat": False,
                     "reason": "LLM 不可用，规则兜底", "forced": True,
+                }
+            # v3.6.2: 非 forced 候选（句首动词"去北山"等）在 LLM 挂时同样跑 travel 兜底
+            # ——否则"去X"这类高频移动输入在故障态退化成对话（行动识别异常的故障态重现）
+            try:
+                from .world_state import resolve_travel_target, clean_loc
+                _tgt2, _ok2 = resolve_travel_target(user_input, state)
+                _locs2 = state.get("world", {}).get("locations") or {}
+                _need_c2 = bool(_tgt2) and clean_loc(_tgt2) not in _locs2  # 图谱校验
+            except Exception:
+                _tgt2, _ok2, _need_c2 = "", False, False
+            if _tgt2:
+                return {
+                    "intent": "travel", "type": "travel",
+                    "summary": f"前往{_tgt2}", "target": _tgt2,
+                    "end_chat": True,
+                    "reason": "LLM 不可用，非 forced 候选 travel 兜底", "forced": True,
+                    "need_confirm": _need_c2,
                 }
             return None
         intent = str(result.get("intent", ""))[:10] or "talk"
@@ -609,6 +642,9 @@ class ActionEngine:
         char_briefs = []
         for name in chars[:3]:
             prof = (state.get("casts", {}).get(name) or {}).get("profile", {})
+            # v3.6.1: 防御——简略角色档案可能是字符串（一句话人设），一律按 dict 处理
+            if not isinstance(prof, dict):
+                prof = {}
             # v3.5.51: 行动结果场景人设全维度（对齐场景生成——行为准则/风格/绝不）
             _segs = []
             heur = prof.get("decision_heuristics", [])[:1]

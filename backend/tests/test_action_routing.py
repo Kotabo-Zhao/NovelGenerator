@@ -346,5 +346,51 @@ class TestBeatLinkage:
         assert saved["chapter_beats"]["beats"][0]["status"] == "done"
 
 
+# ── v3.6.2: LLM 故障兜底 travel + 自然语言确认 ──
+class TestLLMFailoverTravel:
+    def test_llm_down_home_travel_still_works(self, state, engine):
+        """LLM 全挂时"我要回家了"必须仍走 travel（不退化回对话/act）"""
+        engine._llm = lambda *a, **k: None  # 模拟 LLM 失败
+        action = engine.detect_action("我要回家了", state)
+        assert action is not None
+        assert action["intent"] == "travel"
+        assert action["target"] == "家"
+        assert action.get("need_confirm") in (None, False)  # 图谱有家 → 直接执行
+
+    def test_llm_down_unknown_target_needs_confirm(self, state, engine):
+        """LLM 挂时"去北山"（图谱外）→ travel + need_confirm（不静默降级）"""
+        engine._llm = lambda *a, **k: None
+        action = engine.detect_action("去北山", state)
+        assert action is not None
+        assert action["intent"] == "travel"
+        assert action["target"] == "北山"
+        assert action.get("need_confirm") is True
+
+    def test_llm_down_non_travel_fallback_act(self, state, engine):
+        """LLM 挂时普通强制行动仍走 act 兜底"""
+        engine._llm = lambda *a, **k: None
+        action = engine.detect_action("（推门）", state)
+        assert action is not None and action["intent"] == "act"
+
+
+class TestConfirmRegex:
+    def test_natural_confirm_phrases(self):
+        """自然语言确认必须命中 CONFIRM_RE（"好，去吧"等）"""
+        for s in ["好，去吧", "好,走吧", "行 走吧", "嗯，去", "可以，出发",
+                  "好", "走", "去吧", "ok", "OK", "没问题", "好呀", "走起",
+                  "好，那就去吧", "行，听你的"]:
+            assert ws.CONFIRM_RE.match(s), f"应确认但未命中: {s!r}"
+
+    def test_deny_phrases(self):
+        for s in ["算了", "不去了", "取消", "先不去", "改天吧", "等等",
+                  "开玩笑的", "算了吧", "回头再说"]:
+            assert ws.DENY_RE.match(s), f"应取消但未命中: {s!r}"
+
+    def test_confirm_not_match_regular_input(self):
+        """普通输入不得误判为确认"""
+        for s in ["今天天气不错", "你叫什么名字", "我们去码头吧", "喝茶"]:
+            assert not ws.CONFIRM_RE.match(s), f"误判确认: {s!r}"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

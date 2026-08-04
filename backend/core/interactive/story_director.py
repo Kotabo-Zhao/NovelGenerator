@@ -2168,6 +2168,8 @@ class StoryDirector:
                     parts.append(f"- {name}（主角，由读者扮演——不要替 TA 写台词，TA 的言行由读者决定）")
                     continue
                 prof = c.get("profile", {})
+                if not isinstance(prof, dict):  # v3.6.1: 字符串档案防御
+                    prof = {}
                 # v3.5.50: 全维度消费角色蒸馏——行为规则（决策启发式）是人设
                 # 的核心，之前只注入台词碎片（dna+anti 各2条）导致行为脱人设
                 segs = []

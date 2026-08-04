@@ -10,6 +10,8 @@ services:
         sync: false
       - key: DEEPSEEK_MODEL
         value: deepseek-v4-flash
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
       - key: HOST
         value: 0.0.0.0
       - key: NOVELS_DIR

@@ -31,12 +31,21 @@ FACT_BROKEN = "broken"
 
 
 def _atomic_write_json(path: str, data: Any):
-    """原子写 JSON（tmp + rename）"""
+    """原子写 JSON（tmp + rename），Windows 下文件监控器可能短暂持锁 → 重试"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + f".tmp{os.getpid()}"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    # v3.6.3: Windows 重试——uvicorn --reload 的 WatchFiles 可能瞬间持有目标文件句柄
+    for attempt in range(5):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt < 4:
+                time.sleep(0.02 * (attempt + 1))  # 20ms → 40ms → 60ms → 80ms
+            else:
+                raise  # 5 次都失败 → 不再吞异常
 
 
 def _read_json(path: str, default=None):
