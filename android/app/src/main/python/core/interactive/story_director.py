@@ -3267,18 +3267,11 @@ class StoryDirector:
             state["tension_drift_chapters"] = int(state.get("tension_drift_chapters", 0) or 0) + 1
         # v3.5.30: 最后一章也回流（原条件 idx < len-1 导致最后一章永远不生成章节正文）
         if _do_cut:
-            # ── 本章完成：把 [scene_start, scene_num-1] 的互动剧情沉淀为章节正文 ──
+            # ── v3.6.6: 本章完成——不再自动回流章节正文（互动与正式写作分离）。
+            # 互动剧情保留在互动存档（recent_scenes），需要成书时由
+            # 「导出为小说」功能手动触发（写独立目录，不碰正式 chapters/）。
             done_idx = idx
             scene_start = int(op.get("scene_start", 1) or 1)
-            try:
-                # v3.5.47: 章节回流走关键任务队列（串行执行 + 主流程让路，不丢）
-                enqueue_background(
-                    self._sync_chapter_from_interactive,
-                    novel_id, done_idx, scene_start, state.get("scene_num", 0) or 0,
-                    critical=True,
-                )
-            except Exception as e:
-                log.warning(f"chapter sync enqueue failed: {e}")
             if idx < len(chs) - 1:
                 idx += 1
                 cnt = 0
@@ -3360,7 +3353,7 @@ class StoryDirector:
                 return
             # v3.5.29: LLM 输出可能自带章节标题（## 第X章），剥掉避免与文件头重复
             import re as _re
-            body = _re.sub(r"^#{1,3}\s*第?\s*\d+\s*章.*?\n+", "", body, count=1)
+            body = _re.sub(r"^#{1,3}\s*第?\s*[一二三四五六七八九十百千零两\d]+\s*章.*?\n+", "", body, count=1)
             # 写入 chapters/
             import os
             from config import NOVELS_DIR
@@ -3418,6 +3411,100 @@ class StoryDirector:
                 log.info("Memories compressed after chapter sync")
         except Exception as e:
             log.warning(f"memory compress failed: {type(e).__name__}: {str(e)[:80]}")
+
+    # ── v3.6.6: 互动模式 → 导出为小说（互动与正式写作分离后的唯一成书通道）──
+    def export_novel_from_interactive(self, novel_id: str, progress_cb=None) -> dict:
+        """把互动模式的全部剧情导出为独立小说（手动触发，写独立目录）。
+
+        设计原则（v3.6.6）：
+        - 互动与正式写作彻底分离：导出文件写入 novels/<id>/interactive_export/export_<ts>/，
+          不碰正式 chapters/、state.json、global_state.json（互动是平行世界，导出是快照）
+        - 分章：每 2 个互动场景为一章（互动单场景 300-600 字 → 每章约 1200 字）；
+          章节标题优先复用大纲章节标题，场景不够则只导出有内容的章
+        - 视角转换：第二人称"你" → 第三人称主角名（复用 INTERACTIVE_TO_CHAPTER_SYSTEM）
+
+        Args:
+            novel_id: 小说 id
+            progress_cb: 可选回调 progress_cb(idx, total, ch_title, chars) 供 SSE 推进度
+        Returns:
+            {"chapters": int, "total_chars": int, "dir_path": str, "novel_md": str}
+        """
+        import os as _os
+        from config import NOVELS_DIR
+        st = self.store.load_state(novel_id) or {}
+        scenes = self.store.recent_scenes(novel_id, 500) or []
+        scenes = [s for s in scenes if s.get("scene_text")]
+        scenes.sort(key=lambda s: int(s.get("scene_num", 0) or 0))
+        if not scenes:
+            return {"chapters": 0, "total_chars": 0, "dir_path": "", "novel_md": ""}
+        # 玩家行动（对话记录里的用户输入）
+        player_acts = []
+        try:
+            for h in self.store.recent_chats(novel_id, 500) or []:
+                if h.get("role") == "user" and h.get("content"):
+                    player_acts.append(str(h.get("content"))[:100])
+        except Exception:
+            pass
+        acts_brief = "\n".join(f"- {a}" for a in player_acts[-12:]) if player_acts else ""
+        # 大纲章节（标题复用）
+        chs = st.get("outline_chapters") or []
+        # 分章：每 2 场景一组
+        per_chapter = 2
+        groups = [scenes[i:i + per_chapter] for i in range(0, len(scenes), per_chapter)]
+        # 导出目录
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        out_dir = _os.path.join(NOVELS_DIR, novel_id, "interactive_export", f"export_{ts}")
+        _os.makedirs(out_dir, exist_ok=True)
+        # 每章正文
+        bodies = []
+        total_chars = 0
+        for gi, group in enumerate(groups):
+            ch_title = ""
+            if gi < len(chs):
+                ch_title = str(chs[gi].get("title", "") or "")
+            sc_text = "\n\n".join(
+                f"[场景{int(s.get('scene_num', 0) or 0)}]\n{s.get('scene_text', '')}"
+                for s in group)
+            user = (
+                f"## 本章定位\n第{gi + 1}章" + (f"《{ch_title}》" if ch_title else "")
+                + "\n\n## 互动场景记录（玩家真实经历，含其选择与行动）\n"
+                + sc_text[:6000]
+                + (f"\n\n## 玩家在互动中的行动/对话（必须体现在正文）\n{acts_brief}"
+                   if acts_brief else "")
+                + f"\n\n请把以上内容整理成正式章节正文（约 1200 字）。"
+            )
+            raw = (self._llm(INTERACTIVE_TO_CHAPTER_SYSTEM, user,
+                             temperature=0.7, max_tokens=3000) or "").strip()
+            if len(raw) < 150:
+                continue
+            import re as _re
+            raw = _re.sub(r"^#{1,3}\s*第?\s*[一二三四五六七八九十百千零两\d]+\s*章.*?\n+", "", raw, count=1)
+            fname = f"第{gi + 1:03d}章.md"
+            with open(_os.path.join(out_dir, fname), "w", encoding="utf-8") as f:
+                f.write(f"# 第{gi + 1}章 {ch_title}\n\n{raw}\n")
+            bodies.append(f"# 第{gi + 1}章 {ch_title}\n\n{raw}\n")
+            total_chars += len(raw)
+            if progress_cb:
+                try:
+                    progress_cb(gi + 1, len(groups), ch_title or f"第{gi + 1}章", len(raw))
+                except Exception:
+                    pass
+        novel_md = "\n\n".join(bodies)
+        with open(_os.path.join(out_dir, "全书.md"), "w", encoding="utf-8") as f:
+            f.write(novel_md)
+        info = {
+            "exported_at": ts, "chapters": len(bodies), "total_chars": total_chars,
+            "scene_count": len(scenes), "dir": out_dir,
+            "chapters_list": [{"num": i + 1,
+                               "title": (str(chs[i].get("title", "")) if i < len(chs) else ""),
+                               "chars": len(b)}
+                              for i, b in enumerate(bodies)],
+        }
+        with open(_os.path.join(out_dir, "export_info.json"), "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=2)
+        log.info(f"Interactive exported: {len(bodies)} chapters, {total_chars} chars → {out_dir}")
+        return {"chapters": len(bodies), "total_chars": total_chars,
+                "dir_path": out_dir, "novel_md": novel_md, "info": info}
 
     def attach_cast_profiles(self, novel_id: str, char_names: list):
         """为出场角色挂载人设卡（有蒸馏数据则用，无则留空由对话引擎即时蒸馏兜底）"""

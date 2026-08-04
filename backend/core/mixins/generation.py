@@ -536,6 +536,10 @@ class GenerationMixin:
                     "total_beats": len(beats),
                     "function": beat_result["beat_function"],
                 }
+                # v3.6.6: 逐 beat 流式输出正文——beat 完成即推送给前端（打字机效果），
+                # 装配/规范化后由 done 事件触发前端拉取保存版替换，二者不冲突
+                if beat_result.get("text"):
+                    yield {"type": "text", "content": beat_result["text"] + "\n\n"}
             
             # ── Phase 3: 装配章节 ──
             yield {"type": "status", "message": "装配节拍..."}

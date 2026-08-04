@@ -293,13 +293,9 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
     except Exception as e:
         log.warning(f"style_brief failed: {e}")
 
-    # v2.5.61: 回流补漏——互动已完成但正式章节缺失的自动补（后台，幂等）
-    try:
-        import threading
-        threading.Thread(target=_story.backfill_sync, args=(novel_id,), daemon=True).start()
-    except Exception as e:
-        log.warning(f"backfill_sync trigger failed: {e}")
-
+    # v3.6.6: 互动与正式写作彻底分离——不再自动回流章节（互动剧情
+    # 只留在互动存档；如需成书，用「导出为小说」功能手动导出到独立目录）
+    
     async def event_stream():
         # 挂载出场角色人设（异步后台，不阻塞开场）
         try:
@@ -593,26 +589,9 @@ async def interactive_rollback(novel_id: str):
 async def interactive_restart(novel_id: str):
     """重置互动存档（旧存档备份到 backup-<ts>/）
 
-    v3.5.30: 重开前后台把当前章的互动剧情沉淀为章节正文（玩到一半不白玩）
+    v3.6.6: 不再自动回流章节——互动与正式写作分离；想保留剧情用「导出为小说」
     """
     _validate_novel_id(novel_id)
-    try:
-        _st = _store.load_state(novel_id)
-        if _st:
-            _chs = _st.get("outline_chapters") or []
-            _op = _st.get("outline_progress") or {}
-            _idx = int(_op.get("idx", 0))
-            if _chs and not _op.get("final_done") and _idx < len(_chs):
-                import threading
-                threading.Thread(
-                    target=_story._sync_chapter_from_interactive,
-                    args=(novel_id, _idx,
-                          int(_op.get("scene_start", 1) or 1),
-                          int(_st.get("scene_num", 0) or 0)),
-                    daemon=True,
-                ).start()
-    except Exception as e:
-        log.warning(f"restart pre-sync failed: {e}")
     ok = _store.restart(novel_id)
     if not ok:
         raise HTTPException(500, "重开失败（备份失败）")
@@ -730,4 +709,65 @@ async def interactive_act(novel_id: str, req: ActRequest):
             yield data
 
     return StreamingResponse(act_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── v3.6.6: 互动模式 → 导出为小说（手动成书，写独立目录，不碰正式章节）──
+@router.post("/api/novels/{novel_id}/interactive/export")
+async def interactive_export(novel_id: str):
+    """把互动模式的全部剧情导出为独立小说（SSE 流式进度）。
+
+    导出到 novels/<id>/interactive_export/export_<ts>/（第XXX章.md + 全书.md +
+    export_info.json），与正式写作模式完全隔离——不再自动回流章节。
+    """
+    _validate_novel_id(novel_id)
+
+    def _progress(idx, total, title, chars):
+        nonlocal _seen
+        _seen = True
+        progress_queue.put_nowait({"type": "export_progress", "chapter": idx,
+                                   "total": total, "title": title, "chars": chars})
+
+    import queue
+    progress_queue = queue.Queue()
+    _seen = False
+
+    def _worker():
+        try:
+            result = _story.export_novel_from_interactive(novel_id, _progress)
+            progress_queue.put_nowait({"type": "export_result", "result": result})
+        except Exception as e:
+            progress_queue.put_nowait({"type": "export_error",
+                                       "message": f"导出失败: {type(e).__name__}: {str(e)[:120]}"})
+
+    import threading
+    threading.Thread(target=_worker, daemon=True).start()
+
+    async def event_stream():
+        try:
+            yield f"data: {json.dumps({'type': 'export_start', 'message': '开始导出互动剧情…'}, ensure_ascii=False)}\n\n"
+            done = False
+            while not done:
+                try:
+                    evt = progress_queue.get(timeout=30)
+                except queue.Empty:
+                    yield f"data: {json.dumps({'type': 'ping'}, ensure_ascii=False)}\n\n"
+                    continue
+                if evt.get("type") == "export_result":
+                    done = True
+                    r = evt.get("result") or {}
+                    if r.get("chapters", 0) == 0:
+                        yield f"data: {json.dumps({'type': 'export_error', 'message': '没有可导出的互动场景（先去玩几轮互动吧）'}, ensure_ascii=False)}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'type': 'export_done', 'chapters': r.get('chapters'), 'total_chars': r.get('total_chars'), 'dir_path': r.get('dir_path'), 'novel_md': (r.get('novel_md') or '')[:200000], 'info': r.get('info')}, ensure_ascii=False)}\n\n"
+                elif evt.get("type") == "export_error":
+                    done = True
+                    yield f"data: {json.dumps({'type': 'error', 'message': evt.get('message', '导出失败')}, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            log.error(f"export stream error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': f'导出流程异常: {e}'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
