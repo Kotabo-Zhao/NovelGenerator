@@ -250,5 +250,101 @@ class TestTravelRouteBrief:
         assert "街市" in conn and "南门" in conn             # 图谱 connected 可用
 
 
+# ── v3.6 P5: 行动 ↔ 章节 beat 联动 ──
+class TestBeatLinkage:
+    def _state_with_beat(self):
+        st = new_state("t", "《测试》", "都市", "写实", "主角")
+        st["known_locations"] = ["茶楼", "街市"]
+        st["state"]["location"] = "茶楼"
+        st["player_state"] = {"location": "茶楼", "time": "", "with": ["林晚晚"],
+                              "holding": [], "situation": ""}
+        st["cast_states"] = {"林晚晚": {"present": True, "location": "茶楼"}}
+        ws.ensure_world(st)
+        st["chapter_beats"] = {"chapter_idx": 0, "beats": [
+            {"id": 1, "desc": "去码头接头，取回信物", "status": "current",
+             "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3},
+             "entry_hook": "码头有人等你"},
+            {"id": 2, "desc": "护送林晚晚出城", "status": "pending",
+             "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3},
+             "entry_hook": ""},
+        ]}
+        return st
+
+    def test_travel_target_matches_beat(self):
+        from core.interactive.story_director import beat_action_match
+        st = self._state_with_beat()
+        m = beat_action_match(st, "去码头", "码头")
+        assert m is not None and m["beat_id"] == 1
+
+    def test_summary_keyword_matches_beat(self):
+        from core.interactive.story_director import beat_action_match
+        st = self._state_with_beat()
+        m = beat_action_match(st, "答应接头取信物", "")
+        assert m is not None
+
+    def test_unrelated_action_no_match(self):
+        from core.interactive.story_director import beat_action_match
+        st = self._state_with_beat()
+        assert beat_action_match(st, "买了个包子", "") is None
+
+    def test_advance_on_hit(self):
+        from core.interactive.story_director import beat_advance_by_action
+        st = self._state_with_beat()
+        changes = beat_advance_by_action(st, {"summary": "去码头接头", "target": "码头"})
+        assert any("章节推进" in c for c in changes)
+        beats = st["chapter_beats"]["beats"]
+        assert beats[0]["status"] == "done"
+        assert beats[1]["status"] == "current"          # 推进到下一节点
+        assert st.get("drift_count") == 0
+
+    def test_drift_count_after_three(self):
+        from core.interactive.story_director import beat_advance_by_action
+        st = self._state_with_beat()
+        for _ in range(2):
+            beat_advance_by_action(st, {"summary": "买包子", "target": ""})
+        assert st.get("drift_count") == 2
+        assert not st.get("beat_drift")
+        beat_advance_by_action(st, {"summary": "继续逛街", "target": ""})
+        assert st["drift_count"] == 3
+        assert st.get("beat_drift") is True             # 3 次偏离 → 收束标记
+
+    def test_drift_cleared_on_hit(self):
+        from core.interactive.story_director import beat_advance_by_action
+        st = self._state_with_beat()
+        beat_advance_by_action(st, {"summary": "买包子", "target": ""})
+        beat_advance_by_action(st, {"summary": "去码头接头", "target": "码头"})
+        assert st.get("drift_count") == 0
+        assert not st.get("beat_drift")
+
+    def test_drift_hint_text(self):
+        from core.interactive.story_director import beat_drift_hint
+        st = self._state_with_beat()
+        assert beat_drift_hint(st) == ""                # 未偏离无提示
+        st["beat_drift"] = True
+        hint = beat_drift_hint(st)
+        assert "主线" in hint and "码头" in hint        # 含当前节点信息
+
+    def test_apply_action_advances_beat(self, tmp_path):
+        """集成：apply_action 命中 beat → 章节节点推进落盘"""
+        store = InteractStore(str(tmp_path))
+        st = new_state("t", "《测试》", "都市", "写实", "主角")
+        st["state"]["location"] = "茶楼"
+        st["player_state"] = {"location": "茶楼", "with": [], "holding": [], "situation": ""}
+        ws.ensure_world(st)
+        st["world"]["locations"]["码头"] = {"desc": "货运码头", "connected": ["茶楼"],
+                                            "chars": [], "items": []}
+        st["chapter_beats"] = {"chapter_idx": 0, "beats": [
+            {"id": 1, "desc": "去码头接头取信物", "status": "current",
+             "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3}, "entry_hook": ""}]}
+        store.save_state("t", st)
+        e = ActionEngine(None, "mock", store)
+        applied = e.apply_action("t", {"intent": "travel", "type": "travel",
+                                       "summary": "去码头接头", "target": "码头",
+                                       "end_chat": True, "confirmed": True})
+        assert any("章节推进" in c for c in applied["changed"])
+        saved = store.load_state("t")
+        assert saved["chapter_beats"]["beats"][0]["status"] == "done"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

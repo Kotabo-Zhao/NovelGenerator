@@ -467,6 +467,12 @@ class ActionEngine:
                 changes.extend(fulfill_promises_at(state, target))
             except Exception as e:
                 log.warning(f"fulfill promises failed: {e}")
+            # v3.6 P5: 行动 ↔ 章节 beat 联动（命中推进主线节点）
+            try:
+                from .story_director import beat_advance_by_action
+                changes.extend(beat_advance_by_action(state, action))
+            except Exception as e:
+                log.warning(f"beat advance failed: {e}")
             state["last_action"] = {
                 "type": "travel", "summary": action.get("summary", f"前往{target}"),
                 "target": target, "ts": time.strftime("%H:%M:%S"),
@@ -571,6 +577,14 @@ class ActionEngine:
                     add_memory(state, name, "event",
                                f"读者去了{loc or '新的地方'}",
                                source="action")
+        # v3.6 P5: 行动 ↔ 章节 beat 联动（命中推进主线节点/未命中累积偏离）
+        try:
+            from .story_director import beat_advance_by_action
+            _beat_changes = beat_advance_by_action(state, action)
+            if _beat_changes:
+                changed = list(changed) + _beat_changes
+        except Exception as e:
+            log.warning(f"beat advance failed: {e}")
         self.store.save_state(novel_id, state)
         return {"changed": changed, "state": state}
 

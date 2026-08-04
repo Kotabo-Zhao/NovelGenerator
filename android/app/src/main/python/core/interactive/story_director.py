@@ -140,6 +140,105 @@ def _cond_match(field, op, value, state: dict, s: dict, tension: int, target=Non
         return False
 
 
+# ── v3.6 P5: 行动 ↔ 章节 beat 联动（玩家行动直接推进主线节点，规则零 LLM）──
+_BEAT_STOP_CHARS = set("的了在要去来回我们你们他们你我这那是和与及就都也很把被从往向到于为以之其这那").union(
+    set("，。！？、；：""''（）《》…—"))
+
+
+def _beat_key_chars(text: str) -> set:
+    return {c for c in str(text or "") if c not in _BEAT_STOP_CHARS and '\u4e00' <= c <= '\u9fff'}
+
+
+def beat_action_match(state: dict, summary: str, target: str = "") -> Optional[dict]:
+    """行动是否推进当前 beat（规则匹配，零 LLM）。
+
+    判据（命中任一）：
+    1. travel 目标地点名出现在 beat 文本（"去码头" ↔ beat"码头接头"）
+    2. 行动摘要与 beat 文本有 >=2 个公共非停用字（"答应" ↔ "答应林晚晚护送"）
+    返回 {"beat_id", "desc"} 或 None。
+    """
+    cb = state.get("chapter_beats") or {}
+    beats = cb.get("beats") or []
+    cur = next((b for b in beats if b.get("status") == "current"), None)
+    if not cur:
+        return None
+    text = f"{cur.get('desc', '')} {cur.get('entry_hook', '')}"
+    if target and str(target).strip() and str(target) in text:
+        return {"beat_id": cur.get("id"), "desc": str(cur.get("desc", ""))[:60]}
+    common = _beat_key_chars(summary) & _beat_key_chars(text)
+    if len(common) >= 2:
+        return {"beat_id": cur.get("id"), "desc": str(cur.get("desc", ""))[:60]}
+    return None
+
+
+def beat_advance_by_action(state: dict, action: dict) -> List[str]:
+    """行动后调用：命中当前 beat → 推进（含 state_output 应用）；未命中 → 偏离计数。
+
+    偏离计数 >= DRIFT_LIMIT → 标记 beat_drift（场景生成注入主线牵引）。
+    返回变化描述列表。
+    """
+    changes: List[str] = []
+    try:
+        summary = str(action.get("summary", ""))
+        target = str(action.get("target", ""))
+        m = beat_action_match(state, summary, target)
+        if not m:
+            state["drift_count"] = int(state.get("drift_count", 0) or 0) + 1
+            if int(state["drift_count"]) >= 3:
+                state["beat_drift"] = True
+            return changes
+        # 命中 → 推进当前 beat
+        cb = state.get("chapter_beats") or {}
+        beats = cb.get("beats") or []
+        cur_i = next((i for i, b in enumerate(beats) if b.get("status") == "current"), None)
+        if cur_i is None:
+            return changes
+        beats[cur_i]["status"] = "done"
+        # state_output 应用（与锚点推进一致）
+        _so = (beats[cur_i].get("trigger") or {}).get("state_output") or {}
+        _s = state.setdefault("state", {})
+        for _f in (_so.get("flags") or []):
+            _fl = _s.setdefault("flags", [])
+            if str(_f) not in _fl and len(_fl) < 20:
+                _fl.append(str(_f))
+                append_change(state, {"field": "flag", "new": str(_f)}, "action:beat")
+        for _k, _v in (_so.get("relations") or {}).items():
+            _rel = _s.setdefault("relations", {})
+            _rel[str(_k)[:30]] = max(0, min(100, int(_v))) if isinstance(_v, (int, float)) else str(_v)[:60]
+            append_change(state, {"field": f"relation.{_k}", "new": str(_v)[:60]}, "action:beat")
+        if cur_i + 1 < len(beats):
+            beats[cur_i + 1]["status"] = "current"
+        try:
+            from .char_memory import add_event
+            add_event(state, f"章节节点完成（行动推进）: {str(beats[cur_i].get('desc', ''))[:50]}", "beat")
+        except Exception:
+            pass
+        # 偏离清零 + 推进提示
+        state["drift_count"] = 0
+        state.pop("beat_drift", None)
+        changes.append(f"章节推进: {str(beats[cur_i].get('desc', ''))[:40]}")
+    except Exception as e:
+        log.warning(f"beat_advance_by_action failed: {e}")
+    return changes
+
+
+def beat_drift_hint(state: dict) -> str:
+    """偏离收束提示（注入场景 prompt：玩家连续偏离主线时的自然拉回）。"""
+    if state.get("beat_drift"):
+        cb = state.get("chapter_beats") or {}
+        beats = cb.get("beats") or []
+        cur = next((b for b in beats if b.get("status") == "current"), None)
+        obj = str(state.get("state", {}).get("objective", ""))[:120]
+        lines = ["⚠ 你已连续几轮游离于主线之外。本场景需自然牵引："]
+        if cur and cur.get("desc"):
+            lines.append(f"  本章节点: {str(cur.get('desc', ''))[:60]}")
+        if obj:
+            lines.append(f"  主线目标: {obj}")
+        lines.append("  （让事件/角色主动找上门，或玩家偶然发现线索——不要硬掰，保持自然）")
+        return "\n".join(lines)
+    return ""
+
+
 def anchor_trigger_check(state: dict) -> Optional[dict]:
     """锚点条件检查纯函数（v1.1 P2，零 LLM）。
 
@@ -1910,6 +2009,13 @@ class StoryDirector:
         _at = state.get("anchor_triggered")
         if _at and _at.get("hook"):
             parts.append(f"当前剧情事件（本场景以此开场，自然引入，不得无视）: {_at['hook']}")
+        # v3.6 P5: 偏离主线收束提示（连续行动游离主线 → 自然牵引）
+        try:
+            _dh = beat_drift_hint(state)
+            if _dh:
+                parts.append(f"## 主线牵引:\n{_dh}")
+        except Exception:
+            pass
         # v1.1 P4: 跨章张力介入（保险③）——连续 2 章偏离，主线势力施压
         try:
             _mp = mainline_pressure(state)
