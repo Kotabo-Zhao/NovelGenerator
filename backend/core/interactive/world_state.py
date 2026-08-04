@@ -372,6 +372,80 @@ def world_brief(state: dict, max_chars: int = 400) -> str:
     return "\n".join(lines)[:max_chars]
 
 
+# ── v3.6 P3: 对话承诺 → 行动兑现（地点锚定）──
+# 约定地点模式（"在码头见/码头等你/去茶楼碰头"——图谱节点名 + 位置介词）
+_LOCATION_PATTERNS = [
+    re.compile(r"(?:在|到|去|回|来|上|于)\s*([\u4e00-\u9fff]{1,8})\s*(?:见|等|碰头|会合|汇合|找你|见面|赴宴|吃饭|喝茶|等)", re.S),
+    re.compile(r"([\u4e00-\u9fff]{1,8})\s*(?:见|碰头|会合|汇合|等我|找我)", re.S),
+]
+
+
+def extract_location_from_text(text: str, state: dict) -> str:
+    """从约定文本中规则提取地点（图谱节点匹配，零 LLM）。
+    优先"在X见"类模式；其次扫描图谱节点名在文本中的出现。"""
+    if not text:
+        return ""
+    w = state.get("world") or {}
+    locations = w.get("locations") or {}
+    names = sorted(locations.keys(), key=len, reverse=True)  # 长名优先
+    for pat in _LOCATION_PATTERNS:
+        m = pat.search(text)
+        if m:
+            cand = m.group(1).strip()
+            for n in names:
+                if cand == n or cand in n or n in cand:
+                    return n
+            return cand  # 图谱无此节点也返回候选（后续到达时图谱可能已注册）
+    for n in names:
+        if n and n in text:
+            return n
+    return ""
+
+
+def fulfill_promises_at(state: dict, location: str) -> List[str]:
+    """玩家到达某地点 → 兑现该地点的待兑现约定（规则，零 LLM）。
+    返回变化描述列表。"""
+    location = clean_loc(location)
+    if not location:
+        return []
+    ledger = state.get("pending_promises") or []
+    changes = []
+    for p in ledger:
+        if p.get("status") != "pending":
+            continue
+        ploc = clean_loc(p.get("location"))
+        if ploc and ploc == location:
+            p["status"] = "fulfilled"
+            changes.append(
+                f"约定兑现: 与{p.get('who', '?')}的约定（{p.get('what', '')}）在{location}履行")
+            try:
+                from .char_memory import add_event
+                add_event(state, f"约定兑现: 与{p.get('who', '?')}{p.get('what', '')}"
+                                 f"（{p.get('when_raw', '')}）在{location}", "promise")
+            except Exception:
+                pass
+    if changes:
+        state["pending_promises"] = ledger
+    return changes
+
+
+def pending_promises_brief(state: dict, location: str = "", max_chars: int = 200) -> str:
+    """待兑现约定简报（注入场景 prompt：地点匹配优先）。"""
+    ledger = state.get("pending_promises") or []
+    loc = clean_loc(location)
+    pending = [p for p in ledger if p.get("status") == "pending"]
+    if not pending:
+        return ""
+    lines = []
+    for p in pending[:3]:
+        ploc = clean_loc(p.get("location"))
+        if loc and ploc and ploc == loc:
+            lines.append(f"● {p.get('who', '?')}约你{p.get('when_raw', '')}在此地{p.get('what', '')}（待赴约）")
+        elif not ploc:
+            lines.append(f"● 你与{p.get('who', '?')}有约：{p.get('what', '')}（{p.get('when_raw', '') or '未定时间'}，待赴约）")
+    return "\n".join(lines)[:max_chars]
+
+
 # ── LLM 状态提取结果校验（防幻觉：候选 → 规则裁决）──
 def validate_llm_state(state: dict, extracted_ps: dict) -> dict:
     """场景/对话后的 LLM 状态提取结果与三支柱合并：

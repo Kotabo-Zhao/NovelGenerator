@@ -458,10 +458,15 @@ class ActionEngine:
             return {}
         # v3.6: travel 意图 → 确定性移动执行器（目标已过图谱/确认流校验）
         if action.get("intent") == "travel":
-            from .world_state import execute_travel, ensure_world
+            from .world_state import execute_travel, ensure_world, fulfill_promises_at
             ensure_world(state)
             target = action.get("target", "")
             changes, ok = execute_travel(state, target, register_new=True)
+            # v3.6 P3: 到达地点 → 兑现该地点的待兑现约定（对话承诺 → 行动兑现闭环）
+            try:
+                changes.extend(fulfill_promises_at(state, target))
+            except Exception as e:
+                log.warning(f"fulfill promises failed: {e}")
             state["last_action"] = {
                 "type": "travel", "summary": action.get("summary", f"前往{target}"),
                 "target": target, "ts": time.strftime("%H:%M:%S"),
@@ -617,10 +622,12 @@ class ActionEngine:
             _ctx_brief = ""
         # v3.6: travel 行动 → 注入新地点环境信息（到达场景环境描写的确定性依据）
         _travel_brief = ""
+        _promise_brief = ""
         if action.get("intent") == "travel":
             try:
-                from .world_state import world_brief
+                from .world_state import world_brief, pending_promises_brief
                 _travel_brief = world_brief(state)
+                _promise_brief = pending_promises_brief(state, action.get("target", ""))
             except Exception:
                 _travel_brief = ""
         user = (
@@ -632,6 +639,8 @@ class ActionEngine:
             + f"\n"
             f"状态变化: {'；'.join(changed) or '（无）'}\n"
             + (f"世界状态快照（新地点）:\n{_travel_brief}\n" if _travel_brief else "")
+            + (f"待兑现约定（到达地点触发——场景应体现赴约/错过/等待）:\n{_promise_brief}\n"
+               if _promise_brief else "")
             + (f"当前世界状态:\n{_ctx_brief}\n" if _ctx_brief else "")
             + f"在场角色:\n{chr(10).join(char_briefs) or '（无）'}\n"
             f"生成这段行动的结果场景（1-3 句）。"

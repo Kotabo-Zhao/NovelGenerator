@@ -462,10 +462,18 @@ def promise_ledger_update(state: dict, new_promises: list, action_summary: str =
                         break
                 if dup:
                     continue
+                # v3.6 P3: 地点锚定——从约定内容规则提取地点（图谱匹配，零 LLM）
+                _loc = ""
+                try:
+                    from .world_state import extract_location_from_text
+                    _loc = extract_location_from_text(content, state)
+                except Exception:
+                    _loc = ""
                 ledger.append({
                     "who": who[:30],
                     "what": content[:60],
                     "when_raw": anchor[:20],
+                    "location": _loc[:30],   # v3.6 P3: 约定地点（玩家到达时自动兑现）
                     "scene_num": int(state.get("scene_num", 0) or 0),
                     # v2.5.59: 推进时钟——约定后 3 个场景内必须推进兑现（防剧情打转）
                     "due_scene": int(state.get("scene_num", 0) or 0) + 3,

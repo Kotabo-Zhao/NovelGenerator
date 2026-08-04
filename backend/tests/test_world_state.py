@@ -281,5 +281,73 @@ class TestP2:
         assert "掌柜" in st["world"]["locations"]["茶楼"]["chars"]   # 留守保留
 
 
+# ── v3.6 P3: 对话承诺 → 行动兑现（地点锚定）──
+class TestP3Promises:
+    def _state_with_promise(self, location="码头"):
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["locations"]["码头"] = {"desc": "城西货运码头", "connected": ["茶楼"],
+                                            "chars": [], "items": []}
+        st["pending_promises"] = [{
+            "who": "林晚晚", "what": "午时在码头见面", "when_raw": "午时",
+            "location": location, "scene_num": 2, "due_scene": 5, "status": "pending",
+        }]
+        return st
+
+    def test_extract_location_pattern(self):
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["locations"]["码头"] = {"desc": "", "connected": [], "chars": [], "items": []}
+        assert ws.extract_location_from_text("明午时在码头见", st) == "码头"
+        assert ws.extract_location_from_text("后天午时去码头碰头", st) == "码头"
+
+    def test_extract_location_graph_scan(self):
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["locations"]["码头"] = {"desc": "", "connected": [], "chars": [], "items": []}
+        assert ws.extract_location_from_text("我们在码头见面吧", st) == "码头"
+
+    def test_extract_location_none(self):
+        st = base_state()
+        ws.ensure_world(st)
+        assert ws.extract_location_from_text("明早一起吃饭", st) == ""   # 无地点
+
+    def test_fulfill_on_arrival(self):
+        st = self._state_with_promise()
+        changes = ws.fulfill_promises_at(st, "码头")
+        assert len(changes) == 1
+        assert "约定兑现" in changes[0]
+        assert st["pending_promises"][0]["status"] == "fulfilled"
+
+    def test_no_fulfill_at_wrong_location(self):
+        st = self._state_with_promise()
+        changes = ws.fulfill_promises_at(st, "茶楼")
+        assert changes == []
+        assert st["pending_promises"][0]["status"] == "pending"
+
+    def test_no_double_fulfill(self):
+        st = self._state_with_promise()
+        ws.fulfill_promises_at(st, "码头")
+        changes = ws.fulfill_promises_at(st, "码头")
+        assert changes == []                       # 已兑现不重复
+
+    def test_pending_brief_highlights_location(self):
+        st = self._state_with_promise()
+        brief = ws.pending_promises_brief(st, "码头")
+        assert "林晚晚" in brief and "此地" in brief
+
+    def test_ledger_write_gets_location(self):
+        """promise_ledger_update 写入时自动带 location（规则提取）"""
+        from core.interactive.story_director import promise_ledger_update
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["locations"]["码头"] = {"desc": "", "connected": [], "chars": [], "items": []}
+        new_promises = [{"type": "promise", "subject": "读者", "target": "林晚晚",
+                         "content": "明天午时在码头见", "time_anchor": "明天午时"}]
+        result = promise_ledger_update(st, new_promises)
+        assert result["added"] == 1
+        assert st["pending_promises"][0]["location"] == "码头"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

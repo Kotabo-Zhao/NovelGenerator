@@ -175,6 +175,29 @@ class TestApplyTravel:
         assert saved["world"]["location"] == "北山"
         assert "北山" in saved["world"]["locations"]      # 确认后注册
 
+    def test_travel_fulfills_promise(self, tmp_path):
+        """P3 集成：到达约定地点 → 待兑现约定自动兑现 + 变化提示"""
+        store = InteractStore(str(tmp_path))
+        st = new_state("t", "《测试》", "都市", "写实", "主角")
+        st["state"]["location"] = "茶楼"
+        st["player_state"] = {"location": "茶楼", "with": [], "holding": [], "situation": ""}
+        ws.ensure_world(st)
+        st["world"]["locations"]["码头"] = {"desc": "货运码头", "connected": ["茶楼"],
+                                            "chars": [], "items": []}
+        st["pending_promises"] = [{
+            "who": "林晚晚", "what": "午时在码头见面", "when_raw": "午时",
+            "location": "码头", "scene_num": 2, "due_scene": 5, "status": "pending",
+        }]
+        store.save_state("t", st)
+        e = ActionEngine(None, "mock", store)
+        applied = e.apply_action("t", {"intent": "travel", "type": "travel",
+                                       "summary": "去码头", "target": "码头",
+                                       "end_chat": True, "confirmed": True})
+        assert any("约定兑现" in c for c in applied["changed"])
+        saved = store.load_state("t")
+        assert saved["pending_promises"][0]["status"] == "fulfilled"
+        assert saved["world"]["location"] == "码头"
+
 
 class TestMetaIntent:
     def test_meta_no_state_change(self, state, engine):
