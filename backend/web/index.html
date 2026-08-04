@@ -2556,6 +2556,25 @@ const app = createApp({
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
     const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
 
+    // ── 流式打字机：非响应式缓冲 + 定时 flush（每40ms最多8字）
+    // 解决"atomic 模式逐beat一次性蹦出、长时间空白"的问题——
+    // 文字先入缓冲，再以打字机节奏写入响应式 writing.content，用户可看到文字流动。
+    let _streamBuf = '';
+    let _streamTimer = null;
+    function streamPush(t){ _streamBuf += t; if(!_streamTimer){ _streamTimer=setInterval(streamTick, 40); } }
+    function streamTick(){
+      if(!_streamBuf){ if(_streamTimer){ clearInterval(_streamTimer); _streamTimer=null; } return; }
+      const take = Math.min(8, _streamBuf.length);
+      writing.content += _streamBuf.slice(0, take);
+      _streamBuf = _streamBuf.slice(take);
+      nextTick(()=>{ if(preview.value) preview.value.scrollTop = preview.value.scrollHeight; });
+    }
+    function streamFlushAll(){
+      if(_streamBuf){ writing.content += _streamBuf; _streamBuf=''; }
+      if(_streamTimer){ clearInterval(_streamTimer); _streamTimer=null; }
+    }
+    function streamReset(){ _streamBuf=''; if(_streamTimer){ clearInterval(_streamTimer); _streamTimer=null; } }
+
     // v2.3: 剧情图谱
     const sgLoading = ref(false);
     const sgData = ref(null);
@@ -3799,7 +3818,7 @@ const app = createApp({
     let _chFetchAbort=null;
     function selectChapter(ch, skipFetch) {
       if(isBusy.value) return;
-      writing.chapter=ch; writing.content=''; writing.done=false; error.value='';
+      writing.chapter=ch; writing.content=''; writing.done=false; error.value=''; streamReset();
       // 取消进行中的请求
       if (_chFetchAbort) { _chFetchAbort.abort(); _chFetchAbort=null; }
       if (skipFetch) return;
@@ -3818,7 +3837,7 @@ const app = createApp({
       if(!activeNovel.value) return;
       if(isBusy.value){ reportError('有任务正在进行中，请等待完成'); return; }
       if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter)) return;
-      loading.write=true; writing.content=''; writing.done=false; reviewFeedback.value=''; error.value='';
+      loading.write=true; writing.content=''; writing.done=false; reviewFeedback.value=''; error.value=''; streamReset();
       chapterProgress.value=0; chapterProgressLabel.value='准备中…';
       const targetChars = (currentOutline.value?.target_words || 3000) * 2;
       try {
@@ -3847,11 +3866,12 @@ const app = createApp({
             chapterProgressLabel.value = `✨ 优化完成：${evt.score_before}分 → ${evt.score_after}分`;
           }
           else if(evt.type==='text'){
-            writing.content+=evt.content; chapterProgress.value=Math.min(95, Math.round(writing.content.length/targetChars*100));
-            chapterProgressLabel.value=`${writing.content.length}字`;
-            nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
+            streamPush(evt.content);
+            chapterProgress.value=Math.min(95, Math.round((writing.content.length+_streamBuf.length)/targetChars*100));
+            chapterProgressLabel.value=`${writing.content.length+_streamBuf.length}字`;
           }
           else if(evt.type==='done'){
+            streamFlushAll();
             writing.done=true; chapterProgress.value=100; chapterProgressLabel.value='完成';
             const ch=activeNovel.value.state; if(!ch.completed_chapters) ch.completed_chapters=[];
             if(!ch.completed_chapters.includes(evt.chapter_num)) ch.completed_chapters.push(evt.chapter_num);
@@ -3866,9 +3886,9 @@ const app = createApp({
             // v2.3.1: 自动刷新剧情图谱
             if (writing.activeTab === 'storygraph') loadStoryGraph(0);
           }
-          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
+          else if(evt.type==='error'){ streamFlushAll(); reportError(evt.message, '生成失败'); return false; }
         });
-      } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
+      } catch(e){ if(e.name!=='AbortError'){ streamFlushAll(); reportError(e.message||'连接超时，请重试'); } else streamFlushAll(); }
       loading.write=false; chapterProgress.value=0;
     }
     function nextChapter() { const n=writing.chapter+1; if(n<=(activeNovel.value?.state.total_chapters||999)) selectChapter(n); }
@@ -4983,7 +5003,7 @@ const app = createApp({
 
     function cancelBatch() {
       if(abortCtrl.value){ abortCtrl.value.abort(); abortCtrl.value=null; }
-      loading.batch=false; batchStreaming.value=''; writing.done=true;
+      loading.batch=false; batchStreaming.value=''; writing.done=true; streamFlushAll();
       showToast('已中断，已生成的章节保留', '批量生成中断', '⏸');
     }
 
@@ -4994,7 +5014,7 @@ const app = createApp({
       if(start>end) return;
       const count = end - start + 1;
       if(count > 10) { reportError('批量生成上限为10章，请缩小范围'); return; }
-      loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value=''; batchStreaming.value='';
+      loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value=''; batchStreaming.value=''; streamReset();
       let failedChapters = [];
       // v2.6: 断线自动重连（最多重试2次，带 resume 从检查点续传）
       const MAX_ATTEMPTS = 3;
@@ -5029,11 +5049,11 @@ const app = createApp({
               batchStatus.value = '质量优化中…';
             }
             else if(evt.type==='text'){
-              writing.content+=evt.content;
+              streamPush(evt.content);
               batchStreaming.value=(batchStreaming.value+evt.content).slice(-300);
-              nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
             }
             else if(evt.type==='chapter_done'){
+              streamFlushAll();
               writing.done=true;
               const st=activeNovel.value.state;
               if(!st.completed_chapters) st.completed_chapters=[];
@@ -5052,7 +5072,7 @@ const app = createApp({
               batchCurrent.value=end; batchProgress.value=100;
               if((evt.failed||[]).length>0) reportError(`${evt.failed.length}章失败: ${evt.failed.join(',')}`, '批量生成部分失败');
             }
-            else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
+            else if(evt.type==='error'){ streamFlushAll(); reportError(evt.message, '生成失败'); return false; }
           });
           selectChapter(end); loadShelfDebounced();
           break; // 成功完成
@@ -5076,9 +5096,9 @@ const app = createApp({
         const endpoint = useAtomicMode.value ? '/api/novels/generate/atomic' : '/api/novels/generate';
         const r=await fetch(API+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel',feedback:reviewFeedback.value.trim()})});
         await readSSE(r, (evt) => {
-          if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
-          else if(evt.type==='done'){ writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
-          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
+          if(evt.type==='text'){ streamPush(evt.content); }
+          else if(evt.type==='done'){ streamFlushAll(); writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
+          else if(evt.type==='error'){ streamFlushAll(); reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
       loading.write=false; chapterProgress.value=0;

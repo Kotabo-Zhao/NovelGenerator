@@ -564,6 +564,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         
         novel_dir = self.memory.get_novel_dir(novel_id)
         atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
+        self.memory._invalidate(novel_id, "plan")  # 失效缓存：章节生成立即使用新大纲
         
         # 同步更新主角设定卡片
         self.save_character_bible(novel_id, plan, novel_dir)
@@ -650,6 +651,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
             log.warning(f"update_plan: plan_data['outline'] is {type(plan_data.get('outline')).__name__}, not dict")
         
         atomic_write_json(plan_path, plan_data)
+        self.memory._invalidate(novel_id, "plan")  # 失效 plan 缓存（避免 build_writer_context 读到旧大纲）
         
         # 更新 state 中的 total_chapters
         state = self.memory.get_novel_state(novel_id)
@@ -931,6 +933,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                         if k in old_meta and k not in new_plan["_meta"]:
                             new_plan["_meta"][k] = old_meta[k]
                 atomic_write_json(os.path.join(novel_dir, "plan.json"), new_plan)
+                self.memory._invalidate(novel_id, "plan")  # 失效缓存：章节生成立即使用新大纲
 
                 # 同步更新主角设定卡片（character_bible.json）
                 self.save_character_bible(novel_id, new_plan, novel_dir)

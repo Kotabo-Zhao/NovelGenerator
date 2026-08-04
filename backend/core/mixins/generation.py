@@ -633,8 +633,8 @@ class GenerationMixin:
                 "transitions_added": len(assembly["transitions"]),
             }
             
-            # ── 流式输出正文 ──
-            yield {"type": "text", "content": full_text}
+            # ── done 事件（正文已逐 beat 流式输出过，这里不再重复 yield full_text，
+            #    避免前端 writing.content 收到「逐beat文本 + 全文」两遍重复）──
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num,
                    "atomic": True, "beat_count": len(beats)}
             
