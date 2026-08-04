@@ -12,8 +12,8 @@ android {
         applicationId = "com.novelgen.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 54
-        versionName = "2.5.66"
+        versionCode = 55
+        versionName = "2.5.67"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -46,7 +46,9 @@ chaquopy {
         version = "3.13"
         pip {
             // v3.6.3: 禁用 pip cache 防 safe-delete 拦截
-            options("--no-cache-dir", "--no-clean")
+            // v2.5.67: 默认 PyPI 源国内不可达（pydantic==1.10.26 报 from versions: none）→ 切清华镜像
+            options("--no-cache-dir", "--no-clean",
+                    "--index-url", "https://pypi.tuna.tsinghua.edu.cn/simple")
             install("fastapi==0.125.0")
             install("uvicorn==0.52.1")
             install("openai==1.39.0")
