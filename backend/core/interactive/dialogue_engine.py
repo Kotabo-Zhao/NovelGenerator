@@ -449,6 +449,28 @@ class DialogueEngine:
                    "snapshot": _state_snapshot(state)}
             yield {"type": "done"}
             return
+        # v3.6 P4: meta 系统指令不进剧情（规则提示，零 LLM 零场景）
+        if action and action.get("intent") == "meta":
+            _sum = str(action.get("summary", ""))
+            _hint = "请在界面菜单栏操作"
+            if any(k in _sum for k in ("存档", "保存")):
+                _hint = "请点击右上角「存档」按钮（系统指令不会进入剧情）"
+            elif any(k in _sum for k in ("读档", "读取")):
+                _hint = "请在主菜单选择「继续」或「读档」（系统指令不会进入剧情）"
+            elif any(k in _sum for k in ("音量", "设置")):
+                _hint = "请在设置面板调整（系统指令不会进入剧情）"
+            meta_msg = f"【旁白】（{_hint}）"
+            yield {"type": "action_detect", "action_type": "meta",
+                   "summary": _sum, "end_chat": True, "blocked": False}
+            yield {"type": "action_chunk", "content": meta_msg}
+            self.store.append_chat(novel_id, {"role": "assistant", "speaker": "旁白",
+                                              "type": "meta_hint", "content": meta_msg,
+                                              "ts": time.strftime("%H:%M:%S")})
+            yield {"type": "action_end", "content": meta_msg,
+                   "action": {"type": "meta", "summary": _sum},
+                   "snapshot": _state_snapshot(state)}
+            yield {"type": "done"}
+            return
         if action:
             yield {"type": "action_detect", "action_type": action.get("type", "other"),
                    "summary": action.get("summary", ""), "end_chat": action.get("end_chat", False),

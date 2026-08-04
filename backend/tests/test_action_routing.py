@@ -205,6 +205,50 @@ class TestMetaIntent:
         assert action is not None and action["intent"] == "meta"
         assert action["type"] == "meta"
 
+    def test_meta_apply_no_changes(self, tmp_path):
+        """P4: meta 行动不产生任何状态变化（不进剧情）"""
+        store = InteractStore(str(tmp_path))
+        st = new_state("t", "《测试》", "都市", "写实", "主角")
+        st["state"]["location"] = "茶楼"
+        st["player_state"] = {"location": "茶楼", "with": [], "holding": [], "situation": ""}
+        ws.ensure_world(st)
+        store.save_state("t", st)
+        e = ActionEngine(None, "mock", store)
+        applied = e.apply_action("t", {"intent": "meta", "type": "meta",
+                                       "summary": "存档", "target": "",
+                                       "end_chat": True})
+        assert applied["changed"] == []
+        saved = store.load_state("t")
+        assert saved["world"]["location"] == "茶楼"          # 位置没变
+        assert saved["last_action"]["type"] == "meta"
+
+    def test_meta_detect_no_llm_call(self, state, engine):
+        """P4: meta 由规则识别（META_RE），不消耗 LLM 调用"""
+        called = []
+        orig = engine._llm
+        def spy(system, user, temperature=0.2, max_tokens=400):
+            called.append(1)
+            return orig(system, user, temperature, max_tokens)
+        engine._llm = spy
+        action = engine.detect_action("存档", state)
+        assert action is not None and action["intent"] == "meta"
+        assert not called                                   # 零 LLM 调用
+
+
+class TestTravelRouteBrief:
+    def test_route_brief_uses_graph(self, state, engine):
+        """P4: travel 场景的沿途地点来自图谱 connected（非 LLM 猜测）"""
+        from core.interactive.world_state import clean_loc
+        st = state
+        st["world"]["locations"]["码头"] = {"desc": "货运码头",
+                                            "connected": ["街市", "南门"],
+                                            "chars": [], "items": []}
+        action = engine.detect_action("去码头", st)
+        assert action is not None and action["target"] == "码头"
+        locs = st["world"]["locations"]
+        conn = [str(x) for x in (locs.get(clean_loc(action["target"])) or {}).get("connected", [])]
+        assert "街市" in conn and "南门" in conn             # 图谱 connected 可用
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

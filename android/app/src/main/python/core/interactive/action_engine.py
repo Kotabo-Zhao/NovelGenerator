@@ -623,11 +623,18 @@ class ActionEngine:
         # v3.6: travel 行动 → 注入新地点环境信息（到达场景环境描写的确定性依据）
         _travel_brief = ""
         _promise_brief = ""
+        _route_brief = ""
         if action.get("intent") == "travel":
             try:
-                from .world_state import world_brief, pending_promises_brief
+                from .world_state import world_brief, pending_promises_brief, clean_loc
                 _travel_brief = world_brief(state)
                 _promise_brief = pending_promises_brief(state, action.get("target", ""))
+                # v3.6 P4: 沿途经过（图谱 connected——路程描写有依据，消灭瞬移感）
+                _locs = (state.get("world") or {}).get("locations") or {}
+                _entry = _locs.get(clean_loc(action.get("target", ""))) or {}
+                _conn = [str(x) for x in (_entry.get("connected") or [])][:3]
+                if _conn:
+                    _route_brief = f"前往目标沿途可能经过: {'、'.join(_conn)}"
             except Exception:
                 _travel_brief = ""
         user = (
@@ -639,6 +646,7 @@ class ActionEngine:
             + f"\n"
             f"状态变化: {'；'.join(changed) or '（无）'}\n"
             + (f"世界状态快照（新地点）:\n{_travel_brief}\n" if _travel_brief else "")
+            + (f"{_route_brief}\n" if _route_brief else "")
             + (f"待兑现约定（到达地点触发——场景应体现赴约/错过/等待）:\n{_promise_brief}\n"
                if _promise_brief else "")
             + (f"当前世界状态:\n{_ctx_brief}\n" if _ctx_brief else "")
