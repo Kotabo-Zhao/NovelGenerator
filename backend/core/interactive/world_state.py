@@ -453,6 +453,117 @@ def pending_promises_brief(state: dict, location: str = "", max_chars: int = 200
     return "\n".join(lines)[:max_chars]
 
 
+# ── v3.6.4: 行动选项生成器（按钮化——玩家点按钮 = 意图已确定，零 LLM 识别）──
+
+# 图谱节点清洗：worldbuilding 解析可能塞入设定描述片段（"era: 2020年代"/"市值超千亿"），
+# 这些不是地点，不能进行动按钮
+_NON_LOC_RE = re.compile(
+    r"era:|power_|core_|faction|世界观|规则|体系|市值|离婚|婚姻|父亲|母亲|家庭|"
+    r"声誉|社交|资本|权[力势]?$|商业|利益|象征|编织|丑闻|女主|男主|与|和|的$|"
+    r"当代|年代|世纪|——|—|：|:|,|，|。")
+_LOC_MAX_LEN = 8  # 地点名超过 8 字基本是描述片段（"上海陆家嘴金融区——甜品店内"除外，它带——）
+
+# 脏角色名清洗（LLM 状态提取把内心描写当角色名的历史脏数据）
+_DIRTY_CHAR_RE = re.compile(r"^你|^我|心中|冷笑|面上|不露|内心|感到|觉得")
+
+
+def _clean_action_target(text: str, kind: str) -> bool:
+    """行动目标有效性校验（清洗脏数据）"""
+    t = str(text or "").strip()
+    if not t or len(t) > 24:
+        return False
+    if kind == "travel":
+        if _NON_LOC_RE.search(t):
+            return False
+        if len(t) > _LOC_MAX_LEN and "——" not in t and "甜品店" not in t:
+            return False
+        if t in ("家", "街市", "码头", "茶楼"):  # 白名单短地点
+            return True
+    elif kind == "char":
+        if _DIRTY_CHAR_RE.match(t):
+            return False
+        if len(t) > 10:
+            return False
+    return True
+
+# 通用动作模板（按角色/物品/地点场景套用）
+_GENERIC_ACTIONS = [
+    {"type": "interact", "tpl": "和{name}说话", "target_kind": "char"},
+    {"type": "interact", "tpl": "仔细打量{name}", "target_kind": "char"},
+    {"type": "interact", "tpl": "把随身的东西递给{name}", "target_kind": "char"},
+    {"type": "use", "tpl": "使用{name}", "target_kind": "item"},
+    {"type": "use", "tpl": "仔细查看{name}", "target_kind": "item"},
+    {"type": "investigate", "tpl": "观察四周环境", "target_kind": "none"},
+    {"type": "investigate", "tpl": "查看随身物品", "target_kind": "none"},
+]
+
+
+def action_options(state: dict, max_actions: int = 8) -> list:
+    """上下文行动按钮列表（确定性规则，零 LLM）。
+
+    来源：
+    - 移动：当前地点图谱 connected 节点（"去X"）
+    - 交互：当前在场角色（"和X说话"等）
+    - 物品：玩家背包 + 当前地点 items
+    返回 [{id, label, intent, target, kind, emoji}]
+    """
+    try:
+        w = state.get("world") or {}
+        locations = w.get("locations") or {}
+        ps = state.get("player_state") or {}
+        s = state.get("state") or {}
+        cur = clean_loc(w.get("location")) or clean_loc(ps.get("location")) or clean_loc(s.get("location"))
+        player_name = (state.get("player_char") or {}).get("name", "")
+        opts = []
+
+        # 1) 移动选项（图谱 connected，清洗非地点节点）
+        entry = locations.get(cur) if cur else None
+        connected = []
+        if isinstance(entry, dict):
+            connected = [str(x) for x in (entry.get("connected") or []) if str(x) != cur]
+        if not connected and cur:  # 兜底：全部图谱节点（防图谱边缺失导致无路可走）
+            connected = [str(x) for x in locations.keys() if str(x) != cur]
+        for loc in connected[:6]:
+            if not _clean_action_target(loc, "travel"):
+                continue
+            opts.append({
+                "id": f"go_{loc}", "label": f"去{loc}", "intent": "travel",
+                "target": loc, "kind": "travel", "emoji": "📍",
+            })
+
+        # 2) 在场角色交互（清洗脏角色名）
+        try:
+            from .story_director import compute_present
+            present, _away = compute_present(state)
+        except Exception:
+            present = []
+        for name in present[:4]:
+            if name and name != player_name and _clean_action_target(name, "char"):
+                opts.append({
+                    "id": f"talk_{name}", "label": f"和{name}说话", "intent": "talk",
+                    "target": name, "kind": "char", "emoji": "👥",
+                })
+
+        # 3) 物品选项（背包 + 地点物品）
+        inv = [str(x) for x in (s.get("inventory") or [])]
+        loc_items = [str(x) for x in ((entry or {}).get("items") or [])] if isinstance(entry, dict) else []
+        for item in (inv + loc_items)[:3]:
+            if item and not any(o.get("target") == item for o in opts):
+                opts.append({
+                    "id": f"use_{item}", "label": f"使用{item}", "intent": "act",
+                    "target": item, "kind": "item", "emoji": "📦",
+                })
+
+        # 4) 常用行动（兜底，保证按钮条不空）
+        if not opts:
+            opts.append({"id": "observe", "label": "观察四周环境", "intent": "act",
+                         "target": "", "kind": "investigate", "emoji": "🔍"})
+        return opts[:max_actions]
+    except Exception as e:
+        log.warning(f"action_options failed: {e}")
+        return []
+
+
 # ── LLM 状态提取结果校验（防幻觉：候选 → 规则裁决）──
 def validate_llm_state(state: dict, extracted_ps: dict) -> dict:
     """场景/对话后的 LLM 状态提取结果与三支柱合并：

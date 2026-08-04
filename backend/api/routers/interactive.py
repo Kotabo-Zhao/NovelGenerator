@@ -44,6 +44,8 @@ _chat = DialogueEngine(engine.client, engine.model, _store, engine=engine)
 class ChatRequest(BaseModel):
     message: str
     target: Optional[str] = None
+    # v3.6.4: force_talk=True → 纯对话（跳过行动识别，输入框专用）
+    force_talk: Optional[bool] = False
 
 
 class VoiceOverrideRequest(BaseModel):
@@ -373,7 +375,8 @@ async def interactive_chat(novel_id: str, req: ChatRequest):
 
     async def event_stream():
         async for data in _sse_with_heartbeat(
-            _chat.chat_stream(novel_id, req.message, req.target)
+            _chat.chat_stream(novel_id, req.message, req.target,
+                              force_talk=bool(req.force_talk))
         ):
             yield data
 
@@ -614,3 +617,117 @@ async def interactive_restart(novel_id: str):
     if not ok:
         raise HTTPException(500, "重开失败（备份失败）")
     return {"ok": True, "message": "互动存档已重置"}
+
+
+# ── v3.6.4: 行动按钮化（方案C）——按钮点击 = 意图已确定，零 LLM 意图识别 ──
+class ActRequest(BaseModel):
+    action_id: Optional[str] = None   # 按钮 id（action_options 返回）
+    intent: Optional[str] = None      # travel/talk/act
+    target: Optional[str] = None      # 目标（地点/角色/物品）
+    message: Optional[str] = None     # talk 时的说话内容
+
+
+@router.get("/api/novels/{novel_id}/interactive/actions")
+async def interactive_actions(novel_id: str):
+    """返回当前上下文可执行的行动按钮列表（规则生成，零 LLM）。
+
+    来源：地点图谱 connected（移动）+ 在场角色（交互）+ 物品（使用）。
+    前端渲染成按钮条，点击 → POST /act 直接执行。
+    """
+    _validate_novel_id(novel_id)
+    if not _store.exists(novel_id):
+        raise HTTPException(404, "互动存档不存在，请先 start")
+    try:
+        from core.interactive.world_state import action_options
+        st = _store.load_state(novel_id) or {}
+        opts = action_options(st)
+        return {"ok": True, "actions": opts,
+                "hint": "点按钮执行行动；输入框纯对话"}
+    except Exception as e:
+        log.warning(f"actions failed: {e}")
+        return {"ok": False, "actions": [], "error": str(e)[:120]}
+
+
+@router.post("/api/novels/{novel_id}/interactive/act")
+async def interactive_act(novel_id: str, req: ActRequest):
+    """直接执行按钮行动（跳过 detect_action 意图识别）。
+
+    - travel: 规则执行器移动（图谱校验/时间推进/在场重算）
+    - talk:   转对话引擎（对目标角色说话）
+    - act:    通用行动执行（物品使用等）
+    返回 SSE：与 chat 相同的 action 事件流。
+    """
+    _validate_novel_id(novel_id)
+    if not _store.exists(novel_id):
+        raise HTTPException(404, "互动存档不存在，请先 start")
+
+    intent = (req.intent or "").strip()
+    target = (req.target or "").strip()
+    if not intent and req.action_id:
+        # 从 action_id 反推（go_X / talk_X / use_X）
+        if req.action_id.startswith("go_"):
+            intent, target = "travel", req.action_id[3:]
+        elif req.action_id.startswith("talk_"):
+            intent, target = "talk", req.action_id[5:]
+        elif req.action_id.startswith("use_"):
+            intent, target = "act", req.action_id[4:]
+        else:
+            intent = "act"
+    if intent not in ("travel", "talk", "act"):
+        raise HTTPException(400, f"不支持的行动类型: {intent}")
+
+    if intent == "talk":
+        # 对角色说话（纯对话，force_talk 由前端走 chat 接口即可）
+        # 这里支持 message 直接说话
+        if not req.message:
+            raise HTTPException(400, "talk 行动需要 message")
+        async def talk_stream():
+            async for data in _sse_with_heartbeat(
+                _chat.chat_stream(novel_id, req.message, target or None, force_talk=True)
+            ):
+                yield data
+        return StreamingResponse(talk_stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # travel / act：构造确定性 action dict（跳过 LLM 意图识别）
+    if intent == "travel":
+        if not target:
+            raise HTTPException(400, "travel 需要目标地点")
+        action = {"intent": "travel", "type": "travel",
+                  "summary": f"前往{target}", "target": target,
+                  "end_chat": True, "confirmed": True, "forced": True}
+    else:
+        action = {"intent": "act", "type": "use" if target else "observe",
+                  "summary": f"使用{target}" if target else "观察四周环境",
+                  "target": target, "end_chat": False,
+                  "forced": True}
+
+    async def _act_events():
+        try:
+            yield {"type": "action_detect", "action_type": action.get("type", "other"),
+                   "summary": action.get("summary", ""), "end_chat": action.get("end_chat", False),
+                   "blocked": False}
+            applied = _chat.action.apply_action(novel_id, action)
+            changed = applied.get("changed", [])
+            async for ev in _chat.action.action_scene_stream(novel_id, action, changed):
+                yield ev
+            if action.get("end_chat"):
+                yield {"type": "action_done", "end_chat": True, "action": action,
+                       "snapshot": _state_snapshot(applied.get("state") or {})}
+                yield {"type": "done"}
+            else:
+                yield {"type": "action_done", "end_chat": False, "action": action,
+                       "snapshot": _state_snapshot(applied.get("state") or {})}
+                # 非 end_chat 行动后角色反应（对话继续）
+                async for ev in _chat.chat_stream(novel_id, action.get("summary", ""), None):
+                    yield ev
+        except Exception as e:
+            log.error(f"act stream error: {e}")
+            yield {"type": "error", "message": f"行动执行失败: {type(e).__name__}"}
+
+    async def act_stream():
+        async for data in _sse_with_heartbeat(_act_events()):
+            yield data
+
+    return StreamingResponse(act_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

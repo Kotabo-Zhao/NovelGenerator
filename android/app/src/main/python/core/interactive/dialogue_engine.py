@@ -201,6 +201,8 @@ class DialogueEngine:
         casts = state.get("casts", {})
         target = casts.get(target_char, {})
         prof = target.get("profile", {})
+        if not isinstance(prof, dict):  # v3.6.1: 字符串档案防御（一句话人设角色）
+            prof = {}
         if prof:
             parts.append(f"## 你扮演：{target_char}")
             mm = prof.get("mental_models", [])[:3]
@@ -333,8 +335,12 @@ class DialogueEngine:
 
     # ── 对话（SSE）──
     async def chat_stream(self, novel_id: str, user_input: str,
-                          target_char: Optional[str] = None) -> AsyncIterator[dict]:
+                          target_char: Optional[str] = None,
+                          force_talk: bool = False) -> AsyncIterator[dict]:
         """玩家发消息 → 角色回复（流式）
+
+        v3.6.4: force_talk=True 时跳过行动识别——输入框纯对话（方案C：
+        行动走按钮 /act，输入框永不误判为行动）
 
         Yields: {type: chat_chunk/chat_end/ooc_check/error/done}
         """
@@ -403,7 +409,8 @@ class DialogueEngine:
         # 必须在 detect_action 之前检查（LLM 会把"好，去吧"误判为独立 act，
         # 导致 `not action` 为 False → pending 检查被跳过 → 确认流形同虚设）
         action = None
-        pending = state.get("pending_travel") or {}
+        # v3.6.4: force_talk（纯对话模式）——输入框永不触发行动识别/确认流
+        pending = state.get("pending_travel") or {} if not force_talk else {}
         if pending:
             _ptgt = pending.get("target", "")
             if CONFIRM_RE.match(clean_input):
@@ -430,7 +437,7 @@ class DialogueEngine:
                 return
         # v3.6.3: pending 流未命中 confirm/deny → 统一 fallback 到 detect_action
         # （无 pending 时也走同样路径，避免重复 LLM 调用）
-        if not action:
+        if not action and not force_talk:  # v3.6.4: force_talk 跳过行动识别
             action = self.action.detect_action(clean_input, state)
         # v3.6: travel 到图谱外地点 → 回问确认流（不静默执行，也不静默退回对话）
         if action and action.get("intent") == "travel" and action.get("need_confirm") \
@@ -689,6 +696,8 @@ class DialogueEngine:
             return []
         casts = state.get("casts", {})
         prof = casts.get(char_name, {}).get("profile", {})
+        if not isinstance(prof, dict):  # v3.6.1: 字符串档案防御
+            prof = {}
         brief = ""
         if prof:
             dna = prof.get("expression_dna", [])[:2]

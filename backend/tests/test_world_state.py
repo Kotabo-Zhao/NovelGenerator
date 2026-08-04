@@ -349,5 +349,64 @@ class TestP3Promises:
         assert st["pending_promises"][0]["location"] == "码头"
 
 
+# ── v3.6.4: 行动按钮生成（方案C——零 LLM 意图识别）──
+class TestActionOptions:
+    def test_travel_from_graph(self):
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["location"] = "茶楼"
+        st["world"]["locations"]["茶楼"]["connected"] = ["街市", "码头"]
+        st["world"]["locations"]["码头"] = {"desc": "", "connected": ["街市"], "chars": [], "items": []}
+        opts = ws.action_options(st)
+        labels = [o["label"] for o in opts]
+        assert "去街市" in labels
+        assert "去码头" in labels
+
+    def test_talk_for_present_chars(self):
+        st = base_state()
+        ws.ensure_world(st)
+        st["player_char"] = {"name": "主角"}
+        opts = ws.action_options(st)
+        labels = [o["label"] for o in opts]
+        assert any("林晚晚" in l for l in labels)
+        # 玩家自己不出现在 talk 选项
+        assert not any("主角" in l and l.startswith("和") for l in labels)
+
+    def test_filters_worldbuilding_junk(self):
+        """worldbuilding 解析残留的设定片段不是地点，不进按钮"""
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["location"] = "茶楼"
+        st["world"]["locations"]["茶楼"]["connected"] = ["era: 2020年代", "市值超千亿", "街市"]
+        opts = ws.action_options(st)
+        labels = [o["label"] for o in opts]
+        assert "去街市" in labels
+        assert not any("era" in l or "市值" in l for l in labels)
+
+    def test_filters_dirty_char_names(self):
+        """LLM 状态提取把内心描写当角色名的脏数据不进按钮"""
+        st = base_state()
+        ws.ensure_world(st)
+        st["cast_states"]["你心中冷笑"] = {"present": True, "location": "茶楼"}
+        st["player_char"] = {"name": "主角"}
+        opts = ws.action_options(st)
+        labels = [o["label"] for o in opts]
+        assert not any("冷笑" in l for l in labels)
+
+    def test_fallback_observe(self):
+        """图谱/角色全脏时兜底观察行动，按钮条不空"""
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["locations"] = {"茶楼": {"desc": "", "connected": [], "chars": [], "items": []}}
+        st["world"]["location"] = "茶楼"
+        st["cast_states"] = {}
+        st["player_state"] = {"location": "茶楼", "with": [], "holding": []}
+        st["state"]["inventory"] = []
+        opts = ws.action_options(st)
+        assert opts  # 至少有一个兜底按钮
+        kinds = {o["kind"] for o in opts}
+        assert "investigate" in kinds or any(o["intent"] == "act" for o in opts)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

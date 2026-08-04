@@ -498,6 +498,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .inter-track-note{border-radius:10px;padding:8px 14px;font-size:12.5px;margin-bottom:12px;animation:interRise .4s ease both}
   .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;transition:border-color .3s, box-shadow .3s}
   .interactive-input:focus-within{border-color:rgba(212,175,55,.5);box-shadow:0 0 0 3px rgba(212,175,55,.08)}
+  /* v3.6.4: 行动按钮条 */
+  .interactive-actions{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;margin-bottom:10px}
+  .act-btn{background:var(--card);border:1px solid var(--border);border-radius:999px;padding:5px 14px;font-size:12.5px;color:var(--text);cursor:pointer;transition:all .18s var(--ease)}
+  .act-btn:hover{border-color:rgba(212,175,55,.6);color:var(--gold);transform:translateY(-1px)}
+  .act-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
   .interactive-facts{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px}
   .fact-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;flex-wrap:wrap}
   .fact-badge{font-size:13px}
@@ -1408,11 +1413,23 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               <span class="badge-hint">随时可输入打断</span>
             </div>
 
+            <!-- v3.6.4: 行动按钮条（方案C——按钮=行动，输入框=纯对话） -->
+            <div class="interactive-actions" v-if="interactive.actions.length && !interactive.busy && !interactive.typing && (interactive.pendingNode || interactive.inChat)">
+              <div class="card-title" style="font-size:12px;margin-bottom:6px;color:var(--text2)">⚡ 行动</div>
+              <div class="flex gap-6" style="flex-wrap:wrap">
+                <button v-for="a in interactive.actions" :key="a.id" class="btn btn-sm act-btn"
+                        @click="runInteractiveAction(a)" :disabled="interactive.busy||interactive.typing">
+                  {{a.emoji}} {{a.label}}
+                </button>
+              </div>
+              <div class="badge-hint" style="margin-top:4px">点按钮执行行动；下方输入框只用于对话</div>
+            </div>
+
             <!-- 输入区 -->
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
                 <input v-model="interactive.message" @keyup.enter="sendInteractiveChat()"
-                       :placeholder="interactive.busy || interactive.typing ? '⏳ 正在生成，请稍候…' : '说点什么，或直接行动：上车 / 推门 / 答应他 / 离开…（可 @角色名）'"
+                       :placeholder="interactive.busy || interactive.typing ? '⏳ 正在生成，请稍候…' : '和角色说话…（@角色名可指定对象，行动请用上方按钮）'"
                        :disabled="interactive.busy || interactive.typing"
                        style="flex:1;min-height:38px;font-size:14px" />
                 <button class="btn btn-sm btn-primary" @click="sendInteractiveChat()" :disabled="interactive.busy||interactive.typing||!String(interactive.message||'').trim()">💬 说</button>
@@ -3931,6 +3948,8 @@ const app = createApp({
       charOptions: [],         // 可选角色列表 [{name, identity, personality, role}]
       charChoice: '',          // 玩家选中的角色名
       charLoading: false,      // 角色列表加载中
+      // v3.6.4: 行动按钮化（方案C——按钮=行动，输入框=纯对话）
+      actions: [],             // 上下文行动按钮 [{id,label,intent,target,kind,emoji}]
     });
     // v3.5.5: 玩家状态卡计算属性
     // v3.5.18: 显示格式化——location/objective 可能是 JSON 数组字符串（如
@@ -4248,6 +4267,8 @@ const app = createApp({
             _appendSceneBlocks(evt.blocks || [], evt.scene_num);
             // v3.5.8: 场景结束 → 状态卡实时更新
             if (evt.snapshot) _applySnapshot(evt.snapshot);
+            // v3.6.4: 场景结束刷新行动按钮（新地点/新角色/新物品）
+            refreshActions();
             // v3.5: 场景内角色台词预合成（情感引擎开启时）
             if (interactive.emotionVoice && interactive.emotionAvailable) {
               (evt.blocks || []).forEach(b => {
@@ -4272,6 +4293,7 @@ const app = createApp({
         interactive.loading = false;
         await loadInteractiveState();
         await loadInteractiveVoices();
+        refreshActions();  // v3.6.4: 启动后加载行动按钮
         _scrollStory();
       } catch(e) {
         interactive.loading = false;
@@ -4422,6 +4444,84 @@ const app = createApp({
       } catch(e) { interactive.emotionAvailable = false; }
     }
 
+    // v3.6.4: 刷新上下文行动按钮（场景/行动/对话结束后调用）
+    async function refreshActions() {
+      if (!activeNovel.value) return;
+      try {
+        const id = encodeURIComponent(activeNovel.value.id);
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/actions');
+        if (!r.ok) return;
+        const d = await r.json();
+        interactive.actions = (d.actions || []).slice(0, 8);
+      } catch(e) { /* 静默：行动条不是关键路径 */ }
+    }
+
+    // v3.6.4: 执行行动按钮（直接调 /act，跳过 LLM 意图识别）
+    async function runInteractiveAction(a) {
+      if (interactive.busy || interactive.typing) return;
+      if (!activeNovel.value || !a) return;
+      cancelAuto();
+      _setPhase('⚡ 正在执行行动…', 30000);
+      const id = encodeURIComponent(activeNovel.value.id);
+      interactive.busy = true;
+      interactive.inChat = true;
+      interactive.message = '';
+      // 玩家行动气泡
+      interactive.blocks.push({type:'action_desc', speaker:'你', content:'〔'+a.label+'〕'});
+      interactive.blocks.push({type:'typing', speaker:'', content:''});
+      _scrollStory();
+      try {
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/act', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({action_id: a.id, intent: a.intent, target: a.target}),
+        });
+        if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || 'HTTP '+r.status); }
+        await readSSE(r, (evt) => {
+          if (evt.type==='chat_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
+            else if (last && last.type==='chat' && last.speaker===evt.speaker) { last.content += evt.content; }
+            else interactive.blocks.push({type:'chat', speaker:evt.speaker, content:evt.content});
+            _scrollStory();
+          } else if (evt.type==='action_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') last.content += evt.content;
+            else interactive.blocks.push({type:'typing', speaker:'', content:evt.content});
+            _scrollStory();
+          } else if (evt.type==='action_end') {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') { last.type='action_result'; last.speaker=''; last.content=evt.content; }
+            _scrollStory();
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+          } else if (evt.type==='state_change') {
+            _pushStateChange(evt.changes);
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+          } else if (evt.type==='action_done') {
+            if (evt.end_chat) { _setPhase(''); refreshActions(); }
+          } else if (evt.type==='chat_end') {
+            const last = interactive.blocks[interactive.blocks.length-1];
+            if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
+            _scrollStory();
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            refreshActions();
+          } else if (evt.type==='error') {
+            interactive.error = evt.message || '行动执行失败';
+            interactive.blocks.push({type:'action_result', speaker:'', content:'⚠ '+(evt.message||'失败')});
+          }
+        });
+      } catch(e) {
+        console.error('act failed:', e);
+        interactive.error = String(e.message || e);
+        const last = interactive.blocks[interactive.blocks.length-1];
+        if (last && last.type==='typing') { last.type='action_result'; last.content='⚠ 行动失败：'+(e.message||e); }
+      } finally {
+        interactive.busy = false;
+        interactive.typing = false;
+        _setPhase('');
+        refreshActions();
+      }
+    }
+
     async function sendInteractiveChat(prefill) {
       if (interactive.busy || interactive.typing) return;  // v3.5.45: 生成/播放中禁操作
       if (!activeNovel.value) return;
@@ -4443,9 +4543,10 @@ const app = createApp({
       interactive.blocks.push({type:'typing', speaker:'', content:''});
       _scrollStory();
       try {
+        // v3.6.4: 方案C——输入框纯对话（force_talk=true 跳过行动识别，行动走按钮）
         const r = await fetch(API+'/api/novels/'+id+'/interactive/chat', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({message: msg}),
+          body: JSON.stringify({message: msg, force_talk: true}),
         });
         if (!r.ok) throw new Error('HTTP '+r.status);
         await readSSE(r, (evt) => {
