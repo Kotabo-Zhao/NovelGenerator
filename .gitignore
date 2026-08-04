@@ -20,3 +20,4 @@ backend/data/tts_cache/
 
 # android 打包产物（不进版本库）
 android/*.apk
+backend/data/

@@ -1027,7 +1027,15 @@ def cast_presets_build(plan: dict) -> list:
                 _push(c.get("name"), _ident, _pers,
                       c.get("backstory"), c.get("motivation"), "antagonist",
                       relation=c.get("conflict") or "")
-        return out
+        # v2.5.63: 同名去重保留第一个（同一角色出现在 supporting+antagonist 双列表时，
+        # 后者（冲突描述兜底）会覆盖前者（完整档案）→ 角色选择后档案错乱）
+        _seen_n = set()
+        _deduped = []
+        for _p in out:
+            if _p["name"] not in _seen_n:
+                _seen_n.add(_p["name"])
+                _deduped.append(_p)
+        return _deduped
     except Exception:
         return []
 
@@ -1390,7 +1398,14 @@ INTRO_SYSTEM = """你是互动小说开场解说。为玩家写一份简洁的�
 
 段落分明（用空行分段），先世界观后人物再处境再目标，层层递进。
 基于给定资料组织，不要编造资料之外的设定；不要写成教程，要写成有代入感的开场。
-只输出介绍文本，不要输出标题和解释。"""
+只输出介绍文本，不要输出标题和解释。
+
+【v2.5.63 角色扮演铁律】：资料里的"你扮演的角色"一节是**玩家在故事中的身份**。
+整个开场介绍中，第二人称"你"必须严格指代该角色：以 TA 的身份背景、处境、
+人际关系、目标来写"你"的故事。若该角色不是小说主角（如配角/反派），
+开场必须切换到 TA 的视角和处境，**严禁把主角的身份、经历、婚姻状况安在"你"头上**。
+主角在介绍中按"主要人物"提及（如"她叫XXX，是…"），而不是用"你"指代。
+这是最重要的一条，违反即失败。"""
 
 # v3.5.33: 开场背景压缩——超长时语义压缩为精简版（非截断，保留完整信息）
 INTRO_COMPRESS_SYSTEM = """你是文案压缩师。把下面的开场背景介绍压缩到 300 字以内。
@@ -2168,6 +2183,8 @@ class StoryDirector:
                     parts.append(f"- {name}（主角，由读者扮演——不要替 TA 写台词，TA 的言行由读者决定）")
                     continue
                 prof = c.get("profile", {})
+                if not isinstance(prof, dict):  # v3.6.1: 字符串档案防御
+                    prof = {}
                 # v3.5.50: 全维度消费角色蒸馏——行为规则（决策启发式）是人设
                 # 的核心，之前只注入台词碎片（dna+anti 各2条）导致行为脱人设
                 segs = []
@@ -2222,17 +2239,37 @@ class StoryDirector:
 
     # ── 开场背景介绍（v3.5.13：玩家打开互动模式先知道"我是谁/在哪/要做什么"）──
     def generate_intro(self, novel_id: str, state: dict, force: bool = False) -> str:
-        """生成/取缓存的故事背景介绍（v3.5.18: 500-700 字，覆盖世界观/人物/处境/目标）"""
-        cached = state.get("intro")
-        if cached and not force:
-            return cached
+        """生成/取缓存的故事背景介绍（v3.5.18: 500-700 字，覆盖世界观/人物/处境/目标）
+
+        v2.5.63: intro 缓存绑定角色——state['intro_char'] != player_char.name 时
+        强制重新生成（角色切换后旧视角开场白不得复用）
+        """
         pc = state.get("player_char") or {}
+        pc_name = pc.get("name", "")
+        cached = state.get("intro")
+        cached_char = state.get("intro_char") or ""
+        # 缓存命中条件：有缓存 + 缓存属于当前扮演角色 + 非强制
+        if cached and not force and cached_char == pc_name:
+            return cached
         s = state.get("state", {})
         parts = []
-        parts.append(f"小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
+        # v2.5.63: 你扮演的角色放最前 + 加粗强调（LLM 易被世界观简报带偏写成主角）
         if pc.get("name"):
-            parts.append(f"你扮演：{pc['name']}（{pc.get('identity', '')}）"
-                         f"{'，' + pc.get('personality_brief', '')[:120] if pc.get('personality_brief') else ''}")
+            parts.append(f"【你扮演的角色（全文'你'必须指代 TA，最高优先级）】: {pc['name']}")
+            if pc.get("identity"):
+                parts.append(f"身份: {pc['identity']}")
+            if pc.get("personality_brief"):
+                parts.append(f"性格: {pc['personality_brief'][:120]}")
+            if pc.get("speak_style"):
+                parts.append(f"说话风格: {pc['speak_style'][:100]}")
+            if pc.get("initial_attitude"):
+                parts.append(f"处境/关系: {pc['initial_attitude'][:120]}")
+            if pc.get("backstory"):
+                parts.append(f"过往: {pc['backstory'][:150]}")
+            if pc.get("motivation"):
+                parts.append(f"动机: {pc['motivation'][:100]}")
+            parts.append("注意：若该角色不是小说主角，主角只作为'主要人物'以第三人称提及，绝不与'你'混淆")
+        parts.append(f"小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
         wb = state.get("worldbuilding_brief") or ""
         if wb:
             parts.append(f"世界观（时代/地点/势力/规则）：\n{wb[:600]}")
@@ -2291,6 +2328,7 @@ class StoryDirector:
                 lines.append(str(wb).replace("\n", " ")[:200])
             intro = "".join(lines)
         state["intro"] = intro
+        state["intro_char"] = pc_name  # v2.5.63: 缓存绑定角色（角色切换后旧 intro 不可复用）
         try:
             self.store.save_state(novel_id, state)
         except Exception:

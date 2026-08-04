@@ -71,6 +71,15 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
         log.warning(f"build_context_from_bible failed: {e}")
         ctx = {"title": novel_id, "genre": "", "style": "", "protagonist_name": ""}
 
+    # v2.5.63: 老存档角色切换——玩家重新选择角色时必须生效（不依赖 scene_num==0）
+    # 原来 choose_char_apply 只在新存档块内执行 → 已有存档时选谁都被忽略（视角 bug 根因）
+    try:
+        _exist_st = _store.load_state(novel_id) if _store.exists(novel_id) else None
+        _cur_char = ((_exist_st or {}).get("player_char") or {}).get("name", "")
+    except Exception:
+        _exist_st, _cur_char = None, ""
+    _role_switch = bool(char_choice and _exist_st and char_choice != _cur_char)
+
     if not _store.exists(novel_id) or not _store.load_state(novel_id).get("scene_num", 0):
         from core.interactive.interact_store import new_state
         st = new_state(novel_id, ctx.get("title", novel_id),
@@ -89,7 +98,12 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
                     "backstory": "", "motivation": "", "speak_style": "",
                     "initial_attitude": "", "role": "protagonist",
                 }]
-        _presets_map = {p.get("name"): p for p in _presets if p.get("name")}
+        # v2.5.63: 同名角色去重保留第一个（supporting/antagonist 可能重复，
+        # dict 推导会被后者覆盖 → 档案错乱，与 cast-options 的 seen 去重保持一致）
+        _presets_map = {}
+        for _p in _presets:
+            if _p.get("name") and _p["name"] not in _presets_map:
+                _presets_map[_p["name"]] = _p
         _target = char_choice or ctx.get("protagonist_name") or (
             _presets[0]["name"] if _presets else "")
         ok, msg = choose_char_apply(st, _target, _presets_map)
@@ -182,6 +196,40 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
             log.warning(f"global resources load failed: {e}")
         _store.save_state(novel_id, st)
 
+    # v2.5.63: 老存档角色切换（视角 bug 修复核心）
+    # 已有存档 + 玩家显式选了不同角色 → 重新应用角色选择：
+    # - player_char 换成新角色（casts 同步：新角色移除 NPC 化，旧角色回归 NPC）
+    # - intro 缓存作废（旧视角开场白不能继续用）
+    # - 玩家视角缓存作废（recent_blocks 里混着旧角色的台词）
+    if _role_switch:
+        try:
+            from core.interactive.story_director import cast_presets_build, choose_char_apply
+            _st_rs = _store.load_state(novel_id) or {}
+            _plan_rs = _story._load_plan(novel_id) if hasattr(_story, '_load_plan') else {}
+            _presets_rs = cast_presets_build(_plan_rs)
+            _map_rs = {}
+            for _p in _presets_rs:  # v2.5.63: 同名去重保留第一个（防档案被冲突描述覆盖）
+                if _p.get("name") and _p["name"] not in _map_rs:
+                    _map_rs[_p["name"]] = _p
+            _ok_rs, _msg_rs = choose_char_apply(_st_rs, char_choice, _map_rs)
+            if _ok_rs:
+                _st_rs["cast_choices"] = {"char": char_choice, "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
+                _st_rs.pop("intro", None)            # 旧视角开场白作废
+                _st_rs.pop("recent_blocks", None)    # 旧角色对话流作废（防视角混淆）
+                _st_rs.pop("drift_note", None)
+                _st_rs.pop("pending_travel", None)
+                # 主角状态卡同步（场景生成用 player_state 注入视角）
+                _ps_rs = _st_rs.get("player_state") or {}
+                _ps_rs["name"] = char_choice
+                _ps_rs["situation"] = f"已切换扮演角色：{char_choice}"
+                _st_rs["player_state"] = _ps_rs
+                _store.save_state(novel_id, _st_rs)
+                log.info(f"角色切换: {_cur_char} → {char_choice}（老存档视角已重置）")
+            else:
+                log.warning(f"角色切换失败({char_choice}): {_msg_rs}")
+        except Exception as e:
+            log.warning(f"role switch failed: {e}")
+
     # v3.5.28: 大纲驱动互动——每次 start 都刷新章节列表（老存档也补上），
     # 互动剧情按 plan.outline 章节推进（不在初始化块内：老存档 scene_num>0 会跳过）
     try:
@@ -266,13 +314,18 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
             state = _store.load_state(novel_id)
             if state:
                 cached_intro = state.get("intro") or ""
+                # v2.5.63: 缓存绑定角色——intro_char 与当前 player_char 不符时
+                # 强制重新生成（角色切换后旧视角开场白不得复用）
+                _pc_name = ((state.get("player_char") or {}).get("name", ""))
+                _intro_char = state.get("intro_char") or ""
+                _intro_mismatch = bool(_pc_name and _intro_char and _pc_name != _intro_char)
                 # v3.5.33: 精简版 250-350 字——旧缓存 >500 字（长篇）也强制重生
-                if cached_intro and 200 <= len(cached_intro) <= 400:
+                if cached_intro and 200 <= len(cached_intro) <= 400 and not _intro_mismatch:
                     yield f"data: {json.dumps({'type': 'intro', 'content': cached_intro}, ensure_ascii=False)}\n\n"
                 else:
                     intro_fut = asyncio.create_task(
                         asyncio.to_thread(_story.generate_intro, novel_id, state,
-                                          force=bool(cached_intro)))
+                                          force=bool(cached_intro) or _intro_mismatch))
         except Exception as e:
             log.warning(f"intro pre failed: {e}")
         async for data in _sse_with_heartbeat(_story.generate_scene_stream(novel_id)):
