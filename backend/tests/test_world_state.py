@@ -220,5 +220,41 @@ class TestWorldBrief:
         assert "林晚晚" in brief                     # 在场人物
 
 
+# ── v3.6 P1: 场景时间推进 / LLM time 同步 / 图谱显式在场 ──
+class TestP1:
+    def test_llm_time_not_adopted(self):
+        """LLM 提取的 time 不被采纳——同步规则档位（防 LLM 自由编时间）"""
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["time"] = {"label": "傍晚", "slot": 4, "day": 1}
+        ws.validate_llm_state(st, {"time": "三百年后", "location": "茶楼"})
+        assert st["player_state"]["time"] == "傍晚"   # 规则时间
+
+    def test_scene_time_advance_every_2(self, monkeypatch):
+        """场景推进每 2 场景 +1 档（由 story_director 调 advance_time，这里测规则）"""
+        st = base_state()
+        w = ws.ensure_world(st)
+        ws.advance_time(w, 1)
+        assert w["time"]["label"] == "下午"
+        ws.advance_time(w, 1)
+        assert w["time"]["label"] == "傍晚"
+
+    def test_graph_presence_source(self):
+        """图谱 locations[loc].chars 是显式在场来源（compute_present 会读取）"""
+        from core.interactive.story_director import compute_present
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["locations"]["茶楼"]["chars"] = ["林晚晚", "掌柜", "神秘客"]
+        present, away = compute_present(st)
+        assert "神秘客" in present                  # 图谱绑定 → 在场
+
+    def test_validate_time_sync_after_advance(self):
+        st = base_state()
+        ws.ensure_world(st)
+        ws.advance_time(st["world"], 1)
+        ws.validate_llm_state(st, {"with": [], "holding": [], "location": "茶楼"})
+        assert st["player_state"]["time"] == "下午"   # 与 world 档位同步
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

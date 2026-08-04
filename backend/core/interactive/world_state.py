@@ -353,6 +353,8 @@ def validate_llm_state(state: dict, extracted_ps: dict) -> dict:
     if not isinstance(extracted_ps, dict):
         return state.get("player_state") or {}
     ps = state.get("player_state") or {}
+    # time 由规则驱动（world 档位推进）：LLM 的 time 不采纳，同步档位
+    ps["time"] = (w.get("time") or {}).get("label", ps.get("time", ""))
     llm_loc = clean_loc(extracted_ps.get("location"))
     if llm_loc:
         locations = w.get("locations") or {}

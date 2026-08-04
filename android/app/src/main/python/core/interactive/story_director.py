@@ -984,7 +984,17 @@ INTERACTIVE_TO_CHAPTER_SYSTEM = """你是小说章节整理师。把互动模式
 4. 小说文笔：环境描写、人物神态、对话自然，与前文风格一致；不要列提纲、
    不要总结、不要"本章讲述了"之类的说明
 5. 篇幅：接近目标字数（上下浮动 20% 可接受），宁可充实不要干瘪
-只输出章节正文，不要输出标题以外的任何解释。"""
+   只输出章节正文，不要输出标题以外的任何解释。"""
+
+# ── v3.6: 地点图谱 desc 补全（start 时后台一次调用——LLM 填内容，规则管结构）──
+LOC_DESC_SYSTEM = """你是互动小说场景美术师。为地点写一句贴合世界观的环境描写。
+
+要求：
+1. 每句 20-40 字，至少包含光线/氛围/标志物中的两项
+2. 贴合小说世界观与文风，不出现原文没有的超现实元素
+3. 输出格式：每行一个「地点名: 描写」，地点名严格用给出的名字
+4. 某地点无法描写 → 跳过该行
+只输出内容，不要解释。"""
 
 # ── v3.5.37: 主角状态卡提取（后台，场景后更新——LLM 结构化识别主角当前状态）──
 PLAYER_STATE_SYSTEM = """你是互动小说的【世界状态追踪器】。根据最新场景，更新主角状态卡 + 全体在场 NPC 状态卡 + 角色间关系矩阵。
@@ -1067,6 +1077,18 @@ def compute_present(state: dict) -> tuple:
                 sp = str(b["speaker"])
                 if sp not in away:
                     present.add(sp)
+    except Exception:
+        pass
+    # v3.6: 地点图谱显式在场（locations[当前地点].chars —— 规则绑定，权威）
+    try:
+        _w = state.get("world") or {}
+        _locs = _w.get("locations") or {}
+        _entry = _locs.get(clean_location(my_loc)) if my_loc else None
+        if isinstance(_entry, dict):
+            for _nm in (_entry.get("chars") or []):
+                _nm = str(_nm)
+                if _nm and _nm not in away:
+                    present.add(_nm)
     except Exception:
         pass
     # casts.present=True（v3.5.41 旧字段兼容）→ 在场
@@ -1470,6 +1492,39 @@ class StoryDirector:
             log.warning(f"logic_context failed: {e}")
             return ""
 
+    def enrich_location_descs(self, novel_id: str, state: dict):
+        """v3.6: 地点图谱 desc 一次性补全（LLM 填内容，规则管结构——防幻觉）。
+
+        start 时后台触发：只补 desc 为空的节点（≤12 个），失败静默（空 desc
+        不影响移动/在场等规则功能，只影响环境描写素材）。
+        """
+        try:
+            w = state.get("world") or {}
+            locs = w.get("locations") or {}
+            missing = {k: v for k, v in locs.items()
+                       if not str(v.get("desc") or "").strip()}
+            if not missing:
+                return
+            names = list(missing.keys())[:12]
+            user = (
+                f"小说《{state.get('title', '')}》{state.get('genre', '')}·{state.get('style', '')}世界观。\n"
+                f"当前地点: {str((w.get('location') or ''))}\n"
+                f"为下列地点各写一句环境描写（20-40 字）：\n"
+                + "\n".join(f"- {n}" for n in names)
+            )
+            raw = self._llm(LOC_DESC_SYSTEM, user, temperature=0.4, max_tokens=500)
+            import re as _re
+            for seg in _re.split(r"\n(?=-)", raw or ""):
+                m = _re.match(r"-?\s*([^:：]{1,12})[:：]\s*(.+)", seg.strip())
+                if m:
+                    name, desc = m.group(1).strip(), m.group(2).strip()
+                    if name in locs and desc and not str(locs[name].get("desc") or ""):
+                        locs[name]["desc"] = desc[:80]
+            w["locations"] = locs
+            self.store.save_state(novel_id, state)
+        except Exception as e:
+            log.warning(f"enrich desc failed: {type(e).__name__}: {str(e)[:80]}")
+
     def _extract_player_state(self, novel_id: str, scene_text: str):
         """v3.5.37/43: 场景后（后台）提取【世界状态】——主角状态卡 + NPC 状态卡 + 关系矩阵"""
         try:
@@ -1580,6 +1635,19 @@ class StoryDirector:
     def _post_scene_logic_check(self, novel_id: str, scene_num: int, scene_text: str, blocks: list = None):
         """场景生成后（后台）：复用小说模式引擎做状态更新 + 矛盾检查"""
         try:
+            # v3.6: 场景推进 → 时间规则推进（每 2 个场景 +1 档，与 world 三支柱同步）
+            try:
+                from .world_state import ensure_world, advance_time
+                _st0 = self.store.load_state(novel_id) or {}
+                ensure_world(_st0)
+                if int(scene_num or 0) % 2 == 1:
+                    advance_time(_st0["world"], 1)
+                    _ps0 = _st0.get("player_state") or {}
+                    _ps0["time"] = (_st0["world"].get("time") or {}).get("label", "")
+                    _st0["player_state"] = _ps0
+                    self.store.save_state(novel_id, _st0)
+            except Exception as e:
+                log.warning(f"scene time advance failed: {e}")
             # v3.5.46: 在场校验（不在场角色乱入检测 + 合理化）
             try:
                 self._validate_scene_present(novel_id, scene_num, blocks or [])

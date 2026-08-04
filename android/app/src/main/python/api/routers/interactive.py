@@ -137,6 +137,13 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
             ensure_world(st)
         except Exception as e:
             log.warning(f"world init failed: {e}")
+        # v3.6: 图谱 desc 后台一次性补全（LLM 填内容，不阻塞 start）
+        try:
+            import threading as _th
+            _th.Thread(target=_story.enrich_location_descs, args=(novel_id, st),
+                       daemon=True).start()
+        except Exception as e:
+            log.warning(f"desc enrich trigger failed: {e}")
         wb_brief = []
         for k in ("era", "geography", "power_system", "core_conflict", "factions"):
             v = wb.get(k)
