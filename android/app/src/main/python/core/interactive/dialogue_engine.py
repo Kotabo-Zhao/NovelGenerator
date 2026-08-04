@@ -185,7 +185,16 @@ class DialogueEngine:
         # v3.5.37: 主角状态卡（对话发生在哪/何时/和谁/处境）
         ps = state.get("player_state") or {}
         if ps:
-            parts.append(f"## 当前状态: 位置[{clean_location(ps.get('location'))}] 时间[{ps.get('time', '')}] "
+            # v3.6.5: 时间必须取 world.time（规则权威）——player_state.time 可能被
+            # LLM 提取污染，对话中的时间表述以系统时间为唯一基准，防"早上好"发生在夜里
+            _w = state.get("world") or {}
+            _wt = _w.get("time") or {}
+            _pt = str(_wt.get("label", "") or "") or str(ps.get("time", "") or "")
+            _pd = int(_wt.get("day") or 1)
+            _when = f"第{_pd}天·{_pt}" if _pd > 1 else _pt
+            parts.append(f"## 当前状态: 位置[{clean_location(ps.get('location'))}] "
+                         f"时间[{_when}（系统权威——对话中一切时间表述必须与此一致："
+                         f"问候语/天色判断/约时间都以此刻为基准，不得说出与此刻矛盾的时间）] "
                          f"同行[{','.join(ps.get('with') or []) or '无'}] "
                          f"身体[{ps.get('condition', '健康')}] 身份[{ps.get('disguise', '本名') or '本名'}] "
                          f"处境[{ps.get('situation', '')}]")

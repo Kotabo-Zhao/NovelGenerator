@@ -281,6 +281,61 @@ class TestP2:
         assert "掌柜" in st["world"]["locations"]["茶楼"]["chars"]   # 留守保留
 
 
+# ── v3.6.5: 时间连续性（权威横幅 / 档位提取 / 漂移检测）──
+class TestTimeContinuity:
+    def test_time_now_brief_contains_authority(self):
+        """权威横幅：第X天·时段 + 纪律声明"""
+        w = {"time": {"label": "清晨", "slot": 0, "day": 9}}
+        b = ws.time_now_brief(w)
+        assert "第9天·清晨" in b
+        assert "系统权威" in b
+        assert "时间纪律" in b
+
+    def test_time_now_brief_day1_no_prefix(self):
+        w = {"time": {"label": "正午", "slot": 2, "day": 1}}
+        b = ws.time_now_brief(w)
+        assert "正午" in b and "第1天" not in b
+
+    def test_slots_of_text_basic(self):
+        assert ws.time_slots_of_text("深夜十一点，灯熄了") == [6]
+        assert ws.time_slots_of_text("晨阳斜洒") == [0]
+        assert ws.time_slots_of_text("黄昏时分，暮色四合") == [4]
+        assert ws.time_slots_of_text("今天天气不错") == []
+
+    def test_slots_skip_future_marks(self):
+        """'明天下午'是未来约定 → 不参与叙事档位检测"""
+        assert ws.time_slots_of_text("明天下午去旧货市场") == []
+        assert ws.time_slots_of_text("后天珠宝展") == []
+
+    def test_slots_skip_dialogue_blocks(self):
+        """【角色名】台词块剥离——台词里的时间约定不算叙事"""
+        markup = "【旁白】深夜十一点，灯熄了。\n【方瑜】\"明天下午见。\"\n【动作】她转身离开。"
+        assert ws.time_slots_of_text(markup) == [6]
+
+    def test_drift_forward_violation(self):
+        """系统清晨 + 旁白写深夜 → 超前 6 档违规"""
+        w = {"time": {"label": "清晨", "slot": 0, "day": 9}}
+        d = ws.time_drift_check("【旁白】深夜十一点，甜品店熄灯了。", w)
+        assert "超前" in d and "深夜" in d
+
+    def test_drift_backward_violation(self):
+        """系统深夜 + 旁白写清晨 → 倒流违规"""
+        w = {"time": {"label": "深夜", "slot": 6, "day": 3}}
+        d = ws.time_drift_check("【旁白】清晨的微光洒进窗。", w)
+        assert "倒流" in d
+
+    def test_drift_same_slot_ok(self):
+        w = {"time": {"label": "清晨", "slot": 0, "day": 9}}
+        assert ws.time_drift_check("【旁白】清晨的微光洒进窗。", w) == ""
+
+    def test_drift_dialogue_promise_ok(self):
+        """台词里的'明天下午'不误报（真实场景形态）"""
+        w = {"time": {"label": "清晨", "slot": 0, "day": 9}}
+        real = ("【旁白】落地玻璃映着清晨的微光。\n"
+                "【方瑜】\"下午，旧货市场，别迟到。\"")
+        assert ws.time_drift_check(real, w) == ""
+
+
 # ── v3.6 P3: 对话承诺 → 行动兑现（地点锚定）──
 class TestP3Promises:
     def _state_with_promise(self, location="码头"):

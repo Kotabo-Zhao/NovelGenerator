@@ -43,6 +43,139 @@ def time_scene_hint(world: dict) -> str:
     t = world.get("time") or {}
     return TIME_SCENE_HINTS.get(str(t.get("label", "")), "")
 
+
+# ── v3.6.5: 时间连续性（P0）——权威时间横幅 + 场景文本时间漂移检测 ──
+def time_now_brief(world: dict) -> str:
+    """权威时间横幅：第X天·时段 + 时段氛围 + 时间纪律（注入场景/对话 prompt 顶部）。
+
+    让 LLM 对"现在是什么时候"有确定概念——时间由规则引擎唯一决定，
+    叙事/台词/心理中的时间表述必须以它为基准，不得臆造。
+    """
+    t = world.get("time") or {}
+    label = str(t.get("label", "")) or ""
+    day = int(t.get("day") or 1)
+    when = f"第{day}天·{label}" if day > 1 else label
+    lines = [
+        f"现在的时间（系统权威，叙事/台词/心理的所有时间表述必须与此一致）: {when}",
+        "时间纪律（P0）: "
+        "①叙事时间只能从当前时刻向前流动，禁止倒流（不得回到已过去的时段/天）；"
+        "②一个场景内最多跨越 1 个时段（如从傍晚写到深夜可以，从下午写到次日清晨不行——跨天只能由系统推进）；"
+        "③旁白/台词中出现具体时刻（如'深夜十一点'）必须落在当前时段前后 1 档内；"
+        "④约定未来时间用相对表述（'明天下午'/'后天'），以当前系统时间为基准推算，不得凭空跳日；"
+        "⑤问候语（早安/晚安/夜里好）必须匹配当前时段。",
+    ]
+    hint = TIME_SCENE_HINTS.get(label, "")
+    if hint:
+        lines.append(f"当前时段的氛围（场景的光线/声响/节奏必须体现）: {hint}")
+    return "\n".join(lines)
+
+
+# 文本 → 时间档位 规则提取（零 LLM，供漂移检测）
+_SLOT_WORDS = {
+    "清晨": 0, "早晨": 0, "早上": 0, "一早": 0, "天明": 0, "破晓": 0, "拂晓": 0,
+    "晨": 0,  # 晨阳/晨光/晨风——清晨语境
+    "上午": 1, "午前": 1,
+    "正午": 2, "中午": 2, "午时": 2, "晌午": 2, "午间": 2,
+    "下午": 3, "午后": 3,
+    "傍晚": 4, "黄昏": 4, "日落": 4, "夕阳": 4, "暮色": 4, "入暮": 4,
+    "夜晚": 5, "晚上": 5, "入夜": 5, "夜幕": 5, "掌灯": 5, "月上": 5,
+    "深夜": 6, "半夜": 6, "午夜": 6, "凌晨": 6, "子时": 6, "夜里": 6, "三更": 6,
+}
+
+# 未来修饰词：紧跟其后的档位词是"未来约定"（明天下午见），不是叙事时间，跳过
+_FUTURE_MARKERS = ("明天", "明日", "后天", "后日", "次日", "改天", "明早", "明晚",
+                   "明儿", "过两", "下周", "下个", "礼拜", "星期", "月底", "今晚")
+
+
+def _is_future_marked(text: str, start: int) -> bool:
+    """档位词 start 前 6 字符内出现未来修饰词 → 该档位是约定不是叙事。"""
+    ctx = text[max(0, start - 6):start]
+    return any(m in ctx for m in _FUTURE_MARKERS)
+
+
+def _strip_dialogue_blocks(text: str) -> str:
+    """剥离【角色名】台词块——台词常含未来约定（'明天下午见'），不参与叙事时间检测。
+
+    保留【旁白】【动作】块（叙事主体）。
+    """
+    return re.sub(r"【(?![旁白动作])[^】]+】[^【]*", "", text or "")
+
+
+def _hour_to_slot(hour: int) -> Optional[int]:
+    """具体时刻 → 档位（5-7清晨 / 8-10上午 / 11-13正午 / 14-17下午 / 17-19傍晚 / 19-22夜晚 / 22-4深夜）。"""
+    if 5 <= hour < 8:
+        return 0
+    if 8 <= hour < 11:
+        return 1
+    if 11 <= hour < 14:
+        return 2
+    if 14 <= hour < 17:
+        return 3
+    if 17 <= hour < 19:
+        return 4
+    if 19 <= hour < 22:
+        return 5
+    return 6  # 22-24 与 0-4
+
+
+def time_slots_of_text(text: str) -> List[int]:
+    """从文本中提取提到的时间档位（去重、升序）。零 LLM。
+
+    覆盖：档位词（清晨/上午/正午/下午/傍晚/夜晚/深夜）+ 具体时刻（'深夜十一点'/'23点'）。
+    - 台词块（【角色名】…）整体剥离——台词里的'明天下午'是约定不是叙事
+    - '明天/后天/明日'等未来修饰词后的档位跳过（未来约定由承诺台账管理）
+    """
+    if not text:
+        return []
+    text = _strip_dialogue_blocks(text)
+    if not text:
+        return []
+    slots: set = set()
+    for word, slot in _SLOT_WORDS.items():
+        for m in re.finditer(word, text):
+            if not _is_future_marked(text, m.start()):
+                slots.add(slot)
+                break
+    # 数字时刻：'23点' / '深夜十一点' / '11点'
+    for m in re.finditer(r"(?<![0-9])([0-9]{1,2})\s*[点时]", text):
+        if _is_future_marked(text, m.start()):
+            continue
+        try:
+            h = int(m.group(1))
+            if 0 <= h <= 24:
+                slots.add(_hour_to_slot(h))
+        except (TypeError, ValueError):
+            pass
+    return sorted(slots)
+
+
+def time_drift_check(scene_text: str, world: dict, max_gap: int = 1) -> str:
+    """场景文本时间漂移检测（纯函数）——场景叙事提到的时段 vs 系统权威时间。
+
+    返回违规描述（空串 = 无违规）。逻辑：
+    - 场景文本提到的最晚档位 比 系统当前档位 超前 >max_gap 档 → 违规（LLM 穿越时间）
+    - 场景文本提到的最早档位 比 系统当前档位 落后 >max_gap 档 → 违规（时间倒流）
+    宽松点：
+    - 台词块（【角色名】…）不参与检测——'明天下午见'是未来约定不是叙事
+    - '明天/后天'等未来修饰词后的档位跳过
+    """
+    t = world.get("time") or {}
+    cur_slot = int(t.get("slot", 0) or 0)
+    mentions = time_slots_of_text(scene_text or "")
+    if not mentions:
+        return ""
+    earliest, latest = mentions[0], mentions[-1]
+    cur_label = str(t.get("label", "")) or ""
+    problems = []
+    if latest > cur_slot + max_gap:
+        problems.append(
+            f"叙事时间超前：场景提到「{TIME_SLOTS[latest]}」（第{int(t.get('day') or 1)}天系统时间是「{cur_label}」），"
+            f"跨了 {latest - cur_slot} 档")
+    if earliest + max_gap < cur_slot:
+        problems.append(
+            f"叙事时间倒流：场景提到「{TIME_SLOTS[earliest]}」，早于系统当前「{cur_label}」{cur_slot - earliest} 档")
+    return "；".join(problems)
+
 # ── 移动目标规则解析 ──
 # 高置信移动表达（命中 → travel 意图）
 _TRAVEL_VERBS = (

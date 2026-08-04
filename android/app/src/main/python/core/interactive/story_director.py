@@ -1130,7 +1130,7 @@ PLAYER_STATE_SYSTEM = """你是互动小说的【世界状态追踪器】。根�
 
 请输出 JSON（不要解释）:
 {{"player": {{"location": "主角当前精确位置（如：陆氏集团28层，陆廷深办公室门口）",
-  "time": "当前时间段（清晨/上午/正午/下午/傍晚/夜晚/深夜）",
+  "time": "当前时间段（清晨/上午/正午/下午/傍晚/夜晚/深夜）——仅填场景中明确表现的时间段，系统会以规则时间为准自动校准，不要自行推断或臆造",
   "with": ["当前与主角同行的角色名（没有则空数组）"],
   "holding": ["主角随身携带的重要物品（没有则空数组）"],
   "condition": "身体状况（健康/轻伤/重伤/醉酒/疲惫/发烧等，没有异常则健康）",
@@ -1671,11 +1671,16 @@ class StoryDirector:
                 return
             # ── 主角状态卡 ──
             ps = data.get("player") or {}
+            # v3.6.5: time 由规则引擎唯一决定——LLM 提取的时间不采信，
+            # 直接同步 world.time（异常路径 validate_llm_state 未覆盖时的兜底）
+            _wt5 = (st.get("world") or {}).get("time") or {}
+            _pt5 = str(_wt5.get("label", "") or "") or str(
+                ps.get("time", old_ps.get("time", "")))[:20]
             clean = {
                 # v3.5.51: location 必须过 clean_location——LLM 偶尔输出对象/数组
                 # （JSON 片段被 str() 强转进字段），导致场景地点脏数据
                 "location": clean_location(str(ps.get("location", old_ps.get("location", ""))))[:80],
-                "time": str(ps.get("time", old_ps.get("time", "")))[:20],
+                "time": _pt5[:20],
                 "with": [str(x)[:20] for x in (ps.get("with") or [])][:4],
                 "holding": [str(x)[:30] for x in (ps.get("holding") or [])][:5],
                 "situation": str(ps.get("situation", old_ps.get("situation", "")))[:120],
@@ -1793,6 +1798,21 @@ class StoryDirector:
                 self.store.save_state(novel_id, _st3)
             except Exception as e:
                 log.warning(f"time valid failed: {e}")
+            # v3.6.5: 场景文本时间漂移检测（规则兜底）——LLM 叙事提到穿越时段
+            # （深夜场景写晨阳 / 下午场景写半夜）→ 记录 violation + 强制对齐
+            try:
+                from .world_state import time_drift_check
+                _st5 = self.store.load_state(novel_id) or {}
+                _drift = time_drift_check(scene_text, _st5.get("world") or {})
+                if _drift:
+                    _st5["time_violations"] = _st5.get("time_violations", []) + [
+                        {"scene": scene_num, "drift": str(_drift)[:120],
+                         "ts": time.strftime("%m-%d %H:%M")}]
+                    _st5["time_violations"] = _st5["time_violations"][-5:]
+                    self.store.save_state(novel_id, _st5)
+                    log.warning(f"[时间连续性] 场景{scene_num} 漂移: {_drift}")
+            except Exception as e:
+                log.warning(f"time drift failed: {e}")
             # v2.5.57: 承诺时间冲突检测——新场景时间表述 vs 未兑现约定台账
             try:
                 _st4 = self.store.load_state(novel_id) or {}
@@ -2011,13 +2031,15 @@ class StoryDirector:
                 parts.append(f"## 当前世界状态（生成角色反应/剧情后果必须基于此）:\n{_wctx}")
         except Exception:
             pass
-        # v3.6 P2: 当前时段氛围注入（时间驱动内容——场景描写必须体现时段特征）
+        # v3.6.5 P0: 权威时间横幅——现在是什么时候由规则引擎唯一决定，
+        # 场景叙事/台词的时间表述必须以此为基准（防时间错乱：深夜与晨阳共存、
+        # 问候语与时段不符、凭空跳日等）
         try:
-            from .world_state import ensure_world, time_scene_hint
+            from .world_state import ensure_world, time_now_brief
             ensure_world(state)
-            _th = time_scene_hint(state.get("world") or {})
-            if _th:
-                parts.append(f"## 当前时刻的氛围（场景的光线/声音/节奏必须体现）:\n{_th}")
+            _tb = time_now_brief(state.get("world") or {})
+            if _tb:
+                parts.append(f"## {_tb}")
         except Exception:
             pass
         # v1.1 P2: 锚点触发进入方式（entry_hook）——本场景以它开场，事件找上门
@@ -2059,8 +2081,13 @@ class StoryDirector:
         # v3.5.37: 主角状态卡（精确位置/时间/同行/物品/处境——LLM 结构化识别）
         ps = state.get("player_state") or {}
         if ps:
+            # v3.6.5: 时间字段强制取 world.time（规则权威），不采信 LLM 提取值
+            _wt0 = (state.get("world") or {}).get("time") or {}
+            _pt0 = str(_wt0.get("label", "") or "") or str(ps.get("time", "") or "")
+            _pd0 = int(_wt0.get("day") or 1)
+            _when0 = f"第{_pd0}天·{_pt0}" if _pd0 > 1 else _pt0
             parts.append(f"主角状态卡（以此为准，保持状态连续）: "
-                         f"位置[{clean_location(ps.get('location'))}] 时间[{ps.get('time', '')}] "
+                         f"位置[{clean_location(ps.get('location'))}] 时间[{_when0}] "
                          f"同行[{','.join(ps.get('with') or []) or '无'}] "
                          f"物品[{','.join(ps.get('holding') or []) or '无'}] "
                          f"身体[{ps.get('condition', '健康')}] 身份[{ps.get('disguise', '本名') or '本名'}] "
