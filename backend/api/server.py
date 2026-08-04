@@ -212,6 +212,12 @@ for _router in (novels, outline, quality, storygraph, requirements, styles, tren
 @app.on_event("startup")
 async def startup_repair():
     """服务器启动时自动扫描并修复 state 不一致"""
+    # v3.6.4: 确保 NOVELS_DIR 存在（Android 旧 APK 的 server_runner 可能未建目录）
+    try:
+        import os as _os
+        _os.makedirs(NOVELS_DIR, exist_ok=True)
+    except Exception as _e:
+        log.warning(f"NOVELS_DIR 创建失败: {_e}")
     try:
         results = engine.memory.repair_all_states()
         if results:

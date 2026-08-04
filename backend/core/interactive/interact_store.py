@@ -120,6 +120,12 @@ class InteractStore:
 
     def __init__(self, novels_dir: str):
         self.novels_dir = novels_dir
+        # v3.6.4: 防御性创建根目录——Android 上若 server_runner 的 makedirs 未执行
+        # （旧 APK/异常路径），任何访问 NOVELS_DIR 的操作都会 FileNotFoundError
+        try:
+            os.makedirs(self.novels_dir, exist_ok=True)
+        except Exception as e:
+            log.warning(f"novels_dir 创建失败: {self.novels_dir}: {e}")
         self._dir_cache: dict[str, str] = {}
         self._state_cache: dict[str, Optional[dict]] = {}  # novel_id -> state or None
 
