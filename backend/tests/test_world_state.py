@@ -256,5 +256,30 @@ class TestP1:
         assert st["player_state"]["time"] == "下午"   # 与 world 档位同步
 
 
+# ── v3.6 P2: 时段氛围提示 / 图谱 chars 双写 ──
+class TestP2:
+    def test_time_scene_hint_all_slots(self):
+        for slot, label in enumerate(ws.TIME_SLOTS):
+            w = {"time": {"label": label, "slot": slot, "day": 1}}
+            hint = ws.time_scene_hint(w)
+            assert hint, f"{label} 档位应有氛围提示"
+            assert label in hint                       # 提示含时段名
+
+    def test_time_scene_hint_empty(self):
+        assert ws.time_scene_hint({"time": {"label": "奇怪时段"}}) == ""
+
+    def test_presence_updates_graph_chars(self):
+        """移动后图谱 chars 双写：跟随者进新地点列表，留守者从旧地点移除"""
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["locations"]["茶楼"]["chars"] = ["林晚晚", "掌柜"]
+        st["world"]["locations"]["家"] = {"desc": "城南小院", "connected": ["街市"],
+                                          "chars": [], "items": []}
+        ws.execute_travel(st, "家")
+        assert "林晚晚" in st["world"]["locations"]["家"]["chars"]   # 跟随 → 新地点
+        assert "林晚晚" not in st["world"]["locations"]["茶楼"]["chars"]  # 旧地点移除
+        assert "掌柜" in st["world"]["locations"]["茶楼"]["chars"]   # 留守保留
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

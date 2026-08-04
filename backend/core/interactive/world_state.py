@@ -26,6 +26,23 @@ log = logging.getLogger(__name__)
 # ── 时间档位表（确定性推进）──
 TIME_SLOTS = ["清晨", "上午", "正午", "下午", "傍晚", "夜晚", "深夜"]
 
+# v3.6 P2: 时段 → 场景氛围提示（时间驱动内容生成——LLM 描写必须体现）
+TIME_SCENE_HINTS = {
+    "清晨": "清晨：天色初亮、空气清冷，街市刚开张，人们睡眼惺忪",
+    "上午": "上午：日光充足，市面繁忙，正是办事的好时候",
+    "正午": "正午：日头高照，行人稀少，酒楼茶馆里人声鼎沸",
+    "下午": "下午：光线渐斜，长街的影子拉长，茶客陆续散去",
+    "傍晚": "傍晚：暮色四合、灯火初上，归家与开夜市的人流交汇",
+    "夜晚": "夜晚：灯火明亮或昏黄，月色或明或暗，坊市或喧嚣或沉寂",
+    "深夜": "深夜：万籁俱寂，只有更声与犬吠，多数门户紧闭",
+}
+
+
+def time_scene_hint(world: dict) -> str:
+    """当前时段的场景氛围提示（空则无提示）。"""
+    t = world.get("time") or {}
+    return TIME_SCENE_HINTS.get(str(t.get("label", "")), "")
+
 # ── 移动目标规则解析 ──
 # 高置信移动表达（命中 → travel 意图）
 _TRAVEL_VERBS = (
@@ -264,6 +281,19 @@ def recompute_presence(state: dict, world: dict, moved_from: str = "") -> List[s
             c["present"] = False
             changes.append(f"{name}留在{moved_from}")
     state["cast_states"] = cs
+    # v3.6 P2: 图谱 chars 双写（locations[地点].chars 与 cast_states 一致）
+    try:
+        locations = world.setdefault("locations", {})
+        if moved_from and moved_from in locations:
+            _chars = locations[moved_from].setdefault("chars", [])
+            locations[moved_from]["chars"] = [x for x in _chars if x not in with_chars]
+        if cur and cur in locations:
+            _chars = locations[cur].setdefault("chars", [])
+            for _nm in with_chars:
+                if _nm not in _chars:
+                    _chars.append(_nm)
+    except Exception:
+        pass
     # world.chars 同步
     _sync_chars_from_cast(state, world)
     return changes

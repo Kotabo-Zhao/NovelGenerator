@@ -1889,6 +1889,15 @@ class StoryDirector:
                 parts.append(f"## 当前世界状态（生成角色反应/剧情后果必须基于此）:\n{_wctx}")
         except Exception:
             pass
+        # v3.6 P2: 当前时段氛围注入（时间驱动内容——场景描写必须体现时段特征）
+        try:
+            from .world_state import ensure_world, time_scene_hint
+            ensure_world(state)
+            _th = time_scene_hint(state.get("world") or {})
+            if _th:
+                parts.append(f"## 当前时刻的氛围（场景的光线/声音/节奏必须体现）:\n{_th}")
+        except Exception:
+            pass
         # v1.1 P2: 锚点触发进入方式（entry_hook）——本场景以它开场，事件找上门
         _at = state.get("anchor_triggered")
         if _at and _at.get("hook"):
