@@ -395,11 +395,26 @@ async def interactive_end_chat(novel_id: str):
     if not _store.exists(novel_id):
         raise HTTPException(404, "互动存档不存在，请先 start")
 
-    chat_entries = _store.recent_chats(novel_id, 40)
-    # 只取本轮对话（从上次 end-chat 之后）
+    # v3.9: 增量提取——只取上次 end-chat 之后的新对话（老存档/首次无游标 → 全量兼容）
     state = _store.load_state(novel_id)
-    last_chat_scene = state.get("_last_chat_scene", 0)
+    last_chat_total = state.get("_last_chat_total", 0)
+    total_now = _store.chat_log_count(novel_id)
+    if last_chat_total and total_now > last_chat_total:
+        chat_entries = _store.recent_chats_from(novel_id, last_chat_total, 40)
+    else:
+        chat_entries = _store.recent_chats(novel_id, 40)
+    if not chat_entries:
+        return {"ok": True, "facts": [], "relations": {}, "objective": "",
+                "tone": "", "hooks": {}, "suggestions": []}
     result = await asyncio.to_thread(_story.extract_pact, novel_id, chat_entries)
+
+    # v3.9: 游标推进——记录已处理的 chat 条数
+    try:
+        _st = _store.load_state(novel_id) or {}
+        _st["_last_chat_total"] = total_now
+        _store.save_state(novel_id, _st)
+    except Exception as e:
+        log.warning(f"chat cursor advance failed: {e}")
 
     state = _store.load_state(novel_id)
     # v3.3: Agenda 钩子核对（对话是否推进了剧情开关）
@@ -571,12 +586,8 @@ async def interactive_voice_override(novel_id: str, char_name: str, req: VoiceOv
 async def interactive_voice_reset(novel_id: str, char_name: str):
     """恢复默认音色（删除玩家覆盖）"""
     _validate_novel_id(novel_id)
-    over = _store.get_voice_overrides(novel_id)
-    if char_name in over:
-        del over[char_name]
-        _store.clear_voice_overrides(novel_id)
-        for k, v in over.items():
-            _store.set_voice_override(novel_id, k, v)
+    if char_name in _store.get_voice_overrides(novel_id):
+        _store.reset_voice_override(novel_id, char_name)
     return {"ok": True}
 
 

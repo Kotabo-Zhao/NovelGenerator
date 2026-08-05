@@ -245,7 +245,15 @@ def _state_snapshot(state: dict) -> dict:
     events = [{"ts": e.get("ts", ""), "type": e.get("type", "event"),
                "summary": str(e.get("summary", ""))[:50]}
               for e in (state.get("events") or [])[-4:]]
+    # v3.7: 角色属性卡（前端状态卡展示）
+    attrs = {}
+    for _n, _c in (state.get("casts") or {}).items():
+        _st = (_c.get("profile") or {}).get("stats") if isinstance(_c, dict) else None
+        if isinstance(_st, dict):
+            attrs[str(_n)[:12]] = {str(k): int(v) for k, v in _st.items()
+                                   if isinstance(v, (int, float))}
     return {
+        "attrs": attrs,
         "scene_num": state.get("scene_num", 0),
         "location": s.get("location", "") or "",
         "objective": s.get("objective", "") or "",
