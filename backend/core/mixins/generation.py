@@ -8,7 +8,9 @@ import logging
 log = logging.getLogger(__name__)
 
 import asyncio
+import json
 import os
+import re
 import time
 # Allow importing from parent dir (works both as package and standalone)
 try:
@@ -155,6 +157,56 @@ class GenerationMixin:
                 if int(ch.get("number", 0)) == chapter_num:
                     return ch
         return None
+
+    def _decompose_chapter_beats(self, chapter_outline: dict, chapter_num: int,
+                                 novel_dir: str, is_first: bool = False) -> list:
+        """AUDIT P1-1: 统一的章节 beat 分解助手（普通/原子路径共用节奏骨架）"""
+        is_climax = False
+        try:
+            from ..arcplanner import is_arc_climax
+            sg_path = os.path.join(novel_dir, "storygraph.json")
+            if os.path.exists(sg_path):
+                sg_data = safe_read_json(sg_path)
+                if sg_data and sg_data.get("arcs"):
+                    for arc in sg_data["arcs"]:
+                        if is_arc_climax(arc, chapter_num):
+                            is_climax = True
+                            break
+        except Exception:
+            pass
+        chars = chapter_outline.get("characters", []) or []
+        decomposer = BeatDecomposer(seed=chapter_num * 100 + int(time.time()) % 100)
+        return decomposer.decompose(
+            chapter_outline, chapter_num,
+            is_first_chapter=is_first,
+            is_climax_chapter=is_climax,
+            available_characters=chars,
+        )
+
+    def _format_beats_instruction(self, beats: list) -> str:
+        """AUDIT P1-1: 把 beat 列表渲染为紧凑节拍骨架，供普通 Writer 单次生成"""
+        lines = ["## 🎬 本章节拍结构（严格按此节奏推进，节拍顺序不可跳跃、不可合并）"]
+        for b in beats:
+            lines.append(
+                f"{b.index + 1}. {b.function}｜{b.goal}｜"
+                f"情绪 {b.emotion_start}→{b.emotion_end}｜"
+                f"冲突 {b.conflict_type}/{b.conflict_intensity}｜"
+                f"字数 {b.min_words}-{b.max_words}"
+            )
+            if b.key_event:
+                lines.append(f"   └ 核心事件: {b.key_event}")
+            if b.character_focus:
+                lines.append(f"   └ 聚焦角色: {b.character_focus}")
+        return "\n".join(lines)
+
+    def _strip_instruction_leaks(self, text: str) -> tuple:
+        """AUDIT P0-1: 扫描正文中的元指令泄漏，返回 (清理后文本, 泄漏行数)"""
+        markers = ("═══", "以下为写作元指令", "本章必须覆盖以下核心事件", "章末钩子方向")
+        leaked = [ln for ln in text.splitlines() if any(m in ln for m in markers)]
+        if not leaked:
+            return text, 0
+        clean = [ln for ln in text.splitlines() if not any(m in ln for m in markers)]
+        return "\n".join(clean).strip(), len(leaked)
 
     def build_requirements_instruction(self, novel_id: str, chapter_num: int,
                                        plan: dict = None) -> str:
@@ -430,6 +482,10 @@ class GenerationMixin:
                         outline_instr = remaining[:instr_end_marker].strip()
                     else:
                         outline_instr = remaining[:800].strip()
+                    # AUDIT P0-1: 剥离 ═══ 标记行
+                    outline_instr = "\n".join(
+                        ln for ln in outline_instr.splitlines() if "═══" not in ln
+                    ).strip()
                 
                 blueprint_prompt = f"""根据以下写作指令和大纲，写出本章的叙事蓝图。蓝图是一段200-300字的连贯叙事概要，严格遵循写作指令中的核心事件和章末钩子。
 
@@ -554,6 +610,12 @@ class GenerationMixin:
             full_text = assembly["raw_text"]
             formatted = assembly["full_text"]
             
+            # AUDIT P0-1: 指令泄漏检测（原子路径）
+            full_text, _leak_count = self._strip_instruction_leaks(full_text)
+            if _leak_count:
+                log.warning(f"Instruction leak stripped (atomic) Ch{chapter_num}: {_leak_count} lines")
+                formatted = f"# 第{chapter_num}章 {chapter_outline.get('title', f'第{chapter_num}章')}\n\n{full_text}"
+
             # ── v2.4.1: 段落规范化安全网 ──
             try:
                 from core.shared_memory import normalize_chapter_paragraphs
@@ -716,13 +778,28 @@ class GenerationMixin:
             if not chapter_outline:
                 # 兜底：构造一个基础大纲（防止 DeepSeek JSON 结构异常导致全流程挂掉）
                 log.warning(f"Chapter {chapter_num} outline not found in plan, using fallback")
+                # AUDIT P1-5: 兜底基于前文自动推断，不再是「继续推进主线剧情发展」空壳
+                _fb_summary = "推进主线剧情：主角直面新的挑战，冲突升级，并自然收束本章。"
+                _fb_hook = "章末局势急转直下，留下新的悬念。"
+                try:
+                    if chapter_num > 1:
+                        _prev_text = self.memory.read_chapter(novel_id, chapter_num - 1)
+                        if _prev_text:
+                            _prev_tail = _prev_text.strip()[-300:]
+                            _prev_lines = [l for l in _prev_tail.splitlines() if l.strip()]
+                            _prev_last = (_prev_lines[-1] if _prev_lines else _prev_tail)[:80]
+                            _fb_summary = (f"紧接上一章结尾继续：{_prev_last}。"
+                                           f"在此基础上推进核心矛盾、展开新冲突，并自然收束本章。")
+                            _fb_hook = f"围绕上一章结尾「{_prev_last[-40:]}」的悬念展开，章末制造新的反转钩子。"
+                except Exception:
+                    pass
                 chapter_outline = {
                     "number": chapter_num,
                     "title": f"第{chapter_num}章",
-                    "summary": f"继续推进主线剧情发展",
+                    "summary": _fb_summary,
                     "emotion_curve": "平稳→紧张→悬念",
                     "characters": ["主角"],
-                    "hook": "留下悬念引导下一章",
+                    "hook": _fb_hook,
                     "target_words": config.DEFAULT_CHAPTER_WORDS,
                 }
 
@@ -833,6 +910,20 @@ class GenerationMixin:
             if plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False):
                 target_words = 2500
 
+            # AUDIT P1-1: 普通 Writer 注入节拍骨架 — 与原子化路径共享节奏，
+            # 让单次生成也按 beat 推进，而非只靠 outline summary 一句话
+            try:
+                _beats = self._decompose_chapter_beats(
+                    chapter_outline, chapter_num,
+                    self.memory.get_novel_dir(novel_id),
+                    is_first=(chapter_num == 1),
+                )
+                if _beats:
+                    context += "\n\n" + self._format_beats_instruction(_beats)
+                    log.info(f"Beats injected into writer context (Ch{chapter_num}, {len(_beats)} beats)")
+            except Exception as _be:
+                log.warning(f"Beat injection skipped (non-fatal): {_be}")
+
             # 流式生成 + 增量保存（每500字写盘，防断线丢内容）
             full_text = ""
             last_save_len = 0
@@ -857,6 +948,12 @@ class GenerationMixin:
                         log.warning(f"Incremental save failed (non-fatal): {e}")
                 yield {"type": "text", "content": text}
 
+            # AUDIT P0-1: 指令泄漏检测 — 正文中不得出现元指令标记
+            full_text, _leak_count = self._strip_instruction_leaks(full_text)
+            if _leak_count:
+                log.warning(f"Instruction leak stripped from Ch{chapter_num}: {_leak_count} lines")
+                yield {"type": "warning", "message": "已清理正文中的指令泄漏文本"}
+
             # ── v2.27: 先跑质量门（本地规则，毫秒级），用结果控制后续处理 ──
             quality_report = None
             try:
@@ -869,32 +966,94 @@ class GenerationMixin:
                 if qr["score"] < 40 and qr["issues"]:
                     issues_text = "; ".join(qr["issues"])
                     log.warning(f"Quality gate CRITICAL (score={qr['score']}): {issues_text}")
-                    yield {"type": "quality_warning", "score": qr["score"], "issues": qr["issues"],
-                           "message": f"📝 严重质量瑕疵（评分 {qr['score']}），自动续写优化..."}
-                    yield {"type": "status", "message": "✍️ 质量门未过，正在优化改写（约1分钟）…"}
+                    _before_text = full_text
 
-                    # v2.49: 用 multi-turn history 续写修复，而不是从头重写
-                    retry_text = ""
-                    async for text in self.writer.write_stream(
-                        context=context + f"\n\n⚠️ 上一版质量不合格（评分{qr['score']}）。以下问题必须修正：{issues_text}\n\n【已生成内容参考】\n{full_text[-500:]}",
-                        genre=genre, style=style, target_words=target_words, writing_mode=writing_mode,
-                        normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
-                        fast_food=is_fast_food,
-                        chapter_outline=chapter_outline, skip_ending=True,
-                    ):
-                        retry_text += text
+                    # AUDIT P0-2: LLM 复核防误杀 — 规则初筛命中后由 LLM 确认是否真需重写
+                    llm_confirm = None
+                    if not batch_mode:
+                        try:
+                            _resp = self.client.chat.completions.create(
+                                model=self.model,
+                                messages=[
+                                    {"role": "system", "content": "你是一位严格的网络小说编辑。判断规则引擎的检测结果是否属实、文本是否真的需要重写。只输出JSON。"},
+                                    {"role": "user", "content": (
+                                        f"规则引擎认为本章存在以下问题：{issues_text}\n\n"
+                                        f"章节开头1200字：\n{full_text[:1200]}\n\n"
+                                        '请判断：这些问题是否真实存在且严重影响阅读？如果问题被夸大，'
+                                        '或属于正常文风（例如爽文打脸场景节奏快、对话多是优点），请给高分并 needs_rewrite=false。'
+                                        '只输出JSON: {"score": 0-100 可接受度评分, "needs_rewrite": true/false, "reason": "一句话理由"}'
+                                    )},
+                                ],
+                                temperature=0.2,
+                                max_tokens=250,
+                            )
+                            _content = (_resp.choices[0].message.content or "").strip()
+                            try:
+                                llm_confirm = json.loads(_content)
+                            except Exception:
+                                _mj = re.search(r"\{.*\}", _content, re.S)
+                                llm_confirm = json.loads(_mj.group(0)) if _mj else None
+                        except Exception as _ce:
+                            log.warning(f"Quality gate LLM confirm failed, default to rewrite: {_ce}")
 
-                    if retry_text and len(retry_text) > len(full_text) * 0.6:
-                        qr2 = checker.quick_quality_check(retry_text, fast_food=is_fast_food)
-                        if qr2["score"] > qr["score"] + 10 or qr2["score"] >= 60:
-                            full_text = retry_text
-                            quality_report = qr2
-                            log.info(f"Quality gate retry PASSED: {qr['score']} → {qr2['score']}")
-                            yield {"type": "quality_retry", "score_before": qr["score"], "score_after": qr2["score"]}
-                        else:
-                            log.warning("Quality gate retry no improvement, keeping original")
+                    _llm_accept = False
+                    _llm_score = 0
+                    if llm_confirm and isinstance(llm_confirm, dict):
+                        try:
+                            _llm_score = float(llm_confirm.get("score", 0))
+                        except (TypeError, ValueError):
+                            _llm_score = 0
+                        _llm_accept = (llm_confirm.get("needs_rewrite") is False and _llm_score >= 55)
+
+                    if _llm_accept:
+                        log.info(f"Quality gate LLM override: 保留原文 (llm_score={_llm_score})")
+                        quality_report = qr
+                        yield {"type": "quality_minor", "score": qr["score"], "issues": qr["issues"],
+                               "note": f"LLM复核通过，保留原文（{llm_confirm.get('reason', '')}）"}
                     else:
-                        log.warning("Quality gate retry text too short, keeping original")
+                        yield {"type": "quality_warning", "score": qr["score"], "issues": qr["issues"],
+                               "message": f"📝 严重质量瑕疵（评分 {qr['score']}），自动续写优化..."}
+                        yield {"type": "status", "message": "✍️ 质量门未过，正在优化改写（约1分钟）…"}
+
+                        # v2.49: 用 multi-turn history 续写修复，而不是从头重写
+                        retry_text = ""
+                        async for text in self.writer.write_stream(
+                            context=context + f"\n\n⚠️ 上一版质量不合格（评分{qr['score']}）。以下问题必须修正：{issues_text}\n\n【已生成内容参考】\n{full_text[-500:]}",
+                            genre=genre, style=style, target_words=target_words, writing_mode=writing_mode,
+                            normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                            fast_food=is_fast_food,
+                            chapter_outline=chapter_outline, skip_ending=True,
+                        ):
+                            retry_text += text
+
+                        if retry_text and len(retry_text) > len(full_text) * 0.6:
+                            qr2 = checker.quick_quality_check(retry_text, fast_food=is_fast_food)
+                            if qr2["score"] > qr["score"] + 10 or qr2["score"] >= 60:
+                                full_text = retry_text
+                                quality_report = qr2
+                                log.info(f"Quality gate retry PASSED: {qr['score']} → {qr2['score']}")
+                                yield {"type": "quality_retry", "score_before": qr["score"], "score_after": qr2["score"]}
+                            else:
+                                log.warning("Quality gate retry no improvement, keeping original")
+                        else:
+                            log.warning("Quality gate retry text too short, keeping original")
+
+                    # AUDIT P0-2: 误杀率数据采集（积累 before/after 数据集供阈值调优）
+                    try:
+                        _qlog = os.path.join(self.memory.get_novel_dir(novel_id), "quality_gate_log.jsonl")
+                        with open(_qlog, "a", encoding="utf-8") as _qf:
+                            _qf.write(json.dumps({
+                                "ts": time.time(),
+                                "novel": novel_id,
+                                "chapter": chapter_num,
+                                "score_before": qr["score"],
+                                "score_after": quality_report.get("score") if quality_report else None,
+                                "rewritten": full_text != _before_text,
+                                "llm_accept": _llm_accept,
+                                "issues": qr["issues"][:5],
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
                 elif 40 <= qr["score"] < 60 and qr["issues"]:
                     log.info(f"Quality gate MILD (score={qr['score']}): {len(qr['issues'])} minor issues, accepting as-is")
                     yield {"type": "quality_minor", "score": qr["score"], "issues": qr["issues"]}
@@ -983,6 +1142,22 @@ class GenerationMixin:
                     log.info(f"Paragraph normalize: short fragments {before_short}→{after_short}")
             except Exception as e:
                 log.warning(f"Paragraph normalize skipped: {e}")
+
+            # ── v3.8 (AUDIT P1-3): 章末钩子 LLM 判断 — 规则初筛未通过时确认并局部强化 ──
+            if not batch_mode and len(full_text) >= 1500:
+                try:
+                    _hook_kws = ["突然", "忽然", "那一刻", "奇怪", "竟然", "没想到", "却见", "就在这时", "……", "？", "?"]
+                    if not any(k in full_text[-100:] for k in _hook_kws):
+                        _hook_res = self.writer.assess_and_enhance_hook(full_text, min_rewrite_score=35)
+                        if _hook_res.get("rewritten") and _hook_res.get("text"):
+                            full_text = _hook_res["text"]
+                            log.info(f"Hook enhanced for Ch{chapter_num} (score={_hook_res.get('score')})")
+                            yield {"type": "hook_enhanced", "score": _hook_res.get("score"),
+                                   "message": "🔗 章末钩子偏弱，已自动强化结尾悬念"}
+                        elif _hook_res.get("assessed"):
+                            log.info(f"Hook assessment: score={_hook_res.get('score')}, no rewrite needed")
+                except Exception as _he:
+                    log.warning(f"Hook assessment skipped (non-fatal): {_he}")
 
             # 最终保存章节（覆盖增量保存的临时文件）
             # v2.31: 去除 Writer 自动生成的所有标题行（# 开头且含章节号），防止多标题
