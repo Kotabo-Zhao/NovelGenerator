@@ -214,6 +214,15 @@ class DialogueEngine:
             prof = {}
         if prof:
             parts.append(f"## 你扮演：{target_char}")
+            # v3.7: 目标角色属性卡（数值权威——言行/判定必须符合）
+            # 老存档无 stats 时现场规则推断（不写回，纯读取锚点）
+            from .attr_system import render_stats_card, infer_stats_from_profile
+            _tstats = (prof.get("stats") or {})
+            if not isinstance(_tstats, dict) or not _tstats:
+                _tstats = infer_stats_from_profile(prof)
+            _card = render_stats_card(_tstats, target_char)
+            if _card:
+                parts.append(_card)
             mm = prof.get("mental_models", [])[:3]
             if mm:
                 parts.append("心智模型（你的内在逻辑）:")
@@ -274,6 +283,15 @@ class DialogueEngine:
                          f"{'，' + str(pc.get('identity', ''))[:40] if pc.get('identity') else ''}")
             if pc.get("personality_brief"):
                 parts.append(f"读者角色性格: {pc['personality_brief'][:100]}")
+            # v3.7: 玩家属性卡（数值权威——你对他实力/气场的判断依据）
+            # 老存档无 stats 时现场规则推断
+            from .attr_system import render_stats_card, infer_stats_from_profile
+            _pstats = (pc.get("stats") or {})
+            if not isinstance(_pstats, dict) or not _pstats:
+                _pstats = infer_stats_from_profile(pc)
+            _pcard = render_stats_card(_pstats, player_name)
+            if _pcard:
+                parts.append(_pcard)
             parts.append("用{player_name}称呼这位读者，而不是'你'以外的称呼；他是故事中的真实角色")
 
         # 剧情状态（态度依据）

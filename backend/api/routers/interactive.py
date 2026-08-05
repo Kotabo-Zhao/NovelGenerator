@@ -116,9 +116,16 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
             # 缺省角色也失败（数据异常）→ 保底直接设主角名
             _proto = ctx.get("protagonist") or {}
             if _proto.get("name"):
+                # v3.7: 保底路径也带属性数值（从主角档案推断）
+                try:
+                    from core.interactive.attr_system import ensure_stats
+                    _pc_stats = ensure_stats(dict(_proto), inplace=False)
+                except Exception:
+                    _pc_stats = {}
                 st["player_char"] = {"name": _proto["name"],
                                      "identity": str(_proto.get("identity", ""))[:80],
-                                     "personality_brief": ""}
+                                     "personality_brief": "",
+                                     "stats": _pc_stats}
         # v3.5.5: 玩家角色存档标记（场景 prompt 注入视角用）
         st.setdefault("cast_choices", {"char": _target, "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
         # v3.2: 世界观注入（重开后剧情必须贴合本小说设定）
