@@ -279,6 +279,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .batch-status{display:flex;align-items:center;gap:10px}
 .batch-preview{font-size:13px;line-height:1.8;color:var(--text2);max-height:160px;overflow-y:auto;padding:8px 12px;background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm)}
 .chapter-progress{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:12px;color:var(--text2)}
+.compliance-badge{display:flex;align-items:center;gap:8px;margin:4px 0 10px;padding:6px 10px;border-radius:8px;font-size:12px;border:1px solid var(--border);background:var(--bg2);color:var(--text)}
+.compliance-badge.cb-ok{border-color:#2e7d3244;background:rgba(46,125,50,.08);color:#4caf50}
+.compliance-badge.cb-partial{border-color:#f9a82555;background:rgba(249,168,37,.08);color:#f9a825}
+.compliance-badge.cb-fail{border-color:#f4433644;background:rgba(244,67,54,.08);color:#f44336}
+.compliance-badge .cb-missing{opacity:.85;font-size:11px}
 
 /* ═══════ 剧情图谱 ═══════ */
 .sg-dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
@@ -498,11 +503,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .inter-track-note{border-radius:10px;padding:8px 14px;font-size:12.5px;margin-bottom:12px;animation:interRise .4s ease both}
   .interactive-input{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;transition:border-color .3s, box-shadow .3s}
   .interactive-input:focus-within{border-color:rgba(212,175,55,.5);box-shadow:0 0 0 3px rgba(212,175,55,.08)}
-  /* v3.6.4: 行动按钮条 */
-  .interactive-actions{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;margin-bottom:10px}
-  .act-btn{background:var(--card);border:1px solid var(--border);border-radius:999px;padding:5px 14px;font-size:12.5px;color:var(--text);cursor:pointer;transition:all .18s var(--ease)}
-  .act-btn:hover{border-color:rgba(212,175,55,.6);color:var(--gold);transform:translateY(-1px)}
-  .act-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
   .interactive-facts{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:14px 18px}
   .fact-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;flex-wrap:wrap}
   .fact-badge{font-size:13px}
@@ -528,14 +528,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   @keyframes genBreath{0%,100%{opacity:.75}50%{opacity:1}}
   .gen-spinner{width:13px;height:13px;border:2px solid rgba(212,175,55,.25);border-top-color:#d9bc7a;border-radius:50%;animation:genSpin .8s linear infinite;flex-shrink:0}
   @keyframes genSpin{to{transform:rotate(360deg)}}
-  /* v2.5.58: 互动状态徽章（显眼——玩家随时知道系统在干什么、能不能操作） */
-  .inter-state-badge{display:flex;align-items:center;gap:8px;margin-top:10px;padding:9px 14px;border-radius:10px;font-size:13px;font-weight:600;border:1px solid;letter-spacing:.3px}
-  .inter-state-badge.bs-busy{background:rgba(212,175,55,.13);border-color:rgba(212,175,55,.5);color:#e2c57a}
-  .inter-state-badge.bs-ready{background:rgba(63,185,80,.12);border-color:rgba(63,185,80,.45);color:#3fb950}
-  .inter-state-badge.bs-idle{background:rgba(88,166,255,.10);border-color:rgba(88,166,255,.4);color:#58a6ff}
-  .inter-state-badge .badge-dot{width:8px;height:8px;border-radius:50%;background:currentColor;animation:badgeBlink 1.2s infinite;flex-shrink:0}
-  @keyframes badgeBlink{0%,100%{opacity:1}50%{opacity:.3}}
-  .inter-state-badge .badge-hint{font-weight:400;font-size:11.5px;opacity:.8;margin-left:auto;white-space:nowrap}
   .inter-intro{background:linear-gradient(180deg,rgba(212,175,55,.06),rgba(212,175,55,.02));border:1px solid rgba(212,175,55,.28);border-radius:14px;padding:10px 16px;cursor:pointer;transition:border-color .2s}
   .inter-intro:hover{border-color:rgba(212,175,55,.5)}
   .inter-intro-head{display:flex;justify-content:space-between;align-items:center;color:#d9bc7a}
@@ -1078,46 +1070,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
         <!-- v3.0: 互动模式面板 -->
         <div v-if="writing.activeTab==='interactive'" style="margin-top:14px">
-          <!-- v2.5.62: 角色选择卡片（进入互动前，可选扮演角色） -->
-          <div v-if="interactive.charPicker" class="inter-char-picker" style="border:1px solid var(--border);border-radius:14px;padding:18px;background:var(--card)">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-              <div style="font-weight:600;font-size:15px;color:var(--text)">🎭 选择你要扮演的角色</div>
-              <div class="muted" style="font-size:12px">剧情主线不变，以所选角色的视角经历故事</div>
-            </div>
-            <div v-if="interactive.charLoading" class="text-center" style="padding:24px">
-              <div class="spinner" style="width:24px;height:24px"></div>
-              <p class="color-text2 mt-8 text-sm">正在加载角色…</p>
-            </div>
-            <div v-else-if="!interactive.charOptions.length" class="empty" style="padding:20px">
-              <div class="empty-icon">👤</div>
-              <p class="muted text-sm">暂无角色信息，将默认扮演主角</p>
-              <button class="btn btn-primary mt-12" @click="chooseAndStart">进入互动</button>
-            </div>
-            <div v-else style="display:flex;flex-direction:column;gap:10px">
-              <div v-for="opt in interactive.charOptions" :key="opt.name"
-                   @click="interactive.charChoice = opt.name"
-                   class="char-opt"
-                   :class="{'char-opt-active': interactive.charChoice === opt.name}"
-                   style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);cursor:pointer;transition:all .15s">
-                <div class="inter-avatar" style="width:38px;height:38px;font-size:15px;flex-shrink:0"
-                     :style="avatarStyle(opt.name)">{{ opt.name.slice(0,1) }}</div>
-                <div style="flex:1;min-width:0">
-                  <div style="font-weight:600;font-size:13.5px;color:var(--text)">
-                    {{ opt.name }}
-                    <span v-if="opt.role" class="muted" style="font-weight:400;font-size:11px;margin-left:6px">{{ opt.role === 'protagonist' ? '主角' : (opt.role === 'supporting' ? '配角' : '反派') }}</span>
-                  </div>
-                  <div class="muted" style="font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                    {{ opt.identity || opt.personality || opt.speakStyle || '身份未明' }}
-                  </div>
-                </div>
-                <div style="font-size:16px;color:var(--gold)" v-if="interactive.charChoice === opt.name">✓</div>
-              </div>
-              <div style="display:flex;gap:10px;margin-top:6px;justify-content:flex-end">
-                <button class="btn btn-primary" @click="chooseAndStart" :disabled="!interactive.charChoice">🚀 以{{ interactive.charChoice || '所选角色' }}开始</button>
-              </div>
-            </div>
-          </div>
-
           <div v-if="interactive.loading" class="text-center" style="padding:40px 20px">
             <div class="spinner" style="width:30px;height:30px"></div>
             <p class="color-text2 mt-16 text-sm">{{ interactive.loadingMsg || '初始化互动世界…' }}</p>
@@ -1394,53 +1346,45 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </button>
             </div>
 
-            <!-- v2.5.58: 当前状态显眼徽章——任何时刻玩家都清楚系统在干什么、能不能操作 -->
-            <div v-if="interactive.busy || interactive.typing || interactive.pendingNode || interactive.inChat || interactive.generating"
-                 class="inter-state-badge" :class="interStateClass">
-              <span class="badge-dot"></span>
-              <span v-if="interactive.generating">{{ interactive.generating }}</span>
-              <span v-else-if="interactive.busy">⏳ 正在生成，请稍候…</span>
-              <span v-else-if="interactive.typing">📢 剧情播放中…</span>
-              <span v-else>💬 等待你的回应</span>
-              <span class="badge-hint" v-if="interactive.busy || interactive.typing">操作按钮暂不可用</span>
-              <span class="badge-hint" v-else>可输入文字或点建议选项</span>
-            </div>
-            <!-- v2.5.58: 自动推进中（无待办）的安静提示 -->
-            <div v-if="!interactive.busy && !interactive.typing && !interactive.pendingNode && !interactive.inChat && !interactive.generating && interactive.autoPlay"
-                 class="inter-state-badge bs-idle">
-              <span class="badge-dot"></span>
-              <span>📖 剧情自动推进中</span>
-              <span class="badge-hint">随时可输入打断</span>
-            </div>
-
-            <!-- v3.6.4: 行动按钮条（方案C——按钮=行动，输入框=纯对话） -->
-            <div class="interactive-actions" v-if="interactive.actions.length && !interactive.busy && !interactive.typing && (interactive.pendingNode || interactive.inChat)">
-              <div class="card-title" style="font-size:12px;margin-bottom:6px;color:var(--text2)">⚡ 行动</div>
-              <div class="flex gap-6" style="flex-wrap:wrap">
-                <button v-for="a in interactive.actions" :key="a.id" class="btn btn-sm act-btn"
-                        @click="runInteractiveAction(a)" :disabled="interactive.busy||interactive.typing">
-                  {{a.emoji}} {{a.label}}
-                </button>
-              </div>
-              <div class="badge-hint" style="margin-top:4px">点按钮执行行动；下方输入框只用于对话</div>
+            <!-- v3.5.45: 可操作状态提示——任何时刻明确当前能否操作 -->
+            <div v-if="interactive.busy || interactive.typing || interactive.pendingNode || interactive.inChat"
+                 style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px">
+              <span v-if="interactive.busy" style="color:#d9bc7a">⏳ 正在生成，请稍候…</span>
+              <span v-else-if="interactive.typing" style="color:#d9bc7a">📢 剧情播放中…</span>
+              <span v-else style="color:#3fb950">💬 可以回应（输入或点建议选项）</span>
             </div>
 
             <!-- 输入区 -->
+            <!-- v3.9: 行动按钮条（方案C：点击 = 意图已确定，零 LLM 识别） -->
+            <div v-if="(interactive.pendingNode || interactive.inChat) && interactive.actions.length && !interactive.busy && !interactive.typing"
+                 style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center">
+              <span style="font-size:12px;color:var(--text2);margin-right:2px">⚡ 行动</span>
+              <button v-for="a in interactive.actions" :key="a.id" class="btn btn-xs"
+                      @click="onActionButton(a)"
+                      style="border:1px solid rgba(212,175,55,.45);color:#d9bc7a;background:rgba(212,175,55,.06)">
+                {{ a.emoji }} {{ a.label }}
+              </button>
+            </div>
+            <!-- v3.9: talk 行动内联输入 -->
+            <div v-if="interactive.talkTarget" style="display:flex;gap:6px;margin-top:6px;align-items:center">
+              <input v-model="interactive.talkMessage" @keyup.enter="execAction()" class="talk-action-input"
+                     :placeholder="'对 ' + (interactive.talkTarget.label || interactive.talkTarget.target) + ' 说…'"
+                     style="flex:1;min-height:34px;font-size:13.5px" />
+              <button class="btn btn-sm btn-primary" :disabled="!String(interactive.talkMessage||'').trim()"
+                      @click="execAction()">发送</button>
+              <button class="btn btn-sm btn-ghost" @click="interactive.talkTarget=null;interactive.talkMessage=''">取消</button>
+            </div>
+
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
                 <input v-model="interactive.message" @keyup.enter="sendInteractiveChat()"
-                       :placeholder="interactive.busy || interactive.typing ? '⏳ 正在生成，请稍候…' : '和角色说话…（@角色名可指定对象，行动请用上方按钮）'"
+                       :placeholder="interactive.busy || interactive.typing ? '⏳ 正在生成，请稍候…' : '说点什么，或直接行动：上车 / 推门 / 答应他 / 离开…（可 @角色名）'"
                        :disabled="interactive.busy || interactive.typing"
                        style="flex:1;min-height:38px;font-size:14px" />
                 <button class="btn btn-sm btn-primary" @click="sendInteractiveChat()" :disabled="interactive.busy||interactive.typing||!String(interactive.message||'').trim()">💬 说</button>
               </div>
-              <div class="flex gap-6 mt-8" style="justify-content:flex-end;align-items:center">
-                <span v-if="interactive.exporting" class="badge-hint">{{interactive.exportLabel}}</span>
-                <button class="btn btn-sm" @click="exportInteractiveNovel()" :disabled="interactive.busy||interactive.typing||interactive.exporting"
-                        style="border-color:rgba(212,175,55,.4);color:var(--gold)">
-                  📖 导出为小说
-                </button>
-                <button class="btn btn-sm btn-primary" @click="continueInteractive" :disabled="interactive.busy||interactive.exporting">
+              <div class="flex gap-6 mt-8" style="justify-content:flex-end">
+                <button class="btn btn-sm btn-primary" @click="continueInteractive" :disabled="interactive.busy">
                   {{ interactive.pendingNode && !interactive.inChat ? '💬 进入对话' : '▶ 继续剧情' }}
                 </button>
               </div>
@@ -1454,18 +1398,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
                 <span class="fact-text">{{ f.content }}</span>
                 <span class="fact-type muted">{{ f.type }}</span>
               </div>
-            </div>
-
-            <!-- v3.6.6: 导出结果卡片 -->
-            <div v-if="interactive.exportResult" class="interactive-actions" style="margin-top:10px;border-color:rgba(212,175,55,.4)">
-              <div class="card-title" style="font-size:13px;margin-bottom:6px">📖 导出完成（独立小说，不影响正式章节）</div>
-              <div class="flex gap-6" style="align-items:center;flex-wrap:wrap">
-                <span class="badge-hint">{{interactive.exportResult.chapters}} 章 · {{(interactive.exportResult.total_chars/1000).toFixed(1)}} 千字</span>
-                <button class="btn btn-sm act-btn" @click="downloadExportNovel()">⬇️ 下载全书.md</button>
-                <button class="btn btn-sm act-btn" @click="copyExportNovel()">📋 复制全文</button>
-                <button class="btn btn-sm act-btn" @click="interactive.exportResult=null">✕ 关闭</button>
-              </div>
-              <div class="badge-hint" style="margin-top:6px;word-break:break-all">位置：{{interactive.exportResult.dir_path}}</div>
             </div>
           </div>
         </div>
@@ -1551,6 +1483,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div v-if="loading.write && writing.content" class="chapter-progress">
           <div class="cp-bar"><div class="cp-fill" :style="{width:chapterProgress+'%'}"></div></div>
           <div class="cp-text">{{ chapterProgressLabel || chapterProgress+'%' }}</div>
+        </div>
+
+        <!-- v3.10: 大纲合规徽章 -->
+        <div v-if="outlineCompliance.chapter === writing.chapter && outlineCompliance.level" class="compliance-badge" :class="'cb-'+outlineCompliance.level">
+          <span>{{ outlineCompliance.message }}</span>
+          <span v-if="outlineCompliance.missing && outlineCompliance.missing.length" class="cb-missing" :title="outlineCompliance.missing.join('；')">（缺失 {{ outlineCompliance.missing.length }} 项，悬停查看）</span>
         </div>
 
         <!-- 批量生成 -->
@@ -2464,6 +2402,7 @@ const app = createApp({
     }
     const reviewFeedback = ref(''); const batchStreaming = ref('');
     const chapterProgress = ref(0); const chapterProgressLabel = ref('');
+    const outlineCompliance = ref({}); // v3.10: 大纲合规徽章（chapter/pct/level/message/missing）
     const outlineFeedback = ref(''); const isRegenerating = ref(false);
     
     // ── 全局状态锁：任何生成操作进行时阻断其他操作 ──
@@ -2555,25 +2494,6 @@ const app = createApp({
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
     const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
-
-    // ── 流式打字机：非响应式缓冲 + 定时 flush（每40ms最多8字）
-    // 解决"atomic 模式逐beat一次性蹦出、长时间空白"的问题——
-    // 文字先入缓冲，再以打字机节奏写入响应式 writing.content，用户可看到文字流动。
-    let _streamBuf = '';
-    let _streamTimer = null;
-    function streamPush(t){ _streamBuf += t; if(!_streamTimer){ _streamTimer=setInterval(streamTick, 40); } }
-    function streamTick(){
-      if(!_streamBuf){ if(_streamTimer){ clearInterval(_streamTimer); _streamTimer=null; } return; }
-      const take = Math.min(8, _streamBuf.length);
-      writing.content += _streamBuf.slice(0, take);
-      _streamBuf = _streamBuf.slice(take);
-      nextTick(()=>{ if(preview.value) preview.value.scrollTop = preview.value.scrollHeight; });
-    }
-    function streamFlushAll(){
-      if(_streamBuf){ writing.content += _streamBuf; _streamBuf=''; }
-      if(_streamTimer){ clearInterval(_streamTimer); _streamTimer=null; }
-    }
-    function streamReset(){ _streamBuf=''; if(_streamTimer){ clearInterval(_streamTimer); _streamTimer=null; } }
 
     // v2.3: 剧情图谱
     const sgLoading = ref(false);
@@ -3818,7 +3738,7 @@ const app = createApp({
     let _chFetchAbort=null;
     function selectChapter(ch, skipFetch) {
       if(isBusy.value) return;
-      writing.chapter=ch; writing.content=''; writing.done=false; error.value=''; streamReset();
+      writing.chapter=ch; writing.content=''; writing.done=false; error.value='';
       // 取消进行中的请求
       if (_chFetchAbort) { _chFetchAbort.abort(); _chFetchAbort=null; }
       if (skipFetch) return;
@@ -3837,7 +3757,7 @@ const app = createApp({
       if(!activeNovel.value) return;
       if(isBusy.value){ reportError('有任务正在进行中，请等待完成'); return; }
       if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter)) return;
-      loading.write=true; writing.content=''; writing.done=false; reviewFeedback.value=''; error.value=''; streamReset();
+      loading.write=true; writing.content=''; writing.done=false; reviewFeedback.value=''; error.value='';
       chapterProgress.value=0; chapterProgressLabel.value='准备中…';
       const targetChars = (currentOutline.value?.target_words || 3000) * 2;
       try {
@@ -3862,16 +3782,24 @@ const app = createApp({
           else if(evt.type==='quality_warning'){
             chapterProgressLabel.value = evt.message||'质量优化中…';
           }
+          else if(evt.type==='outline_compliance'){
+            outlineCompliance.value = {
+              chapter: evt.chapter, pct: evt.pct, level: evt.level,
+              message: evt.message||'', missing: evt.missing||[],
+              patched: !!evt.patched_text,
+            };
+            chapterProgressLabel.value = evt.message||'大纲合规校验完成';
+            if (evt.patched_text) writing.content += '\n\n' + evt.patched_text;
+          }
           else if(evt.type==='quality_retry'){
             chapterProgressLabel.value = `✨ 优化完成：${evt.score_before}分 → ${evt.score_after}分`;
           }
           else if(evt.type==='text'){
-            streamPush(evt.content);
-            chapterProgress.value=Math.min(95, Math.round((writing.content.length+_streamBuf.length)/targetChars*100));
-            chapterProgressLabel.value=`${writing.content.length+_streamBuf.length}字`;
+            writing.content+=evt.content; chapterProgress.value=Math.min(95, Math.round(writing.content.length/targetChars*100));
+            chapterProgressLabel.value=`${writing.content.length}字`;
+            nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
           }
           else if(evt.type==='done'){
-            streamFlushAll();
             writing.done=true; chapterProgress.value=100; chapterProgressLabel.value='完成';
             const ch=activeNovel.value.state; if(!ch.completed_chapters) ch.completed_chapters=[];
             if(!ch.completed_chapters.includes(evt.chapter_num)) ch.completed_chapters.push(evt.chapter_num);
@@ -3886,9 +3814,9 @@ const app = createApp({
             // v2.3.1: 自动刷新剧情图谱
             if (writing.activeTab === 'storygraph') loadStoryGraph(0);
           }
-          else if(evt.type==='error'){ streamFlushAll(); reportError(evt.message, '生成失败'); return false; }
+          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
-      } catch(e){ if(e.name!=='AbortError'){ streamFlushAll(); reportError(e.message||'连接超时，请重试'); } else streamFlushAll(); }
+      } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
       loading.write=false; chapterProgress.value=0;
     }
     function nextChapter() { const n=writing.chapter+1; if(n<=(activeNovel.value?.state.total_chapters||999)) selectChapter(n); }
@@ -3952,6 +3880,9 @@ const app = createApp({
       state: { scene_num:0, facts:[], casts:{}, state:{relations:{}} },
       blocks: [], typing: false, busy: false,
       pendingNode: false, pendingReason: '', suggestions: [], inChat: false, message: '',
+  actions: [],            // v3.9: 行动按钮条（action_options）
+  talkTarget: null,       // v3.9: talk 行动待发送对象
+  talkMessage: '',        // v3.9: talk 行动输入内容
       voices: {},
       // v3.1: 语音
       autoVoice: true,        // 对话台词自动播放
@@ -3980,17 +3911,6 @@ const app = createApp({
       statusOpen: false,
       // v3.5.19: 生成状态提示（生成中告知用户，避免以为卡住）
       generating: '',          // 当前生成阶段 label（空 = 无生成）
-      // v2.5.62: 角色选择（进入互动前可选扮演角色）
-      charPicker: false,       // 是否显示角色选择卡片
-      charOptions: [],         // 可选角色列表 [{name, identity, personality, role}]
-      charChoice: '',          // 玩家选中的角色名
-      charLoading: false,      // 角色列表加载中
-      // v3.6.4: 行动按钮化（方案C——按钮=行动，输入框=纯对话）
-      actions: [],             // 上下文行动按钮 [{id,label,intent,target,kind,emoji}]
-      // v3.6.6: 导出为小说
-      exporting: false,        // 导出中
-      exportLabel: '',         // 导出进度文案
-      exportResult: null,      // 导出结果 {chapters,total_chars,novel_md,dir_path}
     });
     // v3.5.5: 玩家状态卡计算属性
     // v3.5.18: 显示格式化——location/objective 可能是 JSON 数组字符串（如
@@ -4020,12 +3940,6 @@ const app = createApp({
       }).slice(0, 6);
     });
     const playerName = computed(() => (interactive.state.player_char || {}).name || '你');
-    // v2.5.58: 状态徽章样式——生成中金色 / 等待回应绿色 / 其余蓝色
-    const interStateClass = computed(() => {
-      if (interactive.generating || interactive.busy || interactive.typing) return 'bs-busy';
-      if (interactive.pendingNode || interactive.inChat) return 'bs-ready';
-      return 'bs-idle';
-    });
     // v3.5.9: 待兑现承诺（active facts，状态卡显眼展示）
     const activeFacts = computed(() => {
       return (interactive.state.facts || []).filter(f => f.status === 'active').slice(-4).reverse();
@@ -4226,7 +4140,7 @@ const app = createApp({
         _scrollStory();
         return;
       }
-      // 已有存档 → 直接加载；否则先选角色再 start
+      // 已有存档 → 直接加载；否则 start
       interactive.loading = true; interactive.error = '';
       interactive.loadingMsg = '正在加载互动世界…';
       fetch(API+'/api/novels/'+id+'/interactive/state')
@@ -4246,52 +4160,20 @@ const app = createApp({
             loadInteractiveVoices();
             _scrollStory();
           } else {
-            openCharPicker(id);
+            interactiveStart(id);
           }
         })
         .catch(e => {
-          if (e && e.code===404) { openCharPicker(id); }
+          if (e && e.code===404) { interactiveStart(id); }
           else { interactive.loading=false; interactive.error='加载失败: '+(e.message||e); }
         });
     }
 
-    // v2.5.62: 角色选择——进入互动前可选扮演角色（缺省主角）
-    async function openCharPicker(id) {
-      interactive.charPicker = true; interactive.charLoading = true;
-      interactive.charChoice = ''; interactive.error = '';
-      try {
-        const r = await fetch(API+'/api/novels/'+id+'/interactive/cast-options');
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        const d = await r.json();
-        interactive.charOptions = (d.options || []).map(o => ({
-          name: o.name, identity: o.identity || '', personality: o.personality || '',
-          speakStyle: o.speak_style || '', role: o.role || '',
-        }));
-        // 默认选中主角（role=protagonist）
-        const proto = interactive.charOptions.find(o => o.role === 'protagonist');
-        interactive.charChoice = proto ? proto.name : (interactive.charOptions[0] || {}).name || '';
-      } catch(e) {
-        // 角色列表失败 → 直接默认主角进
-        interactive.charOptions = [];
-        interactive.charChoice = '';
-        interactiveStart(id, '');
-        return;
-      }
-      interactive.charLoading = false;
-    }
-
-    async function chooseAndStart() {
-      const id = encodeURIComponent(activeNovel.value.id);
-      interactive.charPicker = false;
-      interactiveStart(id, interactive.charChoice);
-    }
-
-    async function interactiveStart(id, character) {
+    async function interactiveStart(id) {
       interactive.loading = true; interactive.loadingMsg = '正在创建互动世界（首次约 10-20s）…';
       interactive.error = '';
       try {
-        const body = character ? JSON.stringify({character}) : '{}';
-        const r = await fetch(API+'/api/novels/'+id+'/interactive/start', {method:'POST', body, headers:{'Content-Type':'application/json'}});
+        const r = await fetch(API+'/api/novels/'+id+'/interactive/start', {method:'POST', body:'{}', headers:{'Content-Type':'application/json'}});
         if (!r.ok) throw new Error('HTTP '+r.status);
         interactive.blocks = [];
         await readSSE(r, (evt) => {
@@ -4308,8 +4190,6 @@ const app = createApp({
             _appendSceneBlocks(evt.blocks || [], evt.scene_num);
             // v3.5.8: 场景结束 → 状态卡实时更新
             if (evt.snapshot) _applySnapshot(evt.snapshot);
-            // v3.6.4: 场景结束刷新行动按钮（新地点/新角色/新物品）
-            refreshActions();
             // v3.5: 场景内角色台词预合成（情感引擎开启时）
             if (interactive.emotionVoice && interactive.emotionAvailable) {
               (evt.blocks || []).forEach(b => {
@@ -4334,7 +4214,6 @@ const app = createApp({
         interactive.loading = false;
         await loadInteractiveState();
         await loadInteractiveVoices();
-        refreshActions();  // v3.6.4: 启动后加载行动按钮
         _scrollStory();
       } catch(e) {
         interactive.loading = false;
@@ -4453,7 +4332,8 @@ const app = createApp({
             interactive.state = data.state;
             interactive.pendingNode = !!data.state.pending_node;
             interactive.pendingReason = data.state.pending_reason || '';  // v3.5.35
-            interactive.suggestions = (data.state.suggestions || []).filter(s => typeof s === 'string'); // v3.5.44 类型过滤
+            interactive.suggestions = (data.state.suggestions || []).filter(s => typeof s === 'string');
+        await fetchActions();   // v3.9: 行动按钮条刷新 // v3.5.44 类型过滤
           }
         }
       } catch(e) { console.warn('loadInteractiveState failed:', e); }
@@ -4485,140 +4365,6 @@ const app = createApp({
       } catch(e) { interactive.emotionAvailable = false; }
     }
 
-    // v3.6.6: 导出为小说——把互动剧情整合为独立小说（SSE 进度，完成后可下载）
-    async function exportInteractiveNovel() {
-      if (!activeNovel.value || interactive.exporting) return;
-      interactive.exporting = true;
-      interactive.exportLabel = '准备导出…';
-      interactive.exportResult = null;
-      try {
-        const id = encodeURIComponent(activeNovel.value.id);
-        const r = await fetch(API+'/api/novels/'+id+'/interactive/export', {
-          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
-        });
-        await readSSE(r, (evt) => {
-          if (evt.type === 'export_progress') {
-            interactive.exportLabel = `📖 整理第${evt.chapter}/${evt.total}章《${evt.title||''}》…`;
-            if (evt.chars) interactive.exportLabel += `（${evt.chars}字）`;
-          }
-          else if (evt.type === 'export_done') {
-            interactive.exportResult = evt;
-            interactive.exportLabel = `✅ 导出完成：${evt.chapters}章 · ${(evt.total_chars/1000).toFixed(1)}千字`;
-            showToast(`互动剧情已导出为 ${evt.chapters} 章小说`, '操作成功', '✅');
-          }
-          else if (evt.type === 'error' || evt.type === 'export_error') {
-            interactive.exportLabel = '';
-            reportError(evt.message || '导出失败', '导出失败');
-            return false;
-          }
-        });
-      } catch(e) {
-        interactive.exportLabel = '';
-        if (e.name !== 'AbortError') reportError(e.message || '导出失败，请重试', '导出失败');
-      }
-      interactive.exporting = false;
-    }
-
-    // v3.6.6: 下载导出的小说全文（Blob 下载 .md）
-    function downloadExportNovel() {
-      const r = interactive.exportResult;
-      if (!r || !r.novel_md) return;
-      const blob = new Blob([r.novel_md], {type:'text/markdown;charset=utf-8'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `${activeNovel.value?.id||'互动小说'}_导出_${r.chapters}章.md`;
-      document.body.appendChild(a); a.click();
-      setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();}, 500);
-      showToast('已开始下载全书.md', '操作成功', '✅');
-    }
-
-    // v3.6.6: 复制导出的小说全文
-    function copyExportNovel() {
-      const r = interactive.exportResult;
-      if (!r || !r.novel_md) return;
-      navigator.clipboard.writeText(r.novel_md).then(()=>{
-        showToast('已复制全书全文', '操作成功', '✅');
-      }).catch(()=>{ reportError('复制失败，请手动复制', '复制失败'); });
-    }
-
-    // v3.6.4: 刷新上下文行动按钮（场景/行动/对话结束后调用）
-    async function refreshActions() {
-      if (!activeNovel.value) return;
-      try {
-        const id = encodeURIComponent(activeNovel.value.id);
-        const r = await fetch(API+'/api/novels/'+id+'/interactive/actions');
-        if (!r.ok) return;
-        const d = await r.json();
-        interactive.actions = (d.actions || []).slice(0, 8);
-      } catch(e) { /* 静默：行动条不是关键路径 */ }
-    }
-
-    // v3.6.4: 执行行动按钮（直接调 /act，跳过 LLM 意图识别）
-    async function runInteractiveAction(a) {
-      if (interactive.busy || interactive.typing) return;
-      if (!activeNovel.value || !a) return;
-      cancelAuto();
-      _setPhase('⚡ 正在执行行动…', 30000);
-      const id = encodeURIComponent(activeNovel.value.id);
-      interactive.busy = true;
-      interactive.inChat = true;
-      interactive.message = '';
-      // 玩家行动气泡
-      interactive.blocks.push({type:'action_desc', speaker:'你', content:'〔'+a.label+'〕'});
-      interactive.blocks.push({type:'typing', speaker:'', content:''});
-      _scrollStory();
-      try {
-        const r = await fetch(API+'/api/novels/'+id+'/interactive/act', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({action_id: a.id, intent: a.intent, target: a.target}),
-        });
-        if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || 'HTTP '+r.status); }
-        await readSSE(r, (evt) => {
-          if (evt.type==='chat_chunk' && evt.content) {
-            const last = interactive.blocks[interactive.blocks.length-1];
-            if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
-            else if (last && last.type==='chat' && last.speaker===evt.speaker) { last.content += evt.content; }
-            else interactive.blocks.push({type:'chat', speaker:evt.speaker, content:evt.content});
-            _scrollStory();
-          } else if (evt.type==='action_chunk' && evt.content) {
-            const last = interactive.blocks[interactive.blocks.length-1];
-            if (last && last.type==='typing') last.content += evt.content;
-            else interactive.blocks.push({type:'typing', speaker:'', content:evt.content});
-            _scrollStory();
-          } else if (evt.type==='action_end') {
-            const last = interactive.blocks[interactive.blocks.length-1];
-            if (last && last.type==='typing') { last.type='action_result'; last.speaker=''; last.content=evt.content; }
-            _scrollStory();
-            if (evt.snapshot) _applySnapshot(evt.snapshot);
-          } else if (evt.type==='state_change') {
-            _pushStateChange(evt.changes);
-            if (evt.snapshot) _applySnapshot(evt.snapshot);
-          } else if (evt.type==='action_done') {
-            if (evt.end_chat) { _setPhase(''); refreshActions(); }
-          } else if (evt.type==='chat_end') {
-            const last = interactive.blocks[interactive.blocks.length-1];
-            if (last && last.type==='typing') { last.type='chat'; last.speaker=evt.speaker; last.content=evt.content; }
-            _scrollStory();
-            if (evt.snapshot) _applySnapshot(evt.snapshot);
-            refreshActions();
-          } else if (evt.type==='error') {
-            interactive.error = evt.message || '行动执行失败';
-            interactive.blocks.push({type:'action_result', speaker:'', content:'⚠ '+(evt.message||'失败')});
-          }
-        });
-      } catch(e) {
-        console.error('act failed:', e);
-        interactive.error = String(e.message || e);
-        const last = interactive.blocks[interactive.blocks.length-1];
-        if (last && last.type==='typing') { last.type='action_result'; last.content='⚠ 行动失败：'+(e.message||e); }
-      } finally {
-        interactive.busy = false;
-        interactive.typing = false;
-        _setPhase('');
-        refreshActions();
-      }
-    }
-
     async function sendInteractiveChat(prefill) {
       if (interactive.busy || interactive.typing) return;  // v3.5.45: 生成/播放中禁操作
       if (!activeNovel.value) return;
@@ -4640,10 +4386,9 @@ const app = createApp({
       interactive.blocks.push({type:'typing', speaker:'', content:''});
       _scrollStory();
       try {
-        // v3.6.4: 方案C——输入框纯对话（force_talk=true 跳过行动识别，行动走按钮）
         const r = await fetch(API+'/api/novels/'+id+'/interactive/chat', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({message: msg, force_talk: true}),
+          body: JSON.stringify({message: msg}),
         });
         if (!r.ok) throw new Error('HTTP '+r.status);
         await readSSE(r, (evt) => {
@@ -4720,8 +4465,100 @@ const app = createApp({
       } catch(e) {
         interactive.blocks.push({type:'error', speaker:'', content:'对话失败: '+(e.message||e)});
       }
+      await fetchActions();
       interactive.busy = false;
       _setPhase('');                                   // v3.5.19: 生成结束
+      _scrollStory();
+    }
+
+    // ── v3.9: 行动按钮条（方案C：点击 = 意图已确定，零 LLM 识别）──
+    async function fetchActions() {
+      if (!activeNovel.value) return;
+      try {
+        const id = encodeURIComponent(activeNovel.value.id);
+        const r = await fetch(API + '/api/novels/' + id + '/interactive/actions');
+        if (!r.ok) { interactive.actions = []; return; }
+        const j = await r.json();
+        interactive.actions = (j.actions || []).filter(a => a && a.id);
+      } catch (e) { /* 按钮条是增强，失败静默 */ }
+    }
+
+    function onActionButton(a) {
+      if (!a) return;
+      if (a.intent === 'talk') {
+        interactive.talkTarget = a;
+        interactive.talkMessage = '';
+        requestAnimationFrame(() => {
+          const el = document.querySelector('.talk-action-input');
+          if (el) el.focus();
+        });
+      } else {
+        execAction(a);
+      }
+    }
+
+    async function execAction(a) {
+      const act = a || interactive.talkTarget;
+      if (!act || interactive.busy || interactive.typing) return;
+      if (!activeNovel.value) return;
+      let message;
+      if (act.intent === 'talk') {
+        message = String(interactive.talkMessage || '').trim();
+        if (!message) return;
+        interactive.talkTarget = null;
+        interactive.talkMessage = '';
+      }
+      cancelAuto();
+      _setPhase('⚡ 正在行动…', 30000);
+      const id = encodeURIComponent(activeNovel.value.id);
+      interactive.busy = true;
+      interactive.inChat = true;
+      interactive.blocks.push({type: 'action_desc', speaker: '你', content: '『' + (act.label || act.summary || '行动') + '』'});
+      interactive.blocks.push({type: 'typing', speaker: '', content: ''});
+      _scrollStory();
+      try {
+        const r = await fetch(API + '/api/novels/' + id + '/interactive/act', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action_id: act.id, intent: act.intent, target: act.target, message}),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        await readSSE(r, (evt) => {
+          if (evt.type === 'chat_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length - 1];
+            if (last && last.type === 'typing') { last.type = 'chat'; last.speaker = evt.speaker; last.content = evt.content; }
+            else if (last && last.type === 'chat' && last.speaker === evt.speaker) { last.content += evt.content; }
+            else interactive.blocks.push({type: 'chat', speaker: evt.speaker, content: evt.content});
+            _scrollStory();
+          } else if (evt.type === 'chat_end') {
+            const last = interactive.blocks[interactive.blocks.length - 1];
+            if (last && last.type === 'typing') { last.type = 'chat'; last.speaker = evt.speaker; last.content = evt.content; }
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            _scrollStory();
+          } else if (evt.type === 'action_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length - 1];
+            if (last && last.type === 'typing') last.content += evt.content;
+            else interactive.blocks.push({type: 'typing', speaker: '', content: evt.content});
+            _scrollStory();
+          } else if (evt.type === 'action_end') {
+            const last = interactive.blocks[interactive.blocks.length - 1];
+            if (last && last.type === 'typing') { last.type = 'action_result'; last.speaker = ''; last.content = evt.content; }
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            _scrollStory();
+          } else if (evt.type === 'action_done') {
+            if (evt.end_chat) { interactive.hookSummary = '你的行动改变了剧情走向'; interactive.inChat = false; }
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            cancelAuto();
+            _scheduleAutoNext(4000, true);
+          } else if (evt.type === 'error') {
+            interactive.blocks.push({type: 'error', speaker: '', content: evt.message});
+          }
+        });
+        await fetchActions();
+      } catch (e) {
+        interactive.blocks.push({type: 'error', speaker: '', content: '行动失败: ' + (e.message || e)});
+      }
+      interactive.busy = false;
+      _setPhase('');
       _scrollStory();
     }
 
@@ -4859,10 +4696,6 @@ const app = createApp({
         if (endRes.ok) {
           const data = await endRes.json();
           interactive.state = { ...interactive.state, facts: data.facts || interactive.state.facts };
-          // v2.5.59: 对话后刷新建议选项（贴合最新剧情进度）
-          if (data.suggestions && data.suggestions.length) {
-            interactive.suggestions = data.suggestions;
-          }
           // v3.3: 钩子核对摘要（这场对话推进了什么 / 没谈成什么）
           const hk = data.hooks;
           if (hk && hk.hook_hits && hk.hook_hits.length) {
@@ -4955,9 +4788,7 @@ const app = createApp({
         if (r.ok) {
           interactive.blocks = [];
           interactive.state = { scene_num:0, facts:[], casts:{}, state:{relations:{}} };
-          interactive.intro = ''; interactive.introOpen = false;
-          // v2.5.62: 重开 → 重新选择角色
-          openCharPicker(id);
+          interactiveStart(id);
         }
       } catch(e) { console.warn('restart failed:', e); }
     }
@@ -5003,7 +4834,7 @@ const app = createApp({
 
     function cancelBatch() {
       if(abortCtrl.value){ abortCtrl.value.abort(); abortCtrl.value=null; }
-      loading.batch=false; batchStreaming.value=''; writing.done=true; streamFlushAll();
+      loading.batch=false; batchStreaming.value=''; writing.done=true;
       showToast('已中断，已生成的章节保留', '批量生成中断', '⏸');
     }
 
@@ -5014,7 +4845,7 @@ const app = createApp({
       if(start>end) return;
       const count = end - start + 1;
       if(count > 10) { reportError('批量生成上限为10章，请缩小范围'); return; }
-      loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value=''; batchStreaming.value=''; streamReset();
+      loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value=''; batchStreaming.value='';
       let failedChapters = [];
       // v2.6: 断线自动重连（最多重试2次，带 resume 从检查点续传）
       const MAX_ATTEMPTS = 3;
@@ -5045,15 +4876,18 @@ const app = createApp({
             else if(evt.type==='status'){
               batchStatus.value = (evt.message||'').replace('💾 ','').replace('✍️ ','').replace('🎨 ','');
             }
+            else if(evt.type==='outline_compliance'){
+              batchStatus.value = evt.message||'';
+            }
             else if(evt.type==='quality_warning'){
               batchStatus.value = '质量优化中…';
             }
             else if(evt.type==='text'){
-              streamPush(evt.content);
+              writing.content+=evt.content;
               batchStreaming.value=(batchStreaming.value+evt.content).slice(-300);
+              nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
             }
             else if(evt.type==='chapter_done'){
-              streamFlushAll();
               writing.done=true;
               const st=activeNovel.value.state;
               if(!st.completed_chapters) st.completed_chapters=[];
@@ -5072,7 +4906,7 @@ const app = createApp({
               batchCurrent.value=end; batchProgress.value=100;
               if((evt.failed||[]).length>0) reportError(`${evt.failed.length}章失败: ${evt.failed.join(',')}`, '批量生成部分失败');
             }
-            else if(evt.type==='error'){ streamFlushAll(); reportError(evt.message, '生成失败'); return false; }
+            else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
           });
           selectChapter(end); loadShelfDebounced();
           break; // 成功完成
@@ -5096,9 +4930,17 @@ const app = createApp({
         const endpoint = useAtomicMode.value ? '/api/novels/generate/atomic' : '/api/novels/generate';
         const r=await fetch(API+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel',feedback:reviewFeedback.value.trim()})});
         await readSSE(r, (evt) => {
-          if(evt.type==='text'){ streamPush(evt.content); }
-          else if(evt.type==='done'){ streamFlushAll(); writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
-          else if(evt.type==='error'){ streamFlushAll(); reportError(evt.message, '生成失败'); return false; }
+          if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
+          else if(evt.type==='done'){ writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
+          else if(evt.type==='outline_compliance'){
+            outlineCompliance.value = {
+              chapter: evt.chapter, pct: evt.pct, level: evt.level,
+              message: evt.message||'', missing: evt.missing||[],
+              patched: !!evt.patched_text,
+            };
+            if (evt.patched_text) writing.content += '\n\n' + evt.patched_text;
+          }
+          else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
       loading.write=false; chapterProgress.value=0;
@@ -5289,6 +5131,7 @@ const app = createApp({
       xhsMode,xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,xhsProgress,xhsPhase,xhsStreamText,doXhsCreate,loadXhsPresets,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
+      outlineCompliance,
       requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,
       decomposeRequirements,superviseRequirements,runVerifyLoop,addRequirements,
       loadStyleSeeds,loadStyleParams,applyParamStyle,
@@ -5297,12 +5140,6 @@ const app = createApp({
       // v3.0: 互动模式
       interactive,openInteractive,sendInteractiveChat,continueInteractive,
       interactiveRollback,interactiveRestart,
-      // v3.6.4: 行动按钮（方案C）
-      runInteractiveAction,refreshActions,
-      // v3.6.6: 导出为小说
-      exportInteractiveNovel,downloadExportNovel,copyExportNovel,
-      // v2.5.62: 角色选择
-      openCharPicker,chooseAndStart,
       // v3.5.7: 剧情自动流
       cancelAuto,
       // v3.5.10: 智能滚动
@@ -5314,8 +5151,6 @@ const app = createApp({
       setRealVoice,clearRealVoice,realVoiceName,
       // v3.5.5: 玩家状态卡
       relCount,presentChars,playerName,
-      // v2.5.58: 互动状态徽章样式
-      interStateClass,
       // v3.5.9: 承诺清单
       activeFacts,
       // v3.5.23: 剧情概况（任务条副行）

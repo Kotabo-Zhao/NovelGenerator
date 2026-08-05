@@ -697,6 +697,25 @@ class GenerationMixin:
             
             # ── done 事件（正文已逐 beat 流式输出过，这里不再重复 yield full_text，
             #    避免前端 writing.content 收到「逐beat文本 + 全文」两遍重复）──
+            # ── v3.10: 大纲合规校验（核心事件/节拍落地；fail 自动补写）──
+            try:
+                async for _cev in self._outline_compliance_step(
+                    novel_id, chapter_num, chapter_outline, plan, full_text,
+                    batch_mode=False,
+                ):
+                    if _cev.get("type") == "outline_compliance" and _cev.get("patched_text"):
+                        full_text = full_text.rstrip() + "\n\n" + _cev["patched_text"]
+                        formatted = ("# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                                     .format(chapter_num=chapter_num,
+                                             chapter_title=chapter_outline.get(
+                                                 "title", f"第{chapter_num}章"),
+                                             full_text=full_text))
+                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        self.memory.invalidate("state", novel_id)
+                    yield _cev
+            except Exception as _ce:
+                log.warning(f"Outline compliance step skipped: {_ce}")
+
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num,
                    "atomic": True, "beat_count": len(beats)}
             
@@ -728,6 +747,80 @@ class GenerationMixin:
             except OSError:
                 pass
 
+
+
+    async def _outline_compliance_step(
+        self, novel_id: str, chapter_num: int, chapter_outline: dict,
+        plan: dict, full_text: str, batch_mode: bool = False,
+    ) -> AsyncGenerator[dict, None]:
+        """大纲合规校验（v3.10）：核对本章是否落地大纲核心事件/节拍/角色；
+        fail 且非批量 → 自动补写缺失核心事件。
+
+        Yields: {type: outline_compliance, chapter, pct, passed, level,
+                 missing, checked, patched_text, message}
+        """
+        try:
+            from ..outline_compliance import OutlineComplianceChecker
+        except Exception as e:
+            log.warning(f"outline_compliance import failed: {e}")
+            yield {"type": "outline_compliance", "chapter": chapter_num,
+                   "ok": False, "error": str(e)[:80]}
+            return
+        checker = OutlineComplianceChecker(self.client, self.model)
+        yield {"type": "status", "message": "📋 正在校验大纲合规（核心事件/节拍落地）…"}
+        try:
+            report = await asyncio.to_thread(
+                checker.check_chapter, full_text, chapter_outline,
+                run_deep=not batch_mode)
+        except Exception as e:
+            log.warning(f"Outline compliance check failed: {e}")
+            yield {"type": "outline_compliance", "chapter": chapter_num,
+                   "ok": False, "error": str(e)[:80]}
+            return
+        pct = report.get("pct", 100)
+        level = report.get("level", "ok")
+        passed = report.get("passed", True)
+        missing = report.get("missing", [])
+        missing_labels = [
+            f"{m.get('label', '')}: {str(m.get('needle', ''))[:40]}" for m in missing]
+        # 落盘合规报告（state.outline_compliance）
+        try:
+            state = self.memory.get_novel_state(novel_id)
+            state.setdefault("outline_compliance", {})[str(chapter_num)] = {
+                "pct": pct, "level": level, "passed": passed,
+                "missing": missing_labels, "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            self.memory.save_novel_state(novel_id, state)
+        except Exception as e:
+            log.warning(f"outline compliance report save failed: {e}")
+        patched_text = ""
+        message = ""
+        if level == "ok":
+            message = f"📋 大纲合规 ✓ {pct}%"
+        elif level == "partial":
+            message = f"⚠️ 大纲合规 {pct}%，缺失 {len(missing)} 项"
+        else:
+            message = f"❌ 大纲合规 {pct}%，缺失 {len(missing)} 项"
+            if not batch_mode:
+                yield {"type": "status", "message": "✍️ 正在补写缺失的大纲核心事件…"}
+                try:
+                    patch = await asyncio.to_thread(
+                        checker.patch_missing, full_text, missing)
+                    if patch and len(patch) >= 30:
+                        patched_text = patch
+                        message = f"✍️ 已自动补写缺失核心事件（{len(missing)} 项）"
+                        log.info(
+                            f"Outline compliance patch added for Ch{chapter_num}: {len(patch)} chars")
+                    else:
+                        message = f"❌ 大纲合规 {pct}%，自动补写未成功，建议手动重写本章"
+                except Exception as pe:
+                    log.warning(f"Outline compliance patch failed: {pe}")
+                    message = f"❌ 大纲合规 {pct}%，自动补写失败，建议手动重写本章"
+        yield {"type": "outline_compliance",
+               "chapter": chapter_num, "pct": pct, "passed": passed,
+               "level": level, "checked": report.get("results", []),
+               "missing": missing_labels, "patched_text": patched_text,
+               "message": message}
 
     async def generate_chapter_stream(
         self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel",
@@ -1379,6 +1472,20 @@ class GenerationMixin:
                         log.warning(f"Engine continuation empty, keeping original")
                 except Exception as re:
                     log.warning(f"Engine retry failed: {re}, keeping original")
+
+            # ── v3.10: 大纲合规校验（核心事件/节拍落地；fail 自动补写）──
+            try:
+                async for _cev in self._outline_compliance_step(
+                    novel_id, chapter_num, chapter_outline, plan, full_text, batch_mode,
+                ):
+                    if _cev.get("type") == "outline_compliance" and _cev.get("patched_text"):
+                        full_text = full_text.rstrip() + "\n\n" + _cev["patched_text"]
+                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        self.memory.invalidate("state", novel_id)
+                    yield _cev
+            except Exception as _ce:
+                log.warning(f"Outline compliance step skipped: {_ce}")
 
             # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
             # v2.6: 批量模式后台化（不阻塞正文流程）；单章模式保持同步

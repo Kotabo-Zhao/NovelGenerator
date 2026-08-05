@@ -34,6 +34,11 @@ _PACT_TRIGGER_RE = (
 )
 
 
+# v3.9: 对话轮次上限（兑现文件头 §6 注释——防止上下文膨胀）
+MAX_CHAT_ROUNDS = 100   # 强制上限：纯对话达到后收尾，行动不受限
+CHAT_WARN_ROUNDS = 80   # 预警线：prompt 注入收尾引导
+
+
 def pact_need_extract(user_text, reply_text) -> bool:
     """v2.5.58: 规则预筛——本轮对话是否值得增量 PACT 提取（零 LLM）。
 
@@ -214,6 +219,15 @@ class DialogueEngine:
             prof = {}
         if prof:
             parts.append(f"## 你扮演：{target_char}")
+            # v3.7: 目标角色属性卡（数值权威——言行/判定必须符合）
+            # 老存档无 stats 时现场规则推断（不写回，纯读取锚点）
+            from .attr_system import render_stats_card, infer_stats_from_profile
+            _tstats = (prof.get("stats") or {})
+            if not isinstance(_tstats, dict) or not _tstats:
+                _tstats = infer_stats_from_profile(prof)
+            _card = render_stats_card(_tstats, target_char)
+            if _card:
+                parts.append(_card)
             mm = prof.get("mental_models", [])[:3]
             if mm:
                 parts.append("心智模型（你的内在逻辑）:")
@@ -274,7 +288,16 @@ class DialogueEngine:
                          f"{'，' + str(pc.get('identity', ''))[:40] if pc.get('identity') else ''}")
             if pc.get("personality_brief"):
                 parts.append(f"读者角色性格: {pc['personality_brief'][:100]}")
-            parts.append("用{player_name}称呼这位读者，而不是'你'以外的称呼；他是故事中的真实角色")
+            # v3.7: 玩家属性卡（数值权威——你对他实力/气场的判断依据）
+            # 老存档无 stats 时现场规则推断
+            from .attr_system import render_stats_card, infer_stats_from_profile
+            _pstats = (pc.get("stats") or {})
+            if not isinstance(_pstats, dict) or not _pstats:
+                _pstats = infer_stats_from_profile(pc)
+            _pcard = render_stats_card(_pstats, player_name)
+            if _pcard:
+                parts.append(_pcard)
+            parts.append(f"用{player_name}称呼这位读者，而不是'你'以外的称呼；他是故事中的真实角色")
 
         # 剧情状态（态度依据）
         s = state.get("state", {})
@@ -292,6 +315,30 @@ class DialogueEngine:
         mem_brief = memory_brief(state, target_char, 8)
         if mem_brief:
             parts.append("## " + mem_brief)
+        # v3.9: 当前场景状态注入——角色知道'此刻'在哪、和谁、刚发生什么，
+        # 避免行动-对话衔接断裂（如玩家未起身角色却'追上前几步'）
+        try:
+            _recent_sc = self.store.recent_scenes(novel_id, 1)
+            if _recent_sc:
+                _sc_last = _recent_sc[-1]
+                _loc_now = s.get('location', '') or ''
+                _spk_now = []
+                for _b in (_sc_last.get('blocks') or []):
+                    _sp = str(_b.get('speaker', ''))
+                    if _sp and _sp not in _spk_now:
+                        _spk_now.append(_sp)
+                _last_now = ''
+                for _b in reversed((_sc_last.get('blocks') or [])):
+                    if _b.get('content'):
+                        _last_now = str(_b['content'])[:80]
+                        break
+                _where = _loc_now or '当前地点'
+                _who = '、'.join(_spk_now)[:40] if _spk_now else '在场之人'
+                parts.append('## 当前场景（此刻状态，动作与台词必须符合）:\n'
+                             f"你在{_where}，与{_who}在一起。刚发生：{_last_now or '一切如常'}")
+        except Exception:
+            pass
+
         if s.get("objective"):
             parts.append(f"当前主线: {s['objective']}")
 
@@ -327,6 +374,13 @@ class DialogueEngine:
                 role = player_name if h.get("role") == "user" else h.get("speaker", target_char)
                 parts.append(f"{role}: {h.get('content', '')[:200]}")
         parts.append(f"## 现在{player_name}对你说：\n{history[-1].get('content', '') if history else ''}")
+        # v3.9: 接近对话上限 → 引导自然收尾（不开启新话题）
+        try:
+            _rounds = len(self.store.recent_chats(novel_id, 200)) // 2
+        except Exception:
+            _rounds = 0
+        if _rounds >= CHAT_WARN_ROUNDS:
+            parts.append(f"你们已交谈约 {_rounds} 轮（上限 {MAX_CHAT_ROUNDS} 轮）。请让对话自然告一段落，把话题引向告别或行动，不要开启新话题。")
         return "\n".join(parts)
 
     def _get_voices(self, state: dict, char_name: str) -> dict:
@@ -399,6 +453,32 @@ class DialogueEngine:
         if not target:
             yield {"type": "error", "message": "没有可对话的角色"}
             return
+
+        # v3.9: 在场性校验——目标不在当前场景/不同行 → 旁白提示而非'隐身角色'开口
+        if target and target != player_name:
+            _present = self._is_target_present(novel_id, target, state)
+            if _present is False:
+                _near = []
+                try:
+                    for sc in self.store.recent_scenes(novel_id, 1):
+                        for b in (sc.get('blocks') or []):
+                            sp = str(b.get('speaker', ''))
+                            if sp and sp != player_name and sp not in _near:
+                                _near.append(sp)
+                except Exception:
+                    pass
+                _near = _near[:3] or [str(n) for n in (state.get('node_chars') or [])[:3]]
+                _near_txt = '、'.join(_near) if _near else '（可先移动到目标所在地）'
+                _absent_msg = f"【旁白】{target}此刻不在你身边，无法直接对话。在场的有：{_near_txt}。"
+                self.store.append_chat(novel_id, {"role": "assistant", "speaker": "旁白",
+                                                  "type": "action_result", "content": _absent_msg,
+                                                  "ts": time.strftime("%H:%M:%S")})
+                yield {"type": "chat_chunk", "speaker": "旁白", "content": _absent_msg}
+                yield {"type": "chat_end", "speaker": "旁白", "content": _absent_msg, "segments": [],
+                       "snapshot": _state_snapshot(state)}
+                yield {"type": "done"}
+                return
+
 
         # 清理玩家输入中的 @
         clean_input = user_input.strip()
@@ -492,6 +572,19 @@ class DialogueEngine:
                    "snapshot": _state_snapshot(state)}
             yield {"type": "done"}
             return
+        # v3.9: 对话轮次强制上限——达到后纯对话直接收尾（行动放行）
+        rounds_now = len(self.store.recent_chats(novel_id, 200)) // 2
+        if rounds_now >= MAX_CHAT_ROUNDS and not action:
+            _limit_msg = "【旁白】你们已经聊了很久，是时候回到故事主线了。"
+            self.store.append_chat(novel_id, {"role": "assistant", "speaker": "旁白",
+                                              "type": "action_result", "content": _limit_msg,
+                                              "ts": time.strftime("%H:%M:%S")})
+            yield {"type": "chat_chunk", "speaker": "旁白", "content": _limit_msg}
+            yield {"type": "chat_end", "speaker": "旁白", "content": _limit_msg, "segments": [],
+                   "snapshot": _state_snapshot(state)}
+            yield {"type": "done"}
+            return
+
         if action:
             yield {"type": "action_detect", "action_type": action.get("type", "other"),
                    "summary": action.get("summary", ""), "end_chat": action.get("end_chat", False),
@@ -649,6 +742,28 @@ class DialogueEngine:
         )
         raw = self._llm(DRIFT_SYSTEM, user, temperature=0.2, max_tokens=300)
         return _parse_json(raw) if raw else None
+
+    def _is_target_present(self, novel_id: str, target: str, state: dict) -> Optional[bool]:
+        """目标角色是否在当前场景在场。False=确凿不在场（应拦截），
+        True/None=放行（None=数据不足，不误伤远程对话）。
+        v3.9: 修复'隐身角色开口'逻辑BUG——玩家 @ 任意角色即触发对话，
+        不在场角色突兀回应造成因果断裂。"""
+        try:
+            scenes = self.store.recent_scenes(novel_id, 1)
+            if scenes:
+                sc = scenes[-1]
+                speakers = {str(b.get('speaker', '')) for b in (sc.get('blocks') or [])}
+                if speakers:
+                    return target in speakers
+        except Exception:
+            pass
+        ps = state.get('player_state') or {}
+        if target in [str(x) for x in (ps.get('with') or [])]:
+            return True
+        if target in [str(n) for n in (state.get('node_chars') or [])]:
+            return True
+        return None
+
 
     def _detect_target(self, state: dict, text: str) -> Optional[str]:
         """从 @角色名 提取交流对象（v3.5.16: 排除玩家自己——玩家是沈念薇，

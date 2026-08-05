@@ -1058,6 +1058,17 @@ def choose_char_apply(state: dict, char_name: str, presets_map: dict) -> tuple:
         if not p:
             return False, f"角色不存在: {name}"
         st = state or {}
+        # v3.7: 玩家角色属性数值（从档案规则推断，供对话/判定注入锚点）
+        from .attr_system import ensure_stats
+        _pc_profile = {
+            "identity": p.get("identity", ""),
+            "personality": p.get("personality", ""),
+            "backstory": p.get("backstory", ""),
+            "motivation": p.get("motivation", ""),
+            "speak_style": p.get("speak_style", ""),
+            "role": p.get("role", ""),
+            "cultivation": p.get("cultivation", ""),
+        }
         st["player_char"] = {
             "name": p["name"],
             "identity": p.get("identity", ""),
@@ -1067,12 +1078,23 @@ def choose_char_apply(state: dict, char_name: str, presets_map: dict) -> tuple:
             "speak_style": p.get("speak_style", ""),
             "initial_attitude": p.get("initial_attitude", ""),
             "role": p.get("role", ""),
+            "stats": ensure_stats(_pc_profile),  # v3.7: 玩家属性数值
         }
         casts = st.setdefault("casts", {})
         casts.pop(name, None)  # 被选角色由玩家控制，不 NPC 化
         for other, cp in presets_map.items():
             if other != name:
-                casts.setdefault(other, {
+                # v3.7: NPC 属性数值（从各自档案推断）
+                _np_profile = {
+                    "identity": cp.get("identity", ""),
+                    "personality": cp.get("personality", ""),
+                    "backstory": cp.get("backstory", ""),
+                    "motivation": cp.get("motivation", ""),
+                    "speak_style": cp.get("speak_style", ""),
+                    "role": cp.get("role", ""),
+                    "cultivation": cp.get("cultivation", ""),
+                }
+                _cast = casts.setdefault(other, {
                     "present": True,
                     "profile": {
                         "identity": cp.get("identity", ""),
@@ -1081,6 +1103,10 @@ def choose_char_apply(state: dict, char_name: str, presets_map: dict) -> tuple:
                     },
                     "role": cp.get("role", ""),
                 })
+                # v3.7: 强制写入/刷新 stats（老存档 setdefault 不会更新已有角色）
+                if not isinstance(_cast.get("profile"), dict):
+                    _cast["profile"] = {}
+                _cast["profile"]["stats"] = ensure_stats(_np_profile, inplace=False)
         return True, ""
     except Exception as e:
         return False, f"角色选择失败: {str(e)[:60]}"

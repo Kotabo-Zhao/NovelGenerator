@@ -308,6 +308,90 @@ class Writer:
                 **kwargs
             )
 
+    def assess_and_enhance_hook(self, text: str, min_rewrite_score: int = 35) -> dict:
+        """AUDIT P1-3: LLM 判断章末钩子强度；偏弱时局部重写结尾。
+
+        仅在规则检测（_check_truncation 关键词）未通过时由调用方触发，
+        避免对每章都产生额外 LLM 成本。
+
+        Returns:
+            dict: {"assessed", "score", "rewritten", "text"}
+                text 仅在 rewritten=True 时给出（替换结尾后的完整正文）。
+        """
+        result = {"assessed": False, "score": None, "rewritten": False, "text": None}
+        if not text or len(text) < 500:
+            return result
+        try:
+            import json as _json
+            resp = self._create(
+                messages=[
+                    {"role": "system", "content": "你是一位严格的网络小说编辑，只评估章末钩子强度。只输出JSON。"},
+                    {"role": "user", "content": (
+                        "以下是小说章节的最后400字。请判断：读者读到这个结尾，"
+                        "是否会产生强烈的「然后呢？」的期待？\n\n"
+                        f"章节结尾：\n{text[-400:]}\n\n"
+                        '只输出JSON: {"score": 0-100 钩子强度分, "verdict": "一句话判断", '
+                        '"suggestion": "若需强化，给出一个具体的结尾改写方向；若钩子足够强则为空字符串"}'
+                    )},
+                ],
+                temperature=0.3,
+                max_tokens=300,
+            )
+            content = (resp.choices[0].message.content or "").strip()
+            if not content:
+                return result
+            import re as _re
+            try:
+                assessment = _json.loads(content)
+            except Exception:
+                _m = _re.search(r"\{.*\}", content, _re.S)
+                assessment = _json.loads(_m.group(0)) if _m else None
+            if not isinstance(assessment, dict):
+                return result
+
+            try:
+                score = int(assessment.get("score", 50))
+            except (TypeError, ValueError):
+                score = 50
+            result.update({"assessed": True, "score": score})
+            log.info(f"Hook LLM assessment: score={score}, verdict={assessment.get('verdict', '')}")
+
+            if score >= min_rewrite_score:
+                return result
+
+            suggestion = str(assessment.get("suggestion", "")).strip()
+            if not suggestion or suggestion == "无":
+                return result
+
+            # 局部重写结尾：只替换最后 300 字，保留前文不动
+            resp2 = self._create(
+                messages=[
+                    {"role": "system", "content": "你是一位网络小说作家。只重写章节的结尾部分，保持与前文风格一致。"},
+                    {"role": "user", "content": (
+                        f"原文结尾（最后300字）：\n{text[-300:]}\n\n"
+                        f"问题：{assessment.get('verdict', '章末钩子偏弱')}\n"
+                        f"强化方向：{suggestion}\n\n"
+                        "请重写这段结尾，使其成为强钩子（悬念升级/冲突突变/反转/金句）。"
+                        "只输出改写后的结尾文字（250-350字），不要任何解释或标题。"
+                        "必须以句号/问号/感叹号/省略号结束。"
+                    )},
+                ],
+                temperature=0.75,
+                max_tokens=700,
+            )
+            new_ending = (resp2.choices[0].message.content or "").strip()
+            if len(new_ending) < 100:
+                log.warning(f"Hook rewrite too short ({len(new_ending)} chars), keeping original ending")
+                return result
+
+            head = text[:-300].rstrip() if len(text) > 300 else ""
+            new_text = (head + "\n\n" + new_ending) if head else new_ending
+            result.update({"rewritten": True, "text": new_text})
+            log.info(f"Hook enhanced: {len(new_ending)} chars ending replaced")
+        except Exception as e:
+            log.warning(f"Hook assessment failed (non-fatal): {e}")
+        return result
+
     async def write_stream(
         self,
         context: str,
@@ -364,6 +448,10 @@ class Writer:
                 context = context[:instr_start]
         
         if outline_instruction:
+            # AUDIT P0-1: 剥离 ═══ 标记行，防止指令标记本身进入 system prompt
+            outline_instruction = "\n".join(
+                ln for ln in outline_instruction.splitlines() if "═══" not in ln
+            ).strip()
             system_prompt = system_prompt + "\n\n" + outline_instruction
             log.info(f"Outline injected into system prompt ({len(outline_instruction)} chars)")
 
@@ -630,8 +718,10 @@ def _check_truncation(text: str, target_words: int) -> tuple:
         return True, f"长度不足 ({char_count}字 vs 目标{target_words}字, 最低要求{min_acceptable}字)"
     
     # 3. 钩子检查: 结尾应该有悬念/期待感
+    # AUDIT P1-3: 移除「然后/但是/这时/然而」等高频非钩子词，避免假阳性。
+    # 此检查仅作提示，真正的钩子强弱判断见 Writer.assess_and_enhance_hook（LLM 评估）。
     last_100 = text[-100:] if len(text) > 100 else text
-    has_hook = any(kw in last_100 for kw in ["突然", "忽然", "这时", "那一刻", "然后", "但是", "然而", "奇怪", "……", "?"])
+    has_hook = any(kw in last_100 for kw in ["突然", "忽然", "那一刻", "奇怪", "竟然", "没想到", "却见", "就在这时", "……", "？", "?"])
     if not has_hook and target_words > 2000:
         log.info("No hook detected at end (minor)")
     

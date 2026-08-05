@@ -913,15 +913,12 @@ class SharedMemoryManager:
                         high_dialogue_count += 1
             
             if high_dialogue_count >= 2:
+                # AUDIT P0-4: 对话约束已硬编码进 WRITER_SYSTEM（≤35%、连续≤4轮），
+                # 这里只保留一行自适应提示，避免重复的长篇告警挤占 prompt
                 parts.append(
-                    "## ⚠️ 对话密度告警\n\n"
-                    f"最近 {high_dialogue_count} 章对话占比过高(>40%)。"
-                    "本章必须严格控制对话量：\n"
-                    "- 对话占比 ≤ 35%\n"
-                    "- 连续对话不超过 4 轮就必须用动作或环境打断\n"
-                    "- 每段对话必须有实质性推进（揭示信息/升级冲突/改变关系）\n"
-                    "- 禁止角色之间来回确认已经知道的信息\n"
-                    "- 优先用动作展示冲突，而非用对话说明冲突\n"
+                    "## ⚠️ 对话密度提示\n\n"
+                    f"最近 {high_dialogue_count} 章对话占比>40%。本章对话占比硬约束 ≤30%，"
+                    "连续对话不超过 4 轮就必须用动作/环境打断。"
                 )
         except Exception:
             pass
@@ -1135,6 +1132,28 @@ class SharedMemoryManager:
         if achievements:
             ach_text = "、".join([a.get("event", str(a)) for a in achievements[-5:]])
             lines.append(f"- 成就: {ach_text}")
+
+        # AUDIT P1-4: 活跃配角状态不再丢弃 — 保留最近 5 章出场角色的最新状态
+        active = state.get("active_characters", {})
+        if isinstance(active, dict) and active:
+            _recent = sorted(
+                [c for c in active.values() if isinstance(c, dict)],
+                key=lambda c: c.get("last_appeared", 0),
+                reverse=True,
+            )[:5]
+            if _recent:
+                lines.append("\n### 👥 活跃配角（最近出场）")
+                for c in _recent:
+                    _name = c.get("name", "?")
+                    _status = c.get("status", "活")
+                    _loc = c.get("location", "未知")
+                    _rel = c.get("relationship", "")
+                    _last = c.get("last_appeared", 0)
+                    _extra = f"，关系: {_rel}" if _rel else ""
+                    if _last:
+                        lines.append(f"- {_name}: {_status} @{_loc}{_extra}（第{_last}章出场）")
+                    else:
+                        lines.append(f"- {_name}: {_status} @{_loc}{_extra}（尚未出场）")
 
         # 信息传播（最近5条）
         spreads = state.get("information_spread", [])

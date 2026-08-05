@@ -57,7 +57,9 @@ def add_memory(state: dict, char: str, mtype: str, content: str,
     })
     if len(mems) > MEMORY_LIMIT:
         # v3.5.31: 标记待压缩（硬删除仅作兜底，实际压缩在章节结束时后台执行）
-        state.setdefault("_memory_dirty", set()).add(char)
+        dirty = state.setdefault("_memory_dirty", [])
+        if char not in dirty:
+            dirty.append(char)
         # 兜底：若压缩从未执行（如 LLM 不可用），仍硬截断防无限膨胀
         del mems[: len(mems) - MEMORY_LIMIT]
 
@@ -122,7 +124,9 @@ def compress_char_memories(state: dict, char: str, llm_fn) -> bool:
         # 仍超上限则兜底截断
         if len(mems) > MEMORY_LIMIT + SUMMARY_LIMIT:
             del mems[: len(mems) - (MEMORY_LIMIT + SUMMARY_LIMIT)]
-        state.setdefault("_memory_dirty", set()).discard(char)
+        dirty = state.get("_memory_dirty") or []
+        if char in dirty:
+            dirty.remove(char)
         return True
     except Exception:
         return False
@@ -132,7 +136,7 @@ def compress_all_memories(state: dict, llm_fn) -> int:
     """v3.5.31: 压缩所有需要压缩的角色记忆（章节结束时后台调用）"""
     if not llm_fn:
         return 0
-    dirty = state.get("_memory_dirty") or set()
+    dirty = set(state.get("_memory_dirty") or [])
     chars = dirty or set((state.get("memories") or {}).keys())
     done = 0
     for ch in list(chars):

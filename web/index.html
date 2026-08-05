@@ -279,6 +279,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .batch-status{display:flex;align-items:center;gap:10px}
 .batch-preview{font-size:13px;line-height:1.8;color:var(--text2);max-height:160px;overflow-y:auto;padding:8px 12px;background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm)}
 .chapter-progress{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:12px;color:var(--text2)}
+.compliance-badge{display:flex;align-items:center;gap:8px;margin:4px 0 10px;padding:6px 10px;border-radius:8px;font-size:12px;border:1px solid var(--border);background:var(--bg2);color:var(--text)}
+.compliance-badge.cb-ok{border-color:#2e7d3244;background:rgba(46,125,50,.08);color:#4caf50}
+.compliance-badge.cb-partial{border-color:#f9a82555;background:rgba(249,168,37,.08);color:#f9a825}
+.compliance-badge.cb-fail{border-color:#f4433644;background:rgba(244,67,54,.08);color:#f44336}
+.compliance-badge .cb-missing{opacity:.85;font-size:11px}
 
 /* ═══════ 剧情图谱 ═══════ */
 .sg-dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
@@ -1350,6 +1355,26 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
 
             <!-- 输入区 -->
+            <!-- v3.9: 行动按钮条（方案C：点击 = 意图已确定，零 LLM 识别） -->
+            <div v-if="(interactive.pendingNode || interactive.inChat) && interactive.actions.length && !interactive.busy && !interactive.typing"
+                 style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center">
+              <span style="font-size:12px;color:var(--text2);margin-right:2px">⚡ 行动</span>
+              <button v-for="a in interactive.actions" :key="a.id" class="btn btn-xs"
+                      @click="onActionButton(a)"
+                      style="border:1px solid rgba(212,175,55,.45);color:#d9bc7a;background:rgba(212,175,55,.06)">
+                {{ a.emoji }} {{ a.label }}
+              </button>
+            </div>
+            <!-- v3.9: talk 行动内联输入 -->
+            <div v-if="interactive.talkTarget" style="display:flex;gap:6px;margin-top:6px;align-items:center">
+              <input v-model="interactive.talkMessage" @keyup.enter="execAction()" class="talk-action-input"
+                     :placeholder="'对 ' + (interactive.talkTarget.label || interactive.talkTarget.target) + ' 说…'"
+                     style="flex:1;min-height:34px;font-size:13.5px" />
+              <button class="btn btn-sm btn-primary" :disabled="!String(interactive.talkMessage||'').trim()"
+                      @click="execAction()">发送</button>
+              <button class="btn btn-sm btn-ghost" @click="interactive.talkTarget=null;interactive.talkMessage=''">取消</button>
+            </div>
+
             <div class="interactive-input" v-if="interactive.pendingNode || interactive.inChat">
               <div class="flex gap-6" style="align-items:center">
                 <input v-model="interactive.message" @keyup.enter="sendInteractiveChat()"
@@ -1458,6 +1483,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div v-if="loading.write && writing.content" class="chapter-progress">
           <div class="cp-bar"><div class="cp-fill" :style="{width:chapterProgress+'%'}"></div></div>
           <div class="cp-text">{{ chapterProgressLabel || chapterProgress+'%' }}</div>
+        </div>
+
+        <!-- v3.10: 大纲合规徽章 -->
+        <div v-if="outlineCompliance.chapter === writing.chapter && outlineCompliance.level" class="compliance-badge" :class="'cb-'+outlineCompliance.level">
+          <span>{{ outlineCompliance.message }}</span>
+          <span v-if="outlineCompliance.missing && outlineCompliance.missing.length" class="cb-missing" :title="outlineCompliance.missing.join('；')">（缺失 {{ outlineCompliance.missing.length }} 项，悬停查看）</span>
         </div>
 
         <!-- 批量生成 -->
@@ -2371,6 +2402,7 @@ const app = createApp({
     }
     const reviewFeedback = ref(''); const batchStreaming = ref('');
     const chapterProgress = ref(0); const chapterProgressLabel = ref('');
+    const outlineCompliance = ref({}); // v3.10: 大纲合规徽章（chapter/pct/level/message/missing）
     const outlineFeedback = ref(''); const isRegenerating = ref(false);
     
     // ── 全局状态锁：任何生成操作进行时阻断其他操作 ──
@@ -3750,6 +3782,15 @@ const app = createApp({
           else if(evt.type==='quality_warning'){
             chapterProgressLabel.value = evt.message||'质量优化中…';
           }
+          else if(evt.type==='outline_compliance'){
+            outlineCompliance.value = {
+              chapter: evt.chapter, pct: evt.pct, level: evt.level,
+              message: evt.message||'', missing: evt.missing||[],
+              patched: !!evt.patched_text,
+            };
+            chapterProgressLabel.value = evt.message||'大纲合规校验完成';
+            if (evt.patched_text) writing.content += '\n\n' + evt.patched_text;
+          }
           else if(evt.type==='quality_retry'){
             chapterProgressLabel.value = `✨ 优化完成：${evt.score_before}分 → ${evt.score_after}分`;
           }
@@ -3839,6 +3880,9 @@ const app = createApp({
       state: { scene_num:0, facts:[], casts:{}, state:{relations:{}} },
       blocks: [], typing: false, busy: false,
       pendingNode: false, pendingReason: '', suggestions: [], inChat: false, message: '',
+  actions: [],            // v3.9: 行动按钮条（action_options）
+  talkTarget: null,       // v3.9: talk 行动待发送对象
+  talkMessage: '',        // v3.9: talk 行动输入内容
       voices: {},
       // v3.1: 语音
       autoVoice: true,        // 对话台词自动播放
@@ -4288,7 +4332,8 @@ const app = createApp({
             interactive.state = data.state;
             interactive.pendingNode = !!data.state.pending_node;
             interactive.pendingReason = data.state.pending_reason || '';  // v3.5.35
-            interactive.suggestions = (data.state.suggestions || []).filter(s => typeof s === 'string'); // v3.5.44 类型过滤
+            interactive.suggestions = (data.state.suggestions || []).filter(s => typeof s === 'string');
+        await fetchActions();   // v3.9: 行动按钮条刷新 // v3.5.44 类型过滤
           }
         }
       } catch(e) { console.warn('loadInteractiveState failed:', e); }
@@ -4420,8 +4465,100 @@ const app = createApp({
       } catch(e) {
         interactive.blocks.push({type:'error', speaker:'', content:'对话失败: '+(e.message||e)});
       }
+      await fetchActions();
       interactive.busy = false;
       _setPhase('');                                   // v3.5.19: 生成结束
+      _scrollStory();
+    }
+
+    // ── v3.9: 行动按钮条（方案C：点击 = 意图已确定，零 LLM 识别）──
+    async function fetchActions() {
+      if (!activeNovel.value) return;
+      try {
+        const id = encodeURIComponent(activeNovel.value.id);
+        const r = await fetch(API + '/api/novels/' + id + '/interactive/actions');
+        if (!r.ok) { interactive.actions = []; return; }
+        const j = await r.json();
+        interactive.actions = (j.actions || []).filter(a => a && a.id);
+      } catch (e) { /* 按钮条是增强，失败静默 */ }
+    }
+
+    function onActionButton(a) {
+      if (!a) return;
+      if (a.intent === 'talk') {
+        interactive.talkTarget = a;
+        interactive.talkMessage = '';
+        requestAnimationFrame(() => {
+          const el = document.querySelector('.talk-action-input');
+          if (el) el.focus();
+        });
+      } else {
+        execAction(a);
+      }
+    }
+
+    async function execAction(a) {
+      const act = a || interactive.talkTarget;
+      if (!act || interactive.busy || interactive.typing) return;
+      if (!activeNovel.value) return;
+      let message;
+      if (act.intent === 'talk') {
+        message = String(interactive.talkMessage || '').trim();
+        if (!message) return;
+        interactive.talkTarget = null;
+        interactive.talkMessage = '';
+      }
+      cancelAuto();
+      _setPhase('⚡ 正在行动…', 30000);
+      const id = encodeURIComponent(activeNovel.value.id);
+      interactive.busy = true;
+      interactive.inChat = true;
+      interactive.blocks.push({type: 'action_desc', speaker: '你', content: '『' + (act.label || act.summary || '行动') + '』'});
+      interactive.blocks.push({type: 'typing', speaker: '', content: ''});
+      _scrollStory();
+      try {
+        const r = await fetch(API + '/api/novels/' + id + '/interactive/act', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action_id: act.id, intent: act.intent, target: act.target, message}),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        await readSSE(r, (evt) => {
+          if (evt.type === 'chat_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length - 1];
+            if (last && last.type === 'typing') { last.type = 'chat'; last.speaker = evt.speaker; last.content = evt.content; }
+            else if (last && last.type === 'chat' && last.speaker === evt.speaker) { last.content += evt.content; }
+            else interactive.blocks.push({type: 'chat', speaker: evt.speaker, content: evt.content});
+            _scrollStory();
+          } else if (evt.type === 'chat_end') {
+            const last = interactive.blocks[interactive.blocks.length - 1];
+            if (last && last.type === 'typing') { last.type = 'chat'; last.speaker = evt.speaker; last.content = evt.content; }
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            _scrollStory();
+          } else if (evt.type === 'action_chunk' && evt.content) {
+            const last = interactive.blocks[interactive.blocks.length - 1];
+            if (last && last.type === 'typing') last.content += evt.content;
+            else interactive.blocks.push({type: 'typing', speaker: '', content: evt.content});
+            _scrollStory();
+          } else if (evt.type === 'action_end') {
+            const last = interactive.blocks[interactive.blocks.length - 1];
+            if (last && last.type === 'typing') { last.type = 'action_result'; last.speaker = ''; last.content = evt.content; }
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            _scrollStory();
+          } else if (evt.type === 'action_done') {
+            if (evt.end_chat) { interactive.hookSummary = '你的行动改变了剧情走向'; interactive.inChat = false; }
+            if (evt.snapshot) _applySnapshot(evt.snapshot);
+            cancelAuto();
+            _scheduleAutoNext(4000, true);
+          } else if (evt.type === 'error') {
+            interactive.blocks.push({type: 'error', speaker: '', content: evt.message});
+          }
+        });
+        await fetchActions();
+      } catch (e) {
+        interactive.blocks.push({type: 'error', speaker: '', content: '行动失败: ' + (e.message || e)});
+      }
+      interactive.busy = false;
+      _setPhase('');
       _scrollStory();
     }
 
@@ -4739,6 +4876,9 @@ const app = createApp({
             else if(evt.type==='status'){
               batchStatus.value = (evt.message||'').replace('💾 ','').replace('✍️ ','').replace('🎨 ','');
             }
+            else if(evt.type==='outline_compliance'){
+              batchStatus.value = evt.message||'';
+            }
             else if(evt.type==='quality_warning'){
               batchStatus.value = '质量优化中…';
             }
@@ -4792,6 +4932,14 @@ const app = createApp({
         await readSSE(r, (evt) => {
           if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
           else if(evt.type==='done'){ writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
+          else if(evt.type==='outline_compliance'){
+            outlineCompliance.value = {
+              chapter: evt.chapter, pct: evt.pct, level: evt.level,
+              message: evt.message||'', missing: evt.missing||[],
+              patched: !!evt.patched_text,
+            };
+            if (evt.patched_text) writing.content += '\n\n' + evt.patched_text;
+          }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }
@@ -4983,6 +5131,7 @@ const app = createApp({
       xhsMode,xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,xhsProgress,xhsPhase,xhsStreamText,doXhsCreate,loadXhsPresets,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
+      outlineCompliance,
       requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,
       decomposeRequirements,superviseRequirements,runVerifyLoop,addRequirements,
       loadStyleSeeds,loadStyleParams,applyParamStyle,

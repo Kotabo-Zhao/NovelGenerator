@@ -241,6 +241,37 @@ class InteractStore:
     def recent_chats(self, novel_id: str, n: int = 20) -> list:
         return _read_logs(self._chats_path(novel_id), n)
 
+    def chat_log_count(self, novel_id: str) -> int:
+        """chat 日志总条数（end-chat 增量游标用）"""
+        p = self._chats_path(novel_id)
+        if not os.path.exists(p):
+            return 0
+        n = 0
+        with open(p, "r", encoding="utf-8") as f:
+            for _ in f:
+                n += 1
+        return n
+
+    def recent_chats_from(self, novel_id: str, from_count: int, n: int = 40) -> list:
+        """返回第 from_count 条之后的最近 n 条聊天（end-chat 增量提取用）"""
+        p = self._chats_path(novel_id)
+        if not os.path.exists(p):
+            return []
+        tail = []
+        idx = 0
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                idx += 1
+                if idx <= from_count:
+                    continue
+                try:
+                    tail.append(json.loads(line))
+                except Exception:
+                    continue
+                if len(tail) > n:
+                    tail.pop(0)
+        return tail
+
     # ── 音色覆盖 ──
     def get_voice_overrides(self, novel_id: str) -> dict:
         return _read_json(self._voices_path(novel_id), {}) or {}
@@ -252,6 +283,13 @@ class InteractStore:
 
     def clear_voice_overrides(self, novel_id: str):
         _atomic_write_json(self._voices_path(novel_id), {})
+
+    def reset_voice_override(self, novel_id: str, char_name: str):
+        """删除单个角色音色覆盖（原子写，避免中途失败丢全部）"""
+        over = self.get_voice_overrides(novel_id)
+        if char_name in over:
+            del over[char_name]
+            _atomic_write_json(self._voices_path(novel_id), over)
 
     # ── facts 生命周期 ──
     def add_fact(self, novel_id: str, fact: dict):

@@ -326,6 +326,10 @@ class AtomicWriter:
                     break
             else:
                 outline_instr = remaining.strip()  # 最后一段，取全部
+            # AUDIT P0-1: 剥离 ═══ 标记行，防止指令标记进入 beat 的 user prompt
+            outline_instr = "\n".join(
+                ln for ln in outline_instr.splitlines() if "═══" not in ln
+            ).strip()
             lines.extend([
                 "## 本章写作指令（必须遵守）",
                 outline_instr,
