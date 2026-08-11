@@ -87,6 +87,15 @@ jobs:
       - name: Run ownership isolation tests
         run: python tests/test_ownership_store.py
 
+      - name: Run chapter job runner tests
+        run: python tests/test_chapter_job_runner.py
+
+      - name: Run authenticated v1 API contract tests
+        run: python tests/test_v1_api.py
+
+      - name: Run API security baseline tests
+        run: python tests/test_api_security_baseline.py
+
       - name: Run WeChat auth adapter tests
         run: python tests/test_auth.py
 

@@ -1,6 +1,7 @@
 """Ownership isolation tests for secure novel APIs."""
 
 import os
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -66,6 +67,27 @@ class OwnershipStoreTests(unittest.TestCase):
         second_store = OwnershipStore(Path(self.temp_dir.name))
 
         self.assertTrue(second_store.owns("novel-1", "wx_owner_a"))
+
+    def test_creation_idempotency_is_durable_and_request_bound(self):
+        request_hash = hashlib.sha256(b"request-a").hexdigest()
+        first = self.store.reserve_creation("wx_owner_a", "create-001", request_hash)
+        second = self.store.reserve_creation("wx_owner_a", "create-001", request_hash)
+
+        self.assertEqual(first["status"], "running")
+        self.assertEqual(first["request_hash"], second["request_hash"])
+        with self.assertRaises(ValueError):
+            self.store.reserve_creation(
+                "wx_owner_a",
+                "create-001",
+                hashlib.sha256(b"request-b").hexdigest(),
+            )
+
+        completed = self.store.complete_creation(
+            "wx_owner_a", "create-001", request_hash, "novel-1"
+        )
+        replay = self.store.reserve_creation("wx_owner_a", "create-001", request_hash)
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertEqual(replay["novel_id"], "novel-1")
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ from core.path_security import validate_novel_id
 
 # 共享依赖：engine 单例 + log（见 deps.py）
 from .deps import engine, log
-from .routers import auth, novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive
+from .routers import auth, novels, v1, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
@@ -78,6 +78,9 @@ async def validate_novel_path_middleware(request: Request, call_next):
 _rate_limits: dict = defaultdict(list)  # {ip: [timestamps]}
 _RATE_WINDOW = 60  # 1 minute window
 _RATE_MAX_REQUESTS = int(os.getenv("RATE_LIMIT", "60"))  # 60 req/min per IP
+_auth_rate_limits: dict = defaultdict(list)  # {ip: [timestamps]}
+_AUTH_RATE_WINDOW = 15 * 60
+_AUTH_RATE_MAX_REQUESTS = int(os.getenv("AUTH_RATE_LIMIT", "10"))
 # 生成端点是 SSE 长连接（单章 60-90s），用"并发连接数"而非"次数/min"限流：
 # 同一 IP 同时最多 N 个生成连接，连接释放即恢复，避免连点/刷新被窗口计数锁死
 _RATE_GENERATE_MAX_CONCURRENT = int(os.getenv("RATE_LIMIT_GENERATE_CONCURRENT", "3"))
@@ -90,6 +93,24 @@ async def rate_limit_middleware(request: Request, call_next):
     """内存速率限制：普通端点按 60s 窗口计数，生成端点按并发连接数"""
     client_ip = request.client.host if request.client else "unknown"
     is_generate = "/generate" in request.url.path
+
+    if request.url.path == "/api/auth/wechat-login":
+        now = _time.time()
+        window_start = now - _AUTH_RATE_WINDOW
+        _auth_rate_limits[client_ip] = [
+            timestamp for timestamp in _auth_rate_limits[client_ip]
+            if timestamp > window_start
+        ]
+        if len(_auth_rate_limits[client_ip]) >= _AUTH_RATE_MAX_REQUESTS:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "登录尝试过于频繁，请稍后再试",
+                    "retry_after": _AUTH_RATE_WINDOW,
+                },
+                headers={"Retry-After": str(_AUTH_RATE_WINDOW)},
+            )
+        _auth_rate_limits[client_ip].append(now)
 
     if is_generate:
         # 生成端点：并发连接限流（连接结束即释放）
@@ -126,6 +147,22 @@ async def rate_limit_middleware(request: Request, call_next):
 
     _rate_limits[client_ip].append(now)
     return await call_next(request)
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """为 API 和页面统一补充不依赖前端框架的基础安全响应头。"""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 # 前端文件目录 — 使用 abspath 防止 __file__ 为相对路径时解析错误
@@ -211,7 +248,7 @@ async def health():
 
 # ── 业务路由挂载（2026-07-31 按域拆分）──
 
-for _router in (auth, novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive):
+for _router in (auth, v1, novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive):
     app.include_router(_router.router)
 
 
