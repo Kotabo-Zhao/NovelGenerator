@@ -78,6 +78,9 @@ jobs:
       - name: Run generation budget tests
         run: python tests/test_generation_limits.py
 
+      - name: Run generation failure guard tests
+        run: python tests/test_atomic_failure_guard.py
+
       - name: Verify native mini program structure
         run: python tests/test_miniprogram_structure.py
 

@@ -159,9 +159,11 @@ class AtomicWriter:
                 continue
         
         if not candidates:
-            # 全部失败，用最简单的兜底
+            # 全部失败不能伪装成正常正文；上层必须终止章节并保留失败状态。
             return {
-                "text": f"（生成失败 - {beat.function}）",
+                "text": "",
+                "failed": True,
+                "error": f"beat 生成失败：{beat.function}",
                 "candidates": [],
                 "selected_index": -1,
                 "temperature": beat.temperature,
@@ -217,6 +219,7 @@ class AtomicWriter:
         
         return {
             "text": chosen["text"],
+            "failed": False,
             "candidates": [{"text": c["text"], "index": c["index"]} for _, c in scored],
             "selected_index": chosen["index"],
             "temperature": chosen["temperature"],
@@ -243,6 +246,11 @@ class AtomicWriter:
                 self.write_beat, beat, prev_full, char_snapshots, style_guide,
                 rhythm_hint, blueprint, chapter_context
             )
+
+            if result.get("failed"):
+                message = result.get("error") or f"beat {beat.index} 生成失败"
+                log.error(message)
+                raise RuntimeError(message)
             
             text = result["text"]
             # 记录短句占比（≤8字 = 真正短句）
