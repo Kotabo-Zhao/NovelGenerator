@@ -6,29 +6,33 @@
   </view>
 
   <view class="card auth-card">
-    <view class="row">
-      <view>
-        <view class="section-title">{{loggedIn ? '已连接微信账号' : '登录后开始写作'}}</view>
+    <view class="auth-heading">
+      <view class="auth-mark">{{loggedIn ? '✓' : '我'}}</view>
+      <view class="auth-copy">
+        <view class="section-title">{{loggedIn ? '微信账号已连接' : '登录后开始写作'}}</view>
         <view class="muted">{{loggedIn ? '会话只保存在当前运行内存中。' : '登录后才能访问自己的作品和生成任务。'}}</view>
       </view>
-      <button wx:if="{{!loggedIn}}" class="primary-button auth-button" bindtap="login">微信登录</button>
-      <button wx:else class="quiet-button auth-button" bindtap="logout">退出</button>
     </view>
     <view wx:if="{{authError}}" class="error-box">{{authError}}</view>
+    <button wx:if="{{!loggedIn}}" class="primary-button auth-action" loading="{{loggingIn}}" disabled="{{loggingIn}}" bindtap="login">{{loggingIn ? '正在连接…' : '微信登录'}}</button>
+    <button wx:else class="quiet-button auth-action" bindtap="logout">退出当前账号</button>
   </view>
 
-  <view class="card profile-note">
-    <view class="section-title">小程序 MVP</view>
-    <view class="muted">作品和生成任务已经切换到认证 v1 接口；隐私同意、额度和注销仍需上线配置后开放。</view>
-  </view>
-
-  <view class="settings-list">
-    <view wx:for="{{items}}" wx:key="key" class="card setting-item" data-key="{{item.key}}" bindtap="onTap">
-      <view class="row">
-        <view class="setting-title">{{item.title}}</view>
-        <view class="hint">›</view>
-      </view>
-      <view class="book-meta">{{item.desc}}</view>
+  <view class="card quick-card">
+    <view class="section-title">快速入口</view>
+    <view class="quick-actions">
+      <button class="secondary-button" bindtap="goShelf">我的书架</button>
+      <button class="secondary-button" bindtap="goCreate">创建作品</button>
     </view>
   </view>
+
+  <view class="card status-card">
+    <view class="section-title">当前能力</view>
+    <view class="status-line"><text>作品隔离</text><text class="status-ok">已接入</text></view>
+    <view class="status-line"><text>生成任务恢复</text><text class="status-ok">已接入</text></view>
+    <view class="status-line"><text>隐私同意与注销</text><text class="status-pending">上线前配置</text></view>
+    <view class="status-line"><text>导出与分享</text><text class="status-pending">后续开放</text></view>
+  </view>
+
+  <view class="notice profile-note">当前版本只保留已经可用的入口。隐私、导出和语音能力完成后，会在这里统一出现，不在写作页重复堆叠开关。</view>
 </view>

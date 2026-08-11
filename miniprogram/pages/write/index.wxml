@@ -3,42 +3,75 @@
     <view class="empty-mark">写</view>
     <view class="empty-title">先选择一本作品</view>
     <view class="empty-copy">从书架进入，或先创建一本新小说。</view>
-    <button class="primary-button" bindtap="openCreate">去创建</button>
+    <view class="row gap-16 empty-actions">
+      <button class="quiet-button flex-1" bindtap="openShelf">回书架</button>
+      <button class="primary-button flex-1" bindtap="openCreate">去创建</button>
+    </view>
   </view>
 
   <block wx:else>
     <view class="page-header">
-      <view class="eyebrow">CURRENT WORK</view>
-      <view class="page-title">{{novel.title || novelId}}</view>
-      <view class="page-subtitle">只保留当前章节和一个主动作，其他工具放到后续详情页。</view>
+      <view class="row">
+        <view>
+          <view class="eyebrow">CURRENT WORK</view>
+          <view class="page-title">{{novel.title || novelId}}</view>
+        </view>
+        <view class="count-badge">{{chapter}} / {{totalChapters || '—'}}</view>
+      </view>
+      <view class="page-subtitle">专注读完这一章，再决定下一步。</view>
     </view>
 
-    <view wx:if="{{error}}" class="error-box">{{error}}</view>
-    <view wx:if="{{novel}}" class="card progress-card">
-      <view class="row"><text class="section-title">第 {{chapter}} 章</text><text class="hint">{{readingLoading ? '读取中' : '阅读模式'}}</text></view>
-      <view class="book-meta">已完成 {{novel.state && novel.state.completed_chapters ? novel.state.completed_chapters.length : 0}} 章</view>
-      <view class="progress-track"><view class="progress-value" style="width: {{novel.state && novel.state.total_chapters ? (novel.state.completed_chapters.length / novel.state.total_chapters * 100) : 0}}%;"></view></view>
+    <view wx:if="{{error}}" class="error-box">
+      <view>{{error}}</view>
+      <view class="error-actions">
+        <button class="quiet-button button-small" bindtap="retryCurrent">重新加载</button>
+        <button wx:if="{{jobStatus === 'failed' || jobStatus === 'cancelled'}}" class="secondary-button button-small" bindtap="startGeneration">重试生成</button>
+      </view>
+    </view>
+
+    <view wx:if="{{loading}}" class="card progress-card" aria-busy="true">
+      <view class="skeleton skeleton-wide"></view>
+      <view class="skeleton skeleton-short"></view>
+      <view class="skeleton"></view>
+    </view>
+
+    <view wx:if="{{novel && !loading}}" class="card progress-card">
+      <view class="row"><text class="section-title">写作进度</text><text class="hint">{{jobStatusText || '可以继续'}}</text></view>
+      <view class="metric-row">
+        <view class="metric"><view class="metric-value">{{completedChapters}}</view><view class="metric-label">已完成章节</view></view>
+        <view class="metric"><view class="metric-value">{{totalChapters || '—'}}</view><view class="metric-label">计划章节</view></view>
+      </view>
+      <view class="progress-track"><view class="progress-value" style="width: {{novelProgress}}%;"></view></view>
     </view>
 
     <view wx:if="{{jobId && jobStatus}}" class="card task-card">
-      <view class="row"><text class="section-title">生成任务</text><text class="hint">{{jobPhase || jobStatus}}</text></view>
+      <view class="row"><text class="section-title">生成任务</text><text class="status-badge">{{jobStatusText}}</text></view>
       <view class="progress-track"><view class="progress-value" style="width: {{jobProgress}}%;"></view></view>
-      <view class="book-meta">{{jobProgress}}% · 离开页面后可从这里继续查看</view>
+      <view class="book-meta">{{jobProgress}}% · 离开页面后回来会继续查询</view>
       <button wx:if="{{jobStatus === 'queued' || jobStatus === 'running'}}" class="quiet-button" bindtap="cancelGeneration">取消任务</button>
     </view>
 
-    <view wx:if="{{content}}" class="card chapter-card">
+    <view class="chapter-toolbar">
+      <button class="quiet-button button-small" disabled="{{chapter <= 1 || readingLoading}}" bindtap="previousChapter">上一章</button>
+      <view class="chapter-current"><view class="section-title">第 {{chapter}} 章</view><view class="hint">{{readingLoading ? '正在读取…' : (content ? '阅读模式' : '等待生成')}}</view></view>
+      <button class="quiet-button button-small" disabled="{{!canNext || readingLoading}}" bindtap="nextChapter">下一章</button>
+    </view>
+
+    <view wx:if="{{readingLoading}}" class="card chapter-card" aria-busy="true">
+      <view wx:for="{{chapterSkeletons}}" wx:key="*this" class="skeleton {{item === 1 ? 'skeleton-wide' : ''}}"></view>
+    </view>
+    <view wx:elif="{{content}}" class="card chapter-card">
       <text class="chapter-content">{{content}}</text>
     </view>
     <view wx:elif="{{!loading}}" class="card empty-state compact-empty">
       <view class="empty-title">这一章还没有正文</view>
-      <view class="empty-copy">确认大纲后，点击主按钮开始生成。</view>
+      <view class="empty-copy">确认大纲后，点击下方主按钮生成第 {{chapter}} 章。</view>
+      <button class="quiet-button button-small" bindtap="retryChapter">重新读取</button>
     </view>
 
-    <view class="chapter-actions">
-      <button class="quiet-button flex-1" disabled="{{chapter <= 1}}" bindtap="previousChapter">上一章</button>
-      <button class="primary-button flex-1" disabled="{{jobStatus === 'queued' || jobStatus === 'running'}}" bindtap="startGeneration">{{jobStatus === 'queued' || jobStatus === 'running' ? '生成中' : '生成本章'}}</button>
-      <button class="quiet-button flex-1" bindtap="nextChapter">下一章</button>
+    <view class="sticky-actions">
+      <button class="quiet-button" bindtap="openShelf">回书架</button>
+      <button class="primary-button" disabled="{{jobStatus === 'queued' || jobStatus === 'running' || readingLoading}}" bindtap="startGeneration">{{jobStatus === 'queued' || jobStatus === 'running' ? '生成中…' : '生成本章'}}</button>
     </view>
   </block>
 </view>

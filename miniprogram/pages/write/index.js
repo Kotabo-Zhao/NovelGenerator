@@ -12,6 +12,12 @@ Page({
     jobStatus: "",
     jobProgress: 0,
     jobPhase: "",
+    jobStatusText: "",
+    totalChapters: 0,
+    completedChapters: 0,
+    novelProgress: 0,
+    canNext: false,
+    chapterSkeletons: [1, 2, 3, 4, 5, 6],
     error: ""
   },
 
@@ -19,14 +25,28 @@ Page({
     const novelId = wx.getStorageSync("activeNovelId") || getApp().globalData.activeNovelId || "";
     const jobId = wx.getStorageSync("activeJobId") || "";
     if (novelId && novelId !== this.data.novelId) {
-      this.setData({ novelId, novel: null, content: "", error: "", jobId });
+      this.setData({
+        novelId,
+        novel: null,
+        content: "",
+        chapter: 1,
+        jobId,
+        jobStatus: "",
+        jobStatusText: "",
+        error: ""
+      });
       this.loadNovel();
       return;
     }
-    if (jobId) {
-      if (jobId !== this.data.jobId) this.setData({ jobId });
-      this.pollJob();
+    if (jobId !== this.data.jobId) {
+      this.setData({
+        jobId,
+        jobStatus: jobId ? this.data.jobStatus : "",
+        jobStatusText: jobId ? this.data.jobStatusText : ""
+      });
     }
+    if (novelId && !this.data.novel) this.loadNovel();
+    if (jobId) this.pollJob();
   },
 
   onHide() {
@@ -44,9 +64,19 @@ Page({
     try {
       const result = await api.get(`/v1/novels/${encodeURIComponent(this.data.novelId)}`);
       const novel = result.novel || {};
-      const current = novel.state && novel.state.current_chapter || 0;
-      this.setData({ novel, chapter: Math.max(1, current || 1) });
-      if (current > 0) this.loadChapter(current);
+      const state = novel.state || {};
+      const totalChapters = Number(state.total_chapters || 0);
+      const completedChapters = Array.isArray(state.completed_chapters) ? state.completed_chapters.length : 0;
+      const chapter = Math.max(1, this.data.novel ? this.data.chapter : (state.current_chapter || 1));
+      this.setData({
+        novel,
+        chapter,
+        totalChapters,
+        completedChapters,
+        novelProgress: totalChapters ? Math.min(100, Math.round(completedChapters / totalChapters * 100)) : 0,
+        canNext: totalChapters ? chapter < totalChapters : true
+      });
+      this.loadChapter(chapter);
       if (this.data.jobId) this.pollJob();
     } catch (error) {
       this.setData({ error: error.message || "无法读取作品" });
@@ -56,11 +86,17 @@ Page({
   },
 
   async loadChapter(chapter) {
-    if (!this.data.novelId) return;
+    const chapterNum = Number(chapter);
+    if (!this.data.novelId || !Number.isInteger(chapterNum) || chapterNum < 1) return;
     this.setData({ readingLoading: true, error: "" });
     try {
-      const result = await api.get(`/v1/novels/${encodeURIComponent(this.data.novelId)}/chapters/${chapter}`);
-      this.setData({ content: result.content || "", chapter });
+      const result = await api.get(`/v1/novels/${encodeURIComponent(this.data.novelId)}/chapters/${chapterNum}`);
+      const content = result.content || "";
+      this.setData({
+        content,
+        chapter: chapterNum,
+        canNext: this.data.totalChapters ? chapterNum < this.data.totalChapters : true
+      });
     } catch (error) {
       this.setData({ content: "", error: error.message || "这一章还没有正文" });
     } finally {
@@ -68,12 +104,24 @@ Page({
     }
   },
 
+  retryCurrent() {
+    if (this.data.novelId) this.loadNovel();
+  },
+
+  retryChapter() {
+    this.loadChapter(this.data.chapter);
+  },
+
   previousChapter() {
     if (this.data.chapter > 1) this.loadChapter(this.data.chapter - 1);
   },
 
   nextChapter() {
-    this.loadChapter(this.data.chapter + 1);
+    if (this.data.canNext) this.loadChapter(this.data.chapter + 1);
+  },
+
+  openShelf() {
+    wx.switchTab({ url: "/pages/shelf/index" });
   },
 
   openCreate() {
@@ -88,7 +136,7 @@ Page({
       idempotencyKey = `mini-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       wx.setStorageSync(keyStorage, idempotencyKey);
     }
-    this.setData({ jobStatus: "queued", jobProgress: 0, jobPhase: "排队中", error: "" });
+    this.setData({ jobStatus: "queued", jobProgress: 0, jobPhase: "排队中", jobStatusText: this.statusText("queued"), error: "" });
     try {
       const job = await api.post(
         `/v1/novels/${encodeURIComponent(this.data.novelId)}/chapter-jobs`,
@@ -100,12 +148,19 @@ Page({
         jobId: job.job_id,
         jobStatus: job.status,
         jobProgress: job.progress || 0,
-        jobPhase: job.phase || "排队中"
+        jobPhase: job.phase || "排队中",
+        jobStatusText: this.statusText(job.status)
       });
       this.pollJob();
     } catch (error) {
-      wx.removeStorageSync(keyStorage);
-      this.setData({ jobStatus: "", error: error.message || "生成任务创建失败" });
+      if (error.statusCode >= 400 && error.statusCode < 500 && error.statusCode !== 429) {
+        wx.removeStorageSync(keyStorage);
+      }
+      this.setData({
+        jobStatus: "",
+        jobStatusText: "",
+        error: error.statusCode === 0 ? "网络暂时中断，保留任务请求，稍后可继续重试。" : (error.message || "生成任务创建失败")
+      });
     }
   },
 
@@ -113,7 +168,8 @@ Page({
     if (!this.data.jobId || !["queued", "running"].includes(this.data.jobStatus)) return;
     try {
       const job = await api.post(`/v1/jobs/${this.data.jobId}/cancel`);
-      this.setData({ jobStatus: job.status, jobPhase: job.phase || "已取消" });
+      wx.removeStorageSync("activeJobId");
+      this.setData({ jobStatus: job.status, jobPhase: job.phase || "已取消", jobStatusText: this.statusText(job.status) });
     } catch (error) {
       this.setData({ error: error.message || "取消失败，请稍后重试" });
     }
@@ -127,7 +183,8 @@ Page({
       this.setData({
         jobStatus: job.status || "",
         jobProgress: job.progress || 0,
-        jobPhase: job.phase || ""
+        jobPhase: job.phase || "",
+        jobStatusText: this.statusText(job.status)
       });
       if (job.status === "succeeded") {
         wx.removeStorageSync("activeJobId");
@@ -149,5 +206,16 @@ Page({
     } finally {
       this._polling = false;
     }
+  },
+
+  statusText(status) {
+    return {
+      queued: "排队中",
+      running: "生成中",
+      succeeded: "已完成",
+      failed: "生成失败",
+      cancel_requested: "正在取消",
+      cancelled: "已取消"
+    }[status] || "等待处理";
   }
 });

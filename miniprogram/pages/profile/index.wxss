@@ -1,29 +1,64 @@
-.profile-note {
-  border-left: 6rpx solid #a8843c;
-  margin-bottom: 24rpx;
-}
-
-.auth-card {
+.auth-card,
+.quick-card,
+.status-card {
   margin-bottom: 20rpx;
 }
 
-.auth-button {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 0 18rpx;
+.auth-heading {
+  align-items: center;
+  display: flex;
+  gap: 18rpx;
+  margin-bottom: 24rpx;
 }
 
-.settings-list {
+.auth-mark {
+  align-items: center;
+  background: #2d2a25;
+  border-radius: 50%;
+  color: #fffaf0;
   display: flex;
-  flex-direction: column;
+  flex: 0 0 72rpx;
+  font-size: 32rpx;
+  height: 72rpx;
+  justify-content: center;
+}
+
+.auth-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.auth-copy .section-title {
+  margin-bottom: 4rpx;
+}
+
+.auth-action {
+  width: 100%;
+}
+
+.quick-actions {
+  display: flex;
   gap: 16rpx;
 }
 
-.setting-item {
-  padding: 24rpx 28rpx;
+.quick-actions button {
+  flex: 1;
+  font-size: 25rpx;
+  line-height: 76rpx;
+  min-height: 76rpx;
 }
 
-.setting-title {
-  font-size: 29rpx;
-  font-weight: 600;
+.status-ok {
+  color: #3d7962;
+  font-size: 23rpx;
+}
+
+.status-pending {
+  color: #a8843c;
+  font-size: 23rpx;
+}
+
+.profile-note {
+  display: block;
+  margin-top: 4rpx;
 }

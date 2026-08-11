@@ -6,17 +6,23 @@
   </view>
 
   <view class="step-row">
-    <view class="step {{step >= 0 ? 'step-active' : ''}}">01 灵感</view>
-    <view class="step {{step >= 1 ? 'step-active' : ''}}">02 基调</view>
-    <view class="step {{step >= 2 ? 'step-active' : ''}}">03 确认</view>
+    <block wx:for="{{steps}}" wx:key="index">
+      <view class="step {{step >= item.index ? 'step-active' : ''}}">{{item.label}}</view>
+      <view wx:if="{{item.index < 2}}" class="step-line {{step > item.index ? 'step-line-active' : ''}}"></view>
+    </block>
   </view>
 
   <view wx:if="{{error}}" class="error-box">{{error}}</view>
 
   <view wx:if="{{step === 0}}" class="card stack">
-    <view class="section-title">你想讲一个什么故事？</view>
+    <view class="section-title">先捕捉一个画面</view>
+    <view class="choice-hint">不用写完整大纲，人物、冲突或一个奇怪的念头都可以。</view>
     <text class="form-label">一句话灵感</text>
-    <textarea class="field textarea-field" maxlength="20000" placeholder="例如：一个失去记忆的修理师，在旧城里修复一台能播放未来的收音机。" data-field="inspiration" bindinput="input" value="{{inspiration}}"></textarea>
+    <textarea class="field textarea-field" maxlength="20000" placeholder="例如：一个失去记忆的修理师，在旧城里修复一台能播放未来的收音机。" data-field="inspiration" bindinput="input" value="{{inspiration}}" auto-focus="{{step === 0}}"></textarea>
+    <view class="choice-hint">试试这些开头：</view>
+    <view class="choice-row">
+      <view wx:for="{{examples}}" wx:key="*this" class="choice" data-example="{{item}}" bindtap="useExample">{{item}}</view>
+    </view>
     <text class="form-label">作品名（可留空）</text>
     <input class="field" maxlength="100" placeholder="系统会根据大纲给出建议" data-field="title" bindinput="input" value="{{title}}" />
     <button class="primary-button" bindtap="nextStep">继续设定</button>
@@ -24,6 +30,7 @@
 
   <view wx:if="{{step === 1}}" class="card stack">
     <view class="section-title">选择故事的气质</view>
+    <view class="choice-hint">先选一个接近的方向，后续仍可在写作中调整。</view>
     <text class="form-label">题材</text>
     <view class="choice-row">
       <view wx:for="{{genres}}" wx:key="*this" class="choice {{genre === item ? 'choice-active' : ''}}" data-field="genre" data-value="{{item}}" bindtap="choose">{{item}}</view>
@@ -33,7 +40,11 @@
       <view wx:for="{{styles}}" wx:key="*this" class="choice {{style === item ? 'choice-active' : ''}}" data-field="style" data-value="{{item}}" bindtap="choose">{{item}}</view>
     </view>
     <text class="form-label">目标篇幅</text>
-    <input class="field" type="number" data-field="targetWords" bindinput="input" value="{{targetWords}}" />
+    <view class="choice-row">
+      <view wx:for="{{wordPresets}}" wx:key="value" class="choice {{targetWords === item.value ? 'choice-active' : ''}}" data-field="targetWords" data-value="{{item.value}}" bindtap="choose">{{item.label}}</view>
+    </view>
+    <input class="field" type="number" maxlength="7" placeholder="也可以输入自定义字数" data-field="targetWords" bindinput="input" value="{{targetWords}}" />
+    <view class="choice-hint">建议先从 10 万字以内开始，生成和校对会更容易控制。</view>
     <view class="row gap-16">
       <button class="quiet-button flex-1" bindtap="previousStep">上一步</button>
       <button class="primary-button flex-1" bindtap="nextStep">查看确认</button>
@@ -43,13 +54,10 @@
   <view wx:if="{{step === 2}}" class="card stack">
     <view class="section-title">确认创作方向</view>
     <view class="notice">先生成大纲，确认后再开始写正文。每一步都可以回头修改。</view>
-    <view class="summary-row"><text class="muted">题材</text><text>{{genre}}</text></view>
-    <view class="summary-row"><text class="muted">风格</text><text>{{style}}</text></view>
-    <view class="summary-row"><text class="muted">目标篇幅</text><text>{{targetWords}} 字</text></view>
-    <view class="summary-block"><text class="muted">灵感</text><text>{{inspiration}}</text></view>
-    <view class="row gap-16">
-      <button class="quiet-button flex-1" bindtap="previousStep">返回修改</button>
-      <button class="primary-button flex-1" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">生成大纲</button>
-    </view>
+    <view class="summary-row"><view><text class="summary-label">题材</text><text class="summary-value">{{genre}}</text></view><text class="hint" data-step="1" bindtap="goStep">修改</text></view>
+    <view class="summary-row"><view><text class="summary-label">风格</text><text class="summary-value">{{style}}</text></view><text class="hint" data-step="1" bindtap="goStep">修改</text></view>
+    <view class="summary-row"><view><text class="summary-label">目标篇幅</text><text class="summary-value">{{targetWords}} 字</text></view><text class="hint" data-step="1" bindtap="goStep">修改</text></view>
+    <view class="summary-block"><text class="summary-label">灵感</text><text class="summary-value">{{inspiration}}</text><text class="hint" data-step="0" bindtap="goStep">修改灵感</text></view>
+    <button class="primary-button" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">{{submitting ? '正在整理大纲…' : '生成大纲'}}</button>
   </view>
 </view>

@@ -4,6 +4,7 @@ page {
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 28rpx;
   line-height: 1.6;
+  min-height: 100%;
 }
 
 view, text, button, input, textarea, scroll-view {
@@ -14,13 +15,17 @@ button::after {
   border: 0;
 }
 
+button {
+  margin: 0;
+}
+
 .page {
   min-height: 100vh;
-  padding: 40rpx 32rpx 56rpx;
+  padding: 32rpx 32rpx calc(72rpx + env(safe-area-inset-bottom));
 }
 
 .page-header {
-  margin-bottom: 36rpx;
+  margin-bottom: 28rpx;
 }
 
 .eyebrow {
@@ -33,9 +38,10 @@ button::after {
 .page-title {
   color: #23201a;
   font-family: "STKaiti", "KaiTi", serif;
-  font-size: 54rpx;
+  font-size: 52rpx;
   font-weight: 700;
   letter-spacing: 4rpx;
+  line-height: 1.25;
 }
 
 .page-subtitle {
@@ -47,9 +53,14 @@ button::after {
 .card {
   background: #ffffff;
   border: 1rpx solid #e0dacb;
-  border-radius: 16rpx;
+  border-radius: 14rpx;
   box-shadow: 0 2rpx 12rpx rgba(35, 32, 26, .04);
   padding: 28rpx;
+}
+
+.card-quiet {
+  background: rgba(255, 255, 255, .62);
+  box-shadow: none;
 }
 
 .section-title {
@@ -78,6 +89,25 @@ button::after {
   min-height: 88rpx;
   padding: 0 28rpx;
   text-align: center;
+}
+
+.primary-button[loading] {
+  opacity: .78;
+}
+
+.button-small {
+  font-size: 24rpx;
+  line-height: 68rpx;
+  min-height: 68rpx;
+  padding: 0 22rpx;
+}
+
+.button-compact {
+  display: inline-block;
+  font-size: 25rpx;
+  line-height: 72rpx;
+  min-height: 72rpx;
+  padding: 0 24rpx;
 }
 
 .primary-button {
@@ -109,6 +139,12 @@ button[disabled] {
   font-size: 24rpx;
   margin-bottom: 24rpx;
   padding: 20rpx;
+}
+
+.error-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 16rpx;
 }
 
 .empty-state {
@@ -143,6 +179,10 @@ button[disabled] {
   color: #7c7566;
   font-size: 24rpx;
   margin-bottom: 28rpx;
+}
+
+.empty-state .primary-button {
+  min-width: 300rpx;
 }
 
 .form-label {
@@ -191,6 +231,12 @@ button[disabled] {
   color: #a52d22;
 }
 
+.choice-hint {
+  color: #a59c8b;
+  font-size: 22rpx;
+  margin: -12rpx 0 16rpx;
+}
+
 .stack > view,
 .stack > button {
   margin-bottom: 20rpx;
@@ -200,6 +246,7 @@ button[disabled] {
   align-items: center;
   display: flex;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .gap-16 {
@@ -216,8 +263,142 @@ button[disabled] {
   gap: 18rpx;
 }
 
+.section-heading {
+  align-items: baseline;
+  display: flex;
+  justify-content: space-between;
+  margin: 30rpx 4rpx 16rpx;
+}
+
+.section-heading .section-title {
+  margin-bottom: 0;
+}
+
+.hero-card {
+  background: #2d2a25;
+  border-radius: 16rpx;
+  color: #fffaf0;
+  margin-bottom: 26rpx;
+  overflow: hidden;
+  padding: 30rpx;
+  position: relative;
+}
+
+.hero-card::after {
+  border: 1rpx solid rgba(255, 250, 240, .16);
+  border-radius: 50%;
+  content: "";
+  height: 220rpx;
+  position: absolute;
+  right: -86rpx;
+  top: -94rpx;
+  width: 220rpx;
+}
+
+.hero-title {
+  font-family: "STKaiti", "KaiTi", serif;
+  font-size: 38rpx;
+  font-weight: 700;
+  margin-bottom: 8rpx;
+}
+
+.hero-copy {
+  color: rgba(255, 250, 240, .72);
+  font-size: 24rpx;
+  margin-bottom: 24rpx;
+  max-width: 560rpx;
+}
+
+.hero-card .primary-button {
+  background: #d25a47;
+  display: inline-block;
+  position: relative;
+  z-index: 1;
+}
+
+.count-badge,
+.status-badge {
+  background: #efebe1;
+  border-radius: 999rpx;
+  color: #7c7566;
+  font-size: 22rpx;
+  padding: 6rpx 14rpx;
+}
+
+.status-badge {
+  background: #fff0ed;
+  color: #a52d22;
+}
+
+.metric-row {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 22rpx;
+}
+
+.metric {
+  background: #faf8f2;
+  border: 1rpx solid #ece7da;
+  border-radius: 10rpx;
+  flex: 1;
+  padding: 16rpx;
+}
+
+.metric-value {
+  color: #23201a;
+  font-size: 32rpx;
+  font-weight: 700;
+}
+
+.metric-label {
+  color: #a59c8b;
+  font-size: 21rpx;
+}
+
 .book-card {
-  padding: 26rpx;
+  padding: 24rpx;
+}
+
+.book-card:active {
+  background: #fffaf0;
+}
+
+.book-main {
+  align-items: flex-start;
+  display: flex;
+  gap: 20rpx;
+}
+
+.book-cover {
+  align-items: center;
+  background: #2d2a25;
+  border-radius: 8rpx;
+  color: #fffaf0;
+  display: flex;
+  flex: 0 0 76rpx;
+  font-family: "STKaiti", "KaiTi", serif;
+  font-size: 36rpx;
+  height: 96rpx;
+  justify-content: center;
+}
+
+.book-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.book-title-line {
+  align-items: center;
+  display: flex;
+  gap: 12rpx;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.book-title-line .book-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .book-title {
@@ -263,6 +444,17 @@ button[disabled] {
   font-weight: 700;
 }
 
+.step-line {
+  background: #e0dacb;
+  flex: 1;
+  height: 2rpx;
+  margin: 18rpx 12rpx 0;
+}
+
+.step-line-active {
+  background: #c0392b;
+}
+
 .notice {
   background: #fffaf0;
   border-left: 6rpx solid #a8843c;
@@ -270,4 +462,61 @@ button[disabled] {
   font-size: 24rpx;
   margin-bottom: 26rpx;
   padding: 18rpx 22rpx;
+}
+
+.summary-label {
+  color: #7c7566;
+  display: block;
+  font-size: 22rpx;
+  margin-bottom: 6rpx;
+}
+
+.summary-value {
+  color: #23201a;
+  font-size: 27rpx;
+  word-break: break-all;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #efebe1 25%, #f8f5ed 50%, #efebe1 75%);
+  background-size: 200% 100%;
+  border-radius: 8rpx;
+  height: 30rpx;
+  margin-bottom: 18rpx;
+}
+
+.skeleton-wide {
+  height: 40rpx;
+  width: 72%;
+}
+
+.skeleton-short {
+  width: 42%;
+}
+
+.sticky-actions {
+  background: rgba(246, 243, 236, .94);
+  bottom: 0;
+  display: flex;
+  gap: 16rpx;
+  margin: 24rpx -32rpx calc(-72rpx - env(safe-area-inset-bottom));
+  padding: 18rpx 32rpx calc(18rpx + env(safe-area-inset-bottom));
+  position: sticky;
+  z-index: 3;
+}
+
+.sticky-actions button {
+  flex: 1;
+}
+
+.status-line {
+  align-items: center;
+  border-bottom: 1rpx solid #ece7da;
+  display: flex;
+  justify-content: space-between;
+  padding: 18rpx 0;
+}
+
+.status-line:last-child {
+  border-bottom: 0;
 }

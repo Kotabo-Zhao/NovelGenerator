@@ -6,6 +6,21 @@
   margin-top: 20rpx;
 }
 
+.chapter-toolbar {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-top: 26rpx;
+}
+
+.chapter-current {
+  text-align: center;
+}
+
+.chapter-current .section-title {
+  margin-bottom: 0;
+}
+
 .task-card {
   margin-top: 20rpx;
 }
@@ -24,6 +39,10 @@
 
 .compact-empty {
   padding: 50rpx 24rpx;
+}
+
+.empty-actions {
+  width: 100%;
 }
 
 .chapter-actions {

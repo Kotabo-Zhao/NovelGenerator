@@ -43,6 +43,27 @@ class MiniProgramStructureTests(unittest.TestCase):
         self.assertIn("Idempotency-Key", create_source)
         self.assertIn("/v1/jobs/", write_source)
 
+    def test_core_pages_have_real_loading_error_and_primary_action_states(self):
+        shelf_wxml = (ROOT / "pages" / "shelf" / "index.wxml").read_text(encoding="utf-8")
+        create_wxml = (ROOT / "pages" / "create" / "index.wxml").read_text(encoding="utf-8")
+        create_js = (ROOT / "pages" / "create" / "index.js").read_text(encoding="utf-8")
+        write_wxml = (ROOT / "pages" / "write" / "index.wxml").read_text(encoding="utf-8")
+        write_js = (ROOT / "pages" / "write" / "index.js").read_text(encoding="utf-8")
+        profile_wxml = (ROOT / "pages" / "profile" / "index.wxml").read_text(encoding="utf-8")
+        profile_js = (ROOT / "pages" / "profile" / "index.js").read_text(encoding="utf-8")
+
+        self.assertIn("hero-card", shelf_wxml)
+        self.assertIn("重新加载", shelf_wxml)
+        self.assertIn("skeletons", shelf_wxml)
+        self.assertIn("useExample", create_wxml)
+        self.assertIn("targetWords < 1000", create_js)
+        self.assertIn("sticky-actions", write_wxml)
+        self.assertIn("retryCurrent", write_wxml)
+        self.assertIn("statusText", write_js)
+        self.assertIn("快速入口", profile_wxml)
+        self.assertNotIn("即将开放", profile_wxml)
+        self.assertNotIn("onTap", profile_js)
+
 
 if __name__ == "__main__":
     unittest.main()

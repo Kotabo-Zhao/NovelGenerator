@@ -1,35 +1,64 @@
-<view class="page">
-  <view class="page-header">
-    <view class="eyebrow">NOVEL GENERATOR</view>
-    <view class="page-title">书架</view>
-    <view class="page-subtitle">把灵感留在这里，慢慢写成一本书。</view>
+<view class="page page-shelf">
+  <view class="page-header row">
+    <view>
+      <view class="eyebrow">NOVEL GENERATOR</view>
+      <view class="page-title">书架</view>
+      <view class="page-subtitle">把灵感留在这里，慢慢写成一本书。</view>
+    </view>
+    <view class="status-badge">{{loggedIn ? '已登录' : '准备登录'}}</view>
   </view>
 
-  <view wx:if="{{error}}" class="error-box">{{error}}</view>
+  <view class="hero-card">
+    <view class="hero-title">今天，写下一页。</view>
+    <view class="hero-copy">从一个画面开始。系统负责整理设定，你只需要决定故事往哪里走。</view>
+    <button class="primary-button button-compact" bindtap="goCreate">新建作品</button>
+  </view>
 
-  <view wx:if="{{!loading && novels.length === 0}}" class="card empty-state">
+  <view wx:if="{{error}}" class="error-box">
+    <view>{{error}}</view>
+    <view class="error-actions">
+      <button class="quiet-button button-small" bindtap="loadNovels">重新加载</button>
+      <button class="secondary-button button-small" bindtap="goProfile">查看登录</button>
+    </view>
+  </view>
+
+  <view wx:if="{{loading}}" class="book-list" aria-busy="true">
+    <view wx:for="{{skeletons}}" wx:key="*this" class="card book-card">
+      <view class="skeleton skeleton-wide"></view>
+      <view class="skeleton skeleton-short"></view>
+      <view class="skeleton"></view>
+    </view>
+  </view>
+
+  <view wx:elif="{{novels.length === 0}}" class="card empty-state">
     <view class="empty-mark">卷</view>
     <view class="empty-title">还没有作品</view>
     <view class="empty-copy">从一句灵感开始，先确认大纲，再写第一章。</view>
     <button class="primary-button" bindtap="goCreate">创建第一本小说</button>
   </view>
 
-  <view wx:if="{{loading}}" class="card empty-state">
-    <view class="empty-title">正在整理书架</view>
-    <view class="empty-copy">只加载作品摘要，不拉取整本正文。</view>
-  </view>
-
-  <view wx:if="{{novels.length > 0}}" class="book-list">
-    <view wx:for="{{novels}}" wx:key="id" class="card book-card" data-id="{{item.id}}" bindtap="openNovel">
-      <view class="row">
-        <view class="book-title">{{item.title || item.id}}</view>
-        <view class="hint">进入写作</view>
-      </view>
-      <view class="book-meta">{{item.genre || "未分类"}} · {{item.style || "默认风格"}}</view>
-      <view class="book-meta">已完成 {{item.disk_chapters || 0}} 章</view>
-      <view class="progress-track">
-        <view class="progress-value" style="width: {{item.state && item.state.total_chapters ? (item.disk_chapters / item.state.total_chapters * 100) : 0}}%;"></view>
+  <block wx:else>
+    <view class="section-heading">
+      <view class="section-title">我的作品</view>
+      <view class="count-badge">{{novels.length}} 本</view>
+    </view>
+    <view class="book-list">
+      <view wx:for="{{novels}}" wx:key="id" class="card book-card" data-id="{{item.id}}" bindtap="openNovel">
+        <view class="book-main">
+          <view class="book-cover">{{item.coverLetter}}</view>
+          <view class="book-info">
+            <view class="book-title-line">
+              <view class="book-title">{{item.title || item.id}}</view>
+              <view class="hint">阅读 ›</view>
+            </view>
+            <view class="book-meta">{{item.genre || "未分类"}} · {{item.style || "默认风格"}}</view>
+            <view class="book-meta">已完成 {{item.disk_chapters || 0}} / {{item.totalChapters || 0}} 章</view>
+            <view class="progress-track">
+              <view class="progress-value" style="width: {{item.progressPercent}}%;"></view>
+            </view>
+          </view>
+        </view>
       </view>
     </view>
-  </view>
+  </block>
 </view>
