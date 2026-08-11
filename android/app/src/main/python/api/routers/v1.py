@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import uuid
 from typing import Dict, Optional
 
@@ -13,14 +14,18 @@ from pydantic import BaseModel, Field
 
 from core.job_runner import ChapterJobRunner
 from core.path_security import validate_novel_id
+from core.usage_quota import QuotaExceeded
+from config import MAX_CHAPTER_TOKENS
 
 from ..auth import require_owner
-from ..deps import engine, job_store, log, ownership_store
+from ..deps import engine, job_store, log, ownership_store, quota_store
 from .novels import CreateNovelRequest
 
 
 router = APIRouter(prefix="/v1", tags=["authenticated-v1"])
 _active_tasks: Dict[str, asyncio.Task] = {}
+DAILY_CHAPTER_JOB_LIMIT = int(os.getenv("DAILY_CHAPTER_JOB_LIMIT", "20"))
+DAILY_TOKEN_LIMIT = int(os.getenv("DAILY_TOKEN_LIMIT", "80000"))
 
 
 class ChapterJobRequest(BaseModel):
@@ -216,6 +221,27 @@ async def create_chapter_job(
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(status_code=400, detail="缺少 Idempotency-Key")
     request_data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    quota_request = {"novel_id": novel_id, **request_data}
+    request_hash = hashlib.sha256(
+        json.dumps(quota_request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    try:
+        quota_reservation = quota_store.reserve(
+            owner_id=owner_id,
+            reservation_key=idempotency_key,
+            request_hash=request_hash,
+            token_budget=MAX_CHAPTER_TOKENS,
+            daily_job_limit=DAILY_CHAPTER_JOB_LIMIT,
+            daily_token_limit=DAILY_TOKEN_LIMIT,
+        )
+    except QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="幂等键已绑定其他任务") from exc
     try:
         job = job_store.create_or_get(
             job_type="chapter",
@@ -225,6 +251,12 @@ async def create_chapter_job(
             idempotency_key=idempotency_key,
         )
     except ValueError as exc:
+        if not quota_reservation.get("replayed"):
+            quota_store.release(
+                owner_id=owner_id,
+                reservation_key=idempotency_key,
+                request_hash=request_hash,
+            )
         raise HTTPException(status_code=409, detail="幂等键已绑定其他任务") from exc
     _start_chapter_task(job, req)
     return _public_job(job_store.get(job["job_id"]) or job)

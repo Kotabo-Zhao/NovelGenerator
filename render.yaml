@@ -24,6 +24,10 @@ services:
         sync: false
       - key: WECHAT_SESSION_TTL_SECONDS
         value: "604800"
+      - key: DAILY_CHAPTER_JOB_LIMIT
+        value: "20"
+      - key: DAILY_TOKEN_LIMIT
+        value: "80000"
     disk:
       name: novel-storage
       mountPath: /var/data

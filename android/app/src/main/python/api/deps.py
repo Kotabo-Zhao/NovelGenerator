@@ -14,6 +14,7 @@ from core.engine import NovelEngine
 from core.job_store import GenerationJobStore
 from core.ownership_store import OwnershipStore
 from core.path_security import validate_novel_id as _validate_path_novel_id
+from core.usage_quota import UsageQuotaStore
 from config import NOVELS_DIR
 
 log = logging.getLogger("api")
@@ -22,6 +23,7 @@ log = logging.getLogger("api")
 engine = NovelEngine()
 job_store = GenerationJobStore(NOVELS_DIR)
 ownership_store = OwnershipStore(NOVELS_DIR)
+quota_store = UsageQuotaStore(NOVELS_DIR)
 
 # 保证 novels 目录存在
 os.makedirs(NOVELS_DIR, exist_ok=True)

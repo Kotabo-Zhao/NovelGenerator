@@ -32,6 +32,7 @@ from pydantic import ValidationError
 
 from core.job_store import GenerationJobStore, JobStatus
 from core.ownership_store import OwnershipStore
+from core.usage_quota import UsageQuotaStore
 from api.routers import v1
 
 
@@ -68,17 +69,21 @@ class V1ApiTests(unittest.TestCase):
         self.old_engine = v1.engine
         self.old_job_store = v1.job_store
         self.old_ownership_store = v1.ownership_store
+        self.old_quota_store = v1.quota_store
         self.engine = FakeEngine()
         self.job_store = GenerationJobStore(Path(self.temp_dir.name), "jobs.db")
         self.ownership_store = OwnershipStore(Path(self.temp_dir.name), "ownership.db")
+        self.quota_store = UsageQuotaStore(Path(self.temp_dir.name), "quota.db")
         v1.engine = self.engine
         v1.job_store = self.job_store
         v1.ownership_store = self.ownership_store
+        v1.quota_store = self.quota_store
 
     def tearDown(self):
         v1.engine = self.old_engine
         v1.job_store = self.old_job_store
         v1.ownership_store = self.old_ownership_store
+        v1.quota_store = self.old_quota_store
         v1._active_tasks.clear()
         self.temp_dir.cleanup()
 

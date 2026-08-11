@@ -84,6 +84,9 @@ jobs:
       - name: Run persistent job store tests
         run: python tests/test_job_store.py
 
+      - name: Run usage quota tests
+        run: python tests/test_usage_quota.py
+
       - name: Run ownership isolation tests
         run: python tests/test_ownership_store.py
 
