@@ -20,6 +20,13 @@
       <view class="progress-track"><view class="progress-value" style="width: {{novel.state && novel.state.total_chapters ? (novel.state.completed_chapters.length / novel.state.total_chapters * 100) : 0}}%;"></view></view>
     </view>
 
+    <view wx:if="{{jobId && jobStatus}}" class="card task-card">
+      <view class="row"><text class="section-title">生成任务</text><text class="hint">{{jobPhase || jobStatus}}</text></view>
+      <view class="progress-track"><view class="progress-value" style="width: {{jobProgress}}%;"></view></view>
+      <view class="book-meta">{{jobProgress}}% · 离开页面后可从这里继续查看</view>
+      <button wx:if="{{jobStatus === 'queued' || jobStatus === 'running'}}" class="quiet-button" bindtap="cancelGeneration">取消任务</button>
+    </view>
+
     <view wx:if="{{content}}" class="card chapter-card">
       <text class="chapter-content">{{content}}</text>
     </view>
@@ -30,7 +37,7 @@
 
     <view class="chapter-actions">
       <button class="quiet-button flex-1" disabled="{{chapter <= 1}}" bindtap="previousChapter">上一章</button>
-      <button class="primary-button flex-1" bindtap="startGeneration">生成本章</button>
+      <button class="primary-button flex-1" disabled="{{jobStatus === 'queued' || jobStatus === 'running'}}" bindtap="startGeneration">{{jobStatus === 'queued' || jobStatus === 'running' ? '生成中' : '生成本章'}}</button>
       <button class="quiet-button flex-1" bindtap="nextChapter">下一章</button>
     </view>
   </block>

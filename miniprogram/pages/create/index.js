@@ -38,8 +38,14 @@ Page({
   async submit() {
     if (this.data.submitting) return;
     this.setData({ submitting: true, error: "" });
+    const createKeyStorage = "novel-create-idempotency-key";
+    let idempotencyKey = wx.getStorageSync(createKeyStorage);
+    if (!idempotencyKey) {
+      idempotencyKey = `mini-create-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      wx.setStorageSync(createKeyStorage, idempotencyKey);
+    }
     try {
-      const result = await api.post("/api/novels", {
+      const result = await api.post("/v1/novels", {
         title: this.data.title.trim(),
         genre: this.data.genre,
         style: this.data.style,
@@ -49,14 +55,19 @@ Page({
         normal_pacing: false,
         fast_food: false,
         creative_enhance: false
-      }, { timeout: 60000 });
+      }, {
+        timeout: 60000,
+        header: { "Idempotency-Key": idempotencyKey }
+      });
       const novel = result.novel || {};
-      const novelId = novel.id || novel.novel_id || novel.title || this.data.title;
+      const novelId = result.novel_id || novel.id || novel.novel_id || novel.title || this.data.title;
       wx.setStorageSync("activeNovelId", novelId);
       getApp().globalData.activeNovelId = novelId;
+      wx.removeStorageSync(createKeyStorage);
       wx.showToast({ title: "作品已创建", icon: "success" });
       setTimeout(() => wx.switchTab({ url: "/pages/write/index" }), 450);
     } catch (error) {
+      wx.removeStorageSync(createKeyStorage);
       this.setData({ error: error.message || "创建失败，请稍后重试" });
     } finally {
       this.setData({ submitting: false });

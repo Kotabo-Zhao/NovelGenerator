@@ -5,9 +5,21 @@
     <view class="page-subtitle">把复杂设置收起来，让写作保持专注。</view>
   </view>
 
+  <view class="card auth-card">
+    <view class="row">
+      <view>
+        <view class="section-title">{{loggedIn ? '已连接微信账号' : '登录后开始写作'}}</view>
+        <view class="muted">{{loggedIn ? '会话只保存在当前运行内存中。' : '登录后才能访问自己的作品和生成任务。'}}</view>
+      </view>
+      <button wx:if="{{!loggedIn}}" class="primary-button auth-button" bindtap="login">微信登录</button>
+      <button wx:else class="quiet-button auth-button" bindtap="logout">退出</button>
+    </view>
+    <view wx:if="{{authError}}" class="error-box">{{authError}}</view>
+  </view>
+
   <view class="card profile-note">
     <view class="section-title">小程序 MVP</view>
-    <view class="muted">当前先验证移动端核心闭环。微信登录、隐私同意、作品隔离和用量管理会在后端认证层完成后接入。</view>
+    <view class="muted">作品和生成任务已经切换到认证 v1 接口；隐私同意、额度和注销仍需上线配置后开放。</view>
   </view>
 
   <view class="settings-list">

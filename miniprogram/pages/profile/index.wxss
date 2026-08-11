@@ -3,6 +3,16 @@
   margin-bottom: 24rpx;
 }
 
+.auth-card {
+  margin-bottom: 20rpx;
+}
+
+.auth-button {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 18rpx;
+}
+
 .settings-list {
   display: flex;
   flex-direction: column;

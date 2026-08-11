@@ -14,7 +14,7 @@ Page({
   async loadNovels() {
     this.setData({ loading: true, error: "" });
     try {
-      const result = await api.get("/api/novels");
+      const result = await api.get("/v1/novels");
       this.setData({ novels: result.novels || [] });
     } catch (error) {
       this.setData({ error: error.message || "暂时无法加载书架" });

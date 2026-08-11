@@ -16,6 +16,14 @@ services:
         value: 0.0.0.0
       - key: NOVELS_DIR
         value: /var/data/novels
+      - key: WECHAT_APP_ID
+        sync: false
+      - key: WECHAT_APP_SECRET
+        sync: false
+      - key: WECHAT_SESSION_SECRET
+        sync: false
+      - key: WECHAT_SESSION_TTL_SECONDS
+        value: "604800"
     disk:
       name: novel-storage
       mountPath: /var/data

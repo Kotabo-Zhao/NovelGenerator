@@ -30,6 +30,19 @@ class MiniProgramStructureTests(unittest.TestCase):
         self.assertNotIn("setStorageSync('token'", request_source)
         self.assertNotIn('setStorageSync("token"', request_source)
 
+    def test_request_layer_has_in_memory_session_and_secure_v1_usage(self):
+        request_source = (ROOT / "utils" / "api.js").read_text(encoding="utf-8")
+        app_source = (ROOT / "app.js").read_text(encoding="utf-8")
+        create_source = (ROOT / "pages" / "create" / "index.js").read_text(encoding="utf-8")
+        write_source = (ROOT / "pages" / "write" / "index.js").read_text(encoding="utf-8")
+
+        self.assertIn("/api/auth/wechat-login", request_source)
+        self.assertIn("Authorization", request_source)
+        self.assertIn("accessToken", app_source)
+        self.assertIn("/v1/novels", create_source)
+        self.assertIn("Idempotency-Key", create_source)
+        self.assertIn("/v1/jobs/", write_source)
+
 
 if __name__ == "__main__":
     unittest.main()
