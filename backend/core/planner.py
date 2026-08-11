@@ -189,7 +189,7 @@ class Planner:
         user_prompt = f"""请根据以下信息生成完整的创作方案。
 
 【题材】{genre}
-【风格】{style_name}（{style_config['author']}）
+【风格】{style_name}
 【核心创意】{inspiration}
 【目标字数】{target_words} 字
 {'' if title else '【书名】请根据创意自动生成一个有吸引力的书名'}{pacing_block}
@@ -510,7 +510,7 @@ class Planner:
         
         wb_prompt = f"""你是一位世界观架构师。请根据以下创意和用户需求生成世界设定。
 {creative_seeds_block}
-风格: {style_config['name']} ({style_config['author']})
+风格: {style_config['name']}
 创意: {effective_inspiration}
 题材: {genre}
 {wb_requirements_block}

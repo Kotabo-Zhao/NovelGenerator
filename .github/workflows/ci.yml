@@ -93,8 +93,14 @@ jobs:
       - name: Run authenticated v1 API contract tests
         run: python tests/test_v1_api.py
 
+      - name: Run legacy owner isolation tests
+        run: python tests/test_legacy_owner_api.py
+
       - name: Run API security baseline tests
         run: python tests/test_api_security_baseline.py
+
+      - name: Run style compliance tests
+        run: python tests/test_style_policy.py
 
       - name: Run WeChat auth adapter tests
         run: python tests/test_auth.py

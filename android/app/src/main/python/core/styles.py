@@ -13,28 +13,68 @@
 """
 
 
+# 风格预设曾使用作者姓名作为营销标签。运行时统一转换为可复用的
+# 写作属性，避免直接模仿在世作者，也避免把内部方法论署名泄露给模型。
+_STYLE_TERM_REPLACEMENTS = {
+    "唐家三少": "团队成长",
+    "唐三": "团队成长",
+    "天蚕土豆": "升级逆袭",
+    "土豆": "升级逆袭",
+    "辰东": "史诗悬疑",
+    "猫腻": "克制哲思",
+    "烽火戏诸侯": "江湖群像",
+    "会说话的肘子": "轻松脑洞",
+    "肘子": "轻松脑洞",
+    "爱潜水的乌贼": "设定悬疑",
+    "乌贼": "设定悬疑",
+    "老鹰吃小鸡": "系统升级",
+    "老鹰": "系统升级",
+    "宅猪": "反转悬疑",
+    "远瞳": "科幻日常",
+    "顾漫": "轻甜日常",
+    "墨香铜臭": "群像情感",
+    "priest": "冷峻群像",
+    "丁墨": "悬疑情感",
+    "Twentine": "都市情感",
+    "村上春树": "都市孤独",
+    "乔治·马丁": "多视角史诗",
+    "斯蒂芬·金": "日常惊悚",
+    "金庸": "古典武侠",
+    "古龙": "留白武侠",
+}
+
+
+def _clean_style_text(value: object) -> str:
+    """将历史风格文本清洗为属性描述，保留配置兼容性。"""
+    text = str(value or "")
+    for source, replacement in sorted(
+        _STYLE_TERM_REPLACEMENTS.items(), key=lambda item: -len(item[0])
+    ):
+        text = text.replace(source, replacement)
+    return text
+
+
 def build_style_prompt(style_config: dict) -> str:
     """构建完整的风格注入 prompt"""
     parts = [
-        f"## 作者定位: {style_config.get('author', '')}",
-        f"### 文笔特征\n{style_config.get('prose', '')}",
-        f"### 语气基调\n{style_config.get('tone', '')}",
-        f"### 节奏控制\n{style_config.get('pacing', '')}",
-        f"### 对话风格\n{style_config.get('dialogue', '')}",
-        f"### 结构偏好\n{style_config.get('structure', '')}",
+        f"### 文笔特征\n{_clean_style_text(style_config.get('prose', ''))}",
+        f"### 语气基调\n{_clean_style_text(style_config.get('tone', ''))}",
+        f"### 节奏控制\n{_clean_style_text(style_config.get('pacing', ''))}",
+        f"### 对话风格\n{_clean_style_text(style_config.get('dialogue', ''))}",
+        f"### 结构偏好\n{_clean_style_text(style_config.get('structure', ''))}",
     ]
     
     openings = style_config.get('openings', '')
     if openings:
-        parts.append(f"### 风格示例（请模仿以下写法）\n{openings}")
+        parts.append(f"### 风格示例（请遵守属性要求，不复刻具体作品）\n{_clean_style_text(openings)}")
     
     signatures = style_config.get('signatures', '')
     if signatures:
-        parts.append(f"### 标志性句式/词汇（适当使用）\n{signatures}")
+        parts.append(f"### 语言特征（适当使用）\n{_clean_style_text(signatures)}")
     
     anti = style_config.get('anti_patterns', '')
     if anti:
-        parts.append(f"### 严禁写法\n{anti}")
+        parts.append(f"### 严禁写法\n{_clean_style_text(anti)}")
     
     return "\n\n".join(parts)
 
@@ -42,15 +82,14 @@ def build_style_prompt(style_config: dict) -> str:
 def build_style_context(style_config: dict) -> dict:
     """构建风格上下文（用于传给 Writer）"""
     return {
-        "author": style_config.get("author", ""),
-        "prose": style_config.get("prose", ""),
-        "tone": style_config.get("tone", ""),
-        "pacing": style_config.get("pacing", ""),
-        "dialogue": style_config.get("dialogue", ""),
-        "structure": style_config.get("structure", ""),
-        "openings": style_config.get("openings", ""),
-        "signatures": style_config.get("signatures", ""),
-        "anti_patterns": style_config.get("anti_patterns", ""),
+        "prose": _clean_style_text(style_config.get("prose", "")),
+        "tone": _clean_style_text(style_config.get("tone", "")),
+        "pacing": _clean_style_text(style_config.get("pacing", "")),
+        "dialogue": _clean_style_text(style_config.get("dialogue", "")),
+        "structure": _clean_style_text(style_config.get("structure", "")),
+        "openings": _clean_style_text(style_config.get("openings", "")),
+        "signatures": _clean_style_text(style_config.get("signatures", "")),
+        "anti_patterns": _clean_style_text(style_config.get("anti_patterns", "")),
         "is_custom": style_config.get("is_custom", False),
     }
 
@@ -59,7 +98,6 @@ def build_custom_style(description: str) -> dict:
     """从用户自由描述构建自定义风格配置"""
     return {
         "name": "自定义风格",
-        "author": "用户自定义",
         "is_custom": True,
         "prose": f"用户要求的文笔: {description}",
         "tone": f"用户要求的语气: {description}",
@@ -1099,7 +1137,6 @@ def build_parameterized_style(params: dict) -> dict:
     
     return {
         "name": "自定义参数化风格",
-        "author": "用户自定义",
         "is_custom": True,
         "is_parameterized": True,
         "params": params,
@@ -1127,26 +1164,66 @@ def _find_closest_preset(params: dict) -> dict:
     return STYLES.get(target_style_name)
 
 
+STYLE_DISPLAY_NAMES = {
+    "唐三风格": "团队成长",
+    "土豆风格": "升级逆袭",
+    "辰东风格": "史诗悬疑",
+    "猫腻风格": "克制哲思",
+    "烽火风格": "江湖群像",
+    "肘子风格": "轻松脑洞",
+    "乌贼风格": "设定悬疑",
+    "老鹰风格": "系统升级",
+    "宅猪风格": "反转悬疑",
+    "远瞳风格": "科幻日常",
+    "顾漫风格": "轻甜日常",
+    "墨香风格": "群像情感",
+    "priest风格": "冷峻群像",
+    "丁墨风格": "悬疑情感",
+    "Twentine风格": "都市情感",
+    "金庸武侠": "古典武侠",
+    "古龙武侠": "留白武侠",
+    "村上春树": "都市孤独",
+    "乔治·马丁": "多视角史诗",
+    "斯蒂芬·金": "日常惊悚",
+}
+_DISPLAY_TO_STYLE = {display: key for key, display in STYLE_DISPLAY_NAMES.items()}
+
+
+def _public_style_config(style_key: str) -> dict:
+    config = dict(STYLES[style_key])
+    config["name"] = STYLE_DISPLAY_NAMES.get(style_key, config.get("name", style_key))
+    config.pop("author", None)
+    return config
+
+
 def get_style(name: str) -> dict:
     """获取风格配置"""
-    return STYLES.get(name, STYLES["热血爽文"])
+    style_key = _DISPLAY_TO_STYLE.get(name, name)
+    if style_key not in STYLES:
+        style_key = "热血爽文"
+    return _public_style_config(style_key)
 
 
 def get_all_style_names() -> list:
-    return list(STYLES.keys())
+    names = []
+    for style_key in STYLES:
+        display_name = STYLE_DISPLAY_NAMES.get(style_key, style_key)
+        if display_name not in names:
+            names.append(display_name)
+    return names
 
 
 def get_style_categories() -> dict:
     """返回分组后的风格列表"""
     return {
         "男频·经典流派": ["热血爽文", "轻松搞笑", "黑暗深沉", "文艺哲思", "温馨治愈", "快节奏打脸"],
-        "男频·作者风格": ["唐三风格", "土豆风格", "辰东风格", "猫腻风格", "烽火风格", "肘子风格", "乌贼风格", "老鹰风格", "宅猪风格", "远瞳风格"],
+        "男频·成长流派": ["团队成长", "升级逆袭", "史诗悬疑", "克制哲思", "江湖群像", "轻松脑洞", "设定悬疑", "系统升级", "反转悬疑", "科幻日常"],
         "男频·特殊流派": ["系统流爽文", "悬疑烧脑", "游戏电竞"],
         "女频·经典流派": ["甜宠言情", "古风言情", "女强爽文", "虐恋深情", "校园青春", "悬疑爱情", "宅斗宫斗"],
         "小红书v3.0·爆款风": ["小红书权力倒置体", "小红书荒诞体"],
-        "女频·作者风格": ["顾漫风格", "墨香风格", "priest风格", "丁墨风格", "Twentine风格"],
+        "女频·情感流派": ["轻甜日常", "群像情感", "冷峻群像", "悬疑情感", "都市情感"],
         "跨频·流派": ["悬疑推理", "科幻末世", "历史权谋", "都市生活"],
-        "武侠经典": ["金庸武侠", "古龙武侠"],
-        "国际·大师风格": ["村上春树", "乔治·马丁", "斯蒂芬·金"],
+        "武侠经典": ["古典武侠", "留白武侠"],
+        "国际·叙事取向": ["都市孤独", "多视角史诗", "日常惊悚"],
         "自定义": ["自定义参数化风格"],
     }

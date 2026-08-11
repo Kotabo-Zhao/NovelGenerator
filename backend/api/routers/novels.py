@@ -4,7 +4,7 @@ import json
 import os
 import urllib.parse
 from typing import List, Literal, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse, PlainTextResponse
 from pydantic import BaseModel, Field, validator
 
@@ -13,7 +13,8 @@ from core.path_security import validate_novel_id as _validate_path_novel_id
 
 router = APIRouter()
 
-from ..deps import engine, log, _validate_novel_id, _validate_chapter_range, _sse_with_heartbeat
+from ..deps import engine, log, ownership_store, _validate_novel_id, _validate_chapter_range, _sse_with_heartbeat
+from ..auth import require_owner
 from core.humanizer import humanize_text
 
 
@@ -61,10 +62,22 @@ class BatchExportRequest(BaseModel):
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
+def _require_legacy_owner(request: Request, novel_id: str) -> str:
+    """Return the owner installed by the legacy compatibility middleware."""
+    owner_id = getattr(request.state, "owner_id", None)
+    if not owner_id or not ownership_store.owns(novel_id, owner_id):
+        raise HTTPException(status_code=404, detail="小说不存在")
+    return owner_id
+
+
 @router.get("/api/novels")
-async def list_novels():
-    """列出所有小说"""
-    return {"novels": engine.list_novels()}
+async def list_novels(request: Request):
+    """列出当前登录用户拥有的小说，兼容旧响应格式。"""
+    owner_id = getattr(request.state, "owner_id", None)
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="需要微信登录")
+    owned_ids = {item["novel_id"] for item in ownership_store.list_for_owner(owner_id)}
+    return {"novels": [novel for novel in engine.list_novels() if novel.get("id") in owned_ids]}
 
 
 @router.get("/api/novels/{novel_id}")
@@ -80,11 +93,13 @@ async def get_novel(novel_id: str):
 
 
 @router.delete("/api/novels/{novel_id}")
-async def delete_novel(novel_id: str):
+async def delete_novel(novel_id: str, request: Request):
     """删除小说及其所有章节、状态文件"""
+    owner_id = _require_legacy_owner(request, novel_id)
     success = engine.delete_novel(novel_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"小说 '{novel_id}' 不存在或无法删除")
+    ownership_store.mark_deleted(novel_id, owner_id)
     return {"success": True, "deleted": novel_id}
 
 
@@ -221,7 +236,7 @@ async def update_novel_plan(novel_id: str, plan_data: dict):
 
 
 @router.post("/api/novels")
-async def create_novel(req: CreateNovelRequest):
+async def create_novel(req: CreateNovelRequest, request: Request):
     """创建新小说 — 灵感 → 世界观+角色+大纲（内部走流式避免 Render 超时）"""
     creative_input = {
         "genre": req.genre, "style": req.style,
@@ -231,26 +246,33 @@ async def create_novel(req: CreateNovelRequest):
         "normal_pacing": req.normal_pacing,
         "fast_food": req.fast_food,
     }
+    plan = None
     try:
         plan = engine.create_novel(creative_input)
-        return {"success": True, "novel": plan}
     except Exception as e:
         log.exception("Failed to create novel")
         # Fall through to streaming path if sync path failed (likely Render timeout)
         log.info("Retrying with streaming path...")
-        plan = None
         async for event in engine.create_novel_stream(creative_input):
             if event.get("type") == "done":
                 plan = event.get("plan")
             elif event.get("type") == "error":
                 raise HTTPException(status_code=500, detail=event.get("message", "创建失败"))
-        if plan:
-            return {"success": True, "novel": plan}
+    if not plan:
         raise HTTPException(status_code=500, detail="创建失败，请重试")
+    owner_id = getattr(request.state, "owner_id", None)
+    if not owner_id or not plan.get("title"):
+        raise HTTPException(status_code=500, detail="登录用户或作品 ID 缺失")
+    try:
+        ownership_store.claim(plan["title"], owner_id)
+    except Exception as exc:
+        log.exception("Failed to claim created novel")
+        raise HTTPException(status_code=500, detail="作品归属登记失败，请重试") from exc
+    return {"success": True, "novel": plan}
 
 
 @router.post("/api/novels/create-stream")
-async def create_novel_stream(req: CreateNovelRequest):
+async def create_novel_stream(req: CreateNovelRequest, request: Request):
     """流式创建新小说 — 带 Render 心跳防超时"""
     async def event_stream():
         async for data in _sse_with_heartbeat(
@@ -264,6 +286,16 @@ async def create_novel_stream(req: CreateNovelRequest):
                 "fast_food": req.fast_food,
             })
         ):
+            if data.startswith("data: "):
+                try:
+                    event = json.loads(data[6:].strip())
+                    if event.get("type") == "done" and event.get("plan", {}).get("title"):
+                        owner_id = getattr(request.state, "owner_id", None)
+                        if not owner_id:
+                            raise RuntimeError("登录用户缺失")
+                        ownership_store.claim(event["plan"]["title"], owner_id)
+                except json.JSONDecodeError:
+                    pass
             yield data
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",
@@ -271,8 +303,9 @@ async def create_novel_stream(req: CreateNovelRequest):
 
 
 @router.post("/api/novels/generate")
-async def generate_chapter(req: GenerateChapterRequest):
+async def generate_chapter(req: GenerateChapterRequest, request: Request):
     """流式生成章节 (SSE + 心跳)"""
+    _require_legacy_owner(request, req.novel_id)
     async def event_stream():
         async for data in _sse_with_heartbeat(
             engine.generate_chapter_stream(
@@ -293,8 +326,9 @@ async def generate_chapter(req: GenerateChapterRequest):
 
 
 @router.post("/api/novels/generate/atomic")
-async def generate_chapter_atomic(req: GenerateChapterRequest):
+async def generate_chapter_atomic(req: GenerateChapterRequest, request: Request):
     """原子化生成章节 (逐beat独立LLM → 装配 → 评估)"""
+    _require_legacy_owner(request, req.novel_id)
     async def event_stream():
         async for data in _sse_with_heartbeat(
             engine.atomic_generate_chapter_stream(
@@ -465,15 +499,18 @@ async def export_novel(novel_id: str, fmt: str = "txt"):
 
 
 @router.post("/api/novels/export/batch")
-async def batch_export(req: BatchExportRequest):
+async def batch_export(req: BatchExportRequest, request: Request):
     """批量导出所有小说"""
     novel_ids = req.novel_ids
     fmt = req.fmt
 
     if not novel_ids:
         # 导出全部
-        novels = engine.list_novels()
-        novel_ids = [n["id"] for n in novels]
+        owner_id = getattr(request.state, "owner_id", None)
+        novel_ids = [item["novel_id"] for item in ownership_store.list_for_owner(owner_id)]
+
+    for novel_id in novel_ids:
+        _require_legacy_owner(request, novel_id)
 
     results = []
     for nid in novel_ids:
@@ -501,7 +538,7 @@ async def get_character_bible(novel_id: str):
 
 
 @router.post("/api/repair-states")
-async def repair_all_states():
+async def repair_all_states(_owner_id: str = Depends(require_owner)):
     """修复所有小说的 state.json 一致性（以磁盘章节文件为准）"""
     results = engine.memory.repair_all_states()
     return {"repaired": len(results), "details": results}

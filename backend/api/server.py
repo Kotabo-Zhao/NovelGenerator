@@ -35,7 +35,9 @@ from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR
 from core.path_security import validate_novel_id
 
 # 共享依赖：engine 单例 + log（见 deps.py）
-from .deps import engine, log
+from .deps import engine, log, ownership_store
+from .auth import owner_id_from_authorization
+from core.auth import AuthError
 from .routers import auth, novels, v1, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -71,6 +73,42 @@ async def validate_novel_path_middleware(request: Request, call_next):
                 validate_novel_id(raw_novel_id)
             except ValueError:
                 return JSONResponse(status_code=400, content={"detail": "非法小说 ID"})
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def legacy_novel_owner_middleware(request: Request, call_next):
+    """认证并隔离旧 `/api/novels` 兼容面，避免绕过 v1 owner 检查。"""
+    path = request.url.path
+    if path != "/api/novels" and not path.startswith("/api/novels/"):
+        return await call_next(request)
+
+    try:
+        owner_id = owner_id_from_authorization(request.headers.get("authorization"))
+    except AuthError:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "需要微信登录"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    request.state.owner_id = owner_id
+    suffix = path[len("/api/novels"):].strip("/")
+    first_segment = urllib.parse.unquote(suffix.split("/", 1)[0]) if suffix else ""
+    # 这些是旧接口的集合级动作，具体作品 ID 位于 body/query 中，
+    # 由对应 handler 继续执行 owner 校验。
+    collection_actions = {
+        "generate", "create-stream", "export", "repair-state", "repair-states",
+    }
+    if first_segment and first_segment not in collection_actions:
+        try:
+            validate_novel_id(first_segment)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "非法小说 ID"})
+        if not ownership_store.owns(first_segment, owner_id):
+            # 对不存在和不属于当前用户的作品统一返回 404，避免枚举资源。
+            return JSONResponse(status_code=404, content={"detail": "小说不存在"})
+
     return await call_next(request)
 
 # ── Rate Limiting Middleware ──

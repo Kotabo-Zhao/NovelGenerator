@@ -12,22 +12,22 @@ from core.style_fingerprint import StyleFingerprint
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
 from core.styles import CUSTOM_STYLE_PARAMS
 from core.styles import build_parameterized_style
-from core.styles import get_style_categories, STYLES
+from core.styles import get_style, get_style_categories
 
 @router.get("/api/styles")
 async def get_styles():
     """返回所有可用风格（分组）"""
-    from core.styles import get_style_categories, STYLES
+    from core.styles import get_style, get_style_categories
     categories = get_style_categories()
     result = {}
     for cat, names in categories.items():
         items = []
         for n in names:
-            s = STYLES.get(n)
-            if not s: continue
+            s = get_style(n)
             items.append({
                 "name": n,
-                "author": s["author"],
+                # 保留旧字段，避免旧客户端崩溃；新接口不再返回作者署名。
+                "author": "",
                 "desc": s.get("prose", "")[:80] + "…",
                 "is_custom": s.get("is_custom", False),
             })
