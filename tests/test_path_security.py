@@ -61,6 +61,16 @@ class PathSecurityTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.exists(r"..\outside")
 
+    def test_symlinked_novel_dir_cannot_escape_root(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as outside:
+            link = Path(root) / "linked"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("当前 Windows 环境不允许创建目录符号链接")
+            with self.assertRaises(ValueError):
+                safe_novel_dir(root, "linked")
+
 
 if __name__ == "__main__":
     unittest.main()

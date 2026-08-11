@@ -62,6 +62,12 @@ def _safe_join(root: str, novel_id: str, relative_path: str = "") -> str:
 
     root_path = os.path.realpath(os.path.abspath(root))
     novel_root = os.path.realpath(os.path.join(root_path, novel_id))
+    try:
+        novel_inside_root = os.path.commonpath((root_path, novel_root)) == root_path
+    except ValueError:
+        novel_inside_root = False
+    if not novel_inside_root:
+        raise ValueError("作品目录超出存储根目录")
     candidate = os.path.realpath(os.path.abspath(os.path.join(novel_root, relative_path)))
     try:
         # 文件必须留在该作品目录内，而不是只留在所有作品共用的 root 内。
