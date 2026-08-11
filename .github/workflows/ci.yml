@@ -81,6 +81,12 @@ jobs:
       - name: Run generation failure guard tests
         run: python tests/test_atomic_failure_guard.py
 
+      - name: Run persistent job store tests
+        run: python tests/test_job_store.py
+
+      - name: Run WeChat auth adapter tests
+        run: python tests/test_auth.py
+
       - name: Verify native mini program structure
         run: python tests/test_miniprogram_structure.py
 

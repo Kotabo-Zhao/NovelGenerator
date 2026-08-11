@@ -36,7 +36,7 @@ from core.path_security import validate_novel_id
 
 # 共享依赖：engine 单例 + log（见 deps.py）
 from .deps import engine, log
-from .routers import novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive
+from .routers import auth, novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
@@ -211,7 +211,7 @@ async def health():
 
 # ── 业务路由挂载（2026-07-31 按域拆分）──
 
-for _router in (novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive):
+for _router in (auth, novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive):
     app.include_router(_router.router)
 
 

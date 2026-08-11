@@ -506,6 +506,15 @@ POST   /v1/exports                        创建导出任务
 
 本轮仍未完成微信认证、owner_id 多租户、持久化生成任务和完整可运行的小程序生成闭环；这些仍是后续上线阻断项。
 
+### 2026-08-12：Phase 1 任务与认证基础
+
+- 新增 `backend/core/job_store.py`：SQLite 持久化生成任务，统一 `queued/running/succeeded/failed/cancel_requested/cancelled` 状态、进度、错误码、结果、时间戳和协作式取消。
+- 增加幂等键约束：同一作用域重复提交同一请求返回原任务；幂等键绑定到不同作品或参数时拒绝，避免重复生成和重复扣费。
+- 新增 `backend/core/auth.py` 与 `/api/auth/wechat-login`：使用真实 `wx.login` code 换取身份，派生不暴露 openid 的稳定 owner id，并用 HMAC 会话令牌承载登录状态；未配置 AppID/AppSecret/签名密钥时明确失败，不创建假用户。
+- 新增 `tests/test_job_store.py`、`tests/test_auth.py`，并将任务状态/认证回归测试纳入 CI；核心文件同步到 Android Python 副本。
+
+当前仍未完成：现有小说生成路由尚未切换到 job worker，owner_id 尚未覆盖全部作品 CRUD/生成/导出路由，小程序尚未接入登录与任务恢复；在这三项完成前不能宣称具备上线级多用户隔离。
+
 ## 13. 参考链接
 
 - [微信小程序官方开发框架文档](https://developers.weixin.qq.com/miniprogram/dev/framework/)
