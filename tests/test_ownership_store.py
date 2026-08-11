@@ -26,8 +26,11 @@ class OwnershipStoreTests(unittest.TestCase):
 
         self.assertEqual(first["novel_id"], "novel-1")
         self.assertEqual(first["owner_id"], "wx_owner_a")
+        self.assertTrue(first["public_id"].startswith("n_"))
         self.assertEqual(first["novel_id"], second["novel_id"])
+        self.assertEqual(first["public_id"], second["public_id"])
         self.assertTrue(self.store.owns("novel-1", "wx_owner_a"))
+        self.assertTrue(self.store.owns(first["public_id"], "wx_owner_a"))
 
     def test_cross_owner_claim_and_access_are_rejected(self):
         self.store.claim("novel-1", "wx_owner_a")

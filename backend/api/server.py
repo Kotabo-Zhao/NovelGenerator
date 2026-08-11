@@ -61,6 +61,25 @@ if _cors_origins:
     )
 
 
+MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(1_000_000)))
+
+
+@app.middleware("http")
+async def request_size_middleware(request: Request, call_next):
+    """Reject oversized bodies before Pydantic or JSON parsing allocates them."""
+    raw_length = request.headers.get("content-length")
+    try:
+        content_length = int(raw_length) if raw_length is not None else 0
+    except ValueError:
+        return JSONResponse(status_code=400, content={"detail": "Content-Length 无效"})
+    if content_length > MAX_REQUEST_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": f"请求体过大，最多 {MAX_REQUEST_BYTES} 字节"},
+        )
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def validate_novel_path_middleware(request: Request, call_next):
     """在所有作品路由进入业务层前统一阻断危险的目录名。"""
@@ -311,6 +330,10 @@ async def startup_repair():
             log.info("Startup repair: all states consistent")
     except Exception as e:
         log.error(f"Startup repair failed: {e}")
+    try:
+        await v1.recover_pending_jobs()
+    except Exception as e:
+        log.error(f"Startup job recovery failed: {e}")
 
 
 if __name__ == "__main__":

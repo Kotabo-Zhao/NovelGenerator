@@ -64,6 +64,8 @@ function clearSession() {
   const state = getAppState();
   state.accessToken = "";
   state.tokenExpiresAt = 0;
+  state.consentRequired = false;
+  state.privacyVersion = "";
   state.authError = "";
 }
 
@@ -89,6 +91,8 @@ function login() {
     const state = getAppState();
     state.accessToken = result.access_token || "";
     state.tokenExpiresAt = Date.now() + Math.max(60, Number(result.expires_in || 0) - 60) * 1000;
+    state.consentRequired = !!result.consent_required;
+    state.privacyVersion = result.privacy_version || "v1";
     state.authError = "";
     if (!state.accessToken) throw new Error("登录响应缺少会话令牌");
     return result;
@@ -98,6 +102,22 @@ function login() {
     state.authError = error.message || "微信登录失败";
     throw error;
   });
+}
+
+async function logout() {
+  const state = getAppState();
+  const token = state.accessToken;
+  try {
+    if (token) {
+      await rawRequest("/api/auth/logout", {
+        method: "POST",
+        header: { Authorization: `Bearer ${token}` },
+        timeout: 8000
+      });
+    }
+  } finally {
+    clearSession();
+  }
 }
 
 function ensureSession() {
@@ -141,7 +161,7 @@ async function request(path, options = {}) {
 
 module.exports = {
   login,
-  logout: clearSession,
+  logout,
   ensureSession,
   get(path, options = {}) {
     return request(path, { ...options, method: "GET" });
@@ -152,7 +172,7 @@ module.exports = {
   put(path, data = {}, options = {}) {
     return request(path, { ...options, method: "PUT", data });
   },
-  delete(path, options = {}) {
-    return request(path, { ...options, method: "DELETE" });
+  delete(path, data = {}, options = {}) {
+    return request(path, { ...options, method: "DELETE", data });
   }
 };

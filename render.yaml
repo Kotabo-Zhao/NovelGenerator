@@ -28,6 +28,18 @@ services:
         value: "20"
       - key: DAILY_TOKEN_LIMIT
         value: "80000"
+      - key: MAX_ACTIVE_JOBS_PER_OWNER
+        value: "2"
+      - key: GENERATION_TIMEOUT_SECONDS
+        value: "900"
+      - key: JOB_RECOVERY_STALE_SECONDS
+        value: "900"
+      - key: WECHAT_PRIVACY_VERSION
+        value: "v1"
+      - key: PRIVACY_POLICY_URL
+        sync: false
+      - key: MAX_REQUEST_BYTES
+        value: "1000000"
     disk:
       name: novel-storage
       mountPath: /var/data

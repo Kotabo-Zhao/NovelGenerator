@@ -127,6 +127,56 @@ class GenerationJobStoreTests(unittest.TestCase):
 
         self.assertEqual(second_store.get(job["job_id"]), job)
 
+    def test_try_claim_running_is_atomic_and_only_first_worker_wins(self):
+        job = self.store.create_or_get(
+            job_type="chapter",
+            novel_id="novel-1",
+            request={"chapter_num": 1},
+        )
+        first = self.store.try_claim_running(job["job_id"], phase="writing")
+        second = self.store.try_claim_running(job["job_id"], phase="writing")
+
+        self.assertEqual(first["status"], JobStatus.RUNNING)
+        self.assertIsNone(second)
+
+    def test_recovery_requeues_stale_running_jobs_and_lists_them(self):
+        job = self.store.create_or_get(
+            job_type="chapter",
+            novel_id="novel-1",
+            request={"chapter_num": 1},
+        )
+        self.store.try_claim_running(job["job_id"])
+        with self.store._session() as connection:
+            connection.execute(
+                "UPDATE generation_jobs SET updated_at = ? WHERE job_id = ?",
+                (0, job["job_id"]),
+            )
+
+        result = self.store.requeue_stale(stale_after_seconds=1)
+        self.assertEqual(result["requeued"], 1)
+        self.assertEqual(self.store.list_recoverable()[0]["job_id"], job["job_id"])
+
+    def test_active_capacity_is_enforced_inside_create_transaction(self):
+        from core.job_store import JobCapacityExceeded
+
+        self.store.create_or_get(
+            job_type="chapter",
+            novel_id="novel-1",
+            request={"chapter_num": 1},
+            owner_id="wx_owner_a",
+            idempotency_key="capacity-1",
+            max_active=1,
+        )
+        with self.assertRaises(JobCapacityExceeded):
+            self.store.create_or_get(
+                job_type="chapter",
+                novel_id="novel-1",
+                request={"chapter_num": 2},
+                owner_id="wx_owner_a",
+                idempotency_key="capacity-2",
+                max_active=1,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,10 @@ TERMINAL_JOB_STATUSES = frozenset(
     {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}
 )
 
+
+class JobCapacityExceeded(RuntimeError):
+    """Raised when a new owner job would exceed the active-job limit."""
+
 _ALLOWED_TRANSITIONS = {
     JobStatus.QUEUED: frozenset(
         {JobStatus.RUNNING, JobStatus.FAILED, JobStatus.CANCEL_REQUESTED, JobStatus.CANCELLED}
@@ -167,6 +171,7 @@ class GenerationJobStore:
         request: Mapping[str, Any],
         owner_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        max_active: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a queued job or return the job for a retried request.
 
@@ -187,6 +192,10 @@ class GenerationJobStore:
         normalized_key = None
         if idempotency_key is not None:
             normalized_key = self._require_text(idempotency_key, "idempotency_key")
+        if max_active is not None and (
+            isinstance(max_active, bool) or not isinstance(max_active, int) or max_active < 1
+        ):
+            raise ValueError("max_active must be a positive integer")
         scope = normalized_owner or "anonymous"
 
         with self._lock, self._session() as connection:
@@ -206,6 +215,22 @@ class GenerationJobStore:
                     ):
                         raise ValueError("idempotency_key is already bound to another request")
                     return self._row_to_dict(existing)
+
+            if normalized_owner is not None and max_active is not None:
+                active = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count FROM generation_jobs
+                    WHERE owner_id = ? AND status IN (?, ?, ?)
+                    """,
+                    (
+                        normalized_owner,
+                        JobStatus.QUEUED,
+                        JobStatus.RUNNING,
+                        JobStatus.CANCEL_REQUESTED,
+                    ),
+                ).fetchone()
+                if active and int(active["count"]) >= max_active:
+                    raise JobCapacityExceeded("active generation job limit reached")
 
             now = time.time()
             job_id = str(uuid.uuid4())
@@ -329,6 +354,139 @@ class GenerationJobStore:
             JobStatus.RUNNING,
             phase=self._require_text(phase, "phase", max_length=100),
         )
+
+    def try_claim_running(self, job_id: str, *, phase: str = "running") -> Optional[Dict[str, Any]]:
+        """Atomically claim a queued job for one worker.
+
+        ``mark_running`` is intentionally kept for administrative callers, but
+        workers must use this method so two API processes cannot execute the
+        same queued job after a retry or restart.
+        """
+
+        normalized_id = self._require_text(job_id, "job_id", max_length=100)
+        normalized_phase = self._require_text(phase, "phase", max_length=100)
+        now = time.time()
+        with self._lock, self._session() as connection:
+            changed = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET status = ?, phase = ?, updated_at = ?, started_at = COALESCE(started_at, ?)
+                WHERE job_id = ? AND status = ?
+                """,
+                (
+                    JobStatus.RUNNING,
+                    normalized_phase,
+                    now,
+                    now,
+                    normalized_id,
+                    JobStatus.QUEUED,
+                ),
+            ).rowcount
+            if changed != 1:
+                return None
+            row = self._fetch_one(connection, normalized_id)
+            return self._row_to_dict(row) if row is not None else None
+
+    def list_recoverable(self, *, limit: int = 100) -> list[Dict[str, Any]]:
+        """Return queued jobs that can be handed to a worker after restart."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer between 1 and 1000")
+        with self._lock, self._session() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM generation_jobs
+                WHERE status = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (JobStatus.QUEUED, limit),
+            ).fetchall()
+            return [self._row_to_dict(row) for row in rows]
+
+    def list_for_owner(self, owner_id: str, *, active_only: bool = False) -> list[Dict[str, Any]]:
+        normalized_owner = self._require_text(owner_id, "owner_id")
+        query = "SELECT * FROM generation_jobs WHERE owner_id = ?"
+        params: list[Any] = [normalized_owner]
+        if active_only:
+            query += " AND status IN (?, ?, ?)"
+            params.extend(
+                [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED]
+            )
+        query += " ORDER BY created_at ASC"
+        with self._lock, self._session() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._row_to_dict(row) for row in rows]
+
+    def requeue_stale(self, *, stale_after_seconds: float = 900) -> Dict[str, int]:
+        """Recover workers that disappeared without completing their job.
+
+        A cancelled worker is terminalized, while an abandoned running job is
+        returned to the queue.  The next worker still has to atomically claim it.
+        """
+
+        if isinstance(stale_after_seconds, bool) or stale_after_seconds <= 0:
+            raise ValueError("stale_after_seconds must be positive")
+        cutoff = time.time() - float(stale_after_seconds)
+        now = time.time()
+        with self._lock, self._session() as connection:
+            requeued = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET status = ?, phase = ?, updated_at = ?, finished_at = NULL
+                WHERE status = ? AND updated_at < ?
+                """,
+                (JobStatus.QUEUED, "recovered", now, JobStatus.RUNNING, cutoff),
+            ).rowcount
+            cancelled = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET status = ?, phase = ?, error_code = ?, error_message = ?,
+                    updated_at = ?, finished_at = COALESCE(finished_at, ?)
+                WHERE status = ? AND updated_at < ?
+                """,
+                (
+                    JobStatus.CANCELLED,
+                    "cancelled",
+                    "CANCELLED",
+                    "worker stopped after cancellation request",
+                    now,
+                    now,
+                    JobStatus.CANCEL_REQUESTED,
+                    cutoff,
+                ),
+            ).rowcount
+        return {"requeued": requeued, "cancelled": cancelled}
+
+    def count_active(self, owner_id: str) -> int:
+        """Count queued/running jobs for concurrency admission control."""
+
+        normalized_owner = self._require_text(owner_id, "owner_id")
+        with self._lock, self._session() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS count FROM generation_jobs
+                WHERE owner_id = ? AND status IN (?, ?, ?)
+                """,
+                (
+                    normalized_owner,
+                    JobStatus.QUEUED,
+                    JobStatus.RUNNING,
+                    JobStatus.CANCEL_REQUESTED,
+                ),
+            ).fetchone()
+            return int(row["count"] if row else 0)
+
+    def purge_owner(self, owner_id: str) -> int:
+        """Delete retained task metadata as part of account erasure."""
+
+        normalized_owner = self._require_text(owner_id, "owner_id")
+        with self._lock, self._session() as connection:
+            result = connection.execute(
+                "DELETE FROM generation_jobs WHERE owner_id = ?",
+                (normalized_owner,),
+            )
+            return int(result.rowcount)
 
     def update_progress(self, job_id: str, *, progress: int, phase: str) -> Dict[str, Any]:
         if isinstance(progress, bool) or not isinstance(progress, int):

@@ -6,7 +6,8 @@ Page({
     steps: [
       { index: 0, label: "01 灵感" },
       { index: 1, label: "02 基调" },
-      { index: 2, label: "03 确认" }
+      { index: 2, label: "03 确认" },
+      { index: 3, label: "04 大纲" }
     ],
     examples: ["一个秘密", "一次失踪", "一件不可能的物品"],
     wordPresets: [
@@ -22,7 +23,9 @@ Page({
     inspiration: "",
     targetWords: "500000",
     submitting: false,
-    error: ""
+    error: "",
+    createdNovelId: "",
+    outlinePreview: null
   },
 
   choose(event) {
@@ -97,12 +100,28 @@ Page({
         header: { "Idempotency-Key": idempotencyKey }
       });
       const novel = result.novel || {};
-      const novelId = result.novel_id || novel.id || novel.novel_id || novel.title || this.data.title;
+      const novelId = result.public_id || novel.public_id || novel.id || result.novel_id || novel.novel_id || novel.title || this.data.title;
       wx.setStorageSync("activeNovelId", novelId);
       getApp().globalData.activeNovelId = novelId;
       wx.removeStorageSync(createKeyStorage);
-      wx.showToast({ title: "作品已创建", icon: "success" });
-      setTimeout(() => wx.switchTab({ url: "/pages/write/index" }), 450);
+      const outline = novel.outline || {};
+      const chapters = (outline.volumes || []).reduce((all, volume) => {
+        return all.concat((volume.chapters || []).map(chapter => ({
+          number: chapter.number,
+          title: chapter.title || `第${chapter.number}章`,
+          summary: chapter.summary || chapter.hook || ""
+        })));
+      }, []);
+      this.setData({
+        createdNovelId: novelId,
+        outlinePreview: {
+          title: novel.title || this.data.title || novelId,
+          chapters: chapters.slice(0, 12),
+          totalChapters: chapters.length
+        },
+        step: 3
+      });
+      wx.showToast({ title: "大纲已生成", icon: "success" });
     } catch (error) {
       if (error.statusCode >= 400 && error.statusCode < 500 && error.statusCode !== 429) {
         wx.removeStorageSync(createKeyStorage);
@@ -111,5 +130,13 @@ Page({
     } finally {
       this.setData({ submitting: false });
     }
+  },
+
+  confirmOutline() {
+    const novelId = this.data.createdNovelId;
+    if (!novelId) return;
+    wx.setStorageSync("activeNovelId", novelId);
+    getApp().globalData.activeNovelId = novelId;
+    wx.switchTab({ url: "/pages/write/index" });
   }
 });

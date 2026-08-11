@@ -1,6 +1,6 @@
 """RequirementsStore — 需求拆解结果的 SQLite 持久化存储
 
-替代原先 NovelEngine 进程内 dict（PENDING: needs DB migration for multi-process）。
+替代原先 NovelEngine 进程内 dict，使用 SQLite 保存多进程可读的需求快照。
 - SQLite WAL 模式：多进程并发安全（同机多 worker 可并发读，写串行化）
 - 原子写入：崩溃不损坏数据
 - 接口与 dict 一致：get(novel_id) / set(novel_id, data)

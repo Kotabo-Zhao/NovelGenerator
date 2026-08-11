@@ -62,3 +62,21 @@
   display: block;
   margin-top: 4rpx;
 }
+
+.privacy-card,
+.danger-card {
+  margin-bottom: 20rpx;
+}
+
+.privacy-copy {
+  line-height: 1.7;
+  margin: 12rpx 0 20rpx;
+}
+
+.danger-button {
+  background: #fff0ed;
+  border: 1rpx solid #e4a59b;
+  color: #b6382b;
+  margin-top: 18rpx;
+  width: 100%;
+}

@@ -60,8 +60,20 @@
     <view wx:if="{{readingLoading}}" class="card chapter-card" aria-busy="true">
       <view wx:for="{{chapterSkeletons}}" wx:key="*this" class="skeleton {{item === 1 ? 'skeleton-wide' : ''}}"></view>
     </view>
-    <view wx:elif="{{content}}" class="card chapter-card">
+    <view wx:elif="{{content && !editing}}" class="card chapter-card">
       <text class="chapter-content">{{content}}</text>
+      <view class="chapter-reading-meta">已读 {{contentOffset}} / {{totalContent}} 字</view>
+      <button wx:if="{{hasMoreContent}}" class="quiet-button more-content-button" bindtap="loadMoreContent">继续阅读</button>
+      <view class="chapter-actions">
+        <button class="quiet-button button-small" bindtap="openDraftEditor">编辑草稿</button>
+      </view>
+    </view>
+    <view wx:elif="{{editing}}" class="card chapter-card">
+      <textarea class="draft-editor" value="{{draftContent}}" maxlength="50000" auto-height="true" bindinput="onDraftInput" placeholder="在这里修改本章草稿，保存后不会直接覆盖已发布正文。"></textarea>
+      <view class="chapter-actions">
+        <button class="quiet-button button-small" bindtap="closeDraftEditor">取消</button>
+        <button class="primary-button button-small" loading="{{draftSaving}}" disabled="{{draftSaving}}" bindtap="saveDraft">保存草稿</button>
+      </view>
     </view>
     <view wx:elif="{{!loading}}" class="card empty-state compact-empty">
       <view class="empty-title">这一章还没有正文</view>

@@ -28,6 +28,8 @@ from typing import AsyncIterator, Optional, Any
 from dataclasses import dataclass, field
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
 
+from .usage_context import report_response_usage
+
 log = logging.getLogger(__name__)
 
 
@@ -121,6 +123,7 @@ class ResilientLLMClient:
                 call_kwargs.update(kwargs)
                 
                 response = self.client.chat.completions.create(**call_kwargs)
+                report_response_usage(response, model=self.model)
                 
                 # 统计 token
                 if hasattr(response, 'usage') and response.usage:
@@ -171,6 +174,18 @@ class ResilientLLMClient:
         _metrics.retry_count += self.config.max_retries
         log.error(f"LLM调用全部重试失败: {last_error}")
         raise last_error
+
+    async def create_async(self, messages: list, temperature: float = 0.8,
+                           max_tokens: int = 4096, **kwargs) -> Any:
+        """Run the retrying synchronous API adapter off the asyncio loop."""
+
+        return await asyncio.to_thread(
+            self.create,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
     
     async def create_stream(self, messages: list, temperature: float = 0.8,
                            max_tokens: int = 4096, **kwargs) -> AsyncIterator[str]:
@@ -205,16 +220,29 @@ class ResilientLLMClient:
                 
                 response = await asyncio.to_thread(_sync_stream)
                 
+                def _collect_stream_chunks():
+                    collected = []
+                    try:
+                        for chunk in response:
+                            report_response_usage(chunk, model=self.model)
+                            if not chunk.choices:
+                                continue
+                            delta = chunk.choices[0].delta
+                            if delta and delta.content:
+                                collected.append(delta.content)
+                    except Exception as exc:
+                        # Preserve text received before a broken connection so
+                        # the resume prompt and the client output both retain it.
+                        setattr(exc, "_partial_chunks", tuple(collected))
+                        raise
+                    return collected
+
+                chunks = await asyncio.to_thread(_collect_stream_chunks)
                 chunk_count = 0
-                for chunk in response:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        text = delta.content
-                        full_text_collected += text
-                        chunk_count += 1
-                        yield text
+                for text in chunks:
+                    full_text_collected += text
+                    chunk_count += 1
+                    yield text
                 
                 # 流式完成
                 elapsed = (time.monotonic() - start) * 1000
@@ -226,6 +254,9 @@ class ResilientLLMClient:
                 return
                 
             except (APITimeoutError, APIConnectionError) as e:
+                for text in getattr(e, "_partial_chunks", ()):
+                    full_text_collected += text
+                    yield text
                 if attempt < self.config.max_retries:
                     wait = self._calc_backoff(attempt)
                     log.warning(f"LLM流式断线(已收{len(full_text_collected)}字), "

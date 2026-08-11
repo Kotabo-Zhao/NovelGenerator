@@ -18,6 +18,7 @@ from openai import OpenAI
 
 from .beat_decomposer import Beat
 from .evaluation_system import hook_strength
+from .usage_context import report_response_usage
 
 log = logging.getLogger(__name__)
 
@@ -100,7 +101,9 @@ class AtomicWriter:
         last_error = None
         for attempt in range(max_retries + 1):
             try:
-                return self.client.chat.completions.create(**kwargs)
+                response = self.client.chat.completions.create(**kwargs)
+                report_response_usage(response, model=self.model)
+                return response
             except Exception as e:
                 last_error = e
                 if attempt < max_retries:
@@ -137,7 +140,8 @@ class AtomicWriter:
         candidates = []
         for i in range(num_candidates):
             # 每个候选微调 temperature
-            t = beat.temperature + self.rng.uniform(-0.05, 0.05)
+            offsets = (-0.05, 0.0, 0.05)
+            t = beat.temperature + offsets[i % len(offsets)]
             t = max(0.7, min(1.0, t))
             
             try:
@@ -210,12 +214,11 @@ class AtomicWriter:
             else:
                 length_score = 0
             
-            scored.append((len_score + length_score + self.rng.uniform(0, 0.15), c))
+            scored.append((len_score + length_score, c))
         
         # 不是选最高分，而是在 top 2 中随机选（增加随机性）
-        scored.sort(key=lambda x: -x[0])
-        top_n = min(2, len(scored))
-        chosen = scored[self.rng.randint(0, top_n - 1)][1]
+        scored.sort(key=lambda x: (-x[0], x[1]["index"]))
+        chosen = scored[0][1]
         
         return {
             "text": chosen["text"],

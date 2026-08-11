@@ -42,6 +42,9 @@ class MiniProgramStructureTests(unittest.TestCase):
         self.assertIn("/v1/novels", create_source)
         self.assertIn("Idempotency-Key", create_source)
         self.assertIn("/v1/jobs/", write_source)
+        self.assertIn("/v1/usage", (ROOT / "pages" / "profile" / "index.js").read_text(encoding="utf-8"))
+        self.assertIn("/chapters/", write_source)
+        self.assertIn("/draft", write_source)
 
     def test_core_pages_have_real_loading_error_and_primary_action_states(self):
         shelf_wxml = (ROOT / "pages" / "shelf" / "index.wxml").read_text(encoding="utf-8")
@@ -63,6 +66,8 @@ class MiniProgramStructureTests(unittest.TestCase):
         self.assertIn("快速入口", profile_wxml)
         self.assertNotIn("即将开放", profile_wxml)
         self.assertNotIn("onTap", profile_js)
+        self.assertIn("agreePrivacy", profile_js)
+        self.assertIn("deleteAccount", profile_js)
 
 
 if __name__ == "__main__":

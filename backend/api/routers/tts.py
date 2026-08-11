@@ -16,11 +16,12 @@ import logging
 import os
 import time
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
+from ..auth import require_owner
 
 router = APIRouter()
 
@@ -134,7 +135,7 @@ async def _synthesize(text: str, voice: str, rate: str, pitch: str) -> bytes:
 
 
 @router.post("/api/tts")
-async def tts_synthesize(req: TTSRequest):
+async def tts_synthesize(req: TTSRequest, _owner_id: str = Depends(require_owner)):
     """文本转语音 → MP3（角色扮演 / 章节朗读）
 
     前端降级策略: 503 时自动切换 Web Speech API（系统 TTS）。
@@ -230,7 +231,7 @@ class EmotionTTSRequest(BaseModel):
 
 
 @router.post("/api/tts/emotion")
-async def tts_emotion_synthesize(req: EmotionTTSRequest):
+async def tts_emotion_synthesize(req: EmotionTTSRequest, _owner_id: str = Depends(require_owner)):
     """情感语音合成 → WAV（角色音色 + 情感参考，IndexTTS-2 本地推理）
 
     引擎不可用 → 503，前端自动降级普通 edge-tts 语音。

@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.util
+import importlib.machinery
 import os
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 
 if importlib.util.find_spec("openai") is None:
     fake_openai = types.ModuleType("openai")
+    fake_openai.__spec__ = importlib.machinery.ModuleSpec("openai", loader=None)
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -22,6 +24,7 @@ if importlib.util.find_spec("openai") is None:
     sys.modules["openai"] = fake_openai
 if importlib.util.find_spec("dotenv") is None:
     fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.__spec__ = importlib.machinery.ModuleSpec("dotenv", loader=None)
     fake_dotenv.load_dotenv = lambda *args, **kwargs: None
     sys.modules["dotenv"] = fake_dotenv
 

@@ -18,6 +18,12 @@
     <button wx:else class="quiet-button auth-action" bindtap="logout">退出当前账号</button>
   </view>
 
+  <view wx:if="{{loggedIn && consentRequired}}" class="card privacy-card">
+    <view class="section-title">先确认隐私政策</view>
+    <view class="muted privacy-copy">我们会用微信身份保护你的作品，并保存生成任务状态。当前政策版本：{{privacyVersion}}。</view>
+    <button class="primary-button" bindtap="agreePrivacy">同意并继续</button>
+  </view>
+
   <view class="card quick-card">
     <view class="section-title">快速入口</view>
     <view class="quick-actions">
@@ -26,13 +32,26 @@
     </view>
   </view>
 
+  <view wx:if="{{loggedIn}}" class="card danger-card">
+    <view class="section-title">账号数据</view>
+    <view class="muted">注销会删除作品、任务记录和导出文件。</view>
+    <button class="danger-button" loading="{{deleting}}" disabled="{{deleting}}" bindtap="deleteAccount">注销账号</button>
+  </view>
+
   <view class="card status-card">
     <view class="section-title">当前能力</view>
     <view class="status-line"><text>作品隔离</text><text class="status-ok">已接入</text></view>
     <view class="status-line"><text>生成任务恢复</text><text class="status-ok">已接入</text></view>
-    <view class="status-line"><text>隐私同意与注销</text><text class="status-pending">上线前配置</text></view>
-    <view class="status-line"><text>导出与分享</text><text class="status-pending">后续开放</text></view>
+    <view class="status-line"><text>隐私同意与注销</text><text class="status-ok">已接入</text></view>
+    <view class="status-line"><text>异步导出</text><text class="status-ok">已接入</text></view>
   </view>
 
-  <view class="notice profile-note">当前版本只保留已经可用的入口。隐私、导出和语音能力完成后，会在这里统一出现，不在写作页重复堆叠开关。</view>
+  <view wx:if="{{usage}}" class="card usage-card">
+    <view class="section-title">本日用量</view>
+    <view class="status-line"><text>已预占 token</text><text>{{usage.tokens_reserved}}</text></view>
+    <view class="status-line"><text>模型实际 token</text><text>{{usage.tokens_actual}}</text></view>
+    <view class="status-line"><text>估算费用（微单位）</text><text>{{usage.cost_micros}}</text></view>
+  </view>
+
+  <view class="notice profile-note">当前版本只保留已经可用的入口。导出任务可从后端查询并下载；语音、分享等高级能力继续放在工具箱，避免打断写作主流程。</view>
 </view>

@@ -2,7 +2,7 @@
 import json
 import os
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from core.xiaohongshu import TEMPLATES, create_xhs_novel_pipeline, generate_titles, PRESETS, get_presets
@@ -10,6 +10,7 @@ from core.xiaohongshu import TEMPLATES, create_xhs_novel_pipeline, generate_titl
 router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
+from ..auth import require_owner
 
 @router.get("/api/xiaohongshu/templates")
 async def list_xhs_templates():
@@ -31,7 +32,7 @@ async def list_xhs_templates():
 
 
 @router.post("/api/xiaohongshu/create")
-async def create_xhs_novel(req: dict = None):
+async def create_xhs_novel(req: dict = None, _owner_id: str = Depends(require_owner)):
     """SSE流式创建小红书短篇 — 实时推送进展"""
     if not req:
         req = {}
@@ -162,7 +163,7 @@ async def list_xhs_presets(template: str = None):
 
 
 @router.post("/api/xiaohongshu/titles")
-async def generate_titles_endpoint(req: dict = None):
+async def generate_titles_endpoint(req: dict = None, _owner_id: str = Depends(require_owner)):
     """为已有小说生成5个小红书风格标题"""
     if not req:
         req = {}

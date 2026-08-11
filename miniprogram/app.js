@@ -5,6 +5,8 @@ App({
     activeNovelId: "",
     accessToken: "",
     tokenExpiresAt: 0,
+    consentRequired: false,
+    privacyVersion: "",
     sessionPromise: null,
     authError: ""
   },

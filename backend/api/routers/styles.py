@@ -1,8 +1,9 @@
 """NovelGenerator — 风格系统 / 种子 / 指纹 API Router"""
 import json
 import os
+import hashlib
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -10,6 +11,7 @@ router = APIRouter()
 from core.style_fingerprint import StyleFingerprint
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
+from ..auth import require_owner
 from core.styles import CUSTOM_STYLE_PARAMS
 from core.styles import build_parameterized_style
 from core.styles import get_style, get_style_categories
@@ -44,7 +46,7 @@ async def get_style_params():
 
 
 @router.post("/api/styles/build-custom")
-async def build_custom_style_api(req: dict):
+async def build_custom_style_api(req: dict, _owner_id: str = Depends(require_owner)):
     """从用户选择的参数构建自定义风格"""
     from core.styles import build_parameterized_style
     style = build_parameterized_style(req)
@@ -54,14 +56,20 @@ async def build_custom_style_api(req: dict):
 STYLE_SEEDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "style_seeds")
 
 
+def _owner_style_seeds_dir(owner_id: str) -> str:
+    owner_key = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:32]
+    return os.path.join(STYLE_SEEDS_DIR, owner_key)
+
+
 @router.get("/api/styles/seeds")
-async def list_style_seeds():
+async def list_style_seeds(owner_id: str = Depends(require_owner)):
     """列出所有保存的风格种子"""
     seeds = []
-    if os.path.exists(STYLE_SEEDS_DIR):
-        for fname in os.listdir(STYLE_SEEDS_DIR):
+    seed_dir = _owner_style_seeds_dir(owner_id)
+    if os.path.exists(seed_dir):
+        for fname in os.listdir(seed_dir):
             if fname.endswith(".json"):
-                path = os.path.join(STYLE_SEEDS_DIR, fname)
+                path = os.path.join(seed_dir, fname)
                 with open(path, "r", encoding="utf-8") as f:
                     seed = json.load(f)
                     seeds.append({"name": seed.get("name", fname[:-5]), "author": seed.get("author", ""), "filename": fname})
@@ -69,13 +77,15 @@ async def list_style_seeds():
 
 
 @router.post("/api/styles/seeds")
-async def save_style_seed(seed: dict):
+async def save_style_seed(seed: dict, owner_id: str = Depends(require_owner)):
     """保存风格种子"""
     name = seed.get("name", "未命名").strip()
     if not name:
         raise HTTPException(status_code=400, detail="风格名称不能为空")
     safe_name = "".join(c for c in name if c.isalnum() or c in " _-") or "custom_style"
-    path = os.path.join(STYLE_SEEDS_DIR, f"{safe_name}.json")
+    seed_dir = _owner_style_seeds_dir(owner_id)
+    os.makedirs(seed_dir, exist_ok=True)
+    path = os.path.join(seed_dir, f"{safe_name}.json")
     seed["saved_at"] = __import__("datetime").datetime.now().isoformat()
     with open(path, "w", encoding="utf-8") as f:
         json.dump(seed, f, ensure_ascii=False, indent=2)
@@ -83,8 +93,8 @@ async def save_style_seed(seed: dict):
 
 
 @router.delete("/api/styles/seeds/{name}")
-async def delete_style_seed(name: str):
-    path = os.path.join(STYLE_SEEDS_DIR, f"{name}.json")
+async def delete_style_seed(name: str, owner_id: str = Depends(require_owner)):
+    path = os.path.join(_owner_style_seeds_dir(owner_id), f"{name}.json")
     if os.path.exists(path):
         os.remove(path)
     return {"success": True}
@@ -94,7 +104,7 @@ fingerprinter = StyleFingerprint()
 
 
 @router.post("/api/styles/fingerprint")
-async def style_fingerprint(req: dict):
+async def style_fingerprint(req: dict, _owner_id: str = Depends(require_owner)):
     """分析文本的风格指纹（5维DNA）"""
     text = req.get("text", "")
     if not text or len(text) < 500:
@@ -105,7 +115,7 @@ async def style_fingerprint(req: dict):
 
 
 @router.post("/api/styles/compare")
-async def compare_styles(req: dict):
+async def compare_styles(req: dict, _owner_id: str = Depends(require_owner)):
     """对比两个文本的风格差异"""
     text_a = req.get("text_a", "")
     text_b = req.get("text_b", "")

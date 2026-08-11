@@ -37,6 +37,26 @@
   white-space: pre-wrap;
 }
 
+.chapter-reading-meta {
+  color: #8a8172;
+  font-size: 22rpx;
+  margin-top: 24rpx;
+}
+
+.more-content-button {
+  margin-top: 18rpx;
+  width: 100%;
+}
+
+.draft-editor {
+  box-sizing: border-box;
+  color: #342e25;
+  font-size: 29rpx;
+  line-height: 1.8;
+  min-height: 520rpx;
+  width: 100%;
+}
+
 .compact-empty {
   padding: 50rpx 24rpx;
 }

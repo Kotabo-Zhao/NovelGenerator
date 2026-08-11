@@ -24,6 +24,13 @@ class FakeEngine:
             yield event
 
 
+class SlowEngine(FakeEngine):
+    async def generate_chapter_stream(self, novel_id, chapter_num, writing_mode, feedback=None):
+        self.calls.append((novel_id, chapter_num, writing_mode, feedback))
+        await asyncio.sleep(0.05)
+        yield {"type": "done", "chapter_num": chapter_num}
+
+
 class ChapterJobRunnerTests(unittest.TestCase):
     def run_async(self, coroutine):
         return asyncio.run(coroutine)
@@ -96,6 +103,29 @@ class ChapterJobRunnerTests(unittest.TestCase):
 
         self.assertEqual(result["status"], JobStatus.FAILED)
         self.assertEqual(result["error_code"], "INCOMPLETE_RESULT")
+
+    def test_timeout_fails_the_job_with_stable_error_code(self):
+        job = self.create_job()
+        engine = SlowEngine([])
+
+        self.run_async(
+            ChapterJobRunner(engine, self.store, timeout_seconds=0.001)
+            .run_chapter(job["job_id"], "novel-1", 1)
+        )
+        result = self.store.get(job["job_id"])
+
+        self.assertEqual(result["status"], JobStatus.FAILED)
+        self.assertEqual(result["error_code"], "TIMEOUT")
+
+    def test_running_job_is_not_started_again_by_a_second_runner(self):
+        job = self.create_job()
+        self.store.try_claim_running(job["job_id"])
+        engine = FakeEngine([{"type": "done", "chapter_num": 1}])
+
+        self.run_async(ChapterJobRunner(engine, self.store).run_chapter(job["job_id"], "novel-1", 1))
+
+        self.assertEqual(engine.calls, [])
+        self.assertEqual(self.store.get(job["job_id"])["status"], JobStatus.RUNNING)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,12 @@ Page({
     novel: null,
     chapter: 1,
     content: "",
+    draftContent: "",
+    editing: false,
+    draftSaving: false,
+    contentOffset: 0,
+    totalContent: 0,
+    hasMoreContent: false,
     loading: false,
     readingLoading: false,
     jobId: "",
@@ -29,6 +35,11 @@ Page({
         novelId,
         novel: null,
         content: "",
+        draftContent: "",
+        editing: false,
+        contentOffset: 0,
+        totalContent: 0,
+        hasMoreContent: false,
         chapter: 1,
         jobId,
         jobStatus: "",
@@ -85,15 +96,22 @@ Page({
     }
   },
 
-  async loadChapter(chapter) {
+  async loadChapter(chapter, append = false) {
     const chapterNum = Number(chapter);
     if (!this.data.novelId || !Number.isInteger(chapterNum) || chapterNum < 1) return;
+    const offset = append ? this.data.content.length : 0;
     this.setData({ readingLoading: true, error: "" });
     try {
-      const result = await api.get(`/v1/novels/${encodeURIComponent(this.data.novelId)}/chapters/${chapterNum}`);
-      const content = result.content || "";
+      const result = await api.get(`/v1/novels/${encodeURIComponent(this.data.novelId)}/chapters/${chapterNum}?offset=${offset}&limit=30000`);
+      const page = result.content || "";
+      const content = append ? this.data.content + page : page;
       this.setData({
         content,
+        draftContent: append ? this.data.draftContent : (result.draft || content),
+        editing: append ? this.data.editing : false,
+        contentOffset: offset + page.length,
+        totalContent: Number(result.total || content.length),
+        hasMoreContent: !!result.has_more,
         chapter: chapterNum,
         canNext: this.data.totalChapters ? chapterNum < this.data.totalChapters : true
       });
@@ -110,6 +128,39 @@ Page({
 
   retryChapter() {
     this.loadChapter(this.data.chapter);
+  },
+
+  loadMoreContent() {
+    if (!this.data.hasMoreContent || this.data.readingLoading) return;
+    this.loadChapter(this.data.chapter, true);
+  },
+
+  openDraftEditor() {
+    this.setData({ editing: true, draftContent: this.data.draftContent || this.data.content });
+  },
+
+  closeDraftEditor() {
+    this.setData({ editing: false });
+  },
+
+  onDraftInput(event) {
+    this.setData({ draftContent: event.detail.value });
+  },
+
+  async saveDraft() {
+    if (this.data.draftSaving || !this.data.novelId) return;
+    this.setData({ draftSaving: true, error: "" });
+    try {
+      await api.post(`/v1/novels/${encodeURIComponent(this.data.novelId)}/chapters/${this.data.chapter}/draft`, {
+        content: this.data.draftContent || ""
+      });
+      this.setData({ editing: false });
+      wx.showToast({ title: "草稿已保存", icon: "success" });
+    } catch (error) {
+      this.setData({ error: error.message || "草稿保存失败" });
+    } finally {
+      this.setData({ draftSaving: false });
+    }
   },
 
   previousChapter() {

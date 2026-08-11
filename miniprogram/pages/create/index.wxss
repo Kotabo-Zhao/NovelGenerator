@@ -6,6 +6,24 @@
   padding: 20rpx 0;
 }
 
+.outline-preview-title {
+  color: #342e25;
+  font-size: 34rpx;
+  font-weight: 700;
+  margin: 8rpx 0;
+}
+
+.outline-preview-item {
+  border-bottom: 1rpx solid #ece7da;
+  padding: 18rpx 0;
+}
+
+.outline-chapter-title {
+  color: #342e25;
+  font-size: 28rpx;
+  margin-bottom: 8rpx;
+}
+
 .summary-block {
   display: flex;
   flex-direction: column;

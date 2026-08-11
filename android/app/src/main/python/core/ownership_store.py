@@ -6,6 +6,7 @@ import os
 import sqlite3
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -105,11 +106,31 @@ class OwnershipStore:
                 );
                 """
             )
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(novel_ownership)")}
+            if "public_id" not in columns:
+                connection.execute("ALTER TABLE novel_ownership ADD COLUMN public_id TEXT")
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_novel_ownership_public_id "
+                "ON novel_ownership(public_id)"
+            )
+            missing = connection.execute(
+                "SELECT novel_id FROM novel_ownership WHERE public_id IS NULL OR public_id = ''"
+            ).fetchall()
+            for row in missing:
+                connection.execute(
+                    "UPDATE novel_ownership SET public_id = ? WHERE novel_id = ?",
+                    (self._new_public_id(), row["novel_id"]),
+                )
+
+    @staticmethod
+    def _new_public_id() -> str:
+        return f"n_{uuid.uuid4().hex}"
 
     @staticmethod
     def _record(row: sqlite3.Row) -> Dict[str, object]:
         return {
             "novel_id": row["novel_id"],
+            "public_id": row["public_id"],
             "owner_id": row["owner_id"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -129,6 +150,15 @@ class OwnershipStore:
             if row is not None:
                 if row["owner_id"] != normalized_owner or row["deleted_at"] is not None:
                     raise OwnershipError("novel is not available to this owner")
+                if not row["public_id"]:
+                    connection.execute(
+                        "UPDATE novel_ownership SET public_id = ? WHERE novel_id = ?",
+                        (self._new_public_id(), normalized_novel),
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM novel_ownership WHERE novel_id = ?",
+                        (normalized_novel,),
+                    ).fetchone()
                 return self._record(row)
 
             now = time.time()
@@ -136,10 +166,10 @@ class OwnershipStore:
                 connection.execute(
                     """
                     INSERT INTO novel_ownership
-                        (novel_id, owner_id, created_at, updated_at)
-                    VALUES (?, ?, ?, ?)
+                        (novel_id, public_id, owner_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (normalized_novel, normalized_owner, now, now),
+                    (normalized_novel, self._new_public_id(), normalized_owner, now, now),
                 )
             except sqlite3.IntegrityError as exc:
                 raise OwnershipError("novel ownership could not be claimed") from exc
@@ -152,15 +182,15 @@ class OwnershipStore:
             return self._record(row)
 
     def require_owner(self, novel_id: str, owner_id: str) -> Dict[str, object]:
-        normalized_novel = self._novel(novel_id)
+        normalized_identifier = self._novel(novel_id)
         normalized_owner = self._owner(owner_id)
         with self._lock, self._session() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM novel_ownership
-                WHERE novel_id = ? AND owner_id = ? AND deleted_at IS NULL
+                WHERE (novel_id = ? OR public_id = ?) AND owner_id = ? AND deleted_at IS NULL
                 """,
-                (normalized_novel, normalized_owner),
+                (normalized_identifier, normalized_identifier, normalized_owner),
             ).fetchone()
             if row is None:
                 raise OwnershipError("novel is not owned by this user")
@@ -205,6 +235,21 @@ class OwnershipStore:
             if row is None:
                 raise RuntimeError("novel ownership disappeared during delete")
             return self._record(row)
+
+    def purge_owner(self, owner_id: str) -> int:
+        """Remove ownership and creation idempotency records for erasure."""
+
+        normalized_owner = self._owner(owner_id)
+        with self._lock, self._session() as connection:
+            first = connection.execute(
+                "DELETE FROM novel_ownership WHERE owner_id = ?",
+                (normalized_owner,),
+            ).rowcount
+            connection.execute(
+                "DELETE FROM novel_creation_requests WHERE owner_id = ?",
+                (normalized_owner,),
+            )
+            return int(first)
 
     @staticmethod
     def _creation_record(row: sqlite3.Row) -> Dict[str, object]:

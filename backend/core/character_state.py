@@ -193,7 +193,7 @@ class CharacterStateTracker:
                 chapter_text=chapter_text[:8000],  # 限制长度控制成本
             )
 
-            resp = self.client.chat.completions.create(
+            resp = await asyncio.to_thread(self.client.chat.completions.create,
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "你是角色状态追踪器。只输出JSON。"},

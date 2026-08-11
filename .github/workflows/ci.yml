@@ -19,7 +19,7 @@ jobs:
 
       - name: Install dependencies
         # v3.5.23: 补 python-dotenv（server.py import dotenv，缺则测试收集失败）
-        run: pip install fastapi openai pydantic pytest python-dotenv
+        run: python -m pip install -r requirements.txt pytest
 
       - name: Syntax check (Python, 全部副本含 android)
         run: |
@@ -111,5 +111,8 @@ jobs:
       - name: Verify native mini program structure
         run: python tests/test_miniprogram_structure.py
 
-      - name: Run core test suite (55 cases)
-        run: python -m pytest tests/test_suite.py -q --no-header
+      - name: Run deterministic full test suite
+        run: python -m pytest tests backend/tests -q --no-header
+
+      - name: Run offline integration suite (59 cases)
+        run: PYTHONIOENCODING=utf-8 python tests/integration_test.py

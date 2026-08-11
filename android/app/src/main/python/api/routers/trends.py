@@ -2,7 +2,7 @@
 import json
 import os
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import traceback
@@ -10,11 +10,12 @@ import traceback
 router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
+from ..auth import require_owner
 from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
 from core.trend_analyzer import quick_bizarre, BizarreNovelGenerator
 
 @router.post("/api/trends/analyze")
-async def analyze_trends(req: dict = None):
+async def analyze_trends(req: dict = None, _owner_id: str = Depends(require_owner)):
     """抓取爆火小说并分析趋势"""
     if not req:
         req = {}
@@ -38,7 +39,7 @@ async def analyze_trends(req: dict = None):
 
 
 @router.post("/api/trends/bizarre")
-async def generate_bizarre(req: dict):
+async def generate_bizarre(req: dict, _owner_id: str = Depends(require_owner)):
     """基于爆火趋势生成逆天小说（剧情反转向）"""
     count = min(req.get("count", 5), 10)
     style = req.get("style", "热血爽文")
@@ -70,7 +71,7 @@ async def generate_bizarre(req: dict):
 
 
 @router.post("/api/trends/bizarre/quick")
-async def quick_bizarre(req: dict):
+async def quick_bizarre(req: dict, _owner_id: str = Depends(require_owner)):
     """快速生成逆天小说设定（时事模式优先从网络抓热点新闻动态生成）"""
     count = min(req.get("count", 3), 5)
     genre = req.get("genre", "")
@@ -101,7 +102,7 @@ async def quick_bizarre(req: dict):
 
 
 @router.post("/api/trends/bizarre/create")
-async def create_bizarre_novel(req: dict):
+async def create_bizarre_novel(req: dict, _owner_id: str = Depends(require_owner)):
     """将剧情反转种子直接创建为小说"""
     if not req or not req.get("premise"):
         raise HTTPException(status_code=400, detail="缺少 premise")

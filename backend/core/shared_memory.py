@@ -170,7 +170,10 @@ class SharedMemoryManager:
             return None
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return f.read()
+                content = f.read()
+                if self._is_incomplete_chapter(content):
+                    return None
+                return content
         except Exception:
             return None
 
@@ -181,9 +184,62 @@ class SharedMemoryManager:
         atomic_write_text(path, content)
         self._invalidate(novel_id, "chapter")
 
+    def read_chapter_draft(self, novel_id: str, chapter_num: int) -> Optional[str]:
+        """读取用户草稿；草稿与已发布章节分离，不能污染生成结果。"""
+        path = safe_novel_file(self.novels_dir, novel_id, f"drafts/chapter_{int(chapter_num)}.md")
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                return file.read()
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    def write_chapter_draft(self, novel_id: str, chapter_num: int, content: str) -> None:
+        """原子保存用户草稿，不改变章节完成状态或统计。"""
+        if not isinstance(content, str) or len(content) > 50_000:
+            raise ValueError("草稿长度无效")
+        path = safe_novel_file(self.novels_dir, novel_id, f"drafts/chapter_{int(chapter_num)}.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        atomic_write_text(path, content)
+
+    def delete_chapter_draft(self, novel_id: str, chapter_num: int) -> bool:
+        """删除指定草稿；不存在时保持幂等。"""
+        path = safe_novel_file(self.novels_dir, novel_id, f"drafts/chapter_{int(chapter_num)}.md")
+        try:
+            if not os.path.exists(path):
+                return False
+            os.remove(path)
+            return True
+        except OSError:
+            return False
+
     def chapter_exists(self, novel_id: str, chapter_num: int) -> bool:
         """检查章节是否存在"""
-        return os.path.exists(self._get_path("chapter", novel_id, chapter_num=chapter_num))
+        return self.read_chapter(novel_id, chapter_num) is not None
+
+    @staticmethod
+    def _is_incomplete_chapter(content: str) -> bool:
+        return "<!-- GENERATION_IN_PROGRESS -->" in content or (
+            "<!--" in content and "生成中" in content
+        )
+
+    def remove_incomplete_chapter(self, novel_id: str, chapter_num: int) -> bool:
+        """Remove only a generation marker file; completed text is untouched."""
+
+        path = self._get_path("chapter", novel_id, chapter_num=chapter_num)
+        try:
+            if not os.path.exists(path):
+                return False
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            if not self._is_incomplete_chapter(content):
+                return False
+            os.remove(path)
+            self._invalidate(novel_id, "chapter")
+            return True
+        except OSError:
+            return False
 
     def scan_chapters(self, novel_id: str) -> list:
         """扫描磁盘实际存在的章节号列表"""
@@ -195,8 +251,11 @@ class SharedMemoryManager:
             if f.startswith("chapter_") and f.endswith(".md"):
                 try:
                     num = int(f.replace("chapter_", "").replace(".md", ""))
+                    with open(os.path.join(chapters_dir, f), "r", encoding="utf-8") as chapter_file:
+                        if self._is_incomplete_chapter(chapter_file.read()):
+                            continue
                     chapters.append(num)
-                except ValueError:
+                except (ValueError, OSError, UnicodeDecodeError):
                     pass
         return sorted(chapters)
 
@@ -825,7 +884,9 @@ class SharedMemoryManager:
         elif narrative_pov == 'third_person':
             pov_instruction = "\n叙事人称：第三人称，始终用角色名字或「他」「她」叙述，不要用「我」。\n"
 
-        outline_text = f"""═══ 以下为写作元指令 ═══
+        outline_text = f"""## 本章大纲
+
+═══ 以下为写作元指令 ═══
 
 本章必须覆盖以下核心事件，不可偏离：
 {chapter_outline.get('summary', '')}

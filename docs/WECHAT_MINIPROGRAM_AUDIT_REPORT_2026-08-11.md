@@ -30,6 +30,21 @@ Android Chaquopy 壳（复制一套 backend/core 与 api）
 
 因此建议采用“后端安全与多租户重构 + 原生小程序核心闭环重建 + 高级能力分层迁移”的路线，而不是继续在现有 `web/index.html` 上叠加按钮或尝试直接打包成小程序。
 
+### 2026-08-12 整改快照
+
+本报告保留 2026-08-11 的原始审计证据；以下是连续整改后的当前状态，源码和测试优先于历史描述。
+
+| 审计项 | 当前状态 | 证据 |
+|---|---|---|
+| 认证、owner 隔离、隐私同意、注销 | 已落地 | `backend/api/auth.py`、`backend/api/routers/auth.py`、`backend/core/account_store.py` |
+| 路径安全与公开作品 ID | 已落地兼容迁移 | `backend/core/path_security.py`、`backend/core/ownership_store.py`、`backend/api/routers/v1.py` |
+| 持久化任务、原子认领、恢复、并发、超时 | 已落地 | `backend/core/job_store.py`、`backend/core/job_runner.py`、启动恢复流程 |
+| 异步导出与权限下载 | 已落地 | `backend/core/export_job_runner.py`、`/v1/exports/{job_id}/download` |
+| 小程序核心 UI | MVP 已落地 | `miniprogram/`：书架、创建、大纲预览、写作、我的、隐私/注销、草稿 |
+| 上下文预算、失败占位、非阻塞 LLM、最终质量复评 | 已落地基础门 | `backend/core/context_budget.py`、`quality_gate.py`、`usage_context.py` |
+| 精确 token/费用账本 | 已落地适配器与 SQLite 账本 | `backend/core/usage_quota.py`；仅对供应商返回 usage 的调用记精确值，缺失时不伪造 |
+| 微信开发者工具、真机、合法域名、隐私 URL、真实微信凭据 | 未在本机闭环 | 需要外部微信后台与设备环境 |
+
 ### 上线阻断项（P0）
 
 | 编号 | 阻断项 | 证据 | 影响 |
@@ -66,10 +81,11 @@ Android Chaquopy 壳（复制一套 backend/core 与 api）
 | Python 语法 | 通过 | `python -m compileall -q backend tests` |
 | 前端副本一致性 | 通过 | `python tools/sync_frontend.py --check`，UTF-8 输出环境下通过 |
 | backend/android core 与 api 一致性 | 通过 | `python tools/sync_android_core.py --check`，未写入文件 |
-| 根测试套件 | 未执行成功 | 当前系统 Python 缺少 `openai`；不是“测试通过” |
-| pytest 测试 | 未执行 | 当前环境没有 `pytest`；Android 自带 Python 环境也没有项目依赖 |
+| 根测试套件 | 通过 | `python -m pytest tests backend/tests -q --no-header`：290 passed, 1 skipped；`tests/test_suite.py` 55 passed |
+| 离线集成测试 | 通过 | `PYTHONIOENCODING=utf-8 python tests/integration_test.py`：59 passed |
+| 前端/Android 副本 | 通过 | `sync_frontend.py --check`、`sync_android_core.py --check` |
 | 真机/微信开发者工具 | 未验证 | 仓库没有原生小程序工程，需在客户端重建后验证 |
-| 真实 LLM 生成质量 | 未验证 | 当前环境没有可用依赖/API 会话，需建立固定评测集后做回归 |
+| 真实 LLM 生成质量 | 未在本地验证 | 已有离线质量门和固定确定性回归；仍需配置真实模型后做人工/模型对照评测 |
 
 报告中的“通过”只代表对应静态命令在指定环境通过，不代表已经满足生产上线标准。
 
@@ -524,13 +540,13 @@ POST   /v1/exports                        创建导出任务
 - 旧 `/api/novels*` 兼容面增加 Bearer 认证和 owner 隔离；旧书架仅返回当前用户作品，生成、批量导出和旧创建成功后登记归属；新增 HTTP 级未登录/跨用户回归测试并接入 CI。
 - 新增 SQLite `UsageQuotaStore`：认证章节 job 按用户自然日预占任务次数和预计 token，幂等重试不重复占用，job 创建失败可回滚；配置项为 `DAILY_CHAPTER_JOB_LIMIT` 和 `DAILY_TOKEN_LIMIT`。
 
-当前仍未完成：旧 `/api` 非作品工具接口的全量认证迁移、跨进程/服务重启后的真正队列恢复、金额/精确模型 token 账本、并发与超时配额、异步导出、隐私同意与注销、UI 全量重建、生成质量回归集和微信开发者工具/真机验收；这些仍是正式上线阻断项。
+当前已完成：旧工具写操作鉴权、跨进程任务状态/启动恢复、并发与超时控制、异步导出、隐私同意/注销、核心小程序 UI、章节分页/草稿和 provider usage 账本。当前仍需外部完成：真实微信凭据与合法域名、公开隐私 URL、微信开发者工具/真机弱网和安全区验收，以及真实模型质量/成本基准。
 
 ### 2026-08-12：风格合规与重复入口收敛
 
 - 风格引擎运行时不再向模型注入“作者定位”、作者姓名或方法论署名；历史 style key 继续兼容，但展示名映射为“团队成长、升级逆袭、设定悬疑”等可解释属性卡。
 - 旧 `/api/styles` 兼容接口改为读取属性化展示配置，避免分类改名后返回空列表；保留空 `author` 字段仅用于旧客户端 schema 兼容，不再承载作者信息。
-- planner、Writer 上下文和 Android Python 副本同步完成，新增 `tests/test_style_policy.py` 并接入 CI；全量质量评测集和人工质量门仍未完成。
+- planner、Writer 上下文和 Android Python 副本同步完成，新增 `tests/test_style_policy.py` 并接入 CI；真实模型对照评测和人工质量门仍需上线前外部执行。
 
 ### 2026-08-12：小程序 UI/易用性第一轮
 
@@ -539,6 +555,20 @@ POST   /v1/exports                        创建导出任务
 - 写作页重排为章节导航、阅读/空态、任务状态、取消/重试和底部主动作；离开页面后继续轮询，避免把“生成中”误显示成普通正文。
 - “我的”删除隐私/朗读/反馈等点击后只提示“即将开放”的假入口，保留真实登录、书架/创建快捷入口和当前能力状态。
 - 新增小程序 UI 结构回归，锁定主动作、加载/错误/空态和未开放入口不伪装；尚未完成微信开发者工具、不同屏幕安全区和真机弱网验收。
+
+### 2026-08-12：任务恢复、隐私生命周期与质量收口
+
+- `GenerationJobStore` 增加 SQLite 原子认领、运行中任务回收、活动任务上限和 owner 级清理；启动时自动重新排队可恢复任务，生成/导出均有超时和失败收口。
+- 批量导出旧接口停止返回整本正文 JSON，迁移到认证异步导出 job；文件按 owner 哈希目录隔离，下载校验归属、路径和过期时间。
+- 新增账户状态、隐私政策版本、token 撤销、注销清理；小程序“我的”页接入同意、退出和注销。作品 API 在未同意当前隐私版本时拒绝继续访问。
+- 旧风格、趋势、小红书、语音写操作均增加认证依赖，并加入未登录 HTTP 回归；全局请求体默认上限 1 MB。
+- owner 作品绑定增加不可预测的 `public_id`，v1 读写兼容旧内部 ID 但小程序书架/创建优先使用公开 ID，内部存储 ID 不再作为任务响应的公开作品标识。
+- 章节读取增加分页元数据；新增与已发布章节隔离的 5 万字草稿保存接口和小程序编辑草稿入口。
+- 新增 provider usage 适配上下文、SQLite `usage_ledger`、实际 token/费用聚合和 `/v1/usage`；供应商没有返回 usage 时不伪造精确值。
+- 质量管线加入最终硬约束校验和合规补写后的本地质量复评，保存 `quality_reports.json` 版本化摘要；原子候选排序固定，失败占位不会被正常章节读取。
+- CI 改为安装根依赖并运行 `tests` + `backend/tests` 全量 pytest 和 59 项离线集成测试；当前结果为 290 passed、1 skipped、59 passed。Android 副本已重新同步并通过一致性检查。
+
+本阶段仍不能由本机替代的验收：真实 `wx.login`/AppID、微信合法 HTTPS 业务域名、公开隐私政策 URL、微信开发者工具构建、375/414 宽度安全区、真机弱网/后台恢复、真实模型质量与成本评测。
 
 ## 13. 参考链接
 

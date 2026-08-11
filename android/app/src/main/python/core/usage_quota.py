@@ -55,6 +55,9 @@ class UsageQuotaStore:
                     usage_day TEXT NOT NULL,
                     jobs_reserved INTEGER NOT NULL DEFAULT 0,
                     tokens_reserved INTEGER NOT NULL DEFAULT 0,
+                    tokens_actual INTEGER NOT NULL DEFAULT 0,
+                    cost_micros INTEGER NOT NULL DEFAULT 0,
+                    jobs_completed INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL,
                     PRIMARY KEY(owner_id, usage_day)
                 );
@@ -67,8 +70,30 @@ class UsageQuotaStore:
                     created_at REAL NOT NULL,
                     PRIMARY KEY(owner_id, reservation_key)
                 );
+                CREATE TABLE IF NOT EXISTS usage_ledger (
+                    entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    usage_day TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    total_tokens INTEGER NOT NULL DEFAULT 0,
+                    cost_micros INTEGER NOT NULL DEFAULT 0,
+                    recorded_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_usage_ledger_owner_day
+                    ON usage_ledger(owner_id, usage_day, recorded_at);
                 """
             )
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(usage_daily)")}
+            for name, definition in (
+                ("tokens_actual", "INTEGER NOT NULL DEFAULT 0"),
+                ("cost_micros", "INTEGER NOT NULL DEFAULT 0"),
+                ("jobs_completed", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE usage_daily ADD COLUMN {name} {definition}")
 
     @staticmethod
     def _text(value: str, field: str, max_length: int = 200) -> str:
@@ -135,7 +160,8 @@ class UsageQuotaStore:
 
             usage = connection.execute(
                 """
-                SELECT jobs_reserved, tokens_reserved FROM usage_daily
+                SELECT jobs_reserved, tokens_reserved, tokens_actual, cost_micros, jobs_completed
+                FROM usage_daily
                 WHERE owner_id = ? AND usage_day = ?
                 """,
                 (owner, day),
@@ -218,7 +244,8 @@ class UsageQuotaStore:
         with self._lock, self._session() as connection:
             row = connection.execute(
                 """
-                SELECT jobs_reserved, tokens_reserved FROM usage_daily
+                SELECT jobs_reserved, tokens_reserved, tokens_actual, cost_micros, jobs_completed
+                FROM usage_daily
                 WHERE owner_id = ? AND usage_day = ?
                 """,
                 (owner, day),
@@ -227,7 +254,76 @@ class UsageQuotaStore:
             "usage_day": day,
             "jobs_reserved": row["jobs_reserved"] if row else 0,
             "tokens_reserved": row["tokens_reserved"] if row else 0,
+            "tokens_actual": row["tokens_actual"] if row else 0,
+            "cost_micros": row["cost_micros"] if row else 0,
+            "jobs_completed": row["jobs_completed"] if row else 0,
         }
+
+    def record_usage(
+        self,
+        *,
+        owner_id: str,
+        job_id: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_micros: int = 0,
+    ) -> Dict[str, object]:
+        """Append provider-reported usage and aggregate it by UTC day."""
+        owner = self._text(owner_id, "owner_id")
+        job = self._text(job_id, "job_id")
+        model_name = self._text(model or "unknown", "model", 200)
+        values = (input_tokens, output_tokens, cost_micros)
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in values):
+            raise ValueError("usage values must be non-negative integers")
+        total_tokens = input_tokens + output_tokens
+        day = self._day()
+        now = time.time()
+        with self._lock, self._session() as connection:
+            connection.execute(
+                """
+                INSERT INTO usage_ledger
+                    (owner_id, job_id, usage_day, model, input_tokens, output_tokens,
+                     total_tokens, cost_micros, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (owner, job, day, model_name, input_tokens, output_tokens,
+                 total_tokens, cost_micros, now),
+            )
+            connection.execute(
+                """
+                INSERT INTO usage_daily
+                    (owner_id, usage_day, tokens_actual, cost_micros, jobs_completed, updated_at)
+                VALUES (?, ?, ?, ?, 1, ?)
+                ON CONFLICT(owner_id, usage_day) DO UPDATE SET
+                    tokens_actual = tokens_actual + excluded.tokens_actual,
+                    cost_micros = cost_micros + excluded.cost_micros,
+                    jobs_completed = jobs_completed + 1,
+                    updated_at = excluded.updated_at
+                """,
+                (owner, day, total_tokens, cost_micros, now),
+            )
+        return {
+            "owner_id": owner,
+            "job_id": job,
+            "usage_day": day,
+            "model": model_name,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cost_micros": cost_micros,
+        }
+
+    def purge_owner(self, owner_id: str) -> int:
+        owner = self._text(owner_id, "owner_id")
+        with self._lock, self._session() as connection:
+            reservations = connection.execute(
+                "DELETE FROM usage_reservations WHERE owner_id = ?",
+                (owner,),
+            ).rowcount
+            connection.execute("DELETE FROM usage_daily WHERE owner_id = ?", (owner,))
+            connection.execute("DELETE FROM usage_ledger WHERE owner_id = ?", (owner,))
+            return int(reservations)
 
     @staticmethod
     def _seconds_until_next_day() -> int:

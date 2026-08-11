@@ -82,6 +82,23 @@ class UsageQuotaTests(unittest.TestCase):
             owner_id="owner-a", reservation_key="job-1", request_hash=digest("request")
         ))
 
+    def test_provider_usage_is_recorded_separately_from_reservation(self):
+        self.reserve("job-1")
+        record = self.store.record_usage(
+            owner_id="owner-a",
+            job_id="job-1",
+            model="test-model",
+            input_tokens=120,
+            output_tokens=80,
+            cost_micros=37,
+        )
+        usage = self.store.get_usage("owner-a")
+        self.assertEqual(record["total_tokens"], 200)
+        self.assertEqual(usage["tokens_reserved"], 4_000)
+        self.assertEqual(usage["tokens_actual"], 200)
+        self.assertEqual(usage["cost_micros"], 37)
+        self.assertEqual(usage["jobs_completed"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

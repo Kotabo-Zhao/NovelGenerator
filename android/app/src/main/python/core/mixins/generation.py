@@ -8,6 +8,7 @@ import logging
 log = logging.getLogger(__name__)
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -23,6 +24,28 @@ from ..beat_decomposer import BeatDecomposer, Beat
 from ..pacing_checker import PacingChecker
 from ..chapter_summarizer import check_and_compress
 from ..storygraph_interventions import analyze_and_inject
+from ..usage_context import report_response_usage
+
+
+def _save_final_quality_report(memory, novel_id: str, chapter_num: int, report: dict, *, stage: str) -> dict:
+    """Persist the post-mutation quality result instead of reusing a stale score."""
+    path = os.path.join(memory.get_novel_dir(novel_id), "quality_reports.json")
+    reports = safe_read_json(path, {})
+    if not isinstance(reports, dict):
+        reports = {}
+    record = {
+        "version": "quality-gate-v2",
+        "stage": stage,
+        "chapter_num": chapter_num,
+        "score": report.get("score", 0),
+        "issues": list(report.get("issues", []))[:20],
+        "word_count": len(report.get("text", "")),
+        "text_sha256": hashlib.sha256(report.get("text", "").encode("utf-8")).hexdigest(),
+        "evaluated_at": time.time(),
+    }
+    reports[str(chapter_num)] = record
+    atomic_write_json(path, reports)
+    return record
 
 
 
@@ -464,8 +487,30 @@ class GenerationMixin:
                 )
                 if _vctx:
                     chapter_context = chapter_context + "\n\n" + _vctx
+
             except Exception as _vce:
                 log.warning(f"Voices injection skipped (atomic): {_vce}")
+
+            from ..context_budget import ContextSection, allocate_context
+            chapter_context, _context_trimmed = allocate_context(
+                [
+                    ContextSection(
+                        "本章大纲 · 硬约束",
+                        "标题：{title}\n核心事件：{summary}\n结尾钩子：{hook}\n角色：{characters}".format(
+                            title=chapter_outline.get("title", ""),
+                            summary=chapter_outline.get("summary", ""),
+                            hook=chapter_outline.get("hook", ""),
+                            characters=", ".join(chapter_outline.get("characters", []) or []),
+                        ),
+                        priority=100,
+                        required=True,
+                    ),
+                    ContextSection("写作上下文", chapter_context, priority=60),
+                ],
+                max_chars=max(4000, config.MAX_CONTEXT_TOKENS * 4),
+            )
+            if _context_trimmed:
+                log.info("Context budget trimmed sections: %s", _context_trimmed)
             
             # 用LLM生成300字叙事蓝图
             blueprint = ""
@@ -496,7 +541,7 @@ class GenerationMixin:
 
 只输出蓝图正文，不要标题。"""
                 
-                bp_resp = self.client.chat.completions.create(
+                bp_resp = await asyncio.to_thread(self.client.chat.completions.create,
                     model=self.model,
                     messages=[
                         {"role": "system", "content": "你是一位小说策划。把大纲转化为叙事蓝图。"},
@@ -505,6 +550,7 @@ class GenerationMixin:
                     temperature=0.7,
                     max_tokens=600,
                 )
+                report_response_usage(bp_resp, model=self.model)
                 blueprint = bp_resp.choices[0].message.content.strip()
                 log.info(f"Blueprint generated for Ch{chapter_num}: {len(blueprint)} chars")
             except Exception as e:
@@ -632,6 +678,11 @@ class GenerationMixin:
                 log.warning(f"Atomic paragraph normalize skipped: {e}")
             
             # ── Phase 4: 保存 ──
+            from ..quality_gate import validate_chapter_text
+            validate_chapter_text(
+                full_text,
+                target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
+            )
             self.memory.save_chapter(novel_id, chapter_num, formatted)
             
             # v2.40: 第一章生成后自动检测叙事人称
@@ -716,6 +767,24 @@ class GenerationMixin:
             except Exception as _ce:
                 log.warning(f"Outline compliance step skipped: {_ce}")
 
+            from ..quality_gate import validate_chapter_text
+            validate_chapter_text(
+                full_text,
+                target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
+            )
+            _final_quality = await asyncio.to_thread(
+                PacingChecker(self.client, self.model).quick_quality_check,
+                full_text,
+                fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+            )
+            _final_quality_record = _save_final_quality_report(
+                self.memory,
+                novel_id,
+                chapter_num,
+                {**_final_quality, "text": full_text},
+                stage="post_outline_compliance",
+            )
+            yield {"type": "final_quality", **_final_quality_record}
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num,
                    "atomic": True, "beat_count": len(beats)}
             
@@ -739,6 +808,7 @@ class GenerationMixin:
             
         except Exception as e:
             log.exception(f"Atomic chapter generation failed: {e}")
+            self.memory.remove_incomplete_chapter(novel_id, chapter_num)
             yield {"type": "error", "message": str(e)}
         finally:
             try:
@@ -1017,6 +1087,28 @@ class GenerationMixin:
             except Exception as _be:
                 log.warning(f"Beat injection skipped (non-fatal): {_be}")
 
+            from ..context_budget import ContextSection, allocate_context
+            context, _context_trimmed = allocate_context(
+                [
+                    ContextSection(
+                        "本章大纲 · 硬约束",
+                        "标题：{title}\n核心事件：{summary}\n结尾钩子：{hook}\n角色：{characters}".format(
+                            title=chapter_outline.get("title", ""),
+                            summary=chapter_outline.get("summary", ""),
+                            hook=chapter_outline.get("hook", ""),
+                            characters=", ".join(chapter_outline.get("characters", []) or []),
+                        ),
+                        priority=100,
+                        required=True,
+                    ),
+                    ContextSection("用户反馈", feedback or "", priority=95, required=bool(feedback)),
+                    ContextSection("写作上下文", context, priority=60),
+                ],
+                max_chars=max(4000, config.MAX_CONTEXT_TOKENS * 4),
+            )
+            if _context_trimmed:
+                log.info("Context budget trimmed sections: %s", _context_trimmed)
+
             # 流式生成 + 增量保存（每500字写盘，防断线丢内容）
             full_text = ""
             last_save_len = 0
@@ -1034,7 +1126,7 @@ class GenerationMixin:
                 # 每500字增量保存一次
                 if len(full_text) - last_save_len >= 500:
                     try:
-                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}\n\n<!-- 生成中，尚未完成 -->"
+                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}\n\n<!-- GENERATION_IN_PROGRESS -->"
                         self.memory.save_chapter(novel_id, chapter_num, formatted)
                         last_save_len = len(full_text)
                     except Exception as e:
@@ -1052,7 +1144,11 @@ class GenerationMixin:
             try:
                 is_fast_food = plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False)
                 checker = PacingChecker(self.client, self.model)
-                qr = checker.quick_quality_check(full_text, fast_food=is_fast_food)
+                qr = await asyncio.to_thread(
+                    checker.quick_quality_check,
+                    full_text,
+                    fast_food=is_fast_food,
+                )
                 quality_report = qr
                 log.info(f"Quality gate: score={qr['score']}, issues={len(qr['issues'])}")
 
@@ -1065,7 +1161,7 @@ class GenerationMixin:
                     llm_confirm = None
                     if not batch_mode:
                         try:
-                            _resp = self.client.chat.completions.create(
+                            _resp = await asyncio.to_thread(self.client.chat.completions.create,
                                 model=self.model,
                                 messages=[
                                     {"role": "system", "content": "你是一位严格的网络小说编辑。判断规则引擎的检测结果是否属实、文本是否真的需要重写。只输出JSON。"},
@@ -1080,6 +1176,7 @@ class GenerationMixin:
                                 temperature=0.2,
                                 max_tokens=250,
                             )
+                            report_response_usage(_resp, model=self.model)
                             _content = (_resp.choices[0].message.content or "").strip()
                             try:
                                 llm_confirm = json.loads(_content)
@@ -1241,7 +1338,11 @@ class GenerationMixin:
                 try:
                     _hook_kws = ["突然", "忽然", "那一刻", "奇怪", "竟然", "没想到", "却见", "就在这时", "……", "？", "?"]
                     if not any(k in full_text[-100:] for k in _hook_kws):
-                        _hook_res = self.writer.assess_and_enhance_hook(full_text, min_rewrite_score=35)
+                        _hook_res = await asyncio.to_thread(
+                            self.writer.assess_and_enhance_hook,
+                            full_text,
+                            min_rewrite_score=35,
+                        )
                         if _hook_res.get("rewritten") and _hook_res.get("text"):
                             full_text = _hook_res["text"]
                             log.info(f"Hook enhanced for Ch{chapter_num} (score={_hook_res.get('score')})")
@@ -1266,6 +1367,8 @@ class GenerationMixin:
                 while _lines and not _lines[0].strip():
                     _lines.pop(0)
             _text_to_save = '\n'.join(_lines)
+            from ..quality_gate import validate_chapter_text
+            validate_chapter_text(_text_to_save, target_words=target_words)
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{_text_to_save}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
 
@@ -1361,7 +1464,8 @@ class GenerationMixin:
             # ── v2.3.5: 一致性校验（L1 规则 + L2 LLM 语义，P0 自动重写）──
             try:
                 yield {"type": "status", "message": "🔍 正在校验逻辑一致性（亲属关系/时空/设定）…"}
-                cv_result = self.consistency_validator.validate_chapter(
+                cv_result = await asyncio.to_thread(
+                    self.consistency_validator.validate_chapter,
                     chapter_text=full_text,
                     chapter_num=chapter_num,
                     plan=plan,
@@ -1487,6 +1591,20 @@ class GenerationMixin:
             except Exception as _ce:
                 log.warning(f"Outline compliance step skipped: {_ce}")
 
+            _final_quality = await asyncio.to_thread(
+                PacingChecker(self.client, self.model).quick_quality_check,
+                full_text,
+                fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+            )
+            _final_quality_record = _save_final_quality_report(
+                self.memory,
+                novel_id,
+                chapter_num,
+                {**_final_quality, "text": full_text},
+                stage="post_outline_compliance",
+            )
+            yield {"type": "final_quality", **_final_quality_record}
+
             # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
             # v2.6: 批量模式后台化（不阻塞正文流程）；单章模式保持同步
             try:
@@ -1562,7 +1680,8 @@ class GenerationMixin:
                 if batch_mode:
                     validation = {"violations": [], "score": 100, "warnings": []}
                 else:
-                    validation = self.consistency_validator.validate_chapter(
+                    validation = await asyncio.to_thread(
+                        self.consistency_validator.validate_chapter,
                         chapter_text=full_text,
                         chapter_num=chapter_num,
                         plan=plan,
@@ -1684,11 +1803,14 @@ class GenerationMixin:
                 log.warning(f"Auto-compression skipped: {e}")
             
             yield {"type": "status", "message": "💾 正在保存章节、更新伏笔与剧情图谱…"}
+            from ..quality_gate import validate_chapter_text
+            validate_chapter_text(full_text, target_words=target_words)
             yield {"type": "text", "content": "\n\n"}
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num}
 
         except Exception as e:
             log.exception(f"Chapter generation failed: {e}")
+            self.memory.remove_incomplete_chapter(novel_id, chapter_num)
             yield {"type": "error", "message": f"❌ 章节生成失败：{e}。请检查网络连接或稍后重试。"}
         finally:
             # 清理并发锁

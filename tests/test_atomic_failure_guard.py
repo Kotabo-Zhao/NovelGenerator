@@ -3,6 +3,7 @@ import asyncio
 import os
 import sys
 import types
+import importlib.machinery
 import unittest
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ try:
     import openai  # noqa: F401
 except ModuleNotFoundError:
     fake_openai = types.ModuleType("openai")
+    fake_openai.__spec__ = importlib.machinery.ModuleSpec("openai", loader=None)
     fake_openai.OpenAI = object
     sys.modules["openai"] = fake_openai
 

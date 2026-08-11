@@ -8,7 +8,7 @@
   <view class="step-row">
     <block wx:for="{{steps}}" wx:key="index">
       <view class="step {{step >= item.index ? 'step-active' : ''}}">{{item.label}}</view>
-      <view wx:if="{{item.index < 2}}" class="step-line {{step > item.index ? 'step-line-active' : ''}}"></view>
+      <view wx:if="{{item.index < 3}}" class="step-line {{step > item.index ? 'step-line-active' : ''}}"></view>
     </block>
   </view>
 
@@ -59,5 +59,17 @@
     <view class="summary-row"><view><text class="summary-label">目标篇幅</text><text class="summary-value">{{targetWords}} 字</text></view><text class="hint" data-step="1" bindtap="goStep">修改</text></view>
     <view class="summary-block"><text class="summary-label">灵感</text><text class="summary-value">{{inspiration}}</text><text class="hint" data-step="0" bindtap="goStep">修改灵感</text></view>
     <button class="primary-button" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">{{submitting ? '正在整理大纲…' : '生成大纲'}}</button>
+  </view>
+
+  <view wx:if="{{step === 3 && outlinePreview}}" class="card stack">
+    <view class="section-title">先看一眼大纲</view>
+    <view class="notice">这是生成正文前的最后确认。当前预览 {{outlinePreview.totalChapters}} 章，后续可以在写作页逐章推进。</view>
+    <view class="outline-preview-title">{{outlinePreview.title}}</view>
+    <view wx:for="{{outlinePreview.chapters}}" wx:key="number" class="outline-preview-item">
+      <view class="outline-chapter-title">第{{item.number}}章 {{item.title}}</view>
+      <view wx:if="{{item.summary}}" class="muted">{{item.summary}}</view>
+    </view>
+    <view wx:if="{{outlinePreview.totalChapters > 12}}" class="hint">仅展示前 12 章，完整大纲已保存到作品。</view>
+    <button class="primary-button" bindtap="confirmOutline">确认大纲，开始写作</button>
   </view>
 </view>

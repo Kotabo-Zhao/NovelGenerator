@@ -5,7 +5,7 @@ import os
 import urllib.parse
 from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse, PlainTextResponse
+from fastapi.responses import Response, StreamingResponse, PlainTextResponse
 from pydantic import BaseModel, Field, validator
 
 from core.atomic_io import atomic_write_json, safe_read_json
@@ -482,47 +482,26 @@ async def get_batch_checkpoint(novel_id: str):
 @router.get("/api/novels/{novel_id}/export")
 async def export_novel(novel_id: str, fmt: str = "txt"):
     """导出单本小说 (txt / pdf / epub)"""
-    if fmt == "pdf":
-        return await export_novel_pdf(novel_id)
-    if fmt == "epub":
-        return await export_novel_epub(novel_id)
-
-    content, err = engine.export_novel(novel_id, "txt")
+    if fmt not in {"txt", "epub"}:
+        raise HTTPException(status_code=400, detail="当前仅支持 txt 和 epub 导出")
+    content, err = await asyncio.to_thread(engine.export_novel, novel_id, fmt)
     if err:
         raise HTTPException(status_code=404, detail=err)
 
-    return PlainTextResponse(
-        content,
-        media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{urllib.parse.quote(novel_id)}.txt"}
-    )
+    suffix = "epub" if fmt == "epub" else "txt"
+    media_type = "application/epub+zip" if suffix == "epub" else "text/plain; charset=utf-8"
+    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{urllib.parse.quote(novel_id)}.{suffix}"}
+    if isinstance(content, bytes):
+        return Response(content, media_type=media_type, headers=headers)
+    return PlainTextResponse(content, media_type=media_type, headers=headers)
 
 
 @router.post("/api/novels/export/batch")
 async def batch_export(req: BatchExportRequest, request: Request):
-    """批量导出所有小说"""
-    novel_ids = req.novel_ids
-    fmt = req.fmt
-
-    if not novel_ids:
-        # 导出全部
-        owner_id = getattr(request.state, "owner_id", None)
-        novel_ids = [item["novel_id"] for item in ownership_store.list_for_owner(owner_id)]
-
-    for novel_id in novel_ids:
-        _require_legacy_owner(request, novel_id)
-
-    results = []
-    for nid in novel_ids:
-        content, err = engine.export_novel(nid, fmt)
-        results.append({
-            "novel_id": nid,
-            "success": err is None,
-            "error": err or None,
-            "content": content if err is None else None,
-        })
-
-    return {"results": results}
+    raise HTTPException(
+        status_code=410,
+        detail="批量导出已迁移到认证接口 /v1/novels/{novel_id}/exports",
+    )
 
 
 @router.get("/api/novels/{novel_id}/character-bible")
