@@ -22,4 +22,3 @@ wx.setStorageSync('apiBase', 'https://your-dev-api.example.com')
 - `生成本章` 暂时明确提示“任务接口即将接入”，不会伪装成已完成的长任务。
 - 现有 FastAPI 的 SSE 生成协议尚未直接接入小程序；需等后端 job 状态/事件接口完成后再选轮询或 WebSocket。
 - 需要在微信开发者工具和真机上验证安全区、弱网、长文本滚动和合法域名配置。
-
