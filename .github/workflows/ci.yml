@@ -75,6 +75,9 @@ jobs:
       - name: Run security regression tests
         run: python tests/test_path_security.py
 
+      - name: Run generation budget tests
+        run: python tests/test_generation_limits.py
+
       - name: Verify native mini program structure
         run: python tests/test_miniprogram_structure.py
 

@@ -7,6 +7,12 @@ from openai import OpenAI
 from .styles import get_style, build_style_prompt, build_custom_style
 from .humanizer import humanize_text, build_humanizer_prompt
 from .resilient_client import ResilientLLMClient, RetryConfig
+from .generation_limits import max_generation_tokens
+
+try:
+    from backend.config import MAX_CHAPTER_TOKENS
+except ImportError:
+    from config import MAX_CHAPTER_TOKENS
 
 log = logging.getLogger(__name__)
 
@@ -487,8 +493,10 @@ class Writer:
         
         draft = ""
         finish_reason = "unknown"
-        # max_tokens 根据目标字数动态计算，长章节不受 6000 硬限制
-        safe_max_tokens = min(int(target_words * 3), 12000)
+        # max_tokens 根据目标字数估算，但所有初稿/续写/补全路径共享配置硬上限。
+        safe_max_tokens = max_generation_tokens(
+            int(target_words), hard_cap=MAX_CHAPTER_TOKENS
+        )
         
         # v2.14: 使用韧性客户端的流式调用，支持断线重连
         messages = [
@@ -517,7 +525,9 @@ class Writer:
             log.warning(f"Draft truncated by API (finish_reason=length, {len(draft)} < {int(target_words*0.8)}). "
                        f"Continuing from breakpoint with doubled max_tokens...")
             try:
-                retry_max_tokens = min(int(target_words * 6), 24000)
+                retry_max_tokens = max_generation_tokens(
+                    int(target_words), multiplier=6, hard_cap=MAX_CHAPTER_TOKENS
+                )
                 # v2.49: 从断点续写，而不是从头重写
                 # 将已生成内容作为 assistant 消息传递，让 LLM 知道已经写了什么
                 continue_msgs = [
@@ -638,7 +648,11 @@ class Writer:
                 
                 log.warning(f"Truncation detected (round {retry_round+1}): {reason}. "
                            f"Continuing from breakpoint with {retry_multiplier}x max_tokens...")
-                retry_max = min(int(target_words * 3 * retry_multiplier), 24000)
+                retry_max = max_generation_tokens(
+                    int(target_words),
+                    multiplier=3 * retry_multiplier,
+                    hard_cap=MAX_CHAPTER_TOKENS,
+                )
                 # v2.49: 从断点续写，不重写
                 continue_msgs = [
                     {"role": "system", "content": system_prompt},
