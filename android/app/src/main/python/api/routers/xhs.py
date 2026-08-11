@@ -169,6 +169,7 @@ async def generate_titles_endpoint(req: dict = None):
     novel_id = req.get("novel_id", "")
     if not novel_id:
         raise HTTPException(status_code=400, detail="缺少 novel_id")
+    _validate_novel_id(novel_id)
     
     try:
         plan = engine.memory.read("plan", novel_id)

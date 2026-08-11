@@ -3,13 +3,13 @@ import asyncio
 import json
 import os
 import urllib.parse
-from typing import Optional
+from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse, Response
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse, PlainTextResponse
+from pydantic import BaseModel, Field, validator
 
-from config import NOVELS_DIR, DEFAULT_CHAPTER_WORDS
+from core.atomic_io import atomic_write_json, safe_read_json
+from core.path_security import validate_novel_id as _validate_path_novel_id
 
 router = APIRouter()
 
@@ -18,11 +18,11 @@ from core.humanizer import humanize_text
 
 
 class CreateNovelRequest(BaseModel):
-    genre: str = "玄幻"
-    style: str = "热血爽文"
-    inspiration: str = ""
-    target_words: int = 500000
-    title: str = ""
+    genre: str = Field("玄幻", min_length=1, max_length=40)
+    style: str = Field("热血爽文", min_length=1, max_length=100)
+    inspiration: str = Field("", max_length=20000)
+    target_words: int = Field(500000, ge=1000, le=2000000)
+    title: str = Field("", max_length=100)
     natural_names: bool = True  # 自然命名，去AI味
     normal_pacing: bool = False  # v2.2: 默认快节奏
     fast_food: bool = False  # v2.7: 快餐模式
@@ -30,41 +30,36 @@ class CreateNovelRequest(BaseModel):
 
 
 class GenerateChapterRequest(BaseModel):
-    novel_id: str
-    chapter_num: int
-    writing_mode: str = "webnovel"  # "webnovel" | "literary"
-    feedback: Optional[str] = None  # 用户修改意见（重生成场景）
+    novel_id: str = Field(..., min_length=1, max_length=200)
+    chapter_num: int = Field(..., ge=1, le=100000)
+    writing_mode: Literal["webnovel", "literary"] = "webnovel"
+    feedback: Optional[str] = Field(None, max_length=5000)
+
+    @validator("novel_id")
+    def validate_novel_id(cls, value):
+        try:
+            return _validate_path_novel_id(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
 
-from ..deps import engine, log, _validate_novel_id, _validate_chapter_range, _sse_with_heartbeat
-from core.humanizer import humanize_text
-
-def _validate_novel_id(novel_id: str) -> str:
-    """校验小说ID：只允许ASCII字母/数字/中文/下划线/连字符"""
-    import re
-    if not novel_id or not isinstance(novel_id, str):
-        raise HTTPException(400, "❌ 小说ID不能为空")
-    if len(novel_id) > 200:
-        raise HTTPException(400, "❌ 小说ID过长（最多200字符）")
-    if re.search(r'[<>"/\\|?*]', novel_id):
-        raise HTTPException(400, "❌ 小说ID包含非法字符")
-    # 反路径遍历
-    if ".." in novel_id:
-        raise HTTPException(400, "❌ 小说ID包含非法路径序列")
-    return novel_id
+class BatchGenerationRequest(BaseModel):
+    start_chapter: int = Field(1, ge=1, le=100000)
+    end_chapter: int = Field(1, ge=1, le=100000)
+    writing_mode: Literal["webnovel", "literary"] = "webnovel"
+    resume: bool = False
 
 
-def _validate_chapter_range(start: int, end: int):
-    """校验章节范围"""
-    if not isinstance(start, int) or not isinstance(end, int):
-        raise HTTPException(400, "❌ 章节号必须为整数")
-    if start < 1 or end < 1:
-        raise HTTPException(400, "❌ 章节号必须大于0")
-    if start > end:
-        raise HTTPException(400, f"❌ 起始章节({start})不能大于结束章节({end})")
-    if end - start > 200:
-        raise HTTPException(400, "❌ 批量生成一次最多200章")
+class BatchExportRequest(BaseModel):
+    novel_ids: List[str] = Field(default_factory=list, max_items=50)
+    fmt: Literal["txt", "pdf", "epub"] = "txt"
 
+    @validator("novel_ids", each_item=True)
+    def validate_export_novel_id(cls, value):
+        try:
+            return _validate_path_novel_id(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
 @router.get("/api/novels")
 async def list_novels():
@@ -320,12 +315,14 @@ async def generate_chapter_atomic(req: GenerateChapterRequest):
 
 
 @router.post("/api/novels/{novel_id}/generate/batch")
-async def generate_batch(novel_id: str, req: dict):
+async def generate_batch(novel_id: str, req: BatchGenerationRequest):
     """批量生成章节 (SSE 流式进度 + 检查点断点续传)"""
-    start = req.get("start_chapter", 1)
-    end = req.get("end_chapter", 1)
-    writing_mode = req.get("writing_mode", "webnovel")
-    resume = req.get("resume", False)  # v2.14: 断点续传
+    _validate_novel_id(novel_id)
+    start = req.start_chapter
+    end = req.end_chapter
+    writing_mode = req.writing_mode
+    resume = req.resume  # v2.14: 断点续传
+    _validate_chapter_range(start, end)
 
     # v2.14: 断点续传 — 读取上次检查点，跳过已生成章节
     if resume:
@@ -398,33 +395,31 @@ async def generate_batch(novel_id: str, req: dict):
 
 def _checkpoint_path(novel_id: str) -> str:
     """获取检查点文件路径"""
-    import os
-    novel_dir = os.path.join(config.NOVELS_DIR, novel_id)
-    return os.path.join(novel_dir, ".batch_checkpoint.json")
+    _validate_novel_id(novel_id)
+    return os.path.join(engine.memory.get_novel_dir(novel_id), ".batch_checkpoint.json")
 
 
 def _save_batch_checkpoint(novel_id: str, next_chapter: int, end_chapter: int):
     """保存批量生成检查点"""
-    import os, json, time as _time
+    import time as _time
     try:
         cp = {"novel_id": novel_id, "next_chapter": next_chapter,
               "end_chapter": end_chapter, "saved_at": _time.time()}
         path = _checkpoint_path(novel_id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(cp, f, ensure_ascii=False)
+        atomic_write_json(path, cp)
     except Exception as e:
         log.warning(f"Failed to save checkpoint: {e}")
 
 
 def _read_batch_checkpoint(novel_id: str) -> dict:
     """读取批量生成检查点"""
-    import os, json
     try:
         path = _checkpoint_path(novel_id)
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            checkpoint = safe_read_json(path, None)
+            if isinstance(checkpoint, dict) and checkpoint.get("novel_id") == novel_id:
+                return checkpoint
     except Exception:
         pass
     return None
@@ -462,7 +457,6 @@ async def export_novel(novel_id: str, fmt: str = "txt"):
     if err:
         raise HTTPException(status_code=404, detail=err)
 
-    safe_name = novel_id.encode("ascii", errors="replace").decode().replace("?", "_") or "novel"
     return PlainTextResponse(
         content,
         media_type="text/plain; charset=utf-8",
@@ -471,12 +465,10 @@ async def export_novel(novel_id: str, fmt: str = "txt"):
 
 
 @router.post("/api/novels/export/batch")
-async def batch_export(req: dict = None):
+async def batch_export(req: BatchExportRequest):
     """批量导出所有小说"""
-    if req is None:
-        req = {}
-    novel_ids = req.get("novel_ids", [])
-    fmt = req.get("fmt", "txt")
+    novel_ids = req.novel_ids
+    fmt = req.fmt
 
     if not novel_ids:
         # 导出全部

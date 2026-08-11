@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """NovelGenerator 全模块健康检查"""
 import json, sys, time
-import urllib.request, urllib.error
+import urllib.request, urllib.error, urllib.parse
 
 BASE = "http://localhost:8000"
 NOVEL_ID = "逆天废材：从悬崖开始的无敌路"

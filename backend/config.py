@@ -17,7 +17,9 @@ NOVELS_DIR = os.path.abspath(os.getenv("NOVELS_DIR", _DEFAULT_NOVELS))
 # Server
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+# 默认不启用跨域；浏览器同源页面不需要 CORS，小程序使用合法业务域名。
+# 如需本地跨域调试，请显式配置 CORS_ORIGINS，不要把 * 带入生产。
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")
 
 # 写作参数
 MAX_CONTEXT_TOKENS = 8000

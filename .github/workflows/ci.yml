@@ -72,5 +72,8 @@ jobs:
       - name: Consistency — backend/android core 副本一致
         run: python tools/sync_android_core.py --check
 
+      - name: Run security regression tests
+        run: python tests/test_path_security.py
+
       - name: Run core test suite (55 cases)
         run: python -m pytest tests/test_suite.py -q --no-header

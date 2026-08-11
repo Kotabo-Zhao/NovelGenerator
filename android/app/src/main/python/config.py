@@ -19,7 +19,8 @@ WEB_DIR = os.getenv("NOVELGEN_WEB_DIR", os.path.join(_HERE, "web"))
 # Server
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8899"))
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+# 默认不启用跨域；需要跨域调试时显式配置来源。
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")
 
 # Writing
 MAX_CONTEXT_TOKENS = 8000

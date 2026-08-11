@@ -26,6 +26,7 @@ import threading
 import logging
 from typing import Optional, Callable
 from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
+from .path_security import safe_novel_dir, safe_novel_file
 
 log = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ class SharedMemoryManager:
 
     def scan_chapters(self, novel_id: str) -> list:
         """扫描磁盘实际存在的章节号列表"""
-        chapters_dir = os.path.join(self.novels_dir, novel_id, "chapters")
+        chapters_dir = os.path.join(safe_novel_dir(self.novels_dir, novel_id), "chapters")
         if not os.path.exists(chapters_dir):
             return []
         chapters = []
@@ -1184,7 +1185,7 @@ class SharedMemoryManager:
 
     def create_novel_workspace(self, novel_id: str) -> str:
         """为新小说创建完整工作目录"""
-        novel_dir = os.path.join(self.novels_dir, novel_id)
+        novel_dir = safe_novel_dir(self.novels_dir, novel_id)
         os.makedirs(novel_dir, exist_ok=True)
         os.makedirs(os.path.join(novel_dir, "chapters"), exist_ok=True)
         return novel_dir
@@ -1244,7 +1245,7 @@ class SharedMemoryManager:
             rel_path = file_info["file"].format(chapter_num)
         else:
             rel_path = file_info["file"]
-        return os.path.join(self.novels_dir, novel_id, rel_path)
+        return safe_novel_file(self.novels_dir, novel_id, rel_path)
 
     def _write_with_lock(self, path: str, data, max_retries: int = 3) -> bool:
         """乐观锁写入：读取→版本检查→写入→冲突重试
@@ -1317,7 +1318,7 @@ class SharedMemoryManager:
         Returns:
             {"repaired": bool, "added": [...], "removed": [], "state": dict}
         """
-        state_path = os.path.join(self.novels_dir, novel_id, "state.json")
+        state_path = safe_novel_file(self.novels_dir, novel_id, "state.json")
         
         # 读取当前 state（可能已损坏）
         current_state = safe_read_json(state_path, {})
@@ -1382,7 +1383,7 @@ class SharedMemoryManager:
     # ═══════════════════════════════════════════
 
     def get_novel_dir(self, novel_id: str) -> str:
-        return os.path.join(self.novels_dir, novel_id)
+        return safe_novel_dir(self.novels_dir, novel_id)
 
     def build_writer_context(self, novel_id: str, chapter_num: int,
                              chapter_outline: dict) -> str:
@@ -1443,7 +1444,7 @@ class SharedMemoryManager:
             state["current_chapter"] = max(state["completed_chapters"])
             # v2.2.1: 使用 simplified write (no optimistic lock) to avoid conflict failures
             # during auto-sync. Auto-sync only adds missing chapters, never removes.
-            state_path = os.path.join(self.novels_dir, novel_id, "state.json")
+            state_path = safe_novel_file(self.novels_dir, novel_id, "state.json")
             try:
                 atomic_write_json(state_path, state)
                 self._invalidate(novel_id, "state")

@@ -21,6 +21,8 @@ import shutil
 import time
 from typing import Any, Optional
 
+from ..path_security import safe_novel_dir
+
 log = logging.getLogger(__name__)
 
 CHECKPOINT_KEEP = 10          # 快照保留份数
@@ -132,7 +134,7 @@ class InteractStore:
     # ── 路径 ──
     def _base_dir(self, novel_id: str) -> str:
         if novel_id not in self._dir_cache:
-            d = os.path.join(self.novels_dir, novel_id, "interactive")
+            d = os.path.join(safe_novel_dir(self.novels_dir, novel_id), "interactive")
             os.makedirs(d, exist_ok=True)
             self._dir_cache[novel_id] = d
         return self._dir_cache[novel_id]

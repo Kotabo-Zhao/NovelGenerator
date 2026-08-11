@@ -4,7 +4,6 @@
 storygraph/requirements/styles/trends/xhs），本文件只保留应用装配、中间件、
 静态资源服务与健康检查。
 """
-import json
 import asyncio
 import logging
 import sys
@@ -30,10 +29,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse, FileResponse, HTMLResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 
-from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, DEFAULT_CHAPTER_WORDS
+from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR
+from core.path_security import validate_novel_id
 
 # 共享依赖：engine 单例 + log（见 deps.py）
 from .deps import engine, log
@@ -46,13 +45,33 @@ app = FastAPI(title="NovelGenerator API", version="1.0.0")
 # wildcard + credentials 是浏览器禁止的组合，通配时自动关闭 credentials
 _cors_origins = CORS_ORIGINS.split(",") if isinstance(CORS_ORIGINS, str) else CORS_ORIGINS
 _cors_origins = [o.strip() for o in _cors_origins if o.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"] if "*" in _cors_origins else _cors_origins,
-    allow_credentials="*" not in _cors_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_allow_wildcard_cors = os.getenv("ALLOW_WILDCARD_CORS", "false").lower() == "true"
+if "*" in _cors_origins and not _allow_wildcard_cors:
+    log.warning("Wildcard CORS is disabled by default; configure explicit CORS_ORIGINS for public deployments")
+    _cors_origins = []
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"] if "*" in _cors_origins else _cors_origins,
+        allow_credentials="*" not in _cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+@app.middleware("http")
+async def validate_novel_path_middleware(request: Request, call_next):
+    """在所有作品路由进入业务层前统一阻断危险的目录名。"""
+    prefix = "/api/novels/"
+    path = request.url.path
+    if path.startswith(prefix):
+        raw_novel_id = urllib.parse.unquote(path[len(prefix):].split("/", 1)[0])
+        if raw_novel_id:
+            try:
+                validate_novel_id(raw_novel_id)
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "非法小说 ID"})
+    return await call_next(request)
 
 # ── Rate Limiting Middleware ──
 
@@ -174,30 +193,19 @@ async def serve_manifest():
 @app.get("/api/health")
 async def health():
     novels_exist = os.path.exists(NOVELS_DIR)
-    novel_count = len([f for f in os.listdir(NOVELS_DIR) if os.path.isdir(os.path.join(NOVELS_DIR, f)) and f != ".gitkeep"]) if novels_exist else 0
-    # 列出所有 novel 目录和对应的书名
-    novel_list = []
+    novel_count = 0
     if novels_exist:
-        for d in sorted(os.listdir(NOVELS_DIR)):
-            dpath = os.path.join(NOVELS_DIR, d)
-            if os.path.isdir(dpath) and d != ".gitkeep":
-                plan_f = os.path.join(dpath, "plan.json")
-                title = d
-                if os.path.exists(plan_f):
-                    try:
-                        with open(plan_f, "r", encoding="utf-8") as f:
-                            pd = json.load(f)
-                        title = pd.get("title", d) if isinstance(pd, dict) else d
-                    except Exception as _e:
-                        log.warning("读取 plan.json 失败 %s: %s", plan_f, _e)
-                novel_list.append({"dir": d, "title": title, "has_plan": os.path.exists(plan_f)})
+        novel_count = sum(
+            1 for name in os.listdir(NOVELS_DIR)
+            if not name.startswith(".")
+            and os.path.isdir(os.path.join(NOVELS_DIR, name))
+            and os.path.exists(os.path.join(NOVELS_DIR, name, "plan.json"))
+        )
     return {
         "status": "ok",
         "service": "NovelGenerator",
-        "storage": NOVELS_DIR,
         "storage_exists": novels_exist,
         "novel_count": novel_count,
-        "novels": novel_list,
     }
 
 

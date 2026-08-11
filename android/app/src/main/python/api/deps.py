@@ -7,11 +7,11 @@ import asyncio
 import json
 import logging
 import os
-import re
 
 from fastapi import HTTPException
 
 from core.engine import NovelEngine
+from core.path_security import validate_novel_id as _validate_path_novel_id
 from config import NOVELS_DIR
 
 log = logging.getLogger("api")
@@ -24,17 +24,11 @@ os.makedirs(NOVELS_DIR, exist_ok=True)
 
 
 def _validate_novel_id(novel_id: str) -> str:
-    """校验小说ID：只允许ASCII字母/数字/中文/下划线/连字符"""
-    if not novel_id or not isinstance(novel_id, str):
-        raise HTTPException(400, "❌ 小说ID不能为空")
-    if len(novel_id) > 200:
-        raise HTTPException(400, "❌ 小说ID过长（最多200字符）")
-    if re.search(r'[<>"/\\|?*]', novel_id):
-        raise HTTPException(400, "❌ 小说ID包含非法字符")
-    # 反路径遍历
-    if ".." in novel_id:
-        raise HTTPException(400, "❌ 小说ID包含非法路径序列")
-    return novel_id
+    """API 边界校验小说 ID，并将核心层 ValueError 转为 400。"""
+    try:
+        return _validate_path_novel_id(novel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"❌ {exc}") from exc
 
 
 def _validate_chapter_range(start: int, end: int):

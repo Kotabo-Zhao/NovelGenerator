@@ -10,11 +10,11 @@ router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
 from core.atomic_io import atomic_write_json
+from core.path_security import safe_novel_file
 
 def _read_novel_file(novel_id: str, filename: str) -> dict:
     """安全读取小说目录下的 JSON 文件"""
-    novel_dir = engine.memory.get_novel_dir(novel_id)
-    path = os.path.join(novel_dir, filename)
+    path = safe_novel_file(engine.memory.novels_dir, novel_id, filename)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail=f"{filename} 不存在，请先生成大纲")
     try:
@@ -175,8 +175,7 @@ async def get_storygraph_visualization(novel_id: str, chapter: int = 0):
 def _write_novel_file(novel_id: str, filename: str, data: dict):
     """安全写入小说目录下的 JSON 文件（原子写入）"""
     from core.atomic_io import atomic_write_json
-    novel_dir = engine.memory.get_novel_dir(novel_id)
-    path = os.path.join(novel_dir, filename)
+    path = safe_novel_file(engine.memory.novels_dir, novel_id, filename)
     atomic_write_json(path, data)
 
 
