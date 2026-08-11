@@ -1,0 +1,37 @@
+<view class="page">
+  <view wx:if="{{!novelId}}" class="card empty-state">
+    <view class="empty-mark">写</view>
+    <view class="empty-title">先选择一本作品</view>
+    <view class="empty-copy">从书架进入，或先创建一本新小说。</view>
+    <button class="primary-button" bindtap="openCreate">去创建</button>
+  </view>
+
+  <block wx:else>
+    <view class="page-header">
+      <view class="eyebrow">CURRENT WORK</view>
+      <view class="page-title">{{novel.title || novelId}}</view>
+      <view class="page-subtitle">只保留当前章节和一个主动作，其他工具放到后续详情页。</view>
+    </view>
+
+    <view wx:if="{{error}}" class="error-box">{{error}}</view>
+    <view wx:if="{{novel}}" class="card progress-card">
+      <view class="row"><text class="section-title">第 {{chapter}} 章</text><text class="hint">{{readingLoading ? '读取中' : '阅读模式'}}</text></view>
+      <view class="book-meta">已完成 {{novel.state && novel.state.completed_chapters ? novel.state.completed_chapters.length : 0}} 章</view>
+      <view class="progress-track"><view class="progress-value" style="width: {{novel.state && novel.state.total_chapters ? (novel.state.completed_chapters.length / novel.state.total_chapters * 100) : 0}}%;"></view></view>
+    </view>
+
+    <view wx:if="{{content}}" class="card chapter-card">
+      <text class="chapter-content">{{content}}</text>
+    </view>
+    <view wx:elif="{{!loading}}" class="card empty-state compact-empty">
+      <view class="empty-title">这一章还没有正文</view>
+      <view class="empty-copy">确认大纲后，点击主按钮开始生成。</view>
+    </view>
+
+    <view class="chapter-actions">
+      <button class="quiet-button flex-1" disabled="{{chapter <= 1}}" bindtap="previousChapter">上一章</button>
+      <button class="primary-button flex-1" bindtap="startGeneration">生成本章</button>
+      <button class="quiet-button flex-1" bindtap="nextChapter">下一章</button>
+    </view>
+  </block>
+</view>

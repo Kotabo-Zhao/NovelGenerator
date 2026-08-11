@@ -1,0 +1,22 @@
+<view class="page">
+  <view class="page-header">
+    <view class="eyebrow">YOUR WORKSPACE</view>
+    <view class="page-title">我的</view>
+    <view class="page-subtitle">把复杂设置收起来，让写作保持专注。</view>
+  </view>
+
+  <view class="card profile-note">
+    <view class="section-title">小程序 MVP</view>
+    <view class="muted">当前先验证移动端核心闭环。微信登录、隐私同意、作品隔离和用量管理会在后端认证层完成后接入。</view>
+  </view>
+
+  <view class="settings-list">
+    <view wx:for="{{items}}" wx:key="key" class="card setting-item" data-key="{{item.key}}" bindtap="onTap">
+      <view class="row">
+        <view class="setting-title">{{item.title}}</view>
+        <view class="hint">›</view>
+      </view>
+      <view class="book-meta">{{item.desc}}</view>
+    </view>
+  </view>
+</view>

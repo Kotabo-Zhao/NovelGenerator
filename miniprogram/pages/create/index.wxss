@@ -1,0 +1,13 @@
+.summary-row,
+.summary-block {
+  border-bottom: 1rpx solid #ece7da;
+  display: flex;
+  justify-content: space-between;
+  padding: 20rpx 0;
+}
+
+.summary-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}

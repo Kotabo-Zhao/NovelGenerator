@@ -1,0 +1,30 @@
+.progress-card {
+  margin-bottom: 20rpx;
+}
+
+.chapter-card {
+  margin-top: 20rpx;
+}
+
+.chapter-content {
+  color: #342e25;
+  font-family: "STKaiti", "KaiTi", serif;
+  font-size: 32rpx;
+  line-height: 2;
+  white-space: pre-wrap;
+}
+
+.compact-empty {
+  padding: 50rpx 24rpx;
+}
+
+.chapter-actions {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 24rpx;
+}
+
+.chapter-actions button {
+  font-size: 23rpx;
+  padding: 0 8rpx;
+}

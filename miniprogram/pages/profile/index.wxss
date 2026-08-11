@@ -1,0 +1,19 @@
+.profile-note {
+  border-left: 6rpx solid #a8843c;
+  margin-bottom: 24rpx;
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.setting-item {
+  padding: 24rpx 28rpx;
+}
+
+.setting-title {
+  font-size: 29rpx;
+  font-weight: 600;
+}

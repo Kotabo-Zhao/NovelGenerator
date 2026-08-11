@@ -1,0 +1,55 @@
+<view class="page">
+  <view class="page-header">
+    <view class="eyebrow">START WITH ONE SENTENCE</view>
+    <view class="page-title">创建作品</view>
+    <view class="page-subtitle">三步完成设定，复杂策略交给系统。</view>
+  </view>
+
+  <view class="step-row">
+    <view class="step {{step >= 0 ? 'step-active' : ''}}">01 灵感</view>
+    <view class="step {{step >= 1 ? 'step-active' : ''}}">02 基调</view>
+    <view class="step {{step >= 2 ? 'step-active' : ''}}">03 确认</view>
+  </view>
+
+  <view wx:if="{{error}}" class="error-box">{{error}}</view>
+
+  <view wx:if="{{step === 0}}" class="card stack">
+    <view class="section-title">你想讲一个什么故事？</view>
+    <text class="form-label">一句话灵感</text>
+    <textarea class="field textarea-field" maxlength="20000" placeholder="例如：一个失去记忆的修理师，在旧城里修复一台能播放未来的收音机。" data-field="inspiration" bindinput="input" value="{{inspiration}}"></textarea>
+    <text class="form-label">作品名（可留空）</text>
+    <input class="field" maxlength="100" placeholder="系统会根据大纲给出建议" data-field="title" bindinput="input" value="{{title}}" />
+    <button class="primary-button" bindtap="nextStep">继续设定</button>
+  </view>
+
+  <view wx:if="{{step === 1}}" class="card stack">
+    <view class="section-title">选择故事的气质</view>
+    <text class="form-label">题材</text>
+    <view class="choice-row">
+      <view wx:for="{{genres}}" wx:key="*this" class="choice {{genre === item ? 'choice-active' : ''}}" data-field="genre" data-value="{{item}}" bindtap="choose">{{item}}</view>
+    </view>
+    <text class="form-label">风格</text>
+    <view class="choice-row">
+      <view wx:for="{{styles}}" wx:key="*this" class="choice {{style === item ? 'choice-active' : ''}}" data-field="style" data-value="{{item}}" bindtap="choose">{{item}}</view>
+    </view>
+    <text class="form-label">目标篇幅</text>
+    <input class="field" type="number" data-field="targetWords" bindinput="input" value="{{targetWords}}" />
+    <view class="row gap-16">
+      <button class="quiet-button flex-1" bindtap="previousStep">上一步</button>
+      <button class="primary-button flex-1" bindtap="nextStep">查看确认</button>
+    </view>
+  </view>
+
+  <view wx:if="{{step === 2}}" class="card stack">
+    <view class="section-title">确认创作方向</view>
+    <view class="notice">先生成大纲，确认后再开始写正文。每一步都可以回头修改。</view>
+    <view class="summary-row"><text class="muted">题材</text><text>{{genre}}</text></view>
+    <view class="summary-row"><text class="muted">风格</text><text>{{style}}</text></view>
+    <view class="summary-row"><text class="muted">目标篇幅</text><text>{{targetWords}} 字</text></view>
+    <view class="summary-block"><text class="muted">灵感</text><text>{{inspiration}}</text></view>
+    <view class="row gap-16">
+      <button class="quiet-button flex-1" bindtap="previousStep">返回修改</button>
+      <button class="primary-button flex-1" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">生成大纲</button>
+    </view>
+  </view>
+</view>

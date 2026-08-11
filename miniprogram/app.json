@@ -1,0 +1,27 @@
+{
+  "pages": [
+    "pages/shelf/index",
+    "pages/create/index",
+    "pages/write/index",
+    "pages/profile/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "NovelGenerator",
+    "navigationBarBackgroundColor": "#f6f3ec",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f6f3ec",
+    "backgroundTextStyle": "light"
+  },
+  "tabBar": {
+    "color": "#7c7566",
+    "selectedColor": "#c0392b",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/shelf/index", "text": "书架" },
+      { "pagePath": "pages/create/index", "text": "创建" },
+      { "pagePath": "pages/write/index", "text": "写作" },
+      { "pagePath": "pages/profile/index", "text": "我的" }
+    ]
+  }
+}
