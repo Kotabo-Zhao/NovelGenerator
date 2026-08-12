@@ -582,7 +582,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .shelf-grid{grid-template-columns:repeat(2,1fr);gap:10px}
   .book-cover{height:120px}
   .style-grid{grid-template-columns:repeat(2,1fr)}
-  .xhs-tpl-grid{grid-template-columns:repeat(2,1fr)!important}
   .main{padding:16px 12px 100px}
   .chapter-content{font-size:15px}
   .main-header h2{font-size:20px}
@@ -608,7 +607,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     <nav class="sidebar-nav">
       <div class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="nav-icon">📜</span>书架</div>
       <div class="nav-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="nav-icon">🖋️</span>开卷</div>
-      <div class="nav-item" :class="{active:currentView==='trends'}" @click="openTrends"><span class="nav-icon">🔍</span>追风</div>
       <div class="nav-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="nav-icon">✒️</span>落笔</div>
       <div class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="nav-icon">📦</span>付梓</div>
     </nav>
@@ -669,73 +667,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <div class="main-header">
         <h2>新作品</h2>
         <div class="sub">选择模式开始创作</div>
-      </div>
-
-      <!-- v2.50: 小红书爆款短篇模式 -->
-      <div class="card" :style="{border:'2px solid '+ (xhsMode ? 'var(--accent)' : 'var(--border)'), background: xhsMode ? 'linear-gradient(135deg, rgba(233,69,96,.08), rgba(255,107,107,.04))' : ''}">
-        <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" @click="xhsMode=!xhsMode">
-          <div>
-            <div style="font-size:16px;font-weight:700;color:var(--accent)">📕 小红书爆款短篇</div>
-            <div style="font-size:12px;color:var(--text2);margin-top:2px">8000-10000字，女频爽文，一键生成完整短篇 + 爆款标题</div>
-          </div>
-          <div style="font-size:24px;color:var(--text2);transition:transform .2s" :style="{transform:xhsMode?'rotate(90deg)':''}">▶</div>
-        </div>
-        <template v-if="xhsMode">
-          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-            <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">选择模板</div>
-            <div class="xhs-tpl-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">
-              <button v-for="t in xhsTemplates" :key="t.key"
-                class="btn" :class="xhsTemplate===t.key?'btn-primary':'btn-secondary'"
-                style="font-size:11px;padding:8px 6px;text-align:center"
-                @click="xhsTemplate=t.key; loadXhsPresets()">
-                <div style="font-size:16px">{{ t.emoji }}</div>
-                <div style="margin-top:2px">{{ t.label }}</div>
-                <div style="font-size:9px;opacity:.5">{{ t.target_words }}字</div>
-              </button>
-            </div>
-            <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">预设剧情（点一下就能生成）</div>
-            <div v-if="xhsPresets.length>0" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin-bottom:10px;max-height:180px;overflow-y:auto">
-              <div v-for="p in xhsPresets" :key="p.id"
-                class="btn" :class="xhsPreset?.id===p.id?'btn-primary':'btn-secondary'"
-                style="font-size:11px;padding:8px;text-align:left;cursor:pointer"
-                @click="xhsPreset=p; xhsInspiration=''">
-                <div style="font-weight:600">{{ p.emoji }} {{ p.label }}</div>
-                <div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:4px">
-                  <span v-for="t in p.tags" style="font-size:9px;background:var(--bg2);color:var(--text2);padding:1px 5px;border-radius:8px">{{ t }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-if="xhsPreset" style="margin-bottom:10px;padding:8px 10px;background:var(--bg2);border-radius:6px;font-size:12px;color:var(--text2)">
-              📝 <b>{{ xhsPreset.label }}</b>：{{ xhsPreset.inspiration.slice(0,100) }}…
-            </div>
-            <div class="flex gap-8" style="margin-bottom:10px" v-if="!xhsPreset">
-              <input v-model="xhsInspiration" placeholder="或手动输入你的灵感…" style="font-size:12px;flex:1">
-            </div>
-            <button class="btn" style="width:100%;padding:12px;background:linear-gradient(135deg,#e94560,#ff6b6b);color:#fff;border:none;font-size:15px;font-weight:600"
-              @click="doXhsCreate" :disabled="loading.create || loading.xhs || (!xhsPreset && !xhsInspiration.trim())">
-              {{ loading.xhs ? '⏳ 生成中…' : '⚡ 一键生成短篇 + 爆款标题' }}
-            </button>
-            <div v-if="loading.xhs" style="margin-top:12px">
-              <div style="height:6px;background:var(--bg2);border-radius:3px;overflow:hidden">
-                <div :style="{width:xhsProgress+'%',height:'100%',background:'linear-gradient(90deg,#e94560,#ff6b6b)',transition:'width .3s'}"></div>
-              </div>
-              <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--text2)">
-                <span>{{ xhsPhase || '准备中…' }}</span><span>{{ xhsProgress }}%</span>
-              </div>
-              <div v-if="xhsStreamText" style="margin-top:8px;padding:8px;background:var(--bg2);border-radius:6px;font-size:11px;color:var(--text2);max-height:120px;overflow-y:auto;white-space:pre-wrap;line-height:1.5">{{ xhsStreamText.slice(-500) }}</div>
-            </div>
-            <div v-if="xhsResult" style="margin-top:16px;padding:12px;background:var(--bg2);border-radius:8px;font-size:12px">
-              <div style="color:var(--gold);margin-bottom:6px">✅ 生成完成 · {{ xhsResult.total_words }}字 · {{ xhsResult.chapters.length }}章</div>
-              <div style="color:var(--text2);margin-bottom:6px">📝 推荐标题（点击复制）：</div>
-              <div v-for="(t,i) in xhsResult.titles" :key="i" style="padding:4px 0;color:var(--text);border-bottom:1px solid var(--border);cursor:pointer" @click="navigator.clipboard.writeText(t);showToast('标题已复制','','✅')">
-                {{ i+1 }}. {{ t }}
-              </div>
-              <div class="flex gap-8 mt-8">
-                <span class="btn btn-primary btn-sm" style="cursor:pointer" @click="openNovel({id: xhsResult.novel_id, title: xhsResult.plan?.title, state: {completed_chapters: xhsResult.chapters.map(c=>c.number), total_chapters: 4, total_words: xhsResult.total_words}})">去书架写作</span>
-              </div>
-            </div>
-          </div>
-        </template>
       </div>
 
       <div class="card" style="margin-top:16px">
@@ -946,100 +877,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       </template>
     </template>
 
-    <!-- ====== Trends: 爆火分析 + 逆天生成 ====== -->
-    <template v-if="currentView==='trends'">
-      <div class="main-header">
-        <h2>🔥 爆火小说分析 & 逆天生成</h2>
-        <div class="sub">抓取热门小说 → 提取成功模式 → 离谱设定生成</div>
-      </div>
-      
-      <!-- 模式切换 -->
-      <div class="card" style="padding:8px 12px">
-        <div style="display:flex;gap:6px;align-items:center">
-          <span style="font-size:12px;color:var(--text2);margin-right:8px">生成模式:</span>
-          <button class="btn btn-sm" :class="bizarreMode==='topical'?'btn-primary':''" @click="bizarreMode='topical'" style="font-size:12px;padding:4px 12px">🌍 时事离谱</button>
-          <button class="btn btn-sm" :class="bizarreMode==='twist'?'btn-primary':''" @click="bizarreMode='twist'" style="font-size:12px;padding:4px 12px">🔀 剧情反转</button>
-          <button class="btn btn-sm" :class="bizarreMode==='mixed'?'btn-primary':''" @click="bizarreMode='mixed'" style="font-size:12px;padding:4px 12px">🎲 混搭</button>
-        </div>
-      </div>
-      
-      <div class="card">
-        <div class="card-title">操作</div>
-        <div class="flex gap-8">
-          <button class="btn btn-primary" @click="doTrendAnalyze" :disabled="trendLoading">
-            {{ trendLoading ? '分析中...' : '📊 分析爆火趋势' }}
-          </button>
-          <button class="btn btn-primary" @click="doBizarreQuick" :disabled="trendLoading" style="background:var(--accent2)">
-            {{ trendLoading ? '生成中...' : '🎲 快速生成 (×3)' }}
-          </button>
-          <button class="btn btn-primary" @click="doBizarreFull" :disabled="trendLoading" style="background:var(--accent3)">
-            {{ trendLoading ? '生成中...' : '🚀 完整生成 (×5, 含大纲)' }}
-          </button>
-        </div>
-      </div>
-
-      <!-- 趋势分析结果 -->
-      <div class="card" v-if="trendData">
-        <div class="card-title">📊 当前爆火趋势</div>
-        <div v-if="trendData.patterns">
-          <div style="margin-bottom:12px;color:var(--accent);font-weight:600">{{ trendData.patterns.success_formula?.summary }}</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
-            <span v-for="g in Object.keys(trendData.patterns.top_genres||{})" class="tag" style="background:var(--bg2);padding:4px 10px;border-radius:20px;font-size:12px">
-              {{ g }} ×{{ trendData.patterns.top_genres[g] }}
-            </span>
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;">
-            <span v-for="(t,i) in (trendData.patterns.common_tropes||[]).slice(0,10)" class="tag" style="background:var(--accent);opacity:0.8;color:#fff;padding:4px 10px;border-radius:20px;font-size:12px">
-              #{{ i+1 }} {{ t.name }}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 热门小说 -->
-      <div class="card" v-if="trendData?.hot_novels?.length">
-        <div class="card-title">🔥 {{ trendData.source === 'live' ? '实时' : '内置' }}热门榜 TOP{{ trendData.hot_novels.length }}</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">
-          <div v-for="n in trendData.hot_novels" style="background:var(--bg2);padding:8px 12px;border-radius:8px;font-size:12px">
-            <div style="font-weight:600;color:var(--accent)">{{ n.title }}</div>
-            <div style="color:var(--text2)">{{ n.author }} · {{ n.genre }}</div>
-            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
-              <span v-for="t in (n.tags||[]).slice(0,4)" style="background:var(--bg);padding:2px 6px;border-radius:4px;font-size:11px">{{ t }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 逆天小说卡片 -->
-      <div v-if="bizarreNovels?.length" style="margin-top:16px">
-        <div class="card-title" style="font-size:18px;margin-bottom:12px">🌀 剧情反转种子 ({{ bizarreNovels.length }}部)</div>
-        <div v-for="(bn,idx) in bizarreNovels" class="card" style="margin-bottom:14px;border-left:3px solid var(--accent2);position:relative;overflow:hidden">
-          <div style="position:absolute;top:8px;right:12px;font-size:11px;color:var(--text3);background:var(--bg2);padding:2px 8px;border-radius:10px">{{ bn.premise?.tag || bn.tag }}</div>
-          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;padding-right:80px">
-            <div>
-              <div style="font-size:16px;font-weight:700;color:var(--accent)">{{ bn.premise?.title || bn.title }}</div>
-              <div style="font-size:12px;color:var(--text2)">{{ bn.premise?.genre || bn.genre }} · {{ bn.premise?.trope || bn.twist }}</div>
-            </div>
-            <button class="btn btn-primary btn-sm" @click="createBizarreNovel(bn)" style="padding:4px 12px;font-size:12px">📖 创建小说</button>
-          </div>
-          <div style="font-size:13px;line-height:1.7;color:var(--text);margin-bottom:8px;font-style:italic">{{ bn.premise?.one_liner || bn.one_liner }}</div>
-          <div v-if="bn.premise?.synopsis" style="font-size:12px;line-height:1.8;color:var(--text2);background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:8px;white-space:pre-line">{{ bn.premise.synopsis }}</div>
-          <div v-if="bn.premise?.twist_chapter_hint" style="font-size:11px;color:var(--accent2);margin-bottom:8px;text-align:right">
-            ⚡ 转折节点: {{ bn.premise.twist_chapter_hint }}
-          </div>
-          <div v-if="bn.outline?.volumes" style="margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;font-size:12px">
-            <div style="font-weight:600;margin-bottom:4px">📋 大纲预览</div>
-            <div v-for="vol in (bn.outline.volumes||[]).slice(0,2)">
-              <div style="color:var(--accent)">第{{ vol.number }}卷: {{ vol.title }}</div>
-              <div v-for="ch in (vol.chapters||[]).slice(0,3)" style="padding-left:12px;color:var(--text2)">
-                Ch{{ ch.number }} [{{ ch.title }}] {{ ch.summary }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </template>
-
     <!-- ====== Write ====== -->
     <template v-if="currentView==='write'">
       <div v-if="!activeNovel" style="text-align:center;padding:80px 20px;color:var(--text3)">
@@ -1059,13 +896,6 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             </div>
           </div>
           <button class="btn btn-ghost btn-xs" @click="openOutline" style="font-size:12px">📋 编辑大纲</button>
-        </div>
-
-        <!-- v2.3: 写作 / 剧情图谱 切换 -->
-        <div class="sg-tabs">
-          <button class="sg-tab" :class="{active:writing.activeTab==='write'}" @click="writing.activeTab='write'">✍️ 写作</button>
-          <button class="sg-tab" :class="{active:writing.activeTab==='storygraph'}" @click="switchToStoryGraph">🔍 剧情图谱</button>
-          <button class="sg-tab" :class="{active:writing.activeTab==='interactive'}" @click="openInteractive">🎮 互动模式</button>
         </div>
 
         <!-- v3.0: 互动模式面板 -->
@@ -2477,19 +2307,8 @@ const app = createApp({
     }
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false, creativeEnhance:false });
-    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false, xhs:false });
+    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
     
-    // v2.50: XHS 短篇模式
-    const xhsMode = ref(true);  // 默认展开
-    const xhsTemplate = ref('爽文_打脸逆袭');
-    const xhsInspiration = ref('');
-    const xhsResult = ref(null);
-    const xhsTemplates = ref([]);
-    const xhsPresets = ref([]);
-    const xhsPreset = ref(null);
-    const xhsProgress = ref(0);
-    const xhsPhase = ref('');
-    const xhsStreamText = ref('');
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
@@ -3325,9 +3144,6 @@ const app = createApp({
     onMounted(async () => {
       applyAppearance();
       loadStyles(); loadStyleSeeds(); // fire-and-forget
-      // v2.50: 加载小红书模板列表（加载完自动加载预设）
-      fetch('/api/xiaohongshu/templates').then(r=>r.json()).then(d=>{ if(d.ok){ xhsTemplates.value=d.templates; loadXhsPresets(); } }).catch(()=>{});
-      
       // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
       setTimeout(() => { if (loading.shelf) { loading.shelf = false; console.warn('Shelf loading: forced close after 12s'); } }, 12000);
       
@@ -3527,112 +3343,6 @@ const app = createApp({
     }
     function openCreate() { if(isBusy.value) return; planResult.value=null; decomposeSummary.value=null; error.value=''; currentView.value='create'; }
     
-    // ── v2.39: 爆火分析 + 逆天生成 ──
-    const trendData = ref(null);
-    const bizarreNovels = ref([]);
-    const bizarreMode = ref('topical');  // 'topical' | 'twist' | 'mixed'
-    const trendLoading = ref(false);
-    
-    function openTrends() {
-      if(isBusy.value) return;
-      planResult.value = null;
-      error.value = '';
-      currentView.value = 'trends';
-      if (!trendData.value) doTrendAnalyze();
-    }
-    
-    async function doTrendAnalyze() {
-      trendLoading.value = true; trendData.value = null; error.value = '';
-      try {
-        const r = await fetch(API+'/api/trends/analyze', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-        const d = await r.json();
-        if (d.ok) trendData.value = d;
-        else error.value = d.error;
-      } catch(e) { error.value = e.message; }
-      trendLoading.value = false;
-    }
-    
-    async function doBizarreQuick() {
-      trendLoading.value = true; error.value = '';
-      try {
-        const r = await fetch(API+'/api/trends/bizarre/quick', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:3, mode: bizarreMode.value})});
-        const d = await r.json();
-        if (d.ok) { bizarreNovels.value = d.bizarre_novels; if (!trendData.value) doTrendAnalyze(); }
-        else error.value = d.error;
-      } catch(e) { error.value = e.message; }
-      trendLoading.value = false;
-    }
-    
-    async function doBizarreFull() {
-      trendLoading.value = true; error.value = '';
-      try {
-        const r = await fetch(API+'/api/trends/bizarre', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:5, style:form.style||'热血爽文', mode: bizarreMode.value})});
-        const d = await r.json();
-        if (d.ok) { 
-          bizarreNovels.value = d.bizarre_novels;
-          if (d.trends) trendData.value = {patterns: d.trends, hot_novels: d.hot_novels, source: 'live'};
-        }
-        else error.value = d.error;
-      } catch(e) { error.value = e.message; }
-      trendLoading.value = false;
-    }
-
-    // v2.50: 小红书短篇一键生成
-    function loadXhsPresets() {
-      const tpl = xhsTemplate.value;
-      fetch('/api/xiaohongshu/presets?template='+encodeURIComponent(tpl))
-        .then(r=>r.json()).then(d=>{ if(d.ok) xhsPresets.value=d.presets; }).catch(()=>{});
-    }
-    async function doXhsCreate() {
-      if (loading.xhs) return;
-      loading.xhs = true; xhsResult.value = null; xhsProgress.value = 0; xhsPhase.value = ''; xhsStreamText.value = ''; error.value = '';
-      const inspiration = xhsPreset.value ? xhsPreset.value.inspiration : xhsInspiration.value.trim();
-      if (!inspiration) { reportError('请选择预设或输入灵感'); loading.xhs = false; return; }
-      try {
-        const resp = await fetch(API+'/api/xiaohongshu/create', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ template: xhsTemplate.value, inspiration })
-        });
-        if (!resp.ok) { const d=await resp.json(); reportError(d.detail||'请求失败'); loading.xhs=false; return; }
-        const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
-        while (true) {
-          const {done, value} = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, {stream: true});
-          const lines = buffer.split('\n'); buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const evt = JSON.parse(line.slice(6));
-                if (evt.type === 'progress') { xhsProgress.value = evt.pct; xhsPhase.value = evt.message; }
-                else if (evt.type === 'chapter_start') { xhsPhase.value = `撰写第${evt.number}章 · ${evt.title}`; xhsProgress.value = evt.pct; }
-                else if (evt.type === 'chunk' && evt.chapter === 3) { xhsStreamText.value += evt.text; }
-                else if (evt.type === 'chapter_done') { xhsProgress.value = evt.pct; }
-                else if (evt.type === 'done') { xhsResult.value = evt; xhsProgress.value = 100; xhsPhase.value = '完成！'; }
-                else if (evt.type === 'error') { reportError(evt.message); loading.xhs = false; return; }
-              } catch(e) {}
-            }
-          }
-        }
-      } catch(e) { reportError(e.message||'网络错误'); }
-      finally { loading.xhs = false; }
-    }
-
-    async function createBizarreNovel(bn) {
-      if (isBusy.value) return;
-      isBusy.value = true; error.value = '';
-      try {
-        const p = bn.premise || bn;
-        form.genre = p.genre || '玄幻';
-        form.title = p.title || '';
-        // 用剧情梗概作为灵感，不去掉换行让LLM理解反转结构
-        form.inspiration = (p.synopsis || p.one_liner || '').replace(/\n/g, ' ');
-        form.target_words = 50000;
-        form.naturalNames = true;
-        await doCreate();
-      } catch(e) { error.value = e.message; }
-      isBusy.value = false;
-    }
     function openWrite() { if(isBusy.value) return; if(activeNovel.value) { currentView.value='write'; writing.activeTab='write'; _saveSession(); } }
     function openOutlineFor(novel) {
       // 书架 → 编辑大纲：选中该书并加载最新 plan 进入大纲预览
@@ -5120,15 +4830,12 @@ const app = createApp({
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
       openCreate,openWrite,openOutline,openOutlineFor,doCreate,openNovel,startWriting,
-      openTrends,doTrendAnalyze,doBizarreQuick,doBizarreFull,createBizarreNovel,trendData,bizarreNovels,trendLoading,bizarreMode,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,speakChapter,stopSpeaking,speaking,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStatus,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
-      // v2.50
-      xhsMode,xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,xhsProgress,xhsPhase,xhsStreamText,doXhsCreate,loadXhsPresets,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       outlineCompliance,
