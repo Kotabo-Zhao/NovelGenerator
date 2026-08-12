@@ -69,6 +69,20 @@ def _merge_quality_with_consistency(quality: dict, consistency: dict) -> dict:
     return merged
 
 
+def _consistency_candidate_rank(consistency: dict) -> tuple:
+    """Rank repair candidates: fewer P0 first, then higher score, then fewer issues."""
+    violations = (consistency or {}).get("violations") or []
+    try:
+        score = int(float((consistency or {}).get("score", 0)))
+    except (TypeError, ValueError):
+        score = 0
+    return (
+        sum(1 for item in violations if item.get("severity") == "P0"),
+        -score,
+        len(violations),
+    )
+
+
 def _save_final_quality_report(memory, novel_id: str, chapter_num: int, report: dict, *, stage: str) -> dict:
     """Persist the post-mutation quality result instead of reusing a stale score."""
     path = os.path.join(memory.get_novel_dir(novel_id), "quality_reports.json")
@@ -1687,7 +1701,12 @@ class GenerationMixin:
                 log.warning(f"StoryGraph update skipped: {e}")
 
             # ── 方案A: 一致性校验（ConsistencyValidator L1+L2 每章，P0 自动重写）──
-            _post_consistency_validation = {"score": 100, "violations": []}
+            _post_consistency_validation = {
+                "score": 0,
+                "violations": [],
+                "warnings": [],
+                "error": "consistency validation was not completed",
+            }
             _post_consistency_auto_fixed = False
             try:
                 # 获取前文章节
@@ -1715,11 +1734,13 @@ class GenerationMixin:
                         plan=plan,
                         prev_chapters=prev_chapters,
                         global_state=global_state,
+                        chapter_outline=chapter_outline,
                         run_deep=True,  # 每章 L2 语义校验（v2.3.5: 原每3章→每章）
                     )
                 _post_consistency_validation = validation
                 
                 violations = validation.get("violations", [])
+                p0_count = 0
                 if violations:
                     p0_count = sum(1 for v in violations if v.get("severity") == "P0")
                     score = validation.get("score", 100)
@@ -1770,26 +1791,104 @@ class GenerationMixin:
                     self.memory.save_novel_state(novel_id, state)
                     yield {"type": "consistency_warning", "chapter": chapter_num, "issues": p1_issues[:5]}
             except Exception as e:
+                _post_consistency_validation = {
+                    "score": 0,
+                    "violations": [],
+                    "warnings": [],
+                    "error": str(e),
+                }
                 log.warning(f"Consistency auto-validation skipped: {e}")
 
             # 自动修复后重新校验一次，最终报告必须反映修复后的正文，而不是旧正文的分数。
             if _post_consistency_auto_fixed:
                 try:
-                    _post_consistency_validation = await asyncio.to_thread(
-                        self.consistency_validator.validate_chapter,
-                        chapter_text=full_text,
-                        chapter_num=chapter_num,
-                        plan=plan,
-                        prev_chapters=prev_chapters,
-                        global_state=global_state,
-                        run_deep=not batch_mode,
-                    )
-                    yield {
-                        "type": "consistency_recheck",
-                        "score": _post_consistency_validation.get("score", 100),
-                        "violations": _post_consistency_validation.get("violations", []),
-                    }
+                    # P0 修复可能引入新的时间线/因果问题；最多再补一轮，避免无限重写。
+                    best_recheck_text = None
+                    best_recheck_validation = None
+                    best_recheck_rank = None
+                    for repair_round in range(2):
+                        _post_consistency_validation = await asyncio.to_thread(
+                            self.consistency_validator.validate_chapter,
+                            chapter_text=full_text,
+                            chapter_num=chapter_num,
+                            plan=plan,
+                            prev_chapters=prev_chapters,
+                            global_state=global_state,
+                            chapter_outline=chapter_outline,
+                            run_deep=not batch_mode,
+                        )
+                        recheck_violations = _post_consistency_validation.get("violations", [])
+                        recheck_rank = _consistency_candidate_rank(
+                            _post_consistency_validation
+                        )
+                        if best_recheck_rank is None or recheck_rank < best_recheck_rank:
+                            best_recheck_rank = recheck_rank
+                            best_recheck_text = full_text
+                            best_recheck_validation = _post_consistency_validation
+                        yield {
+                            "type": "consistency_recheck",
+                            "round": repair_round + 1,
+                            "score": _post_consistency_validation.get("score", 100),
+                            "violations": recheck_violations,
+                        }
+                        remaining_p0 = [
+                            item for item in recheck_violations
+                            if item.get("severity") == "P0"
+                        ]
+                        if not remaining_p0 or repair_round >= 1:
+                            break
+
+                        fix_prompt = self.consistency_validator.build_fix_prompt(
+                            recheck_violations
+                        )
+                        repair_context = (
+                            f"{context}\n\n"
+                            "## 当前草稿（只修复下列逻辑问题，保留已成立的情节）\n"
+                            f"{full_text}\n\n{fix_prompt}"
+                        )
+                        repaired_text = ""
+                        async for repair_chunk in self.writer.write_stream(
+                            context=repair_context,
+                            genre=genre,
+                            style=style,
+                            target_words=target_words,
+                            writing_mode=writing_mode,
+                            normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
+                            fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+                            chapter_outline=chapter_outline,
+                            skip_ending=True,
+                        ):
+                            repaired_text += repair_chunk
+                        if not repaired_text or len(repaired_text) <= len(full_text) * 0.5:
+                            log.warning("Consistency repair round %s produced no usable draft", repair_round + 2)
+                            break
+                        full_text = repaired_text
+                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        yield {
+                            "type": "consistency_fixed",
+                            "round": repair_round + 2,
+                            "applied": True,
+                            "violations_fixed": len(remaining_p0),
+                        }
+
+                    # 修复模型可能在后续轮次引入更严重的问题，最终只保留最佳候选。
+                    if best_recheck_text is not None and full_text != best_recheck_text:
+                        full_text = best_recheck_text
+                        _post_consistency_validation = best_recheck_validation
+                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        log.info(
+                            "Consistency repair selected best candidate: rank=%s",
+                            best_recheck_rank,
+                        )
                 except Exception as recheck_error:
+                    _post_consistency_validation = {
+                        "score": 0,
+                        "violations": [],
+                        "warnings": [],
+                        "error": str(recheck_error),
+                    }
                     log.warning(f"Consistency recheck skipped: {recheck_error}")
 
             # ── 最终质量报告：必须位于所有改写/一致性修复之后 ──

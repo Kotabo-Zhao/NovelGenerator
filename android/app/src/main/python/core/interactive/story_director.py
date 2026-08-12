@@ -3076,6 +3076,7 @@ class StoryDirector:
         tw = int(ch.get("target_words", 0) or 0)
         n = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
         n = max(2, min(n, 4))
+        fallback_used = False
         try:
             user = (f"本章目标: 第{ch.get('number', idx + 1)}章《{ch.get('title', '')}》"
                     f"—— {ch.get('summary', '')}\n"
@@ -3090,17 +3091,23 @@ class StoryDirector:
                       "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3},
                       "entry_hook": ""} for i, b in enumerate((data.get("beats") or [])[:n])]
             if len(beats) < 2:  # 拆解失败兜底：目标本身就是事件
+                fallback_used = True
                 beats = [{"id": 1, "desc": str(ch.get("summary", ""))[:60], "status": "pending",
                           "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3},
                           "entry_hook": ""}]
         except Exception as e:
+            fallback_used = True
             log.warning(f"beats extract failed: {type(e).__name__}: {str(e)[:80]}")
             beats = [{"id": 1, "desc": str(ch.get("summary", ""))[:60], "status": "pending",
                       "trigger": {"type": "event", "conditions": [], "timeout_scenes": 3},
                       "entry_hook": ""}]
         if beats:
             beats[0]["status"] = "current"
-            state["chapter_beats"] = {"chapter_idx": idx, "beats": beats}
+            state["chapter_beats"] = {
+                "chapter_idx": idx,
+                "beats": beats,
+                "fallback": fallback_used,
+            }
             try:
                 self.store.save_state(novel_id, state)
             except Exception:
@@ -3135,9 +3142,9 @@ class StoryDirector:
         """
         try:
             trig = state.get("anchor_triggered")
-            if not trig:
-                return
             cb = state.get("chapter_beats") or {}
+            if not trig and not cb.get("fallback"):
+                return
             beats = cb.get("beats") or []
             if not beats:
                 return

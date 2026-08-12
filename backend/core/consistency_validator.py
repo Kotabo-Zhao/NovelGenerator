@@ -158,6 +158,7 @@ class ConsistencyValidator:
         prev_chapters: dict = None,
         global_state: dict = None,
         run_deep: bool = True,
+        chapter_outline: dict = None,
     ) -> dict:
         """校验单章的逻辑一致性
         
@@ -190,7 +191,14 @@ class ConsistencyValidator:
         # ── L2: LLM深度校验 ──
         l2 = {}
         if run_deep and self.client and self.model:
-            l2 = self._l2_validate(chapter_text, chapter_num, plan, prev_chapters, global_state)
+            l2 = self._l2_validate(
+                chapter_text,
+                chapter_num,
+                plan,
+                prev_chapters,
+                global_state,
+                chapter_outline=chapter_outline,
+            )
             violations.extend(l2.get("violations", []))
             warnings.extend(l2.get("warnings", []))
 
@@ -672,7 +680,15 @@ class ConsistencyValidator:
 
 只输出 JSON，不要其他内容。如果没有任何问题，violations 和 warnings 为空数组。"""
 
-    def _l2_validate(self, chapter_text, chapter_num, plan, prev_chapters, global_state):
+    def _l2_validate(
+        self,
+        chapter_text,
+        chapter_num,
+        plan,
+        prev_chapters,
+        global_state,
+        chapter_outline=None,
+    ):
         """L2 LLM深度语义校验"""
         if not self.client or not self.model:
             return {"violations": [], "warnings": [], "skipped": True}
@@ -684,9 +700,44 @@ class ConsistencyValidator:
         context_parts = [
             f"## 小说设定",
             f"- 主角: {protagonist.get('name', '')}",
+            f"- 主角身份: {protagonist.get('identity', '')}",
+            f"- 主角年龄: {protagonist.get('age') or '未设定，不得从文本臆测'}",
+            f"- 主角性别/代词: {protagonist.get('gender') or protagonist.get('pronouns') or '未设定，不得从文本臆测'}",
             f"- 世界观: {json.dumps(plan.get('worldbuilding', {}), ensure_ascii=False)[:300]}",
             f"- 力量体系: {str(plan.get('worldbuilding', {}).get('power_system', ''))[:200]}",
         ]
+
+        supporting = chars.get("supporting", [])
+        if supporting:
+            anchors = []
+            for character in supporting[:8]:
+                if not isinstance(character, dict):
+                    continue
+                anchors.append(
+                    f"{character.get('name', '')}(身份={character.get('identity', '')}, "
+                    f"年龄={character.get('age') or '未设定'}, "
+                    f"性别/代词={character.get('gender') or character.get('pronouns') or '未设定'})"
+                )
+            if anchors:
+                context_parts.append("- 重要配角硬设定: " + "; ".join(anchors))
+
+        outline = chapter_outline or {}
+        if outline:
+            scene_beats = outline.get("scene_beats", [])
+            if isinstance(scene_beats, (list, tuple)):
+                scene_beats = "；".join(str(item) for item in scene_beats)
+            context_parts.append(
+                "\n## 本章大纲（用于核对，不得擅自扩写硬事实）\n"
+                f"- 标题: {outline.get('title', '')}\n"
+                f"- 摘要: {outline.get('summary', '')}\n"
+                f"- 场景节拍: {scene_beats}"
+            )
+        context_parts.append(
+            "\n## 校验边界\n"
+            "只报告与明确设定、前文或本章大纲直接冲突的问题。年龄、性别、出生年份、"
+            "技术能力等字段若未明确，不得把模型推测当成矛盾。角色的关系字段若明确要求‘提供线索但不越权’，"
+            "不得仅因角色没有使用全部权限就判定身份矛盾。"
+        )
         
         # 已有角色状态
         if global_state:

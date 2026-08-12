@@ -11,6 +11,7 @@
 import json
 import logging
 import copy
+import re
 from typing import Optional, Any
 
 log = logging.getLogger(__name__)
@@ -25,6 +26,45 @@ DEFAULT_GRAPH = {
     "version": 0,
     "last_updated_chapter": 0,
 }
+
+
+def _parse_storygraph_response(content: str) -> dict:
+    """Parse common LLM JSON variants without accepting a non-object result."""
+    text = str(content or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    candidates = [text]
+    repaired = re.sub(r",\s*([}\]])", r"\1", text)
+    if repaired != text:
+        candidates.append(repaired)
+
+    start = text.find("{")
+    if start >= 0:
+        candidates.append(text[start:])
+        candidates.append(re.sub(r",\s*([}\]])", r"\1", text[start:]))
+
+    decoder = json.JSONDecoder()
+    last_error = None
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+            if isinstance(value, dict):
+                return value
+        except (TypeError, json.JSONDecodeError) as exc:
+            last_error = exc
+        try:
+            start_index = candidate.find("{")
+            if start_index >= 0:
+                value, _ = decoder.raw_decode(candidate[start_index:])
+                if isinstance(value, dict):
+                    return value
+        except (TypeError, json.JSONDecodeError) as exc:
+            last_error = exc
+
+    raise ValueError(f"invalid StoryGraph JSON response: {last_error}")
 
 
 class Thread:
@@ -428,7 +468,7 @@ def extract_storygraph_from_chapter(
             max_tokens=2000,
             response_format={"type": "json_object"},
         )
-        result = json.loads(resp.choices[0].message.content)
+        result = _parse_storygraph_response(resp.choices[0].message.content)
         log.info(f"StoryGraph extract: {len(result.get('thread_updates', []))} threads, "
                  f"{len(result.get('foreshadow_updates', []))} foreshadows, "
                  f"{len(result.get('char_updates', []))} characters")

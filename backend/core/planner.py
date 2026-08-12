@@ -241,6 +241,8 @@ class Planner:
     "supporting": [
       {{
         "name": "",
+        "age": "",
+        "gender": "",
         "identity": "",
         "relation": "",
         "personality": "",
@@ -622,7 +624,7 @@ class Planner:
       "arc": "", "cheat": "", "secret": "", "catchphrase": "",
       "relationships": [{{"name":"","type":"盟友/导师/对手","dynamic":""}}]
     }},
-    "supporting": [{{"name":"","identity":"","relation":"","personality":"","role":"","mini_arc":"","meaning":"","speak_style":"","initial_attitude":"对主角的初始态度"}}],
+    "supporting": [{{"name":"","age":"","gender":"","identity":"","relation":"","personality":"","role":"","mini_arc":"","meaning":"","speak_style":"","initial_attitude":"对主角的初始态度"}}],
     "antagonist": [{{"name":"","motivation":"","power":"","conflict":"","humanity":""}}],
     "bible_summary": ""
   }}

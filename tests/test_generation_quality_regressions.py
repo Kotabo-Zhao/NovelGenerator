@@ -177,3 +177,114 @@ def test_consistency_parser_repairs_trailing_commas():
     parsed = _parse_json_response('{"violations": [{"severity": "P0",}],}')
 
     assert parsed["violations"][0]["severity"] == "P0"
+
+
+def test_writer_context_includes_character_age_anchor(tmp_path):
+    memory = SharedMemoryManager(str(tmp_path))
+    novel_id = "age_probe"
+    memory.create_novel_workspace(novel_id)
+    memory.write(
+        "plan",
+        novel_id,
+        {
+            "title": novel_id,
+            "worldbuilding": {"era": "contemporary", "power_system": "realistic"},
+            "characters": {
+                "protagonist": {
+                    "name": "Alex",
+                    "identity": "archivist",
+                    "age": "29",
+                    "gender": "male",
+                },
+                "supporting": [],
+            },
+            "outline": {"total_chapters": 1, "volumes": []},
+        },
+    )
+
+    context = memory.build_writer_context(
+        novel_id, 1, {"title": "Archive", "characters": ["Alex"]}
+    )
+
+    assert "29" in context
+    assert "设备工作必须先交代电源" in context
+
+
+def test_l2_context_includes_hard_character_anchors_and_chapter_outline():
+    from backend.core.consistency_validator import ConsistencyValidator
+
+    captured = {}
+
+    class _FakeResilient:
+        def create(self, **kwargs):
+            captured["prompt"] = kwargs["messages"][1]["content"]
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))]
+            )
+
+    validator = ConsistencyValidator()
+    validator.client = object()
+    validator.model = "mock"
+    validator._resilient = _FakeResilient()
+
+    validator._l2_validate(
+        "Alex entered the archive basement.",
+        1,
+        {
+            "worldbuilding": {"era": "contemporary", "power_system": "realistic"},
+            "characters": {
+                "protagonist": {
+                    "name": "Alex",
+                    "identity": "archivist",
+                    "age": "29",
+                    "gender": "male",
+                },
+                "supporting": [],
+            },
+        },
+        prev_chapters=None,
+        global_state=None,
+        chapter_outline={
+            "title": "The Basement",
+            "summary": "Find the missing seal",
+            "scene_beats": ["Enter archive basement", "Discover printer clue"],
+        },
+    )
+
+    prompt = captured["prompt"]
+    assert "Alex" in prompt
+    assert "29" in prompt
+    assert "male" in prompt
+    assert "Find the missing seal" in prompt
+    assert "Discover printer clue" in prompt
+
+
+def test_storygraph_parser_accepts_fenced_json_with_trailing_comma():
+    from backend.core.storygraph import _parse_storygraph_response
+
+    parsed = _parse_storygraph_response(
+        '```json\n{"thread_updates": [], "char_updates": [],}\n```\n'
+    )
+
+    assert parsed["thread_updates"] == []
+
+
+def test_consistency_repair_rank_does_not_prefer_a_later_worse_draft():
+    from backend.core.mixins.generation import _consistency_candidate_rank
+
+    better = {
+        "score": 25,
+        "violations": [
+            {"severity": "P0"},
+            {"severity": "P1"},
+        ],
+    }
+    worse = {
+        "score": 10,
+        "violations": [
+            {"severity": "P0"},
+            {"severity": "P0"},
+        ],
+    }
+
+    assert _consistency_candidate_rank(better) < _consistency_candidate_rank(worse)

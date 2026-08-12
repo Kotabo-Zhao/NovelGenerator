@@ -641,6 +641,7 @@ class SharedMemoryManager:
 - 姓名: {protagonist.get('name', '')}
 - 身份: {protagonist.get('identity', '')}
 - 性别/代词: {protagonist.get('gender') or protagonist.get('pronouns') or '未设定，禁止自行推断'}
+- 年龄: {protagonist.get('age') or '未设定，禁止自行编造具体年龄或出生年份'}
 - 性格: {protagonist.get('personality', '')}
 - 金手指: {protagonist.get('cheat', '')}
 - 核心动机: {protagonist.get('motivation', '')}
@@ -649,7 +650,11 @@ class SharedMemoryManager:
         if supporting:
             core += "\n### 重要配角\n"
             for c in supporting[:5]:
-                core += f"- {c.get('name', '?')}: {c.get('identity', '')}, {c.get('relation', '')}\n"
+                core += (
+                    f"- {c.get('name', '?')}: {c.get('identity', '')}, "
+                    f"{c.get('relation', '')}, 年龄={c.get('age') or '未设定'}, "
+                    f"性别/代词={c.get('gender') or c.get('pronouns') or '未设定'}\n"
+                )
         parts.append(core)
 
         # L1b: 世界档案 — 当小说涉及已知原著世界时注入
@@ -912,6 +917,13 @@ class SharedMemoryManager:
 ═══ 结束 ═══"""
 
         parts.append(outline_text)
+        parts.append(
+            "## 本章逻辑硬约束（写前自检）\n"
+            "- 时间点、等待时长和角色移动必须能同时成立；不要用新时间点覆盖前文而不解释。\n"
+            "- 被外部反锁、断电或隔离的地点，角色不能无铺垫地进出；设备工作必须先交代电源或替代能源。\n"
+            "- 角色只能按身份和关系字段行动；‘提供线索但不越权’不等于身份矛盾。\n"
+            "- 本章摘要、场景节拍和核心设定是硬约束；需要新增事实时先补因果铺垫，不要直接凭空补写。"
+        )
 
         # ── v2.3.5: 上一章一致性提醒注入（ConsistencyValidator 发现的问题）──
         try:
@@ -1546,6 +1558,7 @@ class SharedMemoryManager:
 - 姓名: {protagonist.get('name', '')}
 - 身份: {protagonist.get('identity', '')}
 - 性别/代词: {protagonist.get('gender') or protagonist.get('pronouns') or '未设定，禁止自行推断'}
+- 年龄: {protagonist.get('age') or '未设定，禁止自行编造具体年龄或出生年份'}
 - 性格: {protagonist.get('personality', '')}
 - 金手指: {protagonist.get('cheat', '')}
 """
@@ -1553,7 +1566,11 @@ class SharedMemoryManager:
         if supporting:
             ctx += "\n### 重要配角\n"
             for c in supporting[:5]:
-                ctx += f"- {c.get('name', '?')}: {c.get('identity', '')}, {c.get('relation', '')}\n"
+                ctx += (
+                    f"- {c.get('name', '?')}: {c.get('identity', '')}, "
+                    f"{c.get('relation', '')}, 年龄={c.get('age') or '未设定'}, "
+                    f"性别/代词={c.get('gender') or c.get('pronouns') or '未设定'}\n"
+                )
         return ctx
 
 
