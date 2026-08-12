@@ -139,7 +139,8 @@ class Beat:
                  "conflict_type", "conflict_intensity", "hook_type",
                  "min_words", "max_words", "temperature",
                  "outline_ref", "character_focus", "key_event",
-                 "paragraph_style")
+                 "paragraph_style", "opposition", "choice", "state_change",
+                 "reader_question")
     
     def __init__(self, index: int, function: str):
         self.index = index
@@ -158,6 +159,10 @@ class Beat:
         self.outline_ref = ""
         self.character_focus = ""
         self.key_event = ""
+        self.opposition = ""
+        self.choice = ""
+        self.state_change = {}
+        self.reader_question = ""
     
     def to_dict(self) -> dict:
         return {
@@ -169,6 +174,8 @@ class Beat:
             "temperature": self.temperature,
             "outline_ref": self.outline_ref, "character_focus": self.character_focus,
             "key_event": self.key_event,
+            "opposition": self.opposition, "choice": self.choice,
+            "state_change": self.state_change, "reader_question": self.reader_question,
         }
     
     def to_prompt(self, prev_beat_last_sentence: str = "", char_snapshots: str = "",
@@ -189,6 +196,14 @@ class Beat:
             lines.append(f"核心事件: {self.key_event}")
         if self.character_focus:
             lines.append(f"聚焦角色: {self.character_focus}")
+        if self.opposition:
+            lines.append(f"主要阻力: {self.opposition}")
+        if self.choice:
+            lines.append(f"选择/代价: {self.choice}")
+        if self.state_change:
+            lines.append(f"状态变化: {self.state_change}")
+        if self.reader_question:
+            lines.append(f"读者未解问题: {self.reader_question}")
         if self.hook_type:
             lines.append(f"钩子类型: {self.hook_type}")
         if prev_beat_last_sentence:
@@ -252,7 +267,7 @@ class BeatDecomposer:
         beats[-1].hook_type = hook_type
         
         # ── 步骤5: 分配核心事件到各 beat ──
-        self._distribute_events(beats, summary, chars)
+        self._distribute_events(beats, summary, chars, chapter_outline)
         
         # ── 步骤6: 随机微调 temperature ──
         for beat in beats:
@@ -346,18 +361,48 @@ class BeatDecomposer:
         # 否则按章号轮换
         return HOOK_TYPES[ch_num % len(HOOK_TYPES)]
     
-    def _distribute_events(self, beats: list, summary: str, chars: list):
+    def _distribute_events(self, beats: list, summary: str, chars: list, chapter_outline: dict = None):
         """将本章的核心叙事分配到各 beat"""
-        # 简单策略：把 summary 拆成 N 段，分配到各 beat
-        # 更复杂的版本可以用 LLM 精拆，但这里是确定性基础版
-        
-        for beat in beats:
-            # 给非 hook beat 分配一个角色聚焦
+        # scene_beats 是 Planner 已经生成的事件契约，优先于抽象的 beat goal。
+        # 旧实现把“本章 + 功能目标”复制到所有节拍，模型因此只执行写作动作，
+        # 却不知道这一拍具体要改变什么。
+        chapter_outline = chapter_outline or {}
+        raw_events = chapter_outline.get("scene_beats") or []
+        if not isinstance(raw_events, list):
+            raw_events = [raw_events]
+        chapter_hook = str(chapter_outline.get("hook") or "").strip()
+
+        for index, beat in enumerate(beats):
             if beat.function not in ("opening_hook", "closing_hook") and chars:
-                beat.character_focus = self.rng.choice(chars)
-            
-            # 给每个 beat 一个概要事件描述
-            beat.key_event = f"本章 {beat.goal[:20]}"
+                beat.character_focus = str(chars[index % len(chars)])
+
+            if raw_events:
+                event_index = 0 if len(raw_events) == 1 else round(index * (len(raw_events) - 1) / max(1, len(beats) - 1))
+                event = raw_events[min(event_index, len(raw_events) - 1)]
+                if isinstance(event, dict):
+                    beat.outline_ref = str(event.get("name") or event.get("function") or "").strip()
+                    beat.key_event = str(event.get("key_action") or event.get("event") or event.get("action") or "").strip()
+                    actor = event.get("actor") or event.get("character") or event.get("character_focus")
+                    if isinstance(actor, list):
+                        actor = actor[0] if actor else ""
+                    if actor:
+                        beat.character_focus = str(actor).strip()
+                    beat.opposition = str(event.get("opposition") or event.get("obstacle") or event.get("conflict") or "").strip()
+                    beat.choice = str(event.get("choice") or event.get("decision") or event.get("reject_outcome") or "").strip()
+                    state_change = event.get("state_output") or event.get("state_change") or {}
+                    beat.state_change = state_change if isinstance(state_change, dict) else {"description": str(state_change)}
+                    beat.reader_question = str(event.get("reader_question") or event.get("hook") or event.get("entry_hook") or "").strip()
+                else:
+                    beat.key_event = str(event).strip()
+                    beat.outline_ref = beat.key_event[:40]
+            elif summary and index == 0:
+                # 兼容旧大纲：至少把真实摘要交给第一拍，不再伪造“本章+抽象目标”。
+                beat.key_event = str(summary).strip()
+                beat.outline_ref = beat.key_event[:40]
+
+            # 最后一拍必须知道章节级钩子，即使 scene_beats 没有单独填 hook。
+            if beat.function == "closing_hook":
+                beat.reader_question = beat.reader_question or chapter_hook
 
 
 # ── 批量拆解 ──

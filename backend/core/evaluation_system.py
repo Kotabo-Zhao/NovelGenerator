@@ -232,6 +232,48 @@ HOOK_SIGNALS = [
     r'(等着|走着瞧|你会后悔)',
 ]
 
+# 跨题材通用的章末“未决向量”。它们不等于爽点，适用于悬疑、言情、
+# 现实、玄幻等题材：读者会继续阅读，是因为某个行动、决定、身份或风险
+# 尚未兑现，而不是因为文本里出现了某个固定爽点词。
+OPEN_LOOP_SIGNALS = [
+    r'(必须|不得不|只能|决定|答应|拒绝|来不及|只剩|等到|明天|今晚|天亮前)',
+    r'(门外|身后|脚步|敲门|有人|名字|身份|编号|倒计时|旧码头)',
+    r'(却发现|才发现|原来|竟然|不料|下一秒|转身|推开|按下|拔刀|开枪)',
+    r'(秘密|真相|线索|证据|约见|交易|警告|追杀|跟踪|等待)',
+    r'(该|准备|打算).{0,12}(去|回|见|启|开始|了)',
+]
+
+# 结构信号比“爽点词”更稳定：它们用于判断一个章节是否发生了叙事推进，
+# 只作为确定性质量门的证据，不是要求每个题材都写成打脸文。
+ACTION_SIGNALS = [
+    r'(推开|打开|关上|走进|冲出|转身|抬手|伸手|抓住|放下|拿出|收起)',
+    r'(追上|逃走|躲开|拦住|撞开|撬开|按下|拔出|扣动|扯断|撕开|取走|推门)',
+    r'(调查|检查|搜索|翻找|确认|记录|拨通|发送|签下|交出|带走|塞进|拍下|收进)',
+]
+CHOICE_SIGNALS = [
+    r'(决定|选择|答应|拒绝|放弃|坚持|隐瞒|承认|冒险|赌一把|不再|必须|反而|故意|没有解释)',
+]
+OBSTACLE_SIGNALS = [
+    r'(却|但是|然而|偏偏|没想到|不料|来不及|拦住|拒绝|威胁|追杀|失效|打不开|要求|保安)',
+    r'(危险|代价|条件|限制|误会|冲突|争执|审问|封锁|倒计时|替换|陌生)',
+]
+CONSEQUENCE_SIGNALS = [
+    r'(因此|于是|结果|代价|付出|换来|导致|暴露|失去|得到|留下|改变)',
+    r'(门外|屏幕|纸上|手机|信封|脚步|声音|名字|编号|地址|消息)',
+]
+
+
+def _signal_matches(text: str, patterns: list) -> list:
+    """返回去重后的结构信号，供评分和诊断共用。"""
+    import re
+    matches = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or ""):
+            value = match.group(0)
+            if value and value not in matches:
+                matches.append(value)
+    return matches
+
 def hook_strength(chapter_text: str) -> dict:
     """检测章末钩子强度
     
@@ -250,12 +292,30 @@ def hook_strength(chapter_text: str) -> dict:
             matched.append({"pattern": pattern[:40], "count": len(matches)})
             score += len(matches) * 2
     
-    # 额外：检查是否以问句或省略号结尾（钩子信号）
-    last_sentence = re.split(r'[。！？\n]', end_text)[-1].strip()
-    if last_sentence.endswith('……') or last_sentence.endswith('...'):
+    # 额外：检查最后一个非空句，而不是 split 后的空尾项。
+    # 旧实现遇到“……。/。/？”结尾会永远取到空字符串，导致真实钩子被判为0。
+    sentence_parts = []
+    for raw_sentence in re.split(r'[。！？\n]+', end_text):
+        cleaned = re.sub(r'^[「『“\"（(]+|[」』”\"）)】》]+$', '', raw_sentence.strip()).strip()
+        if cleaned:
+            sentence_parts.append(cleaned)
+    last_sentence = sentence_parts[-1] if sentence_parts else ""
+    if re.search(r'[」』”]', last_sentence):
+        last_sentence = re.split(r'[」』”]', last_sentence)[-1].strip()
+    terminal = end_text.rstrip()
+    terminal = re.sub(r'[」』”’\"）)】》]+$', '', terminal).rstrip()
+    if re.search(r'(……|\.{3,})$', terminal):
         score += 3
-    if '?' in last_sentence or '？' in last_sentence:
+    if re.search(r'[?？]$', terminal):
         score += 2
+
+    open_loop_signals = _signal_matches(end_text, OPEN_LOOP_SIGNALS)
+    # 章末动作/选择/信息未决，是比“突然/震惊”等词更稳的跨题材钩子。
+    if open_loop_signals:
+        score += min(4, len(open_loop_signals) * 2)
+    # “为什么/谁/怎么会”即使以句号收尾，也代表读者问题仍未解决。
+    if re.search(r'(为什么|为何|谁|怎么会|怎么可能|哪一个|哪个)', last_sentence):
+        score += 3
     
     strength = min(10, score)
     
@@ -264,6 +324,113 @@ def hook_strength(chapter_text: str) -> dict:
         "verdict": "强钩子" if strength >= 7 else ("中钩子" if strength >= 4 else "弱/无钩子"),
         "matched_patterns": matched,
         "last_sentence": last_sentence[:100],
+        "open_loop_signals": open_loop_signals[:12],
+    }
+
+
+def chapter_structure(text: str, chapter_outline: Optional[dict] = None) -> dict:
+    """评估章节是否完成“目标→阻力→选择→后果→未决问题”闭环。
+
+    这是本地确定性基线，不替代编辑判断，也不把任何具体作品的表达方式
+    当成标准。它只检查优秀连载网文普遍依赖的可验证结构信号，解决原评估器
+    过度依赖爽点词、却无法发现空转章节的问题。
+    """
+    import re
+
+    body = (text or "").strip()
+    if not body:
+        empty = {"opening": 0, "agency": 0, "obstacle": 0, "consequence": 0,
+                 "scene_progress": 0, "ending_hook": 0, "outline_alignment": 0}
+        return {"score": 0, "metrics": empty, "signals": {}, "issues": ["正文为空"]}
+
+    length = len(body)
+    opening = body[: min(360, length)]
+    active_half = body[: max(1, int(length * 0.65))]
+    middle = body[int(length * 0.25): int(length * 0.85)]
+    ending = body[-420:]
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n+', body) if p.strip()]
+
+    opening_actions = _signal_matches(opening, ACTION_SIGNALS)
+    opening_obstacles = _signal_matches(opening, OBSTACLE_SIGNALS)
+    agency_actions = _signal_matches(active_half, ACTION_SIGNALS)
+    choices = _signal_matches(active_half, CHOICE_SIGNALS)
+    obstacles = _signal_matches(body, OBSTACLE_SIGNALS)
+    consequences = _signal_matches(middle + "\n" + ending, CONSEQUENCE_SIGNALS)
+    ending_hook = hook_strength(body)
+
+    def capped(value: float) -> int:
+        return max(0, min(100, int(round(value))))
+
+    opening_score = capped(min(60, len(opening_actions) * 22) + min(40, len(opening_obstacles) * 20))
+    agency_score = capped(min(55, len(agency_actions) * 16) + min(45, len(choices) * 30))
+    obstacle_score = capped(min(65, len(obstacles) * 13) + (35 if len(obstacles) >= 2 else 0))
+    consequence_score = capped(min(55, len(consequences) * 15) + min(45, len(choices) * 22))
+
+    # 场景推进不以“场景越多越好”为目标；只奖励有段落承载的事件变化，
+    # 避免把文学性较强的单场景章节误判为失败。
+    scene_markers = _signal_matches(body, [
+        r'(门外|窗边|楼下|车上|码头|医院|学校|办公室|巷口|山谷|大厅)',
+        r'(第二天|片刻后|过了|直到|夜里|天亮|此刻|随后)',
+    ])
+    scene_score = capped(min(55, len(paragraphs) * 5) + min(45, len(scene_markers) * 12))
+    ending_score = min(100, ending_hook["strength"] * 10)
+
+    alignment_score = 50
+    alignment_signals = []
+    if isinstance(chapter_outline, dict):
+        outline_text = " ".join(str(chapter_outline.get(key) or "") for key in ("summary", "hook", "key_event"))
+        # 中文用二字片段做轻量对齐，不要求正文逐字复述大纲。
+        outline_terms = re.findall(r'[\u4e00-\u9fff]{2}', outline_text)
+        if outline_terms:
+            matched_terms = [term for term in outline_terms if term in body]
+            alignment_signals = list(dict.fromkeys(matched_terms))[:12]
+            alignment_score = capped(len(alignment_signals) / max(1, min(6, len(outline_terms))) * 100)
+
+    metrics = {
+        "opening": opening_score,
+        "agency": agency_score,
+        "obstacle": obstacle_score,
+        "consequence": consequence_score,
+        "scene_progress": scene_score,
+        "ending_hook": ending_score,
+        "outline_alignment": alignment_score,
+    }
+    # 结构权重优先于“爽点词”：章末钩子和主角能动性是连载留存的硬指标。
+    score = round(
+        metrics["opening"] * 0.18
+        + metrics["agency"] * 0.18
+        + metrics["obstacle"] * 0.16
+        + metrics["consequence"] * 0.18
+        + metrics["scene_progress"] * 0.10
+        + metrics["ending_hook"] * 0.15
+        + metrics["outline_alignment"] * 0.05,
+        1,
+    )
+    issues = []
+    if opening_score < 40:
+        issues.append("开篇缺少具体行动或立即冲突")
+    if agency_score < 40:
+        issues.append("主角行动/选择不足，叙事可能停留在旁观或说明")
+    if obstacle_score < 35:
+        issues.append("主要阻力信号不足")
+    if consequence_score < 35:
+        issues.append("行动后的后果或状态变化不清晰")
+    if ending_score < 30:
+        issues.append("章末缺少未决动作、风险、信息或下一步")
+
+    return {
+        "score": score,
+        "metrics": metrics,
+        "signals": {
+            "opening_actions": opening_actions[:12],
+            "agency_actions": agency_actions[:12],
+            "choices": choices[:12],
+            "obstacles": obstacles[:12],
+            "consequences": consequences[:12],
+            "ending_open_loops": ending_hook.get("open_loop_signals", []),
+            "outline_alignment": alignment_signals,
+        },
+        "issues": issues,
     }
 
 
@@ -420,8 +587,13 @@ def sentence_fragmentation(text: str) -> dict:
 
 # ── L8: 综合评估报告 ──
 
-def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None) -> dict:
-    """对单章文本执行全维度评估"""
+def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None,
+                     chapter_outline: Optional[dict] = None) -> dict:
+    """对单章文本执行全维度评估。
+
+    ``chapter_outline`` 可选：提供时会额外检查正文与本章事件/钩子的轻量对齐。
+    保留原有参数位置，避免旧调用方和历史报告失效。
+    """
     report = {
         "distinct_1": round(distinct_n(text, 1), 4),
         "distinct_2": round(distinct_n(text, 2), 4),
@@ -431,6 +603,7 @@ def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None)
         "dopamine": dopamine_density(text),
         "ai_slop": ai_slop_score(text),
         "fragmentation": sentence_fragmentation(text),
+        "structure": chapter_structure(text, chapter_outline),
     }
     
     if texts_for_diversity and len(texts_for_diversity) >= 2:
@@ -452,11 +625,13 @@ def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None)
         scores.append(("连贯性", 40, 0.15))
     else:
         scores.append(("连贯性", 30, 0.15))
+    # 叙事结构：目标/阻力/选择/后果/章末未决，跨题材比爽点词更稳定。
+    scores.append(("章节结构", report["structure"]["score"], 0.20))
     # 钩子
-    scores.append(("钩子强度", report["hook"]["strength"] * 10, 0.20))
-    # 爽点
+    scores.append(("钩子强度", report["hook"]["strength"] * 10, 0.15))
+    # 爽点只作为题材相关的辅助项，避免悬疑/现实/慢热章被误杀。
     dp = report["dopamine"]["density_per_2000"]
-    scores.append(("爽点密度", min(100, dp / 6 * 100), 0.20))
+    scores.append(("爽点密度", min(100, dp / 6 * 100), 0.08))
     # 去AI味
     scores.append(("去AI味", report["ai_slop"]["score"], 0.15))
     # 句式碎片化

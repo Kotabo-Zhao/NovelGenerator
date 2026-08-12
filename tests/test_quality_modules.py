@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from backend.core.humanizer import detect_ai_patterns, humanize_text, build_humanizer_prompt, _analyze_burstiness
 from backend.core.chapter_summarizer import ChapterSummarizer
+from backend.core.evaluation_system import chapter_structure, evaluate_chapter, hook_strength
 
 
 class TestHumanizerDetection(unittest.TestCase):
@@ -178,6 +179,51 @@ class TestChapterSummarizer(unittest.TestCase):
         chapters = {1: "关键章节测试" * 30}
         results = self.s.summarize_batch(chapters)
         self.assertEqual(results[1]["importance"], "key")
+
+
+class TestNarrativeEvaluation(unittest.TestCase):
+    """叙事结构评估回归：指标必须能识别真实的章节推进，而不是只看爽点词。"""
+
+    def test_hook_keeps_last_sentence_when_chapter_ends_with_punctuation(self):
+        text = "火光照进门缝，他终于看清了那枚黑色的印记。为什么偏偏是黑色的。"
+
+        result = hook_strength(text)
+
+        self.assertEqual(result["last_sentence"], "为什么偏偏是黑色的")
+        self.assertGreater(result["strength"], 0)
+
+    def test_hook_recognizes_decision_or_next_action_without_dopamine_words(self):
+        text = "沈砚把证物收进内袋，关掉档案室的灯。天亮以前，他必须回到旧码头。"
+
+        result = hook_strength(text)
+
+        self.assertGreaterEqual(result["strength"], 3)
+        self.assertTrue(result["open_loop_signals"])
+
+    def test_structure_rewards_goal_obstacle_choice_consequence_and_hook(self):
+        text = (
+            "沈砚刚撬开档案柜，门外的脚步声就停在了第三层。"
+            "他想取走封条，却发现封条上的编号已经被人替换。\n\n"
+            "保安推门进来，要求他立刻交出钥匙。沈砚没有解释，反而把假封条塞进打印机，"
+            "借机器卡纸的瞬间拍下了真正的编号。\n\n"
+            "打印机吐出最后一张纸时，屏幕上跳出一个陌生账号：明晚十二点，旧码头见。"
+        )
+
+        result = chapter_structure(text, {"summary": "沈砚调查被替换的封条", "hook": "旧码头的约见"})
+
+        self.assertGreaterEqual(result["score"], 65)
+        self.assertGreaterEqual(result["metrics"]["opening"], 60)
+        self.assertGreaterEqual(result["metrics"]["agency"], 60)
+        self.assertGreaterEqual(result["metrics"]["consequence"], 50)
+        self.assertGreaterEqual(result["metrics"]["ending_hook"], 30)
+
+    def test_evaluate_chapter_exposes_structure_contract(self):
+        result = evaluate_chapter("他推开门，发现桌上多了一封没有署名的信。")
+
+        self.assertIn("structure", result)
+        self.assertIn("章节结构", {item["metric"] for item in result["score_breakdown"]})
+        self.assertGreaterEqual(result["structure"]["score"], 0)
+        self.assertLessEqual(result["structure"]["score"], 100)
 
 
 if __name__ == '__main__':

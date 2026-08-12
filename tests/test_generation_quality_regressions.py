@@ -5,6 +5,8 @@ from backend.core.character_state import CharacterStateTracker
 from backend.core.outline_compliance import OutlineComplianceChecker
 from backend.core.shared_memory import SharedMemoryManager
 from backend.core.writer import Writer
+from backend.core.beat_decomposer import BeatDecomposer
+from backend.core.atomic_writer import _beat_contract_score
 
 
 class _FakeMemory:
@@ -38,6 +40,74 @@ def test_writer_stream_helper_runs_inside_asyncio_loop():
     result = asyncio.run(writer._create_stream_chunks(stream=True))
 
     assert result == ["片段"]
+
+
+def test_beat_decomposer_maps_scene_contract_into_writer_beats():
+    outline = {
+        "summary": "沈砚调查被替换的封条并赴旧码头",
+        "hook": "旧码头有人等他",
+        "characters": ["沈砚", "周岚"],
+        "scene_beats": [
+            {
+                "name": "发现封条",
+                "key_action": "沈砚撬开档案柜，发现封条编号被替换",
+                "entry_hook": "门外传来保安的脚步声",
+                "reject_outcome": "他若交出钥匙，真正的封条会被销毁",
+                "state_output": {"flags": ["发现假封条"], "relations": {}},
+            },
+            {
+                "name": "赴约",
+                "key_action": "沈砚带着证据前往旧码头",
+                "entry_hook": "陌生账号发来倒计时",
+                "reject_outcome": "拒绝赴约就会失去唯一证人",
+                "state_output": {"flags": ["旧码头赴约"], "relations": {}},
+            },
+        ],
+    }
+
+    beats = BeatDecomposer(seed=7).decompose(outline, 2, available_characters=["沈砚", "周岚"])
+    payload = [beat.to_dict() for beat in beats]
+
+    assert any("撬开档案柜" in beat["key_event"] for beat in payload)
+    assert any("旧码头" in beat["key_event"] for beat in payload)
+    assert payload[0]["state_change"]["flags"] == ["发现假封条"]
+    assert payload[-1]["reader_question"]
+    assert all("本章 " not in beat["key_event"] for beat in payload)
+
+
+def test_beat_prompt_exposes_choice_and_state_change_contract():
+    outline = {
+        "summary": "调查失踪案",
+        "scene_beats": [{
+            "key_action": "找到被撕碎的名单",
+            "reject_outcome": "不追查就会错过凶手",
+            "state_output": {"flags": ["拿到名单"], "relations": {}},
+        }],
+    }
+
+    beat = BeatDecomposer(seed=1).decompose(outline, 1)[0]
+    prompt = beat.to_prompt()
+
+    assert "选择/代价" in prompt
+    assert "状态变化" in prompt
+    assert "不追查就会错过凶手" in prompt
+
+
+def test_atomic_candidate_score_prefers_event_progress_over_generic_prose():
+    outline = {
+        "summary": "调查失踪案",
+        "scene_beats": [{
+            "key_action": "找到被撕碎的名单",
+            "reject_outcome": "不追查就会错过凶手",
+            "state_output": {"flags": ["拿到名单"], "relations": {}},
+        }],
+    }
+    beat = BeatDecomposer(seed=1).decompose(outline, 1)[0]
+
+    generic = "雨水沿着屋檐落下，他想起了很多年前的那个夜晚，心里泛起说不清的情绪。"
+    progressing = "沈砚撕开档案袋，在碎纸堆里找到被撕碎的名单，并把证据收进内袋。"
+
+    assert _beat_contract_score(progressing, beat) > _beat_contract_score(generic, beat)
 
 
 def test_character_state_update_persists_empty_extraction_without_asyncio_name_error():
@@ -169,6 +239,26 @@ def test_final_quality_downgrades_when_consistency_result_has_parse_error():
 
     assert merged["score"] == 0
     assert merged["issues"] == ["[P1] 一致性校验未完成: invalid JSON"]
+
+
+def test_final_quality_includes_narrative_structure_without_hiding_pacing_issues():
+    from backend.core.mixins.generation import _merge_quality_with_narrative
+
+    merged = _merge_quality_with_narrative(
+        {"score": 90, "issues": []},
+        {
+            "hook": {"strength": 2},
+            "structure": {
+                "score": 30,
+                "metrics": {"opening": 20},
+                "issues": ["开篇缺少具体行动或立即冲突"],
+            },
+        },
+    )
+
+    assert merged["score"] < 90
+    assert merged["narrative"]["structure"]["score"] == 30
+    assert "[叙事结构] 开篇缺少具体行动或立即冲突" in merged["issues"]
 
 
 def test_consistency_parser_repairs_trailing_commas():

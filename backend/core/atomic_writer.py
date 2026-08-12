@@ -22,6 +22,40 @@ from .usage_context import report_response_usage
 
 log = logging.getLogger(__name__)
 
+
+def _beat_contract_score(text: str, beat: Beat) -> float:
+    """给候选节拍补一层事件契约评分。
+
+    原候选排序只奖励长度和句长，容易选中“文风顺但没有完成本拍事件”的
+    片段。这里用低成本词面证据做预筛，不要求模型逐字复述大纲，也不替代
+    章节级评估；它只把具体事件/阻力/代价/状态变化纳入选择依据。
+    """
+    import re
+
+    body = (text or "").strip()
+    score = 0.0
+
+    def evidence(value: str) -> float:
+        if not value:
+            return 0.0
+        terms = [term for term in re.findall(r'[\u4e00-\u9fff]{2,4}', str(value)) if len(term) >= 2]
+        if not terms:
+            return 0.0
+        hits = sum(1 for term in terms if term in body)
+        return min(1.2, hits / max(1, min(4, len(terms))) * 1.2)
+
+    score += evidence(getattr(beat, "key_event", ""))
+    score += evidence(getattr(beat, "opposition", "")) * 0.45
+    score += evidence(getattr(beat, "choice", "")) * 0.45
+    state_change = getattr(beat, "state_change", {})
+    if state_change:
+        score += evidence(json.dumps(state_change, ensure_ascii=False)) * 0.35
+    if getattr(beat, "function", "") == "closing_hook":
+        score += hook_strength(body)["strength"] / 10 * 1.5
+    if "本章 " in body or "核心事件:" in body:
+        score -= 1.0
+    return round(score, 4)
+
 ATOMIC_WRITER_SYSTEM = """你是一个小说节拍写手。你只写一个节拍（scene beat）——不是一整章，只是 100-400 字的一个叙事单元。
 
 ## 创作自由声明
@@ -214,7 +248,9 @@ class AtomicWriter:
             else:
                 length_score = 0
             
-            scored.append((len_score + length_score, c))
+            contract_score = _beat_contract_score(text, beat)
+            c["contract_score"] = contract_score
+            scored.append((len_score + length_score + contract_score, c))
         
         # 不是选最高分，而是在 top 2 中随机选（增加随机性）
         scored.sort(key=lambda x: (-x[0], x[1]["index"]))
@@ -223,8 +259,9 @@ class AtomicWriter:
         return {
             "text": chosen["text"],
             "failed": False,
-            "candidates": [{"text": c["text"], "index": c["index"]} for _, c in scored],
+            "candidates": [{"text": c["text"], "index": c["index"], "contract_score": c.get("contract_score", 0)} for _, c in scored],
             "selected_index": chosen["index"],
+            "selected_score": round(scored[0][0], 4),
             "temperature": chosen["temperature"],
         }
     
@@ -365,6 +402,14 @@ class AtomicWriter:
             lines.append(f"核心事件: {beat.key_event}")
         if beat.character_focus:
             lines.append(f"聚焦角色: {beat.character_focus}")
+        if beat.opposition:
+            lines.append(f"主要阻力: {beat.opposition}")
+        if beat.choice:
+            lines.append(f"选择/代价: {beat.choice}")
+        if beat.state_change:
+            lines.append(f"状态变化: {beat.state_change}")
+        if beat.reader_question:
+            lines.append(f"读者未解问题: {beat.reader_question}")
         
         if prev_full:
             lines.append(f"\n## ⬆️ 上一节拍的完整正文（从这里直接接续）\n{prev_full}")
