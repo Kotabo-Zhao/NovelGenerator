@@ -7,6 +7,7 @@ from backend.core.shared_memory import SharedMemoryManager
 from backend.core.writer import Writer
 from backend.core.beat_decomposer import BeatDecomposer
 from backend.core.atomic_writer import _beat_contract_score
+from backend.core.planner import Planner
 
 
 class _FakeMemory:
@@ -108,6 +109,63 @@ def test_atomic_candidate_score_prefers_event_progress_over_generic_prose():
     progressing = "沈砚撕开档案袋，在碎纸堆里找到被撕碎的名单，并把证据收进内袋。"
 
     assert _beat_contract_score(progressing, beat) > _beat_contract_score(generic, beat)
+
+
+def test_atomic_closing_candidate_penalizes_truncated_last_sentence():
+    outline = {
+        "summary": "调查失踪案",
+        "hook": "名单背面出现新的名字",
+        "scene_beats": [{
+            "key_action": "找到被撕碎的名单",
+            "reader_question": "名单背面是谁留下的名字",
+        }],
+    }
+    beats = BeatDecomposer(seed=1).decompose(outline, 1, is_first_chapter=True)
+    closing = beats[-1]
+
+    truncated = "他翻到名单最后一页，看见一个熟悉的名字，手指停在那一行"
+    complete = "他翻到名单最后一页，看见一个熟悉的名字。名单背面，另一个名字正在渗出来。"
+
+    assert _beat_contract_score(complete, closing) > _beat_contract_score(truncated, closing)
+
+
+def test_planner_repair_builds_non_placeholder_scene_contract():
+    outline = {"volumes": [{"chapters": [{
+        "number": 1,
+        "summary": "沈砚在档案室发现封条编号被替换",
+        "conflict": "保安回来阻止他取证",
+        "hook": "名单背面出现父亲写下的名字",
+        "bridge_to_next": "沈砚必须在天亮前赴旧码头",
+    }]}]}
+
+    repaired = Planner.repair_outline(outline)
+    beats = repaired["volumes"][0]["chapters"][0]["scene_beats"]
+
+    assert len(beats) == 5
+    assert all(beat["key_action"] for beat in beats)
+    assert all("具体发生了什么" not in beat["key_action"] for beat in beats)
+    assert beats[0]["key_action"] != beats[-1]["key_action"]
+    assert beats[-1]["key_action"] == "名单背面出现父亲写下的名字"
+
+
+def test_planner_repair_replaces_llm_placeholder_key_actions():
+    outline = {"volumes": [{"chapters": [{
+        "number": 1,
+        "summary": "主角拿到失踪案名单",
+        "hook": "名单上出现熟人的名字",
+        "scene_beats": [
+            {"beat": 1, "key_action": "具体发生了什么——必填本章第1关键节点的具体事件"},
+            {"beat": 2, "key_action": "核心冲突展开"},
+            {"beat": 5, "key_action": "留下悬念"},
+        ],
+    }]}]}
+
+    repaired = Planner.repair_outline(outline)
+    beats = repaired["volumes"][0]["chapters"][0]["scene_beats"]
+
+    assert beats[0]["key_action"] != "具体发生了什么——必填本章第1关键节点的具体事件"
+    assert beats[1]["key_action"] != "核心冲突展开"
+    assert beats[2]["key_action"] != "留下悬念"
 
 
 def test_character_state_update_persists_empty_extraction_without_asyncio_name_error():

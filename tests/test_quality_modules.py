@@ -225,6 +225,18 @@ class TestNarrativeEvaluation(unittest.TestCase):
         self.assertGreaterEqual(result["structure"]["score"], 0)
         self.assertLessEqual(result["structure"]["score"], 100)
 
+    def test_coherence_does_not_call_low_lexical_overlap_a_narrative_jump(self):
+        text = (
+            "沈砚推开档案室的门，屋里只亮着一盏旧灯。"
+            "他没有停留，先检查了门锁和桌面的灰尘。"
+            "随后，手机震动了一下，匿名账号发来旧码头的地址。"
+            "沈砚收起证据，转身走进雨里。"
+        )
+
+        result = __import__("backend.core.evaluation_system", fromlist=["coherence_score"]).coherence_score(text)
+
+        self.assertNotEqual(result["verdict"], "跳跃过大")
+
 
 if __name__ == '__main__':
     unittest.main()

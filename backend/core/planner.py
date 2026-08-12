@@ -1420,6 +1420,68 @@ class Planner:
         }
 
     @staticmethod
+    def _repair_scene_beats(chapter: dict) -> list:
+        """把缺失/白板 scene_beats 修成可供正文生成的五段事件契约。
+
+        这里不编造新的剧情，只使用章节已有的 opening_scene、summary、conflict、
+        bridge_to_next、hook 和 LLM 已填的具体动作。这样降级路径也能保持
+        “开场行动→阻力→选择→后果→章末问题”的骨架，而不是把模板句原样
+        传给写手。
+        """
+        summary = str(chapter.get("summary") or "").strip()
+        conflict = str(chapter.get("conflict") or "").strip()
+        opening = str(chapter.get("opening_scene") or "").strip()
+        bridge = str(chapter.get("bridge_to_next") or "").strip()
+        hook = str(chapter.get("hook") or "").strip()
+        characters = chapter.get("characters") or ["主角"]
+        actor = str(characters[0] if isinstance(characters, list) and characters else characters).strip() or "主角"
+
+        def placeholder(value: object) -> bool:
+            value = str(value or "").strip()
+            return (not value or any(token in value for token in (
+                "具体发生了什么", "本章第", "本章事件开场", "核心冲突展开",
+                "留下悬念", "必填", "玩家拒绝/反着来时后果", "承接上章结尾",
+                "大纲生成时未包含",
+            )))
+
+        existing = chapter.get("scene_beats") or []
+        if not isinstance(existing, list):
+            existing = []
+        existing = [item if isinstance(item, dict) else {"key_action": str(item)} for item in existing]
+        default_actions = [
+            f"{actor}开始行动：{opening if not placeholder(opening) else summary or '追查眼前的异常'}",
+            f"{actor}推进目标时遭遇阻力：{conflict or summary or '现场出现新的阻碍'}",
+            f"{actor}必须在继续追查和付出代价之间做出选择：{summary or conflict or '本章核心目标'}",
+            f"{actor}带着选择造成的结果离开现场：{bridge if not placeholder(bridge) else summary or '局面发生改变'}",
+            hook or f"{actor}发现新的线索，下一步被迫指向未解决的问题",
+        ]
+        names = ["开场行动", "阻力升级", "选择转折", "后果余波", "章末钩子"]
+        functions = ["立即建立行动与悬念", "阻力增加并迫使主角付出代价", "主角做出不可逆选择", "展示选择造成的状态变化", "留下下一步问题"]
+        repaired = []
+        for index in range(5):
+            item = existing[index] if index < len(existing) else {}
+            action = item.get("key_action")
+            if placeholder(action):
+                action = default_actions[index]
+            item["beat"] = index + 1
+            item["name"] = str(item.get("name") or names[index])
+            item["function"] = str(item.get("function") or functions[index])
+            item["key_action"] = str(action).strip()
+            item["entry_hook"] = str(item.get("entry_hook") or item["key_action"][:80]).strip()
+            item["reject_outcome"] = str(item.get("reject_outcome") or f"若拒绝本节点，{item['key_action'][:50]}将转化为新的阻力").strip()
+            if not isinstance(item.get("state_output"), dict):
+                item["state_output"] = {"flags": [], "relations": {}}
+            trigger = item.get("trigger")
+            if not isinstance(trigger, dict):
+                trigger = {}
+            trigger.setdefault("type", "event")
+            trigger.setdefault("conditions", [])
+            trigger.setdefault("timeout_scenes", 4)
+            item["trigger"] = trigger
+            repaired.append(item)
+        return repaired
+
+    @staticmethod
     def repair_outline(outline: dict) -> dict:
         """自动修复大纲常见问题"""
         if not outline:
@@ -1453,47 +1515,8 @@ class Planner:
                     ch["bridge_to_next"] = "（大纲生成时未包含因果链，建议重新生成）"
                 if "opening_scene" not in ch:
                     ch["opening_scene"] = "承接上章结尾"
-                # v3.5.54: scene_beats 兜底（Galgame 节点图）——LLM 常丢这个字段，
-                # 用 summary/cause_from_prev/hook 生成 3 节点，互动模式据此收束
-                if "scene_beats" not in ch or not ch.get("scene_beats"):
-                    _sum = str(ch.get("summary", ""))[:60]
-                    _hook = str(ch.get("hook", ""))[:60]
-                    _cfp = str(ch.get("cause_from_prev", ""))[:60]
-                    ch["scene_beats"] = [
-                        {"beat": 1, "name": "开篇钩子",
-                         "function": "承接前章，本章事件开场",
-                         "key_action": _cfp or _sum or "本章事件开场"},
-                        {"beat": 2, "name": "冲突升级",
-                         "function": "本章核心事件发生",
-                         "key_action": _sum or "核心冲突展开"},
-                        {"beat": 3, "name": "钩子",
-                         "function": "悬念收束，引向下一章",
-                         "key_action": _hook or "留下悬念"},
-                    ]
-                elif isinstance(ch.get("scene_beats"), list):
-                    # 补齐 key_action 为空的白板节点（LLM 常只填名称）
-                    _sum = str(ch.get("summary", ""))[:60]
-                    _hook = str(ch.get("hook", ""))[:60]
-                    for _b in ch.get("scene_beats", []):
-                        if isinstance(_b, dict) and not str(_b.get("key_action", "")).strip():
-                            _b["key_action"] = _sum if _b.get("beat", 1) in (1, 2) else _hook
-                        # v1.1 P2: trigger 兜底——LLM 丢字段时补默认（timeout 触发，
-                        # 保证锚点式不卡死；entry_hook 用 key_action 兜底）
-                        if isinstance(_b, dict):
-                            _trg = _b.get("trigger")
-                            if not isinstance(_trg, dict):
-                                _b["trigger"] = {"type": "event", "conditions": [],
-                                                 "timeout_scenes": 4}
-                            else:
-                                _trg.setdefault("type", "event")
-                                _trg.setdefault("conditions", [])
-                                _trg.setdefault("timeout_scenes", 4)
-                            if not str(_b.get("entry_hook", "")).strip():
-                                _b["entry_hook"] = str(_b.get("key_action", ""))[:60]
-                            if not _b.get("reject_outcome"):
-                                _b["reject_outcome"] = "玩家拒绝 → 以'拒绝及其后果'推进（对方态度变化/线索转移）"
-                            if not isinstance(_b.get("state_output"), dict):
-                                _b["state_output"] = {"flags": [], "relations": {}}
+                # v3.6: 统一修成五段具体事件契约，避免白板/模板句进入 Writer。
+                ch["scene_beats"] = Planner._repair_scene_beats(ch)
                 if "conflict_intensity" not in ch:
                     # 从 conflict 字符串中尝试提取
                     cf = ch.get("conflict", "")

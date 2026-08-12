@@ -300,7 +300,13 @@ class GenerationMixin:
 
     def _format_beats_instruction(self, beats: list) -> str:
         """AUDIT P1-1: 把 beat 列表渲染为紧凑节拍骨架，供普通 Writer 单次生成"""
-        lines = ["## 🎬 本章节拍结构（严格按此节奏推进，节拍顺序不可跳跃、不可合并）"]
+        lines = [
+            "## 🎬 本章叙事契约（先完成事件，再展开文风；节拍顺序不可跳跃、不可合并）",
+            "- 开篇必须让主角或现场发生一个可见动作，不要从设定说明起笔。",
+            "- 中段必须出现具体阻力，并让主角做出选择；选择要产生可观察的状态变化。",
+            "- 章末必须留下风险、信息、决定或下一步行动，最后一句必须完整收束，不得半句截断。",
+            "## 节拍明细",
+        ]
         for b in beats:
             lines.append(
                 f"{b.index + 1}. {b.function}｜{b.goal}｜"

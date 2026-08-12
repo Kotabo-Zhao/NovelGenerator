@@ -52,6 +52,11 @@ def _beat_contract_score(text: str, beat: Beat) -> float:
         score += evidence(json.dumps(state_change, ensure_ascii=False)) * 0.35
     if getattr(beat, "function", "") == "closing_hook":
         score += hook_strength(body)["strength"] / 10 * 1.5
+        if re.search(r'[。！？……」』”\"）)]$', body):
+            score += 0.8
+        else:
+            # 章末钩子可以悬停，但不能停在模型被 max_tokens 截断的半句上。
+            score -= 1.0
     if "本章 " in body or "核心事件:" in body:
         score -= 1.0
     return round(score, 4)
@@ -79,6 +84,8 @@ ATOMIC_WRITER_SYSTEM = """你是一个小说节拍写手。你只写一个节拍
 - 这个节拍必须在情节上往前推一步。读者看完这个节拍后应该比之前知道更多、感受到更多
 - 如果这个节拍删掉不影响剧情理解 → 这个节拍不合格。重新写
 - 环境描写/内心独白/角色闲聊：除非直接服务于当前节拍的核心事件，否则不写
+- 当前节拍若提供了“核心事件/主要阻力/选择代价/状态变化”，必须在正文中完成至少两项可观察结果，不能只复述情绪
+- 章末节拍可以悬停，但最后一个句子必须完整结束；禁止在半句、破折号或未闭合引号处截断
 
 ### 去AI味规则
 - 句长变化：长句>30字后跟短句≤12字
@@ -179,6 +186,9 @@ class AtomicWriter:
             t = max(0.7, min(1.0, t))
             
             try:
+                max_tokens = max(300, beat.max_words * 2)
+                if beat.function == "closing_hook":
+                    max_tokens = max(max_tokens, beat.max_words * 3, 480)
                 resp = self._create(
                     model=self.model,
                     messages=[
@@ -186,7 +196,7 @@ class AtomicWriter:
                         {"role": "user", "content": prompt},
                     ],
                     temperature=t,
-                    max_tokens=max(300, beat.max_words * 2),
+                    max_tokens=max_tokens,
                     response_format={"type": "text"},
                 )
                 text = resp.choices[0].message.content.strip()
