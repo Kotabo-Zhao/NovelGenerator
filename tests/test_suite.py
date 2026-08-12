@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 from core.planner import Planner
 from core.atomic_io import atomic_write_json, safe_read_json, atomic_write_text
 from core.writer import Writer
-from core.memory import NovelMemory
+from core.shared_memory import SharedMemoryManager
 from core.engine import NovelEngine
 
 
@@ -212,7 +212,7 @@ class TestWriter(unittest.TestCase):
 class TestMemory(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.mem = NovelMemory(self.tmpdir)
+        self.mem = SharedMemoryManager(self.tmpdir)
 
     def test_31_save_and_load_state(self):
         novel_dir = os.path.join(self.tmpdir, "test_novel")
@@ -240,7 +240,7 @@ class TestMemory(unittest.TestCase):
     def test_34_foreshadowing_empty(self):
         novel_dir = os.path.join(self.tmpdir, "novel_fs")
         os.makedirs(novel_dir)
-        ctx = self.mem.get_foreshadowing_context("novel_fs", 5)
+        ctx = self.mem._build_foreshadowing_context("novel_fs", 5)
         self.assertEqual(ctx, "")
 
     def test_35_foreshadowing_urgent(self):
@@ -249,7 +249,7 @@ class TestMemory(unittest.TestCase):
         # reveal_chapter <= current_chapter → 🔴 必须
         hooks = [{"plant_chapter": 1, "description": "神秘戒指", "reveal_chapter": 2, "resolved": False}]
         atomic_write_json(os.path.join(novel_dir, "foreshadowing.json"), hooks)
-        ctx = self.mem.get_foreshadowing_context("novel_fs2", 3)
+        ctx = self.mem._build_foreshadowing_context("novel_fs2", 3)
         self.assertIn("神秘戒指", ctx)
         self.assertIn("🔴", ctx)  # urgent
 
@@ -281,7 +281,7 @@ class TestMemory(unittest.TestCase):
             {"description": "伏笔A", "reveal_chapter": 5}
         ])
         self.mem.update_foreshadowing("novel_fs3", 5, resolved=["伏笔A"])
-        ctx = self.mem.get_foreshadowing_context("novel_fs3", 10)
+        ctx = self.mem._build_foreshadowing_context("novel_fs3", 10)
         self.assertEqual(ctx, "")
 
 
@@ -536,7 +536,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_55_state_consistency_after_chapter_ops(self):
         """状态一致性：模拟章节生成后的状态更新"""
-        mem = NovelMemory(self.tmpdir)
+        mem = SharedMemoryManager(self.tmpdir)
         novel_dir = os.path.join(self.tmpdir, "state_test")
         os.makedirs(novel_dir)
         

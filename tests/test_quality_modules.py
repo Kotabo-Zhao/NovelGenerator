@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from backend.core.humanizer import detect_ai_patterns, humanize_text, build_humanizer_prompt, _analyze_burstiness
 from backend.core.chapter_summarizer import ChapterSummarizer
-from backend.core.evaluation_system import chapter_structure, evaluate_chapter, hook_strength
+from backend.core.evaluation_system import chapter_structure, dopamine_density, evaluate_chapter, hook_strength
 
 
 class TestHumanizerDetection(unittest.TestCase):
@@ -208,6 +208,14 @@ class TestNarrativeEvaluation(unittest.TestCase):
         self.assertGreaterEqual(result["strength"], 4)
         self.assertTrue(result["ending_reveal_signals"])
 
+    def test_hook_recognizes_semantic_reframe_as_ending_reveal(self):
+        text = "周岚是你父亲对那个地方的叫法。那三个字根本不是在写一个人，而是一个地点。"
+
+        result = hook_strength(text)
+
+        self.assertGreaterEqual(result["strength"], 4)
+        self.assertTrue(result["ending_reveal_signals"])
+
     def test_structure_rewards_goal_obstacle_choice_consequence_and_hook(self):
         text = (
             "沈砚刚撬开档案柜，门外的脚步声就停在了第三层。"
@@ -225,6 +233,16 @@ class TestNarrativeEvaluation(unittest.TestCase):
         self.assertGreaterEqual(result["metrics"]["consequence"], 50)
         self.assertGreaterEqual(result["metrics"]["ending_hook"], 30)
 
+    def test_structure_recognizes_common_opening_actions(self):
+        text = (
+            "沈砚抽出档案袋，拉开暗格，解开封条后看见一行新字。"
+            "门把手在身后转动，他把证据塞进内袋，决定从后门离开。"
+        )
+
+        result = chapter_structure(text)
+
+        self.assertGreaterEqual(result["metrics"]["opening"], 60)
+
     def test_evaluate_chapter_exposes_structure_contract(self):
         result = evaluate_chapter("他推开门，发现桌上多了一封没有署名的信。")
 
@@ -232,6 +250,21 @@ class TestNarrativeEvaluation(unittest.TestCase):
         self.assertIn("章节结构", {item["metric"] for item in result["score_breakdown"]})
         self.assertGreaterEqual(result["structure"]["score"], 0)
         self.assertLessEqual(result["structure"]["score"], 100)
+
+    def test_mystery_payoff_counts_evidence_risk_and_decision(self):
+        text = (
+            "沈砚撬开档案柜，拍下被替换的编号，确认名单确实少了一页。"
+            "手机亮起倒计时，他决定带走证据；门外的脚步逼近，拒绝赴约就会失去唯一证人。"
+            "他把照片和名单分别封进两个文件袋，记下旧码头的地址，才关掉手机屏幕。"
+            "他将这份记录藏进内袋，准备在明晚之前查清周岚是否说谎。"
+        )
+
+        result = dopamine_density(text, genre="悬疑")
+
+        self.assertEqual(result["mode"], "information_tension")
+        self.assertEqual(result["label"], "情绪/信息回报")
+        self.assertGreaterEqual(result["total_signals"], 3)
+        self.assertNotEqual(result["verdict"], "严重不足")
 
     def test_coherence_does_not_call_low_lexical_overlap_a_narrative_jump(self):
         text = (

@@ -152,6 +152,22 @@ def test_atomic_closing_prompt_requires_a_concrete_open_loop():
     assert "下一章要追查" in prompt
 
 
+def test_atomic_prompt_requires_an_observable_payoff_per_beat():
+    outline = {
+        "summary": "调查失踪案",
+        "scene_beats": [{"key_action": "找到被撕碎的名单"}],
+    }
+    beat = BeatDecomposer(seed=1).decompose(outline, 1)[0]
+    from backend.core.atomic_writer import AtomicWriter
+
+    prompt = AtomicWriter(None, "mock")._build_beat_prompt(
+        beat, "", "", chapter_context=""
+    )
+
+    assert "可验证的即时回报" in prompt
+    assert "证据、决定、关系变化或代价" in prompt
+
+
 def test_atomic_opening_candidate_requires_action_near_the_start():
     outline = {
         "summary": "调查失踪案",
@@ -163,6 +179,25 @@ def test_atomic_opening_candidate_requires_action_near_the_start():
     immediate = "沈砚撬开档案柜，铁屑落在手背上，里面那份名单少了一页。"
 
     assert _beat_contract_score(immediate, opening) > _beat_contract_score(delayed, opening)
+
+
+def test_atomic_opening_prompt_requires_action_and_irregularity_early():
+    outline = {
+        "summary": "调查失踪案",
+        "scene_beats": [{"key_action": "撬开档案柜找到名单"}],
+    }
+    opening = BeatDecomposer(seed=1).decompose(
+        outline, 1, is_first_chapter=True
+    )[0]
+    from backend.core.atomic_writer import AtomicWriter
+
+    prompt = AtomicWriter(None, "mock")._build_beat_prompt(
+        opening, "", "", chapter_context=""
+    )
+
+    assert "前80字" in prompt
+    assert "具体行动" in prompt
+    assert "异常或阻力" in prompt
 
 
 def test_planner_repair_builds_non_placeholder_scene_contract():

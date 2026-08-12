@@ -883,7 +883,7 @@ class GenerationMixin:
                 fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
             )
             _narrative_quality = await asyncio.to_thread(
-                evaluate_chapter, full_text, None, None, chapter_outline
+                evaluate_chapter, full_text, None, None, chapter_outline, genre
             )
             _final_quality = _merge_quality_with_narrative(
                 _final_quality, _narrative_quality
@@ -1261,7 +1261,7 @@ class GenerationMixin:
                     fast_food=is_fast_food,
                 )
                 _narrative_probe = await asyncio.to_thread(
-                    evaluate_chapter, full_text, None, None, chapter_outline
+                    evaluate_chapter, full_text, None, None, chapter_outline, genre
                 )
                 qr = _merge_quality_with_narrative(qr, _narrative_probe)
                 quality_report = qr
@@ -1335,7 +1335,7 @@ class GenerationMixin:
                             qr2 = checker.quick_quality_check(retry_text, fast_food=is_fast_food)
                             qr2 = _merge_quality_with_narrative(
                                 qr2,
-                                evaluate_chapter(retry_text, None, None, chapter_outline),
+                                evaluate_chapter(retry_text, None, None, chapter_outline, genre),
                             )
                             if qr2["score"] > qr["score"] + 10 or qr2["score"] >= 60:
                                 full_text = retry_text
@@ -1962,7 +1962,7 @@ class GenerationMixin:
                 fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
             )
             _narrative_quality = await asyncio.to_thread(
-                evaluate_chapter, full_text, None, None, chapter_outline
+                        evaluate_chapter, full_text, None, None, chapter_outline, genre
             )
             _final_quality = _merge_quality_with_narrative(
                 _final_quality, _narrative_quality

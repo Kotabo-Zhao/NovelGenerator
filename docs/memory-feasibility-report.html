@@ -132,7 +132,7 @@ li { margin:4px 0; padding-left:4px; }
     <tr><td>TwistDesigner</td><td>R</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
     <tr><td>FeedbackDecomposer</td><td>R</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
     <tr><td>OutlineInteractive</td><td>R+W</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
-    <tr><td>NovelMemory</td><td>R</td><td>R+W</td><td>R</td><td>R+W</td><td>R+W</td></tr>
+    <tr><td>SharedMemoryManager</td><td>R</td><td>R+W</td><td>R</td><td>R+W</td><td>R+W</td></tr>
   </table>
   <p style="color:var(--text2);font-size:0.85em;margin-top:8px">R=Read, W=Write. Engineer 负责所有文件的最终写入调度。</p>
 
@@ -191,7 +191,7 @@ li { margin:4px 0; padding-left:4px; }
   </div>
 
   <div class="v-box ok">
-    <strong>关键发现：</strong>当前 NovelGenerator 的 6 个分散文件已经天然构成了一个"Soul 文件"体系，只是缺乏统一的访问层。改造的核心不是"新建一个 Soul 文件"，而是"为已有的 Soul 体系加一层统一管理器"。
+    <strong>当前实现：</strong>当前 NovelGenerator 的 6 个分散文件已经天然构成了一个"Soul 文件"体系，现由 SharedMemoryManager 提供统一的访问层；旧 NovelMemory 包装器已移除。
   </div>
 </div>
 
@@ -207,7 +207,7 @@ li { margin:4px 0; padding-left:4px; }
   <h4>✅ 已有基础</h4>
   <ul>
     <li><code>atomic_io.py</code> 提供了原子写入 + 损坏恢复，是文件级持久化的可靠底层</li>
-    <li><code>NovelMemory</code> 已有 L1/L2/L3 分层上下文构建，只是耦合在 Engine 内</li>
+    <li><code>SharedMemoryManager</code> 已提供 L1/L2/L3 分层上下文构建与统一读写</li>
     <li>所有模块通过 Engine 串行调用，天然避免了真正的并发竞争</li>
   </ul>
 
@@ -274,7 +274,7 @@ class SharedMemoryManager:
     <tr><th>文件</th><th>改动量</th><th>说明</th></tr>
     <tr><td><code>shared_memory.py</code> (新)</td><td>~400行</td><td>统一记忆管理器</td></tr>
     <tr><td><code>engine.py</code></td><td>~20行</td><td>初始化 SharedMemoryManager，注入各模块</td></tr>
-    <tr><td><code>memory.py</code></td><td>~30行</td><td>委托给 SharedMemoryManager</td></tr>
+    <tr><td><code>memory.py</code></td><td>已移除</td><td>旧兼容包装器无生产引用，统一使用 SharedMemoryManager</td></tr>
     <tr><td>各 Agent 模块</td><td>各 ~5行</td><td>memory 引用切换</td></tr>
   </table>
 </div>
@@ -318,7 +318,7 @@ class SharedMemoryManager:
       <h4>策略4: 记忆优先级</h4>
       <p>不是所有记忆都平等。L1（核心设定）永远注入，L2（近期上下文）仅3章，L3（伏笔）按紧迫度排序取 Top 8。</p>
       <div class="meter"><div class="meter-fill v-high" style="width:85%"></div></div>
-      <p style="font-size:0.82em;color:var(--text2)">已实现: 当前 NovelMemory 已有此分层</p>
+      <p style="font-size:0.82em;color:var(--text2)">已实现: 当前 SharedMemoryManager 已有此分层</p>
     </div>
   </div>
 </div>

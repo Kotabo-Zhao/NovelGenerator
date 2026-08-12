@@ -112,7 +112,7 @@ pre code { background: none; padding: 0; color: var(--text); }
 │                                                                   │
 │  ┌─ 辅助模块 ───────────────────────────────────────────────┐    │
 │  │ ForeshadowingDesigner │ PacingChecker │ Humanizer         │    │
-│  │ NovelMemory (L1/L2/L3) │ StyleFingerprint                 │    │
+│  │ SharedMemoryManager (L1/L2/L3) │ StyleFingerprint          │    │
 │  └──────────────────────────────────────────────────────────┘    │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
@@ -154,9 +154,9 @@ pre code { background: none; padding: 0; color: var(--text); }
       <td>章节完成后更新全局角色状态</td>
     </tr>
     <tr>
-      <td><span class="badge badge-existing">v1</span> NovelMemory</td>
+      <td><span class="badge badge-existing">v1</span> SharedMemoryManager</td>
       <td>状态管理</td>
-      <td><code>memory.py</code></td>
+      <td><code>shared_memory.py</code></td>
       <td>L1/L2/L3 分层上下文管理</td>
     </tr>
     <tr>
@@ -582,7 +582,7 @@ pre code { background: none; padding: 0; color: var(--text); }
 │   │   ├── engine.py              # 🆕 集成全部新模块
 │   │   ├── planner.py             # 规划器
 │   │   ├── writer.py              # 写手
-│   │   ├── memory.py              # 分层记忆
+│   │   ├── shared_memory.py       # 分层记忆与统一持久化访问
 │   │   ├── embellisher.py         # 润色师
 │   │   ├── context_updater.py     # 状态更新
 │   │   ├── pacing_checker.py      # 节奏检查

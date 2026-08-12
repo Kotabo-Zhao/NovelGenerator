@@ -15,7 +15,7 @@
   - 内存缓存 (TTL 30s): 减少 60-80% 磁盘 I/O
   - 乐观锁 (_version): 防止并发写入冲突
   - 变化通知: 写操作后自动失效缓存
-  - 完全向后兼容 NovelMemory 接口
+  - 保留迁移期旧方法映射，业务统一直接依赖本类
 """
 
 import json
@@ -1479,7 +1479,7 @@ class SharedMemoryManager:
         return results
 
     # ═══════════════════════════════════════════
-    # 向后兼容 — NovelMemory 接口映射
+    # 迁移期兼容方法：统一由本类承载，避免再维护包装器
     # ═══════════════════════════════════════════
 
     def get_novel_dir(self, novel_id: str) -> str:

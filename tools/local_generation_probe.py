@@ -25,6 +25,7 @@ from backend.core.evaluation_system import evaluate_chapter
 def build_probe_outline() -> dict:
     return {
         "title": "旧码头的名单",
+        "genre": "悬疑",
         "summary": "沈砚调查被替换的封条，拿到失踪案名单后决定赴旧码头见匿名证人",
         "hook": "匿名证人知道沈砚父亲失踪前的最后一个名字",
         "characters": ["沈砚", "周岚"],
@@ -110,12 +111,13 @@ def run_probe(candidates: int = 2, max_beats: int = 0) -> dict:
         })
 
     text = "\n\n".join(parts)
-    report = evaluate_chapter(text, chapter_outline=outline)
+    report = evaluate_chapter(text, chapter_outline=outline, genre=outline["genre"])
     return {
         "model": config.DEEPSEEK_MODEL,
         "chars": len(text),
         "selections": selections,
         "report": report,
+        "head": text[:500],
         "tail": text[-500:],
     }
 

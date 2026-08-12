@@ -97,6 +97,7 @@ ATOMIC_WRITER_SYSTEM = """你是一个小说节拍写手。你只写一个节拍
 - 如果这个节拍删掉不影响剧情理解 → 这个节拍不合格。重新写
 - 环境描写/内心独白/角色闲聊：除非直接服务于当前节拍的核心事件，否则不写
 - 当前节拍若提供了“核心事件/主要阻力/选择代价/状态变化”，必须在正文中完成至少两项可观察结果，不能只复述情绪
+- 每个节拍至少兑现一个**可验证的即时回报**：证据、决定、关系变化或代价至少落地一项；悬疑/推理题材的回报优先是新证据、限制条件、选择或风险，不要求硬写打脸和升级
 - 章末节拍可以悬停，但最后一个句子必须完整结束；禁止在半句、破折号或未闭合引号处截断
 
 ### 去AI味规则
@@ -415,6 +416,7 @@ class AtomicWriter:
             f"情绪: {beat.emotion_start} → {beat.emotion_end}",
             f"冲突: {beat.conflict_type} {beat.conflict_intensity}/5",
             f"目标字数: {beat.min_words}-{beat.max_words}字",
+            "执行要求：本节拍必须落地一个可验证的即时回报（证据、决定、关系变化或代价至少一项），禁止只写气氛或情绪变化。",
         ])
         if beat.paragraph_style:
             lines.append(f"段落节奏: {beat.paragraph_style}")
@@ -432,6 +434,12 @@ class AtomicWriter:
             lines.append(f"状态变化: {beat.state_change}")
         if beat.reader_question:
             lines.append(f"读者未解问题: {beat.reader_question}")
+
+        if beat.function == "opening_hook":
+            lines.append(
+                "开篇硬门槛：前80字内必须出现主角的具体行动，以及一个可感知的异常或阻力；"
+                "禁止先铺环境、回忆或抽象情绪，第一段就让读者知道事情哪里不对。"
+            )
         
         if prev_full:
             lines.append(f"\n## ⬆️ 上一节拍的完整正文（从这里直接接续）\n{prev_full}")

@@ -181,7 +181,7 @@
 <tr><td><code>resilient_client</code>（LLM 韧性网关）</td><td>✅ 已实现</td><td>对话/剧情生成自动重试、限流、断线重连</td><td><span class="tag t-reuse">直接复用</span></td></tr>
 <tr><td><code>readSSE + _sse_with_heartbeat</code>（流式基建）</td><td>✅ 已实现</td><td>场景生成 & 对话流式输出，零改造</td><td><span class="tag t-reuse">直接复用</span></td></tr>
 <tr><td><code>chapter_summarizer</code>（摘要压缩）</td><td>✅ 已实现</td><td>剧情状态滚动压缩（防上下文膨胀）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
-<tr><td><code>shared_memory / memory.py</code>（统一记忆层）</td><td>✅ 已实现</td><td>互动存档读写（乐观锁/缓存）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
+<tr><td><code>shared_memory.py</code>（统一记忆层）</td><td>✅ 已实现</td><td>互动存档读写（乐观锁/缓存）</td><td><span class="tag t-reuse">直接复用</span></td></tr>
 <tr><td><b>对话引擎（多轮聊天）</b></td><td>❌ 未开发</td><td>玩家↔角色多轮对话、扮演提示词</td><td><span class="tag t-new">新建</span></td></tr>
 <tr><td><b>剧情引擎（场景生成/关键节点/状态流）</b></td><td>❌ 未开发</td><td>互动小说核心：场景推进 + 对话驱动分支</td><td><span class="tag t-new">新建</span></td></tr>
 <tr><td><b>人设→音色映射</b></td><td>❌ 未开发</td><td>角色性别/年龄/性格 → edge-tts 音色自动选择</td><td><span class="tag t-new">新建</span></td></tr>

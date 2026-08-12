@@ -9,7 +9,7 @@
   L3 自我重复度: self-BLEU (越低 = 越多样)
   L4 连贯性: 相邻句 embedding cosine similarity 的均值与方差
   L5 钩子强度: 章末句是否包含"冲突/悬念/反转"语义信号
-  L6 爽点密度: 每2000字内的情绪变化点数
+  L6 情绪/信息回报密度: 每2000字内的可验证推进点数
   L7 去AI味得分: 现有 AI detector 的评分
   L8 人类可读对比: 并排展示两份生成结果 + 指标仪表板
 """
@@ -264,12 +264,14 @@ OPEN_LOOP_SIGNALS = [
 ENDING_REVEAL_SIGNALS = [
     r'(照片|录像|监控|名单|信封|屏幕|门缝|字迹|残笔).{0,40}(出现|贴满|写着|亮起|露出|留下|指向|只露|中央|男人|女人|父亲|母亲|名字|身份)',
     r'(最后|最中间|唯一|半个|只露|背对|残留).{0,40}(名字|身份|照片|线索|人影|身影|编号|吊坠)',
+    r'(根本不是|不是|并非).{0,20}(一个人|女人|男人|名字|身份|真相|地点|代号|在写)',
+    r'(叫法|代号|地点|名字).{0,20}(其实|原来|根本|不是|指向)',
 ]
 
 # 结构信号比“爽点词”更稳定：它们用于判断一个章节是否发生了叙事推进，
 # 只作为确定性质量门的证据，不是要求每个题材都写成打脸文。
 ACTION_SIGNALS = [
-    r'(推开|打开|关上|走进|冲出|转身|抬手|伸手|抓住|放下|拿出|收起)',
+    r'(推开|打开|关上|走进|冲出|转身|抬手|伸手|抓住|放下|拿出|收起|抽出|拉开|解开|掀开)',
     r'(追上|逃走|躲开|拦住|撞开|撬开|按下|拔出|扣动|扯断|撕开|取走|推门)',
     r'(调查|检查|搜索|翻找|确认|记录|拨通|发送|签下|交出|带走|塞进|拍下|收进)',
 ]
@@ -338,7 +340,8 @@ def hook_strength(chapter_text: str) -> dict:
         score += min(4, len(open_loop_signals) * 2)
     ending_reveals = _signal_matches(end_text, ENDING_REVEAL_SIGNALS)
     if ending_reveals:
-        score += min(3, len(ending_reveals) * 2)
+        # 可验证的信息重构本身就是强钩子；不能因为没有问号或“震惊”词而低估。
+        score += min(4, len(ending_reveals) * 2 + 1)
     # “为什么/谁/怎么会”即使以句号收尾，也代表读者问题仍未解决。
     if re.search(r'(为什么|为何|谁|怎么会|怎么可能|哪一个|哪个)', last_sentence):
         score += 3
@@ -479,33 +482,86 @@ DOPAMINE_SIGNALS = [
     r'(温柔|宠溺|心疼|舍不得)',
 ]
 
-def dopamine_density(text: str) -> dict:
-    """计算爽点密度：每 2000 字中的爽感信号数"""
-    total_chars = len(text)
-    if total_chars < 100:
-        return {"density_per_2000": 0, "total_signals": 0, "verdict": "too_short"}
-    
+INFORMATION_TENSION_SIGNALS = [
+    ("evidence", r'(发现|找到|拿到|拍下|记录|确认|认出|看见|读到|查到|露出|指向|写下|少了|替换)'),
+    ("risk", r'(倒计时|追踪|跟踪|追杀|逼近|封锁|来不及|必须|只能|不能|代价|暴露|失去|威胁)'),
+    ("decision", r'(决定|选择|拒绝|答应|隐瞒|承认|带走|离开|赴约|调查|冒险)'),
+    ("reversal", r'(却发现|才发现|原来|竟然|不料|没想到|假|真正|秘密|身份)'),
+]
+
+
+def _is_information_tension_genre(genre: str) -> bool:
+    value = str(genre or "")
+    return any(keyword in value for keyword in ("悬疑", "推理", "探案", "惊悚", "灵异"))
+
+
+def _collect_density_signals(text: str, patterns: list) -> list:
+    """收集并按邻近位置去重，避免同一叙事事件被多个词重复计数。"""
     import re
+
     all_matches = []
-    for pattern in DOPAMINE_SIGNALS:
-        for m in re.finditer(pattern, text):
-            all_matches.append({"pattern": pattern[:30], "position": m.start()})
-    
-    # 按位置去重（相邻50字内的算同一个）
-    all_matches.sort(key=lambda x: x["position"])
+    for signal_type, pattern in patterns:
+        for match in re.finditer(pattern, text or ""):
+            all_matches.append({
+                "pattern": pattern[:30],
+                "position": match.start(),
+                "type": signal_type,
+            })
+    all_matches.sort(key=lambda item: item["position"])
+
     unique_signals = []
-    last_pos = -100
-    for m in all_matches:
-        if m["position"] - last_pos > 50:
-            unique_signals.append(m)
-            last_pos = m["position"]
-    
+    last_pos_by_type = {}
+    for match in all_matches:
+        signal_type = match["type"]
+        last_pos = last_pos_by_type.get(signal_type, -100)
+        if match["position"] - last_pos > 50:
+            unique_signals.append(match)
+            last_pos_by_type[signal_type] = match["position"]
+    return unique_signals
+
+
+def dopamine_density(text: str, genre: str = "") -> dict:
+    """计算每 2000 字的情绪/信息回报密度。
+
+    爽文保留原有的打脸、升级、情感释放词表；悬疑/推理/惊悚改用
+    ``证据→风险→决定→反转``四类可验证推进点，避免把“没有打脸词”
+    误判成章节没有回报。返回字段保持 ``dopamine`` 兼容，新增 ``mode``
+    与 ``signal_types`` 供前端和诊断使用。
+    """
+    total_chars = len(text)
+    information_mode = _is_information_tension_genre(genre)
+    mode = "information_tension" if information_mode else "classic_dopamine"
+    label = "情绪/信息回报" if information_mode else "爽点密度"
+    if total_chars < 100:
+        return {
+            "density_per_2000": 0,
+            "total_signals": 0,
+            "verdict": "too_short",
+            "mode": mode,
+            "label": label,
+            "signal_types": [],
+        }
+
+    if information_mode:
+        unique_signals = _collect_density_signals(text, INFORMATION_TENSION_SIGNALS)
+        density_verdict = lambda density: (
+            "回报充足" if density >= 3 else ("回报偏少" if density >= 1.5 else "严重不足")
+        )
+    else:
+        legacy_patterns = [("classic", pattern) for pattern in DOPAMINE_SIGNALS]
+        unique_signals = _collect_density_signals(text, legacy_patterns)
+        density_verdict = lambda density: (
+            "爽点充足" if density >= 4 else ("偏少" if density >= 2 else "严重不足")
+        )
+
     density = round(len(unique_signals) / (total_chars / 2000), 1)
-    
     return {
         "density_per_2000": density,
         "total_signals": len(unique_signals),
-        "verdict": "爽点充足" if density >= 4 else ("偏少" if density >= 2 else "严重不足"),
+        "verdict": density_verdict(density),
+        "mode": mode,
+        "label": label,
+        "signal_types": sorted({item["type"] for item in unique_signals}),
     }
 
 
@@ -615,19 +671,24 @@ def sentence_fragmentation(text: str) -> dict:
 # ── L8: 综合评估报告 ──
 
 def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None,
-                     chapter_outline: Optional[dict] = None) -> dict:
+                     chapter_outline: Optional[dict] = None, genre: str = "") -> dict:
     """对单章文本执行全维度评估。
 
     ``chapter_outline`` 可选：提供时会额外检查正文与本章事件/钩子的轻量对齐。
+    ``genre`` 可选：悬疑/推理等题材使用信息回报指标，保留旧调用兼容性。
     保留原有参数位置，避免旧调用方和历史报告失效。
     """
+    effective_genre = genre or ""
+    if not effective_genre and isinstance(chapter_outline, dict):
+        effective_genre = str(chapter_outline.get("genre") or "")
+
     report = {
         "distinct_1": round(distinct_n(text, 1), 4),
         "distinct_2": round(distinct_n(text, 2), 4),
         "distinct_3": round(distinct_n(text, 3), 4),
         "coherence": coherence_score(text, embed_fn),
         "hook": hook_strength(text),
-        "dopamine": dopamine_density(text),
+        "dopamine": dopamine_density(text, genre=effective_genre),
         "ai_slop": ai_slop_score(text),
         "fragmentation": sentence_fragmentation(text),
         "structure": chapter_structure(text, chapter_outline),
@@ -658,7 +719,7 @@ def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None,
     scores.append(("钩子强度", report["hook"]["strength"] * 10, 0.15))
     # 爽点只作为题材相关的辅助项，避免悬疑/现实/慢热章被误杀。
     dp = report["dopamine"]["density_per_2000"]
-    scores.append(("爽点密度", min(100, dp / 6 * 100), 0.08))
+    scores.append((report["dopamine"].get("label", "爽点密度"), min(100, dp / 6 * 100), 0.08))
     # 去AI味
     scores.append(("去AI味", report["ai_slop"]["score"], 0.15))
     # 句式碎片化
@@ -817,7 +878,7 @@ th{{background:#f8f9fa;font-weight:600;font-size:12px;color:#555}}
 <tr><td class="metric-name">词汇多样性</td><td>{a['distinct_1']}</td><td>{b['distinct_1']}</td><td>{delta_cell(b['distinct_1']-a['distinct_1'])}</td></tr>
 <tr><td class="metric-name">短语多样性</td><td>{a['distinct_2']}</td><td>{b['distinct_2']}</td><td>{delta_cell(b['distinct_2']-a['distinct_2'])}</td></tr>
 <tr><td class="metric-name">钩子强度</td><td>{a['hook']['strength']}/10</td><td>{b['hook']['strength']}/10</td><td>{delta_cell(delta['hook_strength'])}</td></tr>
-<tr><td class="metric-name">爽点密度</td><td>{a['dopamine']['density_per_2000']}/2000字</td><td>{b['dopamine']['density_per_2000']}/2000字</td><td>{delta_cell(delta['dopamine_density'])}</td></tr>
+<tr><td class="metric-name">{a['dopamine'].get('label', '爽点密度')}</td><td>{a['dopamine']['density_per_2000']}/2000字</td><td>{b['dopamine']['density_per_2000']}/2000字</td><td>{delta_cell(delta['dopamine_density'])}</td></tr>
 <tr><td class="metric-name">去AI味</td><td>{a['ai_slop']['score']}/100</td><td>{b['ai_slop']['score']}/100</td><td>{delta_cell(delta['ai_slop'])}</td></tr>
 <tr><td class="metric-name">连贯性</td><td>{a['coherence']['verdict']}</td><td>{b['coherence']['verdict']}</td><td>{delta_cell(delta['coherence'])}</td></tr>
 </table>
@@ -887,7 +948,7 @@ if __name__ == "__main__":
     print(f"综合评分: {result['overall_score']} — {result['verdict']}")
     print(f"词汇多样性 distinct-1: {result['distinct_1']}")
     print(f"钩子强度: {result['hook']['strength']}/10 ({result['hook']['verdict']})")
-    print(f"爽点密度: {result['dopamine']['density_per_2000']}/2000字")
+    print(f"{result['dopamine'].get('label', '爽点密度')}: {result['dopamine']['density_per_2000']}/2000字")
     print(f"AI味: {result['ai_slop']['score']}/100")
     print(f"连贯性: {result['coherence']['verdict']}")
     

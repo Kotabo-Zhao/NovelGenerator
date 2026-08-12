@@ -451,7 +451,7 @@ chapter_XXXX.md + 状态/伏笔/图谱更新</div>
       <ul>
         <li>核心设定 / 近期上下文 / 伏笔追踪三层隔离，prompt 组装按需拼接</li>
         <li>SharedMemoryManager 统一缓存 + 乐观锁 + 订阅通知，接口一致性好</li>
-        <li>memory.py 薄包装层保持向后兼容，v2.1 迁移无破坏</li>
+        <li>旧 memory.py 薄包装层已移除，统一由 SharedMemoryManager 承载，避免重复入口</li>
         <li>渐进式摘要压缩（check_and_compress）控制长篇小说上下文膨胀</li>
       </ul>
     </div>
