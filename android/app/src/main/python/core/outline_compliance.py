@@ -107,9 +107,14 @@ class OutlineComplianceChecker:
             })
         beats = chapter_outline.get("scene_beats") or []
         for i, b in enumerate(beats):
-            if not isinstance(b, dict):
-                continue
-            ka = str(b.get("key_action") or b.get("name") or "").strip()
+            if isinstance(b, dict):
+                ka = str(b.get("key_action") or b.get("name") or "").strip()
+            elif b is not None:
+                # 兼容旧版/手工大纲中的 scene_beats: list[str]，
+                # 确保这些硬节拍也进入合规检查而不是静默跳过。
+                ka = str(b).strip()
+            else:
+                ka = ""
             if ka:
                 items.append({
                     "id": f"beat{i + 1}", "label": f"节拍{i + 1}: {ka[:20]}",

@@ -20,6 +20,7 @@
   context_text = tracker.build_context(novel_id)
 """
 
+import asyncio
 import json
 import logging
 from typing import Optional

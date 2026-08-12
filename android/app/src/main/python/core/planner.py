@@ -218,6 +218,7 @@ class Planner:
       "name": "姓名",
       "age": "年龄",
       "identity": "身份",
+      "gender": "性别/代词（男性/女性/非二元/未设定；正文必须遵守）",
       "appearance": "外貌描述",
       "personality": {{
         "surface": "表层性格（对外展现的样子）",

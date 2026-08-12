@@ -27,6 +27,48 @@ from ..storygraph_interventions import analyze_and_inject
 from ..usage_context import report_response_usage
 
 
+def _normalize_chapter_text(text: str) -> str:
+    """按当前包导入方式加载段落规范化器，兼容 backend/core 两种入口。"""
+    try:
+        from ..shared_memory import normalize_chapter_paragraphs
+    except ImportError:
+        from core.shared_memory import normalize_chapter_paragraphs
+    return normalize_chapter_paragraphs(text)
+
+
+def _merge_quality_with_consistency(quality: dict, consistency: dict) -> dict:
+    """把后置一致性结果合并进最终质量报告，避免用旧分数掩盖逻辑硬伤。"""
+    merged = dict(quality or {})
+    issues = list(merged.get("issues") or [])
+    violations = (consistency or {}).get("violations") or []
+    validation_error = str((consistency or {}).get("error") or "").strip()
+    if validation_error:
+        merged["score"] = 0
+        item = f"[P1] 一致性校验未完成: {validation_error}"
+        if item not in issues:
+            issues.append(item)
+    if violations:
+        try:
+            quality_score = int(float(merged.get("score", 0)))
+        except (TypeError, ValueError):
+            quality_score = 0
+        try:
+            consistency_score = int(float((consistency or {}).get("score", 0)))
+        except (TypeError, ValueError):
+            consistency_score = 0
+        merged["score"] = min(quality_score, consistency_score)
+        for violation in violations:
+            if not isinstance(violation, dict):
+                continue
+            severity = str(violation.get("severity") or "P1").upper()
+            description = str(violation.get("description") or "逻辑一致性问题").strip()
+            item = f"[{severity}] {description}"
+            if item not in issues:
+                issues.append(item)
+    merged["issues"] = issues[:20]
+    return merged
+
+
 def _save_final_quality_report(memory, novel_id: str, chapter_num: int, report: dict, *, stage: str) -> dict:
     """Persist the post-mutation quality result instead of reusing a stale score."""
     path = os.path.join(memory.get_novel_dir(novel_id), "quality_reports.json")
@@ -664,9 +706,8 @@ class GenerationMixin:
 
             # ── v2.4.1: 段落规范化安全网 ──
             try:
-                from core.shared_memory import normalize_chapter_paragraphs
                 before_lines = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
-                full_text = normalize_chapter_paragraphs(full_text)
+                full_text = _normalize_chapter_text(full_text)
                 # v2.11: 确保结尾完整句子
                 from ..writer import _ensure_complete_ending
                 full_text = _ensure_complete_ending(full_text)
@@ -1324,9 +1365,8 @@ class GenerationMixin:
 
             # ── v2.4.1: 段落规范化安全网（必须在 Humanizer 和质量门之后执行）──
             try:
-                from core.shared_memory import normalize_chapter_paragraphs
                 before_short = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
-                full_text = normalize_chapter_paragraphs(full_text)
+                full_text = _normalize_chapter_text(full_text)
                 after_short = len([l for l in full_text.split('\n') if l.strip() and len(l.strip()) <= 10])
                 if before_short != after_short:
                     log.info(f"Paragraph normalize: short fragments {before_short}→{after_short}")
@@ -1591,20 +1631,6 @@ class GenerationMixin:
             except Exception as _ce:
                 log.warning(f"Outline compliance step skipped: {_ce}")
 
-            _final_quality = await asyncio.to_thread(
-                PacingChecker(self.client, self.model).quick_quality_check,
-                full_text,
-                fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
-            )
-            _final_quality_record = _save_final_quality_report(
-                self.memory,
-                novel_id,
-                chapter_num,
-                {**_final_quality, "text": full_text},
-                stage="post_outline_compliance",
-            )
-            yield {"type": "final_quality", **_final_quality_record}
-
             # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
             # v2.6: 批量模式后台化（不阻塞正文流程）；单章模式保持同步
             try:
@@ -1661,6 +1687,8 @@ class GenerationMixin:
                 log.warning(f"StoryGraph update skipped: {e}")
 
             # ── 方案A: 一致性校验（ConsistencyValidator L1+L2 每章，P0 自动重写）──
+            _post_consistency_validation = {"score": 100, "violations": []}
+            _post_consistency_auto_fixed = False
             try:
                 # 获取前文章节
                 prev_chapters = {}
@@ -1689,6 +1717,7 @@ class GenerationMixin:
                         global_state=global_state,
                         run_deep=True,  # 每章 L2 语义校验（v2.3.5: 原每3章→每章）
                     )
+                _post_consistency_validation = validation
                 
                 violations = validation.get("violations", [])
                 if violations:
@@ -1728,6 +1757,7 @@ class GenerationMixin:
                             # 重新保存
                             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{fixed_text}"
                             self.memory.save_chapter(novel_id, chapter_num, formatted)
+                            _post_consistency_auto_fixed = True
                             log.info(f"Auto-fix completed for chapter {chapter_num}")
                             yield {"type": "auto_fix", "applied": True, "violations_fixed": p0_count}
 
@@ -1741,6 +1771,46 @@ class GenerationMixin:
                     yield {"type": "consistency_warning", "chapter": chapter_num, "issues": p1_issues[:5]}
             except Exception as e:
                 log.warning(f"Consistency auto-validation skipped: {e}")
+
+            # 自动修复后重新校验一次，最终报告必须反映修复后的正文，而不是旧正文的分数。
+            if _post_consistency_auto_fixed:
+                try:
+                    _post_consistency_validation = await asyncio.to_thread(
+                        self.consistency_validator.validate_chapter,
+                        chapter_text=full_text,
+                        chapter_num=chapter_num,
+                        plan=plan,
+                        prev_chapters=prev_chapters,
+                        global_state=global_state,
+                        run_deep=not batch_mode,
+                    )
+                    yield {
+                        "type": "consistency_recheck",
+                        "score": _post_consistency_validation.get("score", 100),
+                        "violations": _post_consistency_validation.get("violations", []),
+                    }
+                except Exception as recheck_error:
+                    log.warning(f"Consistency recheck skipped: {recheck_error}")
+
+            # ── 最终质量报告：必须位于所有改写/一致性修复之后 ──
+            _final_quality = await asyncio.to_thread(
+                PacingChecker(self.client, self.model).quick_quality_check,
+                full_text,
+                fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+            )
+            _final_quality = _merge_quality_with_consistency(
+                _final_quality, _post_consistency_validation
+            )
+            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+            self.memory.save_chapter(novel_id, chapter_num, formatted)
+            _final_quality_record = _save_final_quality_report(
+                self.memory,
+                novel_id,
+                chapter_num,
+                {**_final_quality, "text": full_text},
+                stage="final",
+            )
+            yield {"type": "final_quality", **_final_quality_record}
 
             # ── 自动校准（每10章）──
             try:

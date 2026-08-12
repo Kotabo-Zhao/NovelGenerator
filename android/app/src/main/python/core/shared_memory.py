@@ -640,6 +640,7 @@ class SharedMemoryManager:
 ### 主角档案
 - 姓名: {protagonist.get('name', '')}
 - 身份: {protagonist.get('identity', '')}
+- 性别/代词: {protagonist.get('gender') or protagonist.get('pronouns') or '未设定，禁止自行推断'}
 - 性格: {protagonist.get('personality', '')}
 - 金手指: {protagonist.get('cheat', '')}
 - 核心动机: {protagonist.get('motivation', '')}
@@ -853,8 +854,16 @@ class SharedMemoryManager:
         beats = chapter_outline.get("scene_beats", [])
         if beats:
             beats_text = "\n### 场景节拍\n"
-            for b in beats:
-                beats_text += f"- 节拍{b.get('beat','?')}「{b.get('name','')}」: {b.get('function','')} → {b.get('key_action','')}\n"
+            for index, b in enumerate(beats, 1):
+                if isinstance(b, dict):
+                    beats_text += (
+                        f"- 节拍{b.get('beat', index)}「{b.get('name', '')}」: "
+                        f"{b.get('function', '')} → {b.get('key_action', '')}\n"
+                    )
+                elif b is not None and str(b).strip():
+                    # 兼容旧版/手工编辑大纲中的 scene_beats: list[str]，
+                    # 不让一条格式问题拖垮整层写作上下文。
+                    beats_text += f"- 节拍{index}: {str(b).strip()}\n"
         
         cause = chapter_outline.get("cause_from_prev", "")
         bridge = chapter_outline.get("bridge_to_next", "")
@@ -898,6 +907,7 @@ class SharedMemoryManager:
 接续状态：从上章结尾继续。{cause + ' ' if cause else ''}{opening if opening else ''}
 出场角色：{', '.join(chapter_outline.get('characters', ['主角']))}
 情绪曲线：{chapter_outline.get('emotion_curve', '未设定')}
+{beats_text}
 
 ═══ 结束 ═══"""
 
@@ -1352,6 +1362,12 @@ class SharedMemoryManager:
         with self._cache_lock:
             self._cache.pop(cache_key, None)
 
+    def invalidate(self, memory_type: str, novel_id: str):
+        """公开失效单项记忆缓存，供生成管线在落盘后刷新状态。"""
+        if memory_type not in MEMORY_FILES:
+            raise ValueError(f"Unknown memory type: {memory_type}")
+        self._invalidate(novel_id, memory_type)
+
     def invalidate_all(self, novel_id: str = None):
         """失效全部缓存"""
         with self._cache_lock:
@@ -1529,6 +1545,7 @@ class SharedMemoryManager:
 ### 主角档案
 - 姓名: {protagonist.get('name', '')}
 - 身份: {protagonist.get('identity', '')}
+- 性别/代词: {protagonist.get('gender') or protagonist.get('pronouns') or '未设定，禁止自行推断'}
 - 性格: {protagonist.get('personality', '')}
 - 金手指: {protagonist.get('cheat', '')}
 """

@@ -26,6 +26,31 @@ log = logging.getLogger(__name__)
 
 # ── 工具函数 ──
 
+def _parse_json_response(content: str) -> dict:
+    """解析 LLM JSON，并修复常见的尾逗号/代码围栏污染。"""
+    text = str(content or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
+    candidates = [text]
+    repaired = re.sub(r",\s*([}\]])", r"\1", text)
+    if repaired != text:
+        candidates.append(repaired)
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start:end + 1])
+        candidates.append(re.sub(r",\s*([}\]])", r"\1", text[start:end + 1]))
+    last_error = None
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+            if isinstance(value, dict):
+                return value
+        except (TypeError, json.JSONDecodeError) as exc:
+            last_error = exc
+    raise ValueError(f"invalid JSON response: {last_error}")
+
 def _name_similarity(a: str, b: str) -> float:
     """计算两个名字的相似度 (0.0 ~ 1.0)
     
@@ -702,7 +727,7 @@ class ConsistencyValidator:
             )
             
             content = response.choices[0].message.content
-            result = json.loads(content)
+            result = _parse_json_response(content)
             
             v_count = len(result.get("violations", []))
             w_count = len(result.get("warnings", []))
