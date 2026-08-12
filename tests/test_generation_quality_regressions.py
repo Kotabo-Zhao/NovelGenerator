@@ -129,6 +129,19 @@ def test_atomic_closing_candidate_penalizes_truncated_last_sentence():
     assert _beat_contract_score(complete, closing) > _beat_contract_score(truncated, closing)
 
 
+def test_atomic_opening_candidate_requires_action_near_the_start():
+    outline = {
+        "summary": "调查失踪案",
+        "scene_beats": [{"key_action": "撬开档案柜找到名单"}],
+    }
+    opening = BeatDecomposer(seed=1).decompose(outline, 1, is_first_chapter=True)[0]
+
+    delayed = ("雨声铺满了走廊，旧灯在头顶闪烁了很久。" + "走廊尽头的灰尘被风卷起来，贴在墙面上，空气里只有潮湿木头和旧纸张的气味。") * 3 + "直到最后一段，他才撬开档案柜找到名单。"
+    immediate = "沈砚撬开档案柜，铁屑落在手背上，里面那份名单少了一页。"
+
+    assert _beat_contract_score(immediate, opening) > _beat_contract_score(delayed, opening)
+
+
 def test_planner_repair_builds_non_placeholder_scene_contract():
     outline = {"volumes": [{"chapters": [{
         "number": 1,
