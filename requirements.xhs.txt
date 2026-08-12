@@ -1,3 +1,0 @@
-# XHS Pipeline dependencies (minimal)
-requests>=2.28.0
-beautifulsoup4>=4.12.0

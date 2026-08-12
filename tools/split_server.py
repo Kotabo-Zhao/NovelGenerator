@@ -2,7 +2,7 @@
 """split_server.py — 将 server.py 的 71 个路由按域拆分为独立 router 文件（纯移动，零逻辑改动）
 
 用法: python tools/split_server.py
-生成: backend/api/routers/{novels,outline,quality,storygraph,requirements,styles,trends,xhs}.py
+生成: backend/api/routers/{novels,outline,quality,storygraph,requirements,styles,trends}.py
 """
 import ast
 import os
@@ -41,9 +41,6 @@ for name in ["get_styles", "get_style_params", "build_custom_style_api",
     ROUTE_DOMAIN[name] = "styles"
 for name in ["analyze_trends", "generate_bizarre", "quick_bizarre", "create_bizarre_novel"]:
     ROUTE_DOMAIN[name] = "trends"
-for name in ["list_xhs_templates", "create_xhs_novel", "list_xhs_presets", "generate_titles_endpoint"]:
-    ROUTE_DOMAIN[name] = "xhs"
-
 # ── 辅助函数 → 域 ──
 HELPER_DOMAIN = {
     "_generate_quality_recommendations": "novels",
@@ -122,7 +119,6 @@ def main():
         "requirements": "需求拆解与监督",
         "styles": "风格系统 / 种子 / 指纹",
         "trends": "爆火分析 / 逆天生成",
-        "xhs": "小红书爆款短篇",
     }
 
     for dom, blocks in domains.items():
@@ -143,8 +139,6 @@ def main():
         extra = ""
         if dom == "trends":
             extra = 'import traceback\n'
-        if dom == "xhs":
-            extra = "from core.xiaohongshu import TEMPLATES, create_xhs_novel_pipeline, generate_titles, PRESETS, get_presets\n"
         content = f"{header}{extra}\nrouter = APIRouter()\n\n{deps_import}{core_imports}\n{body}\n"
         # 把 @app. 替换为 @router.
         content = content.replace("@app.", "@router.")
@@ -155,7 +149,7 @@ def main():
 
     # 统计
     total = sum(len(b) for b in domains.values())
-    print(f"\n共移动 {total} 个顶层节点到 8 个 router 文件")
+    print(f"\n共移动 {total} 个顶层节点到 7 个 router 文件")
 
 if __name__ == "__main__":
     main()

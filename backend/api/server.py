@@ -1,7 +1,7 @@
 """NovelGenerator — FastAPI Server (serves frontend + API)
 
 2026-07-31 重构: 71 个业务路由按域拆分到 api/routers/（novels/outline/quality/
-storygraph/requirements/styles/trends/xhs），本文件只保留应用装配、中间件、
+storygraph/requirements/styles/trends），本文件只保留应用装配、中间件、
 静态资源服务与健康检查。
 """
 import asyncio
@@ -38,7 +38,7 @@ from core.path_security import validate_novel_id
 from .deps import engine, log, ownership_store
 from .auth import owner_id_from_authorization
 from core.auth import AuthError
-from .routers import auth, novels, v1, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive
+from .routers import auth, novels, v1, outline, quality, storygraph, requirements, styles, trends, characters, feedback, tts, interactive
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
@@ -305,7 +305,7 @@ async def health():
 
 # ── 业务路由挂载（2026-07-31 按域拆分）──
 
-for _router in (auth, v1, novels, outline, quality, storygraph, requirements, styles, trends, xhs, characters, feedback, tts, interactive):
+for _router in (auth, v1, novels, outline, quality, storygraph, requirements, styles, trends, characters, feedback, tts, interactive):
     app.include_router(_router.router)
 
 

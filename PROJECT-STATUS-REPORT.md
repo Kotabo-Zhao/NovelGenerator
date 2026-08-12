@@ -18,7 +18,7 @@
 | 后端 | Python ≥3.10 + FastAPI（`backend/`，81 个 .py） |
 | 生成模型 | DeepSeek（`.env` 已配置 API Key / Model / Base URL / NOVELS_DIR） |
 | 打包 | Android 壳（PWA→APK）+ PyInstaller（`NovelGenerator.exe` 未迁移） |
-| 附加 | 小红书发布管线（`Dockerfile.xhs` / `docker-compose.xhs.yml`） |
+| 附加 | 无独立内容平台发布管线；小红书专属能力已于 2026-08-12 下线 |
 
 ---
 
@@ -70,7 +70,7 @@ StoryGraph（剧情线/伏笔/角色快照/因果链）→ ArcPlanner（三幕�
 
 ## 四、代码与测试状态
 
-- **backend/core/**：43 个模块（engine、writer、planner、storygraph、memory、humanizer、epub_exporter、xiaohongshu 等）
+- **backend/core/**：核心模块（engine、writer、planner、storygraph、memory、humanizer、epub_exporter 等）；小红书专属模块已移除
 - **backend/core/interactive/**：11 个模块（attr_system、action_engine、dialogue_engine、world_state、story_director 等）
 - **backend/api/**：FastAPI 服务（server + routers，含 interactive 路由）
 - **tests/**：26 个测试/诊断脚本（含 e2e、stress、health_check、attr_system 单测等）

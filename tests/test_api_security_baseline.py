@@ -55,8 +55,6 @@ class ApiSecurityBaselineTests(unittest.TestCase):
             ("post", "/api/trends/bizarre"),
             ("post", "/api/trends/bizarre/quick"),
             ("post", "/api/trends/bizarre/create"),
-            ("post", "/api/xiaohongshu/create"),
-            ("post", "/api/xiaohongshu/titles"),
             ("post", "/api/tts"),
             ("post", "/api/tts/emotion"),
         ]
@@ -64,6 +62,19 @@ class ApiSecurityBaselineTests(unittest.TestCase):
             with self.subTest(path=path):
                 response = client.request(method.upper(), path, json={})
                 self.assertEqual(response.status_code, 401)
+
+    def test_xiaohongshu_endpoints_are_removed(self):
+        client = TestClient(app)
+        removed = [
+            ("get", "/api/xiaohongshu/templates"),
+            ("get", "/api/xiaohongshu/presets"),
+            ("post", "/api/xiaohongshu/create"),
+            ("post", "/api/xiaohongshu/titles"),
+        ]
+        for method, path in removed:
+            with self.subTest(path=path):
+                response = client.request(method.upper(), path, json={})
+                self.assertEqual(response.status_code, 404)
 
     def test_oversized_request_is_rejected_before_route_processing(self):
         response = TestClient(app).post(
