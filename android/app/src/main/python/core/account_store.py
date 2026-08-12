@@ -139,11 +139,14 @@ class AccountStore:
     def revoke_all(self, owner_id: str) -> dict:
         owner = self._owner(owner_id)
         self.ensure_user(owner)
-        now = int(time.time())
+        now = time.time()
+        # JWT issued_at 当前按整数秒传递；向上取整，避免撤销恰好跨秒时
+        # “刚撤销但当前 token 仍被认为有效”的边界竞态。
+        revoked_before = int(now) + 1
         with self._lock, self._session() as connection:
             connection.execute(
                 "UPDATE accounts SET revoked_before = ?, updated_at = ? WHERE owner_id = ?",
-                (now, time.time(), owner),
+                (revoked_before, now, owner),
             )
             row = connection.execute(
                 "SELECT * FROM accounts WHERE owner_id = ?", (owner,)
@@ -154,6 +157,7 @@ class AccountStore:
         owner = self._owner(owner_id)
         self.ensure_user(owner)
         now = time.time()
+        revoked_before = int(now) + 1
         with self._lock, self._session() as connection:
             connection.execute(
                 """
@@ -161,7 +165,7 @@ class AccountStore:
                 SET deleted_at = ?, revoked_before = ?, updated_at = ?
                 WHERE owner_id = ?
                 """,
-                (now, int(now), now, owner),
+                (now, revoked_before, now, owner),
             )
             row = connection.execute(
                 "SELECT * FROM accounts WHERE owner_id = ?", (owner,)
