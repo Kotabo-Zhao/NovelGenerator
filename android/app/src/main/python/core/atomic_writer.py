@@ -17,7 +17,7 @@ from typing import Optional, AsyncGenerator
 from openai import OpenAI
 
 from .beat_decomposer import Beat
-from .evaluation_system import hook_strength
+from .evaluation_system import ACTION_SIGNALS, hook_strength
 from .usage_context import report_response_usage
 
 log = logging.getLogger(__name__)
@@ -57,6 +57,10 @@ def _beat_contract_score(text: str, beat: Beat) -> float:
         else:
             # 章末钩子可以悬停，但不能停在模型被 max_tokens 截断的半句上。
             score -= 1.0
+    if getattr(beat, "function", "") == "opening_hook":
+        opening = body[:120]
+        opening_actions = any(re.search(pattern, opening) for pattern in ACTION_SIGNALS)
+        score += 1.2 if opening_actions else -1.2
     if "本章 " in body or "核心事件:" in body:
         score -= 1.0
     return round(score, 4)
