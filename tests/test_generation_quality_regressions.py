@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 from backend.core.character_state import CharacterStateTracker
@@ -127,6 +128,28 @@ def test_atomic_closing_candidate_penalizes_truncated_last_sentence():
     complete = "他翻到名单最后一页，看见一个熟悉的名字。名单背面，另一个名字正在渗出来。"
 
     assert _beat_contract_score(complete, closing) > _beat_contract_score(truncated, closing)
+
+
+def test_atomic_closing_prompt_requires_a_concrete_open_loop():
+    outline = {
+        "summary": "调查失踪案",
+        "hook": "名单背面出现新的名字",
+        "scene_beats": [{
+            "key_action": "找到被撕碎的名单",
+            "reader_question": "名单背面是谁留下的名字",
+        }],
+    }
+    closing = BeatDecomposer(seed=1).decompose(
+        outline, 1, is_first_chapter=True
+    )[-1]
+    from backend.core.atomic_writer import AtomicWriter
+
+    prompt = AtomicWriter(None, "mock")._build_beat_prompt(
+        closing, "", "", chapter_context=""
+    )
+
+    assert "具体未决向量" in prompt
+    assert "下一章要追查" in prompt
 
 
 def test_atomic_opening_candidate_requires_action_near_the_start():
@@ -428,6 +451,123 @@ def test_storygraph_parser_accepts_fenced_json_with_trailing_comma():
     )
 
     assert parsed["thread_updates"] == []
+
+
+def test_storygraph_keeps_non_thread_constraints_and_deduplicates_causal_links():
+    from backend.core.storygraph import StoryGraph
+
+    graph = StoryGraph()
+    graph.add_foreshadow("fs-1", "钟声里的第二个回响", 1, 4, importance=4)
+    graph.ensure_char("林晚")
+    graph.add_causal_link(1, "拿到旧钥匙", 4, "打开地下门")
+    graph.add_causal_link(1, "拿到旧钥匙", 4, "打开地下门")
+
+    assert len(graph.data["causal_links"]) == 1
+    assert "未闭环因果链" in graph.get_causal_context(4)
+
+
+def test_shared_memory_storygraph_context_survives_without_plot_threads(tmp_path):
+    memory = SharedMemoryManager(str(tmp_path))
+    novel_id = "graph-only"
+    novel_dir = tmp_path / novel_id
+    novel_dir.mkdir()
+    (novel_dir / "storygraph.json").write_text(json.dumps({
+        "plot_threads": {},
+        "foreshadow_ledger": {
+            "fs-1": {
+                "description": "钟声里的第二个回响",
+                "planted_chapter": 1,
+                "planned_payoff_chapter": 3,
+                "status": "planted",
+                "importance": 4,
+            }
+        },
+        "char_snapshots": {},
+        "causal_links": [],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    context = memory._build_storygraph_context(novel_id, 3, {"characters": []})
+
+    assert "即将到期的伏笔" in context
+    assert "钟声里的第二个回响" in context
+
+
+def test_storygraph_intervention_uses_progress_and_current_outline(tmp_path):
+    from backend.core.storygraph_interventions import analyze_and_inject
+
+    novel_dir = tmp_path / "intervention"
+    chapters_dir = novel_dir / "chapters"
+    chapters_dir.mkdir(parents=True)
+    for chapter in range(1, 5):
+        (chapters_dir / f"chapter_{chapter:04d}.md").write_text(
+            f"第{chapter}章", encoding="utf-8"
+        )
+    (novel_dir / "global_state.json").write_text(json.dumps({
+        "chapters_summary": {str(ch): f"摘要{ch}" for ch in range(1, 5)}
+    }), encoding="utf-8")
+    (novel_dir / "storygraph.json").write_text(json.dumps({
+        "plot_threads": {},
+        "foreshadow_ledger": {},
+        "char_snapshots": {
+            "林晚": {
+                "last_chapter_appeared": 1,
+                "active_goals": ["找出内鬼"],
+                "current_emotion": "焦虑",
+            }
+        },
+        "causal_links": [
+            {"cause_chapter": i, "cause_event": f"起因{i}",
+             "effect_chapter": 5, "effect_event": f"结果{i}",
+             "status": "active"}
+            for i in range(1, 6)
+        ],
+    }), encoding="utf-8")
+
+    context = analyze_and_inject(
+        str(novel_dir), 5, {"characters": ["林晚"]}
+    )
+
+    assert "DOPAMINE_CHECK" in context
+    assert "TENSION_ADJUST" in context
+    assert "CHARACTER_ABSENT" not in context
+
+
+def test_story_director_llm_degrades_cleanly_for_legacy_object():
+    from backend.core.interactive.story_director import StoryDirector
+
+    director = StoryDirector.__new__(StoryDirector)
+
+    assert director._llm("system", "user") is None
+
+
+def test_interactive_prompt_can_read_shared_storygraph(tmp_path):
+    from backend.core.interactive.story_director import StoryDirector
+
+    novel_dir = tmp_path / "interactive-graph"
+    novel_dir.mkdir()
+    (novel_dir / "storygraph.json").write_text(json.dumps({
+        "plot_threads": {
+            "main": {
+                "name": "旧钥匙主线", "status": "active", "priority": 5,
+                "current_tension": 7, "key_nodes": [],
+                "type": "main_plot", "next_planned": "找到地下门",
+            }
+        },
+        "foreshadow_ledger": {},
+        "char_snapshots": {},
+        "causal_links": [],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    director = StoryDirector.__new__(StoryDirector)
+    director.store = SimpleNamespace(novels_dir=str(tmp_path))
+    director.engine = None
+    state = {"novel_id": "interactive-graph", "outline_progress": {"idx": 0},
+             "casts": {}}
+
+    context = director._storygraph_context("interactive-graph", state)
+
+    assert "旧钥匙主线" in context
+    assert "找到地下门" in context
 
 
 def test_consistency_repair_rank_does_not_prefer_a_later_worse_draft():

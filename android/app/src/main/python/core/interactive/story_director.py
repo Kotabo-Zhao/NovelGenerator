@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -1640,6 +1641,55 @@ class StoryDirector:
             log.warning(f"logic_context failed: {e}")
             return ""
 
+    def _storygraph_context(self, novel_id: str, state: dict) -> str:
+        """把正式写作模式的剧情图谱只读接入互动场景。
+
+        互动存档和正式章节存档是两套状态，过去互动场景只能看到
+        ``foreshadows_brief``，会漏掉正式模式已经积累的剧情线、角色快照和
+        因果链。这里不修改图谱，只把当前章节真正需要的约束压缩后注入，
+        避免两种写作模式各自长出一套互相矛盾的世界状态。
+        """
+        try:
+            root = getattr(self.store, "novels_dir", "")
+            if not root and self.engine is not None:
+                memory = getattr(self.engine, "memory", None)
+                if memory is not None:
+                    root = getattr(memory, "novels_dir", "")
+            if not root or not novel_id:
+                return ""
+            graph_path = os.path.join(root, novel_id, "storygraph.json")
+            if not os.path.exists(graph_path):
+                return ""
+            with open(graph_path, "r", encoding="utf-8") as graph_file:
+                graph_data = json.load(graph_file)
+            if not isinstance(graph_data, dict):
+                return ""
+            from ..storygraph import StoryGraph
+            graph = StoryGraph.from_dict(graph_data)
+            op = state.get("outline_progress") or {}
+            chapter_idx = int(op.get("idx", 0) or 0)
+            chapter_num = chapter_idx + 1
+            parts = []
+            thread_ctx = graph.get_thread_summaries()
+            if thread_ctx:
+                parts.append(thread_ctx)
+            foreshadow_ctx = graph.get_foreshadow_context(chapter_num)
+            if foreshadow_ctx:
+                parts.append(foreshadow_ctx)
+            char_names = list((state.get("casts") or {}).keys())[:8]
+            char_ctx = graph.get_char_snapshots_text(char_names)
+            if char_ctx:
+                parts.append(char_ctx)
+            causal_ctx = graph.get_causal_context(chapter_num, limit=3)
+            if causal_ctx:
+                parts.append(causal_ctx)
+            if not parts:
+                return ""
+            return "\n\n---\n\n".join(parts)[:1800]
+        except Exception as e:
+            log.warning(f"interactive storygraph context failed: {type(e).__name__}: {str(e)[:100]}")
+            return ""
+
     def enrich_location_descs(self, novel_id: str, state: dict):
         """v3.6: 地点图谱 desc 一次性补全（LLM 填内容，规则管结构——防幻觉）。
 
@@ -1919,10 +1969,30 @@ class StoryDirector:
             log.warning(f"ai_detect failed: {e}")
 
     # ── LLM 基础 ──
+    def _resilient_client(self):
+        """返回兼容旧存档/测试构造路径的韧性客户端。
+
+        少数旧调用方会通过 ``__new__`` 或反序列化对象恢复 StoryDirector，
+        这类路径不会执行 ``__init__``。LLM 调用不能因此抛出
+        ``AttributeError: _resilient``，没有可用 client 时按正常降级处理。
+        """
+        resilient = getattr(self, "_resilient", None)
+        if resilient is not None:
+            return resilient
+        client = getattr(self, "client", None)
+        if client is None:
+            return None
+        resilient = ResilientLLMClient(client, getattr(self, "model", ""))
+        self._resilient = resilient
+        return resilient
+
     def _llm(self, system: str, user: str, temperature: float = 0.8,
              max_tokens: int = 2000) -> Optional[str]:
         try:
-            resp = self._resilient.create(
+            resilient = self._resilient_client()
+            if resilient is None:
+                return None
+            resp = resilient.create(
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -1944,7 +2014,10 @@ class StoryDirector:
         # 防止并发打 API 触发限流导致生成变慢
         set_main_flow(True)
         try:
-            async for chunk in self._resilient.create_stream(
+            resilient = self._resilient_client()
+            if resilient is None:
+                return
+            async for chunk in resilient.create_stream(
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -1998,8 +2071,14 @@ class StoryDirector:
         fs = state.get("foreshadows_brief") or ""
         if fs:
             parts.append(f"未揭晓的伏笔（剧情中可自然铺垫/呼应，不必强行回收）: {fs[:200]}")
-        # v3.5.22: 复用小说模式角色状态追踪——当前角色位置/状态（结构化，防瞬移）
         nid = state.get("novel_id", "")
+        # v3.6.7: 与正式写作共享 StoryGraph（只读、限长），让互动选择也能
+        # 看到已建立的主线/角色状态/因果链，避免互动模式把图谱当成展示页。
+        if nid:
+            graph_ctx = self._storygraph_context(nid, state)
+            if graph_ctx:
+                parts.append("## 共享剧情图谱（互动场景必须遵守）:\n" + graph_ctx)
+        # v3.5.22: 复用小说模式角色状态追踪——当前角色位置/状态（结构化，防瞬移）
         if nid:
             ctx = self._logic_context(nid)
             if ctx:
@@ -3267,8 +3346,13 @@ class StoryDirector:
             per = max(2, min(len(_sb), 6))
         else:
             per = 4 if tw >= 5000 else (2 if 0 < tw < 2500 else 3)
-        # v1.1: 锚点式切章判定（有 beats 时以全 done 为准，场景数不再硬性提前切章）
-        _do_cut = chapter_complete(state, per)
+        # v1.1: 锚点式切章判定（有 beats 时以全 done 为准，场景数不再硬性提前切章）。
+        # 当前调用发生在本场景落盘后，cnt 已包含本场景；用副本把有效计数
+        # 传给纯函数，避免拿到旧的 scene_in_chapter 导致切章永远晚一拍。
+        _check_state = dict(state)
+        _check_state["outline_progress"] = dict(op)
+        _check_state["outline_progress"]["scene_in_chapter"] = cnt
+        _do_cut = chapter_complete(_check_state, per)
         # v1.1 P3: 切章时状态一致性修复（L3 规则修复，零 LLM）——先修复再切章
         if _do_cut:
             try:

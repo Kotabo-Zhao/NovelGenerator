@@ -258,6 +258,14 @@ OPEN_LOOP_SIGNALS = [
     r'(轮廓|笔迹|字迹|墨迹).{0,12}(露出|显现|认出|名字|身份)',
 ]
 
+# 章末不一定用问号；悬疑/现实题材常把一个新的可验证证据截在最后，
+# 例如照片、名单、监控或半个名字。单独计入“信息揭示型钩子”，避免把
+# 具体的未决证据误判成普通氛围描写。
+ENDING_REVEAL_SIGNALS = [
+    r'(照片|录像|监控|名单|信封|屏幕|门缝|字迹|残笔).{0,40}(出现|贴满|写着|亮起|露出|留下|指向|只露|中央|男人|女人|父亲|母亲|名字|身份)',
+    r'(最后|最中间|唯一|半个|只露|背对|残留).{0,40}(名字|身份|照片|线索|人影|身影|编号|吊坠)',
+]
+
 # 结构信号比“爽点词”更稳定：它们用于判断一个章节是否发生了叙事推进，
 # 只作为确定性质量门的证据，不是要求每个题材都写成打脸文。
 ACTION_SIGNALS = [
@@ -328,6 +336,9 @@ def hook_strength(chapter_text: str) -> dict:
     # 章末动作/选择/信息未决，是比“突然/震惊”等词更稳的跨题材钩子。
     if open_loop_signals:
         score += min(4, len(open_loop_signals) * 2)
+    ending_reveals = _signal_matches(end_text, ENDING_REVEAL_SIGNALS)
+    if ending_reveals:
+        score += min(3, len(ending_reveals) * 2)
     # “为什么/谁/怎么会”即使以句号收尾，也代表读者问题仍未解决。
     if re.search(r'(为什么|为何|谁|怎么会|怎么可能|哪一个|哪个)', last_sentence):
         score += 3
@@ -340,6 +351,7 @@ def hook_strength(chapter_text: str) -> dict:
         "matched_patterns": matched,
         "last_sentence": last_sentence[:100],
         "open_loop_signals": open_loop_signals[:12],
+        "ending_reveal_signals": ending_reveals[:8],
     }
 
 

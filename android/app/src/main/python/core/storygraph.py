@@ -360,12 +360,63 @@ class StoryGraph:
     def add_causal_link(self, cause_chapter: int, cause_event: str,
                         effect_chapter: int, effect_event: str):
         """添加因果链"""
+        try:
+            cause_chapter = int(cause_chapter or 0)
+        except (TypeError, ValueError):
+            cause_chapter = 0
+        try:
+            effect_chapter = int(effect_chapter or 0)
+        except (TypeError, ValueError):
+            effect_chapter = 0
+        cause_event = str(cause_event or "").strip()
+        effect_event = str(effect_event or "").strip()
+        if not cause_event or not effect_event:
+            return
+        # 后台提取可能在重试时重复提交同一条因果链；重复链会夸大
+        # 干预器的待回收数量，进而不断向 Writer 注入错误的紧张度提醒。
+        for link in self.data["causal_links"]:
+            try:
+                same_chapters = (
+                    int(link.get("cause_chapter", 0) or 0) == cause_chapter
+                    and int(link.get("effect_chapter", 0) or 0) == effect_chapter
+                )
+            except (TypeError, ValueError):
+                same_chapters = False
+            if (same_chapters
+                    and str(link.get("cause_event", "")).strip() == cause_event
+                    and str(link.get("effect_event", "")).strip() == effect_event):
+                return
         self.data["causal_links"].append({
             "cause_chapter": cause_chapter, "cause_event": cause_event,
             "effect_chapter": effect_chapter, "effect_event": effect_event,
             "description": f"Ch{cause_chapter}「{cause_event}」→ Ch{effect_chapter}「{effect_event}」",
             "status": "active",
         })
+
+    def get_causal_context(self, current_chapter: int, limit: int = 5) -> str:
+        """返回尚未闭环的近期因果链，供写作上下文使用。"""
+        def _chapter(value, fallback=0):
+            try:
+                return int(value or fallback)
+            except (TypeError, ValueError):
+                return fallback
+
+        links = [link for link in self.data.get("causal_links", [])
+                 if link.get("status") in ("pending", "active")]
+        if not links:
+            return ""
+        links.sort(key=lambda link: (
+            _chapter(link.get("effect_chapter", current_chapter), current_chapter),
+            _chapter(link.get("cause_chapter", 0)),
+        ))
+        parts = ["## 🔗 未闭环因果链\n"]
+        for link in links[-max(1, int(limit)):]:
+            parts.append(
+                f"- Ch{link.get('cause_chapter', '?')}「{str(link.get('cause_event', ''))[:36]}」"
+                f" → Ch{link.get('effect_chapter', '?')}「{str(link.get('effect_event', ''))[:36]}」"
+            )
+        parts.append("本章至少让其中一条因果链获得可观察的推进或回收，禁止只重复背景说明。")
+        return "\n".join(parts)
 
     # ── 序列化 ──
 

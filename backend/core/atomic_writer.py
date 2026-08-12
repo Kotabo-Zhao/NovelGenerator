@@ -51,7 +51,15 @@ def _beat_contract_score(text: str, beat: Beat) -> float:
     if state_change:
         score += evidence(json.dumps(state_change, ensure_ascii=False)) * 0.35
     if getattr(beat, "function", "") == "closing_hook":
-        score += hook_strength(body)["strength"] / 10 * 1.5
+        hook = hook_strength(body)
+        score += hook["strength"] / 10 * 1.5
+        # 优先选择能把“下一章要追什么”说清楚的候选，而不是只留下
+        # 氛围化的余韵。具体未决问题不要求使用问号，悬疑/现实题材常以
+        # “是否/究竟/谁/明晚前”这类陈述句收尾。
+        if len(hook.get("open_loop_signals", [])) >= 2:
+            score += 0.45
+        if re.search(r'(究竟|是否|谁|为何|为什么|怎么会|会不会|明天|今晚|天亮前|来不及)', body[-180:]):
+            score += 0.65
         if re.search(r'[。！？……」』”\"）)]$', body):
             score += 0.8
         else:
@@ -441,6 +449,11 @@ class AtomicWriter:
             }
             lines.append(f"\n## 章末钩子要求\n{hook_guide.get(beat.hook_type, '')}")
             lines.append(f"钩子类型: {beat.hook_type}")
+            lines.append(
+                "章末必须留下一个具体未决向量：明确读者下一章要追查的人、物、风险、"
+                "时间或行动选择；不要只写‘故事还在继续’或用泛化的情绪余韵收尾。"
+                "可以用完整陈述句悬停，不必刻意加问号，但不能把答案解释完。"
+            )
         
         return "\n".join(lines)
 

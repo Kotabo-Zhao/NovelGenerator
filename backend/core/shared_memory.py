@@ -1122,7 +1122,13 @@ class SharedMemoryManager:
         except Exception:
             return ""
 
-        if not sg_data or not sg_data.get("plot_threads"):
+        if not sg_data:
+            return ""
+        # 图谱可能只有伏笔、角色快照或因果链（例如刚完成首次提取，
+        # 尚未建立剧情线）。不能因为 plot_threads 为空就丢弃其余约束。
+        if not any(sg_data.get(key) for key in
+                   ("plot_threads", "foreshadow_ledger", "char_snapshots",
+                    "causal_links", "current_arc")):
             return ""
 
         from .storygraph import StoryGraph
@@ -1141,12 +1147,17 @@ class SharedMemoryManager:
         if fs_ctx:
             parts.append(fs_ctx)
 
-        # 3) 角色快照（只取本章出场角色）
+        # 4) 因果链（此前只用于诊断，未进入 Writer 上下文）
+        causal_ctx = sg.get_causal_context(chapter_num)
+        if causal_ctx:
+            parts.append(causal_ctx)
+
+        # 5) 角色快照（只取本章出场角色）
         char_ctx = sg.get_char_snapshots_text(chapter_chars)
         if char_ctx:
             parts.append(char_ctx)
 
-        # 4) 当前剧情弧信息（如果有 arcplanner 规划的弧数据）
+        # 6) 当前剧情弧信息（如果有 arcplanner 规划的弧数据）
         arc_data = sg.data.get("current_arc", {})
         if arc_data:
             arc_phase = {0: "铺垫阶段", 1: "升级阶段", 2: "高潮阶段",

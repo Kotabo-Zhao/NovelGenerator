@@ -17,6 +17,7 @@
 import json
 import os
 import logging
+import re
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -259,7 +260,10 @@ class StoryGraphInterventions:
     def _check_tension(self, storygraph: dict, ch: int):
         """紧张度曲线检查（从 causal_links 推断）"""
         links = storygraph.get("causal_links", [])
-        pending = [l for l in links if l.get("status") == "pending"]
+        # StoryGraph.add_causal_link 写入的是 active，而提取器/旧数据有时使用
+        # pending。两者都表示尚未闭环；只检查 pending 会让生成后的因果链
+        # 永远不触发回收提醒。
+        pending = [l for l in links if l.get("status") in ("pending", "active")]
         
         if len(pending) >= 5:
             self.interventions.append(Intervention(
@@ -470,9 +474,46 @@ def analyze_and_inject(novel_dir: str, chapter_num: int, chapter_outline: dict =
     if os.path.exists(sg_path):
         sg_data = safe_read_json(sg_path)
         arcs_data = safe_read_json(arc_path) if os.path.exists(arc_path) else None
+
+        # 生成前把真实进度传给干预器。旧实现只传 chapter_num，导致
+        # DOPAMINE_CHECK 永远没有 completed_chapters，且角色长期未出场
+        # 检测不知道本章已经安排了谁，容易给 Writer 下相互矛盾的指令。
+        completed_chapters = set()
+        state_path = os.path.join(novel_dir, "state.json")
+        global_state_path = os.path.join(novel_dir, "global_state.json")
+        state_data = safe_read_json(state_path) if os.path.exists(state_path) else {}
+        global_state = (safe_read_json(global_state_path)
+                        if os.path.exists(global_state_path) else {})
+        if isinstance(state_data, dict):
+            raw_completed = state_data.get("completed_chapters") or []
+            if isinstance(raw_completed, dict):
+                raw_completed = raw_completed.keys()
+            for value in raw_completed:
+                try:
+                    completed_chapters.add(int(value))
+                except (TypeError, ValueError):
+                    pass
+        if isinstance(global_state, dict):
+            summaries = global_state.get("chapters_summary") or {}
+            if isinstance(summaries, dict):
+                for value in summaries.keys():
+                    try:
+                        completed_chapters.add(int(value))
+                    except (TypeError, ValueError):
+                        pass
+        chapters_dir = os.path.join(novel_dir, "chapters")
+        if os.path.isdir(chapters_dir):
+            for filename in os.listdir(chapters_dir):
+                match = re.match(r"chapter_(\d+)\.md$", filename, re.I)
+                if match:
+                    completed_chapters.add(int(match.group(1)))
         
         interventions = StoryGraphInterventions()
-        interventions.analyze(sg_data, arcs_data, None, chapter_num)
+        interventions.analyze(
+            sg_data, arcs_data, None, chapter_num,
+            completed_chapters=sorted(completed_chapters),
+            chapter_outline=chapter_outline,
+        )
         
         block = interventions.to_context_block()
         if block:

@@ -200,6 +200,14 @@ class TestNarrativeEvaluation(unittest.TestCase):
         self.assertGreaterEqual(result["strength"], 3)
         self.assertTrue(result["open_loop_signals"])
 
+    def test_hook_recognizes_concrete_ending_reveal_without_question_mark(self):
+        text = "他推开铁皮门，门后的墙上贴满了照片，照片中央的人正是失踪多年的父亲。"
+
+        result = hook_strength(text)
+
+        self.assertGreaterEqual(result["strength"], 4)
+        self.assertTrue(result["ending_reveal_signals"])
+
     def test_structure_rewards_goal_obstacle_choice_consequence_and_hook(self):
         text = (
             "沈砚刚撬开档案柜，门外的脚步声就停在了第三层。"
