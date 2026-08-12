@@ -22,6 +22,7 @@ from typing import AsyncGenerator, Optional, AsyncIterator
 from ..atomic_io import atomic_write_json, safe_read_json
 from ..beat_decomposer import BeatDecomposer, Beat
 from ..pacing_checker import PacingChecker
+from ..evaluation_system import evaluate_chapter
 from ..chapter_summarizer import check_and_compress
 from ..storygraph_interventions import analyze_and_inject
 from ..usage_context import report_response_usage
@@ -69,6 +70,36 @@ def _merge_quality_with_consistency(quality: dict, consistency: dict) -> dict:
     return merged
 
 
+def _merge_quality_with_narrative(quality: dict, narrative: dict) -> dict:
+    """将章节结构契约并入本地质量门，避免只按句式通过的空转章节落盘。"""
+    merged = dict(quality or {})
+    if not isinstance(narrative, dict):
+        return merged
+    merged["narrative"] = narrative
+    structure = narrative.get("structure") or {}
+    structure_score = structure.get("score")
+    if structure_score is None:
+        return merged
+    try:
+        base_score = float(merged.get("score", 0))
+        structure_score = float(structure_score)
+        hook_score = float((narrative.get("hook") or {}).get("strength", 0)) * 10
+    except (TypeError, ValueError):
+        return merged
+
+    # 结构是辅助质量门：保留 pacing checker 的主体权重，但让结构明显失真
+    # 的文本无法用“句长合格”掩盖问题。
+    structural_blend = structure_score * 0.75 + hook_score * 0.25
+    merged["score"] = int(round(min(base_score, base_score * 0.7 + structural_blend * 0.3)))
+    issues = list(merged.get("issues") or [])
+    for issue in structure.get("issues") or []:
+        item = f"[叙事结构] {issue}"
+        if item not in issues:
+            issues.append(item)
+    merged["issues"] = issues[:20]
+    return merged
+
+
 def _consistency_candidate_rank(consistency: dict) -> tuple:
     """Rank repair candidates: fewer P0 first, then higher score, then fewer issues."""
     violations = (consistency or {}).get("violations") or []
@@ -90,7 +121,7 @@ def _save_final_quality_report(memory, novel_id: str, chapter_num: int, report: 
     if not isinstance(reports, dict):
         reports = {}
     record = {
-        "version": "quality-gate-v2",
+        "version": "quality-gate-v3",
         "stage": stage,
         "chapter_num": chapter_num,
         "score": report.get("score", 0),
@@ -99,6 +130,11 @@ def _save_final_quality_report(memory, novel_id: str, chapter_num: int, report: 
         "text_sha256": hashlib.sha256(report.get("text", "").encode("utf-8")).hexdigest(),
         "evaluated_at": time.time(),
     }
+    narrative = report.get("narrative") or {}
+    if narrative:
+        record["narrative_score"] = narrative.get("structure", {}).get("score", 0)
+        record["narrative_metrics"] = narrative.get("structure", {}).get("metrics", {})
+        record["narrative_issues"] = narrative.get("structure", {}).get("issues", [])[:10]
     reports[str(chapter_num)] = record
     atomic_write_json(path, reports)
     return record
@@ -264,7 +300,13 @@ class GenerationMixin:
 
     def _format_beats_instruction(self, beats: list) -> str:
         """AUDIT P1-1: 把 beat 列表渲染为紧凑节拍骨架，供普通 Writer 单次生成"""
-        lines = ["## 🎬 本章节拍结构（严格按此节奏推进，节拍顺序不可跳跃、不可合并）"]
+        lines = [
+            "## 🎬 本章叙事契约（先完成事件，再展开文风；节拍顺序不可跳跃、不可合并）",
+            "- 开篇必须让主角或现场发生一个可见动作，不要从设定说明起笔。",
+            "- 中段必须出现具体阻力，并让主角做出选择；选择要产生可观察的状态变化。",
+            "- 章末必须留下风险、信息、决定或下一步行动，最后一句必须完整收束，不得半句截断。",
+            "## 节拍明细",
+        ]
         for b in beats:
             lines.append(
                 f"{b.index + 1}. {b.function}｜{b.goal}｜"
@@ -276,6 +318,14 @@ class GenerationMixin:
                 lines.append(f"   └ 核心事件: {b.key_event}")
             if b.character_focus:
                 lines.append(f"   └ 聚焦角色: {b.character_focus}")
+            if b.opposition:
+                lines.append(f"   └ 主要阻力: {b.opposition}")
+            if b.choice:
+                lines.append(f"   └ 选择/代价: {b.choice}")
+            if b.state_change:
+                lines.append(f"   └ 状态变化: {b.state_change}")
+            if b.reader_question:
+                lines.append(f"   └ 读者未解问题: {b.reader_question}")
         return "\n".join(lines)
 
     def _strip_instruction_leaks(self, text: str) -> tuple:
@@ -832,6 +882,12 @@ class GenerationMixin:
                 full_text,
                 fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
             )
+            _narrative_quality = await asyncio.to_thread(
+                evaluate_chapter, full_text, None, None, chapter_outline
+            )
+            _final_quality = _merge_quality_with_narrative(
+                _final_quality, _narrative_quality
+            )
             _final_quality_record = _save_final_quality_report(
                 self.memory,
                 novel_id,
@@ -1204,6 +1260,10 @@ class GenerationMixin:
                     full_text,
                     fast_food=is_fast_food,
                 )
+                _narrative_probe = await asyncio.to_thread(
+                    evaluate_chapter, full_text, None, None, chapter_outline
+                )
+                qr = _merge_quality_with_narrative(qr, _narrative_probe)
                 quality_report = qr
                 log.info(f"Quality gate: score={qr['score']}, issues={len(qr['issues'])}")
 
@@ -1273,6 +1333,10 @@ class GenerationMixin:
 
                         if retry_text and len(retry_text) > len(full_text) * 0.6:
                             qr2 = checker.quick_quality_check(retry_text, fast_food=is_fast_food)
+                            qr2 = _merge_quality_with_narrative(
+                                qr2,
+                                evaluate_chapter(retry_text, None, None, chapter_outline),
+                            )
                             if qr2["score"] > qr["score"] + 10 or qr2["score"] >= 60:
                                 full_text = retry_text
                                 quality_report = qr2
@@ -1896,6 +1960,12 @@ class GenerationMixin:
                 PacingChecker(self.client, self.model).quick_quality_check,
                 full_text,
                 fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
+            )
+            _narrative_quality = await asyncio.to_thread(
+                evaluate_chapter, full_text, None, None, chapter_outline
+            )
+            _final_quality = _merge_quality_with_narrative(
+                _final_quality, _narrative_quality
             )
             _final_quality = _merge_quality_with_consistency(
                 _final_quality, _post_consistency_validation
