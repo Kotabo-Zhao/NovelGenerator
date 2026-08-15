@@ -6,18 +6,20 @@ GET  /api/novels/{novel_id}/feedback                          反馈汇总
 import json
 import os
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
+from .novels import _require_legacy_owner
 
 
 @router.post("/api/novels/{novel_id}/chapters/{chapter_num}/feedback")
-async def submit_feedback(novel_id: str, chapter_num: int, req: dict):
+async def submit_feedback(novel_id: str, chapter_num: int, req: dict, request: Request):
     """提交章节反馈（rating: 1 赞 / -1 踩 / 0 中性，reason 可选）"""
+    _require_legacy_owner(request, novel_id)
     _validate_novel_id(novel_id)
     _validate_chapter_range(chapter_num, chapter_num)
     rating = int(req.get("rating", 0)) if req else 0
@@ -31,7 +33,8 @@ async def submit_feedback(novel_id: str, chapter_num: int, req: dict):
 
 
 @router.get("/api/novels/{novel_id}/feedback")
-async def get_feedback(novel_id: str):
+async def get_feedback(novel_id: str, request: Request):
     """获取反馈汇总（列表 + 统计）"""
+    _require_legacy_owner(request, novel_id)
     _validate_novel_id(novel_id)
     return engine.get_feedback_summary(novel_id)

@@ -23,7 +23,7 @@ def write(name, s):
         f.write(s)
 
 # 1. 相对导入 + deps 补充
-for name in ["novels", "outline", "quality", "storygraph", "requirements", "styles", "trends"]:
+for name in ["novels", "outline", "quality", "requirements", "styles", "trends"]:
     s = read(f"{name}.py")
     s = s.replace("from .deps import", "from ..deps import")
     if name in ("outline", "requirements"):

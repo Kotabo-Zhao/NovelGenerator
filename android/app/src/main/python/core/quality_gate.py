@@ -29,6 +29,15 @@ def validate_chapter_text(text: str, *, target_words: int = 1500) -> dict:
     minimum = max(120, min(600, int(max(1, target_words) * 0.25)))
     if len(normalized) < minimum:
         raise ChapterQualityError(f"chapter text is too short: {len(normalized)} < {minimum}")
-    if re.search(r"(?:。|！|？|\.|!|\?)$", normalized) is None:
+    # A Chinese dialogue often ends with a closing quote/book-title bracket after
+    # the actual punctuation, e.g. `……？"` or `……。」`.  The writer's ending
+    # normalizer already treats these as complete; keep the quality gate aligned
+    # instead of rejecting an otherwise valid generated chapter.
+    sentence_endings = set("。！？.!?…")
+    closing_marks = set("\"'”’」』】》〉〕）)]}")
+    content_end = normalized
+    while content_end and content_end[-1] in closing_marks:
+        content_end = content_end[:-1]
+    if not content_end or content_end[-1] not in sentence_endings:
         raise ChapterQualityError("chapter does not end with punctuation")
     return {"chars": len(normalized), "minimum_chars": minimum}

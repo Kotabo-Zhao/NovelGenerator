@@ -2,20 +2,21 @@
 import json
 import os
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range, _sse_with_heartbeat
+from ..auth import require_owner
 
 @router.post("/api/requirements/preview-decompose")
-async def preview_decompose(req: dict):
+async def preview_decompose(req: dict, _owner_id: str = Depends(require_owner)):
     """预拆解用户灵感（创建小说前预览需求拆解结果）
 
     v2.2: 新增端点，让用户在创建小说之前预览AI对其需求的理解。
-    不依赖 novel_id，直接拆解灵感文本。
+    不依赖 novel_id，直接拆解灵感文本。需登录：否则任意匿名可烧 LLM 成本。
     """
     inspiration = req.get("inspiration", "")
     if not inspiration.strip():
@@ -61,10 +62,37 @@ async def update_requirements(novel_id: str, req: dict):
 @router.get("/api/novels/{novel_id}/requirements")
 async def get_requirements(novel_id: str):
     """获取当前需求列表"""
-    reqs = engine._req_store.get(novel_id)
+    plan = engine.get_novel(novel_id) or {}
+    if hasattr(engine, "_load_requirements_contract"):
+        reqs, _ = engine._load_requirements_contract(novel_id, plan)
+    else:
+        reqs = engine._req_store.get(novel_id)
     if not reqs:
         raise HTTPException(status_code=404, detail="尚未拆解需求")
-    return reqs
+    response = dict(reqs)
+    response["chapter_contract"] = [
+        {
+            "chapter_num": chapter.get("chapter_num", chapter.get("number")),
+            "requirement_ids": chapter.get("requirement_ids", []),
+        }
+        for volume in ((plan.get("outline") or {}).get("volumes") or [])
+        for chapter in (volume.get("chapters") or [])
+        if isinstance(chapter, dict)
+    ]
+    state = engine.memory.get_novel_state(novel_id) if plan else {}
+    response["compliance"] = state.get("requirement_compliance", {})
+    return response
+
+
+@router.get("/api/novels/{novel_id}/requirements/compliance")
+async def get_requirement_compliance(novel_id: str, chapter_num: Optional[int] = None):
+    """Return persisted chapter-level requirement evidence."""
+    plan = engine.get_novel(novel_id) or {}
+    state = engine.memory.get_novel_state(novel_id) if plan else {}
+    compliance = state.get("requirement_compliance", {})
+    if chapter_num is not None:
+        return compliance.get(str(chapter_num), {"overall_status": "not_checked", "results": []})
+    return {"compliance": compliance}
 
 
 @router.post("/api/novels/{novel_id}/requirements/supervise")

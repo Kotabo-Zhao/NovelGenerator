@@ -9,7 +9,6 @@ import json
 import os
 import uuid
 import logging
-import shutil
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +33,11 @@ def atomic_write_json(path: str, data, indent: int = 2):
 
 
 def safe_read_json(path: str, default=None):
-    """安全读取 JSON，损坏时自动恢复"""
+    """安全读取 JSON，损坏时备份原文件并返回 default（绝不覆写用户数据）。
+
+    损坏的原文件会被原子移到 ``<path>.corrupted.<时间戳>`` 保留，
+    由显式修复流程决定是否重建；本函数不写回 default，避免静默覆盖。
+    """
     if default is None:
         default = {}
     
@@ -45,17 +48,15 @@ def safe_read_json(path: str, default=None):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        backup = path + ".corrupted"
+        import time as _time
+        backup = f"{path}.corrupted.{int(_time.time())}"
         try:
-            shutil.copy2(path, backup)
-            log.warning(f"Corrupted file backed up: {backup}")
-        except Exception:
-            pass
-        log.error(f"Failed to read {path}: {e}. Restoring to default.")
-        try:
-            atomic_write_json(path, default)
-        except Exception:
-            pass
+            # 原子移走损坏文件：既保留原文，又避免下次读取重复触发。
+            os.replace(path, backup)
+            log.warning(f"Corrupted file moved aside: {backup}")
+        except OSError as be:
+            log.error(f"Failed to move corrupted file {path}: {be}")
+        log.error(f"Failed to read {path}: {e}. Returning default without overwriting.")
         return default
 
 

@@ -14,7 +14,7 @@ def _section(source: str, start: str, end: str) -> str:
 
 def test_sidebar_only_exposes_core_workflow():
     source = WEB.read_text(encoding="utf-8")
-    nav = _section(source, '<nav class="sidebar-nav">', "</nav>")
+    nav = _section(source, '<nav class="topnav">', "</nav>")
 
     for label in ("书架", "开卷", "落笔", "付梓"):
         assert label in nav
@@ -24,9 +24,9 @@ def test_sidebar_only_exposes_core_workflow():
 
 def test_create_page_has_one_generation_entry():
     source = WEB.read_text(encoding="utf-8")
-    create = _section(source, '<template v-if="currentView===\'create\'">', '<!-- ====== Write ====== -->')
+    create = _section(source, '<section v-if="currentView===\'create\'"', "</section>")
 
-    assert "长篇模式 · 自定义创作" in create
+    assert "✨ 生成大纲" in create
     assert "小红书爆款短篇" not in create
     assert "xiaohongshu" not in create
 
@@ -35,13 +35,13 @@ def test_write_page_does_not_render_deferred_tool_tabs():
     source = WEB.read_text(encoding="utf-8")
     write_header = _section(
         source,
-        '<template v-if="currentView===\'write\'">',
-        "<!-- v3.0: 互动模式面板 -->",
+        '<section v-if="currentView===\'write\'"',
+        '<!-- ══════════ 导出视图 ══════════ -->',
     )
 
     assert 'class="sg-tabs"' not in write_header
     assert "剧情图谱" not in write_header
-    assert "互动模式" not in write_header
+    assert "data-xhs" not in write_header
 
 
 def test_removed_trend_view_has_no_frontend_route_or_state():

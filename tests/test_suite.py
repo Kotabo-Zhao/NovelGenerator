@@ -132,7 +132,10 @@ class TestAtomicIO(unittest.TestCase):
         with open(path, 'w') as f: f.write('{invalid')
         data = safe_read_json(path)
         self.assertEqual(data, {})
-        self.assertTrue(os.path.exists(path + '.corrupted'))
+        # 损坏文件被原子移走（而非覆写），备份文件带 .corrupted.<ts> 前缀
+        self.assertFalse(os.path.exists(path))
+        backups = [n for n in os.listdir(self.tmpdir) if n.startswith('corrupt.json.corrupted.')]
+        self.assertTrue(backups)
 
     def test_20_atomic_write_text(self):
         path = os.path.join(self.tmpdir, 'text.txt')

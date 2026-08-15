@@ -42,7 +42,7 @@ METHOD_MAP = {
 
 # 保留在 NovelEngine 的方法（核心编排 + 状态 + 创建流程）
 KEEP_METHODS = {
-    "__init__", "create_novel", "_init_storygraph_and_arcs", "create_novel_stream",
+    "__init__", "create_novel", "create_novel_stream",
     "regenerate_outline_stream", "get_novel", "update_plan", "list_novels",
     "delete_novel", "get_chapter", "_detect_narrative_pov", "_save_narrative_pov",
     "_save_character_bible", "save_character_bible", "_format_char_entry",

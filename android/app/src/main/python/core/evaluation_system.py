@@ -52,7 +52,7 @@ def _tokenize(text: str) -> list:
     """简单中文分词：按标点+空格切分，取长度≥1的片段"""
     import re
     # 中文：按常见标点切分，保留汉字词语
-    segments = re.split(r'[，。！？；：、""\'\'（）\\s\\n]+', text)
+    segments = re.split(r'[，。！？；：、""\'\'（）\s\n]+', text)
     words = []
     for seg in segments:
         seg = seg.strip()

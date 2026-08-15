@@ -33,6 +33,7 @@ from core.interactive.interact_store import InteractStore
 from core.interactive.story_director import StoryDirector
 from core.interactive.dialogue_engine import DialogueEngine
 from core.interactive import voice_director
+from core.interactive.action_engine import _state_snapshot  # v3.8: /act 事件携带状态快照（此前缺失导致 NameError）
 from config import NOVELS_DIR
 
 # ── 单例（复用 engine 的 client/model）──
@@ -80,7 +81,12 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
         _cur_char = ((_exist_st or {}).get("player_char") or {}).get("name", "")
     except Exception:
         _exist_st, _cur_char = None, ""
-    _role_switch = bool(char_choice and _exist_st and char_choice != _cur_char)
+    _role_switch = bool(
+        char_choice
+        and _exist_st
+        and int((_exist_st or {}).get("scene_num", 0) or 0) > 0
+        and char_choice != _cur_char
+    )
 
     if not _store.exists(novel_id) or not _store.load_state(novel_id).get("scene_num", 0):
         from core.interactive.interact_store import new_state
@@ -160,13 +166,6 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
             ensure_world(st)
         except Exception as e:
             log.warning(f"world init failed: {e}")
-        # v3.6: 图谱 desc 后台一次性补全（LLM 填内容，不阻塞 start）
-        try:
-            import threading as _th
-            _th.Thread(target=_story.enrich_location_descs, args=(novel_id, st),
-                       daemon=True).start()
-        except Exception as e:
-            log.warning(f"desc enrich trigger failed: {e}")
         wb_brief = []
         for k in ("era", "geography", "power_system", "core_conflict", "factions"):
             v = wb.get(k)
@@ -177,34 +176,16 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
             elif isinstance(v, list) and v:
                 wb_brief.append(f"{k}: {'、'.join(str(x)[:40] for x in v[:4])[:120]}")
         st["worldbuilding_brief"] = "\n".join(wb_brief)[:800]
-        # v3.5.20: 复用全局状态资源——时间线摘要 + 未回收伏笔（剧情呼应）
-        try:
-            import os
-            from config import NOVELS_DIR
-            gs_path = os.path.join(NOVELS_DIR, novel_id, "global_state.json")
-            if os.path.exists(gs_path):
-                with open(gs_path, "r", encoding="utf-8") as f:
-                    gs = json.load(f)
-                tl = gs.get("timeline") or []
-                if isinstance(tl, list) and tl:
-                    st["timeline_brief"] = " → ".join(str(x)[:40] for x in tl[-5:])
-                chs = gs.get("chapters_summary") or ""
-                if isinstance(chs, str) and chs.strip():
-                    st["chapters_brief"] = str(chs)[:200]
-            fs_path = os.path.join(NOVELS_DIR, novel_id, "foreshadowing.json")
-            if os.path.exists(fs_path):
-                with open(fs_path, "r", encoding="utf-8") as f:
-                    fs = json.load(f)
-                if isinstance(fs, list):
-                    unclosed = [x for x in fs if isinstance(x, dict) and not x.get("resolved")]
-                    if unclosed:
-                        st["foreshadows_brief"] = "；".join(
-                            str(x.get("content") or x.get("seed") or "")[:50]
-                            for x in unclosed[:3])
-        except Exception as e:
-            log.warning(f"global resources load failed: {e}")
+        # 新互动线必须在返回 StreamingResponse 前落盘。生成器函数只有客户端开始
+        # 消费 SSE 后才执行；若这里不保存，首次进入会在流内被判定为“存档不存在”。
         _store.save_state(novel_id, st)
-
+        # 地点描述补全必须在初始状态落盘后启动，避免后台线程与首次保存竞态。
+        # 统一走后台串行队列，不再裸起线程（避免与主流程并发打 LLM / 改同一 state）。
+        try:
+            from core.interactive.story_director import enqueue_background
+            enqueue_background(_story.enrich_location_descs, novel_id, st, critical=False)
+        except Exception as e:
+            log.warning(f"desc enrich trigger failed: {e}")
     # v2.5.63: 老存档角色切换（视角 bug 修复核心）
     # 已有存档 + 玩家显式选了不同角色 → 重新应用角色选择：
     # - player_char 换成新角色（casts 同步：新角色移除 NPC 化，旧角色回归 NPC）
@@ -290,10 +271,17 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
     # （文笔/语气/对话/反套路），注入互动全部生成路径，保证与小说文风一致
     try:
         from core.planner import get_style, build_style_prompt
+        from core.styles import has_style
         _st3 = _store.load_state(novel_id) or {}
         _sn = _st3.get("style", "") or ""
         if _sn:
-            _sb = build_style_prompt(get_style(_sn))
+            # 未注册的自由文本风格不能悄悄降级为“热血爽文”，否则悬疑/现实
+            # 互动线会被注入打脸升级模板。保留用户原始风格作为轻量硬约束。
+            _sb = (
+                build_style_prompt(get_style(_sn))
+                if has_style(_sn)
+                else f"叙事风格：{_sn}。用词、节奏、人物反应必须持续符合这一基调，不套用其他类型模板。"
+            )
             if _sb:
                 _st3["style_brief"] = _sb[:600]
                 _store.save_state(novel_id, _st3)
@@ -438,12 +426,13 @@ async def interactive_end_chat(novel_id: str):
             f"{h.get('speaker', h.get('role', ''))}: {str(h.get('content', ''))[:100]}"
             for h in chat_entries[-10:])
         if _transcript:
-            import threading
-            threading.Thread(
-                target=_story._extract_player_state,
-                args=(novel_id, "本轮对话：\n" + _transcript),
-                daemon=True,
-            ).start()
+            # v3.8: 走后台串行队列而非裸线程——裸线程绕过了 main_flow_active 让路
+            # 机制且与主流程并发打 LLM（此前 429 限流的复发路径）
+            enqueue_background(
+                _story._extract_player_state,
+                novel_id, "本轮对话：\n" + _transcript,
+                critical=False, novel_id=novel_id,
+            )
     except Exception as e:
         log.warning(f"post-chat player_state update failed: {e}")
     # v2.5.59: 对话后刷新建议选项（贴合最新剧情进度——旧选项与现状脱节问题）
@@ -639,10 +628,11 @@ async def interactive_actions(novel_id: str):
         st = _store.load_state(novel_id) or {}
         opts = action_options(st)
         return {"ok": True, "actions": opts,
-                "hint": "点按钮执行行动；输入框纯对话"}
+                "hint": "优先点按钮执行明确行动；输入框支持自由对话或行动"}
     except Exception as e:
+        # v3.8: 异常详情只进日志，不回传客户端
         log.warning(f"actions failed: {e}")
-        return {"ok": False, "actions": [], "error": str(e)[:120]}
+        return {"ok": False, "actions": [], "error": "行动选项获取失败，请稍后重试"}
 
 
 @router.post("/api/novels/{novel_id}/interactive/act")
@@ -706,8 +696,15 @@ async def interactive_act(novel_id: str, req: ActRequest):
                    "blocked": False}
             applied = _chat.action.apply_action(novel_id, action)
             changed = applied.get("changed", [])
+            action_scene_failed = False
             async for ev in _chat.action.action_scene_stream(novel_id, action, changed):
+                if ev.get("type") == "error":
+                    ev.setdefault("snapshot", _state_snapshot(applied.get("state") or {}))
+                    action_scene_failed = True
                 yield ev
+            if action_scene_failed:
+                yield {"type": "done"}
+                return
             if action.get("end_chat"):
                 yield {"type": "action_done", "end_chat": True, "action": action,
                        "snapshot": _state_snapshot(applied.get("state") or {})}
@@ -755,11 +752,15 @@ async def interactive_export(novel_id: str):
             result = _story.export_novel_from_interactive(novel_id, _progress)
             progress_queue.put_nowait({"type": "export_result", "result": result})
         except Exception as e:
+            # v3.8: 异常详情只进日志，客户端收通用文案
+            log.exception("interactive export failed")
             progress_queue.put_nowait({"type": "export_error",
-                                       "message": f"导出失败: {type(e).__name__}: {str(e)[:120]}"})
+                                       "message": "导出失败，请稍后重试"})
 
-    import threading
-    threading.Thread(target=_worker, daemon=True).start()
+    # v3.8: 走后台串行队列而非裸线程——导出含 LLM（视角转换），
+    # 裸线程绕过 main_flow_active 让路会与主流程并发打 API（429 复发路径）。
+    # critical=True：导出是用户主动长任务，队列满时优先保证不丢。
+    enqueue_background(_worker, critical=True, novel_id=novel_id)
 
     async def event_stream():
         try:
@@ -784,8 +785,9 @@ async def interactive_export(novel_id: str):
                 else:
                     yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
         except Exception as e:
-            log.error(f"export stream error: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': f'导出流程异常: {e}'}, ensure_ascii=False)}\n\n"
+            # v3.8: 异常详情只进日志，客户端收通用文案
+            log.exception(f"export stream error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': '导出流程异常，请稍后重试'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

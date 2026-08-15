@@ -813,6 +813,10 @@ class Planner:
         
         skeleton_prompt = f"""你是小说大纲规划师。请为这{vol_count}卷{total_chapters}章的小说规划全局章节骨架。
 
+## 📝 用户原始创意（最高优先级——全局骨架必须忠实服务于这份创意，不得偏题）
+
+{effective_inspiration}
+
 {name_lock}
 {worldbuilding_summary}
 {character_roster}
@@ -888,29 +892,34 @@ class Planner:
             if deduped:
                 log.info(f"Skeleton dedup: {deduped} near-duplicate entries escalated")
         
-        # v2.2: 骨架角色名校验 — 扫描全部角色名而非仅主角
+        # v2.2/v3.8: 骨架角色名校验 — 正则抓 2-3 字词会误报剧情短语（"的线索""士算力"），
+        # 只做 info 级提示，不打扰用户（此前 warning 会刷屏且信息量低）
         if skeleton_map and all_char_names:
             all_sk_text = " ".join(skeleton_map.values())
-            wrong = []
-            for name in all_char_names:
-                # 检查骨架中是否没有使用已设定的角色名（说明LLM可能用了别名）
-                pass  # 主要是检查未知名
             # 用简单方式检测：骨架中出现的中文2-3字名称，不在角色池中
             import re as _re
             potential_names = set(_re.findall(r'(?:[主角]是)?([\u4e00-\u9fff]{2,3})(?:[，。！、\s]|$)', all_sk_text))
-            # 过滤掉常见词
-            stop_words = {'主角', '配角', '反派', '师兄', '师弟', '师姐', '师妹', '长老', '掌门', '宗主', '他们', '自己', '这个', '那个', '一个', '然后', '突然', '发现', '开始', '决定', '准备'}
+            # 过滤掉常见词（v3.8 扩充：动词/助词/剧情短语高频词）
+            stop_words = {'主角', '配角', '反派', '师兄', '师弟', '师姐', '师妹', '长老', '掌门', '宗主',
+                          '他们', '自己', '这个', '那个', '一个', '然后', '突然', '发现', '开始', '决定', '准备',
+                          '但是', '因为', '所以', '如果', '为了', '随着', '通过', '并且', '同时', '最终',
+                          '线索', '阴谋', '真相', '身份', '计划', '秘密', '危险', '危机', '冲突', '对决',
+                          '大战', '逃亡', '伏击', '反攻', '崛起', '突破', '升级', '修炼', '力量', '实力',
+                          '代码', '系统', '协议', '节点', '数据', '网络', '服务器', '算力', '芯片', '终端',
+                          '基站', '宗门', '联盟', '势力', '组织', '散修', '修士', '世界', '规则', '结果',
+                          '来源', '触发', '改变', '击败', '出现', '追踪', '收集', '破解', '注入', '回归',
+                          '开源', '自由', '意识', '记忆', '线索的', '的线索', '的阴谋', '的秘密', '的来源'}
             unknown_names = potential_names - set(all_char_names) - stop_words
             if unknown_names:
-                log.warning(f"Skeleton contains unknown character names: {unknown_names}")
-                yield {"type": "warning", "message": f"🔧 大纲规划中发现 {len(list(unknown_names)[:5])} 个未设定角色名（{', '.join(list(unknown_names)[:3])}{'等' if len(unknown_names) > 3 else ''}），系统将在详细展开时自动修正。"}
+                log.info(f"Skeleton contains unknown character names (info): {unknown_names}")
         
         has_skeleton = len(skeleton_map) > 0
         
-        # Phase 3c: 逐卷展开 — 分批生成（v2.25: 每批≤4章，防止LLM截断）
+        # Phase 3c: 逐卷展开 — 分批生成（v3.8: 每批≤2章——4章×5beats 的完整 JSON 输出
+        # 常超 max_tokens 被截断，走 fallback 模板导致大纲退化为"第X卷第Y章"白板）
         all_volumes = []
         chapter_counter = 0
-        BATCH_SIZE = 4  # 每批最多4章，保证LLM不会输出到一半就停
+        BATCH_SIZE = 2  # v3.8: 4→2，保证每批 LLM 输出完整不截断
 
         for idx, vol_meta in enumerate(volumes_meta[:vol_count]):
             vol_num = vol_meta.get("vol", idx + 1)
@@ -963,6 +972,10 @@ class Planner:
 
                 ch_prompt = f"""为第{vol_num}卷「{vol_title}」写{batch_n}章大纲（共{n_ch}章的第{batch_start+1}-{batch_start+batch_n}章）。
 
+## 📝 用户原始创意（最高优先级——本章事件必须推进这份创意，不得偏题）
+
+{effective_inspiration}
+
 {name_lock}
 {worldbuilding_summary}
 {character_roster}
@@ -976,14 +989,29 @@ class Planner:
 - **hook**: 章末钩子，让读者想点下一章
 - **cause_from_prev**: 为什么这章是上一章的必然结果（第1章填"开篇"）
 - **bridge_to_next**: 这章结尾怎么引出下一章
+- **opening_scene**: 本章开场的具体场景——角色在何地点、何种情绪/身体状态、正在做什么？必须承接上一章的结尾状态，禁止写"承接上章结尾"这类占位句
+- **conflict**: 本章冲突描述，含类型标注[IN内心/IR人际/EN环境/DE宿命]
+- **conflict_intensity**: 冲突强度 1-5（必须 ≥ 上一章强度，只有缓冲章可降1级）
+- **scene_type**: 本章主导场景类型（动作场景/情感场景/对话场景/混合）
+- **emotion_curve**: 压抑→爆发→余韵（本章情绪弧线）
+- **scene_beats**: 本章拆成 5 个关键节拍（数组），每个 beat 必须包含：
+  - beat: 序号 1-5
+  - name: 节拍名（开篇钩子/冲突升级/转折高潮/余波收束/章末钩子）
+  - function: 该节拍在叙事中的作用
+  - key_action: **本章该节点发生的具体事件**（谁对谁做了什么、发生了什么冲突），必须依据 summary/conflict 展开，禁止写"具体发生了什么""本章第N节点"这类占位；这是正文生成的直接依据，写得越具体，章节越贴合大纲
+  - trigger: {{"type": "event", "conditions": [{{"field": "tension/location/flag/relations/inventory", "op": ">=/<=/==/!=/has/not_has", "value": "阈值或关键词"}}], "timeout_scenes": 4}}
+  - reject_outcome: 玩家拒绝/反着来时后果（拒绝也是推进）
+  - state_output: {{"flags": ["触发后写入的flag"], "relations": {{"角色名": 数值}}}}
+  - entry_hook: 本节点触发时事件如何找上门（NPC登场/消息传来/意外发生）
 
 只输出JSON数组 {batch_n} 个对象：
 [
-  {{"number":{batch_chapter_start},"title":"章节名","summary":"30字核心事件","cause_from_prev":"上章X→本章Y","bridge_to_next":"本章Z→下章W","emotion_curve":"压抑→爆发→余韵","characters":["角色"],"hook":"钩子","target_words":{chapter_words}}}
+  {{"number":{batch_chapter_start},"title":"章节名","summary":"30字核心事件","cause_from_prev":"上章X→本章Y","bridge_to_next":"本章Z→下章W","opening_scene":"开场具体场景（承接上章）","conflict":"冲突描述[类型]","conflict_intensity":3,"scene_type":"动作场景","emotion_curve":"压抑→爆发→余韵","characters":["角色"],"hook":"钩子","target_words":{chapter_words},"scene_beats":[{{"beat":1,"name":"开篇钩子","function":"作用","key_action":"本章第1节点具体事件","trigger":{{"type":"event","conditions":[{{"field":"tension","op":">=","value":30}}],"timeout_scenes":4}},"reject_outcome":"拒绝后果","state_output":{{"flags":[],"relations":{{}}}},"entry_hook":"事件如何找上门"}},{{"beat":2,"name":"冲突升级","function":"作用","key_action":"本章第2节点具体事件","trigger":{{"type":"event","conditions":[],"timeout_scenes":4}},"reject_outcome":"拒绝后果","state_output":{{"flags":[],"relations":{{}}}},"entry_hook":"事件如何找上门"}},{{"beat":3,"name":"转折高潮","function":"作用","key_action":"本章第3节点具体事件","trigger":{{"type":"event","conditions":[],"timeout_scenes":4}},"reject_outcome":"拒绝后果","state_output":{{"flags":[],"relations":{{}}}},"entry_hook":"事件如何找上门"}},{{"beat":4,"name":"余波收束","function":"作用","key_action":"本章第4节点具体事件","trigger":{{"type":"event","conditions":[],"timeout_scenes":4}},"reject_outcome":"拒绝后果","state_output":{{"flags":[],"relations":{{}}}},"entry_hook":"事件如何找上门"}},{{"beat":5,"name":"章末钩子","function":"作用","key_action":"本章第5节点具体事件","trigger":{{"type":"event","conditions":[],"timeout_scenes":4}},"reject_outcome":"拒绝后果","state_output":{{"flags":[],"relations":{{}}}},"entry_hook":"事件如何找上门"}}]}}
 ]
+**scene_beats 是硬要求**：每章必须输出全部 5 个 beats，每个 beat 的 key_action 必须写本章该节点的具体事件，不能省略、不能写占位句。这是正文生成和互动剧情的直接依据。
 只输出JSON。"""
 
-                ch_result = await self._call_llm(ch_prompt, f"outline_v{vol_num}_b{batch_start}", max_tokens=4096)
+                ch_result = await self._call_llm(ch_prompt, f"outline_v{vol_num}_b{batch_start}", max_tokens=6144)
                 
                 if not ch_result:
                     log.warning(f"Volume {vol_num} batch {batch_start} failed, using fallback")
@@ -1031,6 +1059,25 @@ class Planner:
                         chapters[j] = ch
                     ch["number"] = batch_chapter_start + j
                     ch["target_words"] = chapter_words
+
+                # v3.8: LLM 解析出少于 batch_n 章（截断/漏章）时补齐模板——
+                # 此前 batch_start += len(chapters) 会导致批次窗口错位、章节编号跳变、
+                # 总章数不足，且缺失章节成为"幽灵"（不生成、不编号）。
+                if len(chapters) < batch_n:
+                    log.warning(
+                        f"Volume {vol_num} batch {batch_start}: parsed {len(chapters)}/{batch_n} chapters, "
+                        f"padding missing with templates")
+                    for _j in range(len(chapters), batch_n):
+                        _num = batch_chapter_start + _j
+                        chapters.append({
+                            "number": _num, "title": f"第{_num}章",
+                            "summary": f"第{vol_num}卷第{batch_start+_j+1}章（本批截断，占位）",
+                            "cause_from_prev": "承接上章", "bridge_to_next": f"引出第{_num+1}章",
+                            "emotion_curve": "平稳→起伏→悬念",
+                            "characters": ["主角"], "hook": "引导下一章",
+                            "target_words": chapter_words,
+                        })
+                    fallback_count += 1
 
                 vol_chapters.extend(chapters)
                 batch_start += len(chapters)
@@ -1399,6 +1446,29 @@ class Planner:
                     warnings.append(f"第{ch.get('number','?')}章缺少摘要")
                 if not ch.get("title"):
                     ch["title"] = f"第{ch.get('number','?')}章"
+                # v3.8: scene_beats 是正文/互动生成的核心事件契约——缺失视为 issue，
+                # 触发 repair_outline 用章节信息补全（否则 Writer 拿不到具体事件，章节变流水账）。
+                beats = ch.get("scene_beats")
+                if not isinstance(beats, list) or len(beats) < 3:
+                    issues.append(f"第{ch.get('number','?')}章缺少 scene_beats 事件契约（正文生成依据）")
+                else:
+                    # 检查 key_action 是否有占位/空白（白板 beats 与缺失同样有害）
+                    for bi, b in enumerate(beats):
+                        if not isinstance(b, dict):
+                            issues.append(f"第{ch.get('number','?')}章 beat{bi+1} 结构异常")
+                            break
+                        ka = str(b.get("key_action") or "").strip()
+                        if not ka or any(t in ka for t in ("具体发生了什么", "本章第", "必填")):
+                            issues.append(f"第{ch.get('number','?')}章 beat{bi+1} key_action 为占位句（正文生成依据缺失）")
+                            break
+                # opening_scene 占位符检测
+                op = str(ch.get("opening_scene") or "").strip()
+                if not op or "承接上章结尾" in op or "承接上章" == op[:4]:
+                    issues.append(f"第{ch.get('number','?')}章 opening_scene 为占位句")
+                # conflict_intensity 必须有数值且逐章递增（缓冲章可平）
+                ci = ch.get("conflict_intensity")
+                if not isinstance(ci, (int, float)) or ci < 1 or ci > 5:
+                    issues.append(f"第{ch.get('number','?')}章 conflict_intensity 缺失或越界")
         
         # 检查总章节数一致性
         if outline.get("total_chapters", 0) != total:
@@ -1515,8 +1585,23 @@ class Planner:
                     ch["bridge_to_next"] = "（大纲生成时未包含因果链，建议重新生成）"
                 if "opening_scene" not in ch:
                     ch["opening_scene"] = "承接上章结尾"
-                # v3.6: 统一修成五段具体事件契约，避免白板/模板句进入 Writer。
-                ch["scene_beats"] = Planner._repair_scene_beats(ch)
+                # v3.8: 补齐 scene_type/conflict（正文生成的维度信息）
+                if "scene_type" not in ch:
+                    ch["scene_type"] = "混合"
+                if "conflict" not in ch:
+                    ch["conflict"] = ""
+                # v3.6/v3.8: 统一修成五段具体事件契约——只有缺失/白板 beats 才重建，
+                # LLM 已输出的真实 beats 必须保留（否则覆盖掉具体剧情设计）。
+                existing_beats = ch.get("scene_beats")
+                _placeholder_tokens = ("具体发生了什么", "本章第", "核心冲突展开",
+                                       "留下悬念", "必填", "承接上章结尾")
+                def _is_blank(ka):
+                    ka = str(ka or "").strip()
+                    return not ka or any(t in ka for t in _placeholder_tokens)
+                if (not isinstance(existing_beats, list) or len(existing_beats) < 3
+                        or any(not isinstance(b, dict) for b in existing_beats)
+                        or any(_is_blank(b.get("key_action")) for b in existing_beats if isinstance(b, dict))):
+                    ch["scene_beats"] = Planner._repair_scene_beats(ch)
                 if "conflict_intensity" not in ch:
                     # 从 conflict 字符串中尝试提取
                     cf = ch.get("conflict", "")

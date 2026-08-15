@@ -7,31 +7,36 @@ GET  /api/novels/{novel_id}/characters/{char_name}/profile  获取单个人设�
 import json
 import os
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
+from .novels import _require_legacy_owner
 
 
 @router.post("/api/novels/{novel_id}/characters/{char_name}/profile")
-async def distill_character_profile(novel_id: str, char_name: str):
+async def distill_character_profile(novel_id: str, char_name: str, request: Request):
     """蒸馏角色人设卡（女娲框架：心智模型/决策启发式/表达DNA/反模式/边界）"""
+    _require_legacy_owner(request, novel_id)
     _validate_novel_id(novel_id)
     if not char_name or len(char_name) > 50:
         raise HTTPException(status_code=400, detail="非法角色名")
 
-    result = engine.distill_character_profile(novel_id, char_name)
+    # v3.8: 同步 LLM 蒸馏（1-2 分钟）放入线程池，避免阻塞事件循环（全站请求卡死）
+    import asyncio
+    result = await asyncio.to_thread(engine.distill_character_profile, novel_id, char_name)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return {"ok": True, "profile": result}
 
 
 @router.get("/api/novels/{novel_id}/character-profiles")
-async def list_character_profiles(novel_id: str):
+async def list_character_profiles(novel_id: str, request: Request):
     """列出全部已蒸馏角色人设卡"""
+    _require_legacy_owner(request, novel_id)
     _validate_novel_id(novel_id)
     profiles = engine.get_character_profiles(novel_id)
     # 返回精简摘要列表
@@ -48,8 +53,9 @@ async def list_character_profiles(novel_id: str):
 
 
 @router.get("/api/novels/{novel_id}/characters/{char_name}/profile")
-async def get_character_profile(novel_id: str, char_name: str):
+async def get_character_profile(novel_id: str, char_name: str, request: Request):
     """获取单个人设卡"""
+    _require_legacy_owner(request, novel_id)
     _validate_novel_id(novel_id)
     profile = engine.get_character_profile(novel_id, char_name)
     if not profile:
@@ -58,12 +64,13 @@ async def get_character_profile(novel_id: str, char_name: str):
 
 
 @router.post("/api/novels/{novel_id}/character-profiles/generate-all")
-async def generate_all_assets(novel_id: str):
+async def generate_all_assets(novel_id: str, request: Request):
     """一键补全：为已有书批量蒸馏全部角色人设 + 生成声音卡，并回写人物宝典
 
     旧书迁移用（创建即蒸馏上线前的书没有这些资产）。
     阻塞式，约 1-3 分钟。
     """
+    _require_legacy_owner(request, novel_id)
     _validate_novel_id(novel_id)
     import asyncio
     result = await asyncio.to_thread(engine.generate_all_character_assets, novel_id)

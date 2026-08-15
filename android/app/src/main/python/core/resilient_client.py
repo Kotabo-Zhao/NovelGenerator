@@ -33,6 +33,33 @@ from .usage_context import report_response_usage
 log = logging.getLogger(__name__)
 
 
+class LLMConfigurationError(RuntimeError):
+    """Raised before a provider call when the local model credentials are unusable."""
+
+
+_PLACEHOLDER_KEY_MARKERS = (
+    "placeholder",
+    "your-key",
+    "your_api_key",
+    "your-api-key",
+)
+
+
+def llm_error_message(error: Exception, action: str = "内容生成") -> str:
+    """Return a stable user-facing error without leaking provider details."""
+    if isinstance(error, LLMConfigurationError):
+        return f"{action}不可用：请配置 DEEPSEEK_API_KEY 并重启服务器"
+
+    status = getattr(error, "status_code", None)
+    if status in (401, 403):
+        return f"{action}鉴权失败：请检查 DEEPSEEK_API_KEY 并重启服务器"
+    if status == 429:
+        return f"{action}请求过于频繁，请稍后重试"
+    if isinstance(error, (APITimeoutError, APIConnectionError)):
+        return f"{action}暂时无法连接模型服务，请检查网络后重试"
+    return f"{action}失败，请稍后重试"
+
+
 @dataclass
 class RetryConfig:
     """重试配置"""
@@ -92,6 +119,15 @@ class ResilientLLMClient:
         self.client = client
         self.model = model
         self.config = config or RetryConfig()
+
+    def _ensure_configured(self) -> None:
+        """Reject empty/test credentials before a slow provider request."""
+        api_key = getattr(self.client, "api_key", None)
+        if not isinstance(api_key, str):
+            return
+        normalized = api_key.strip().lower()
+        if not normalized or any(marker in normalized for marker in _PLACEHOLDER_KEY_MARKERS):
+            raise LLMConfigurationError("DEEPSEEK_API_KEY is not configured")
     
     def create(self, messages: list, temperature: float = 0.8, 
                max_tokens: int = 4096, **kwargs) -> Any:
@@ -105,6 +141,12 @@ class ResilientLLMClient:
         
         _metrics.total_calls += 1
         start = time.monotonic()
+
+        try:
+            self._ensure_configured()
+        except LLMConfigurationError:
+            _metrics.failed_calls += 1
+            raise
         
         last_error = None
         for attempt in range(self.config.max_retries + 1):
@@ -140,26 +182,39 @@ class ResilientLLMClient:
                 
             except RateLimitError as e:
                 _metrics.rate_limit_hits += 1
-                wait = self._get_retry_after(e, attempt)
-                log.warning(f"LLM限流(429), 等待{wait:.1f}s后重试: {e}")
-                last_error = e
-                time.sleep(wait)
+                if attempt < self.config.max_retries:
+                    wait = self._get_retry_after(e, attempt)
+                    log.warning(f"LLM限流(429), 等待{wait:.1f}s后重试: {e}")
+                    last_error = e
+                    _metrics.retry_count += 1
+                    time.sleep(wait)
+                else:
+                    _metrics.failed_calls += 1
+                    raise
                 
             except (APITimeoutError, APIConnectionError) as e:
-                wait = self._calc_backoff(attempt)
-                log.warning(f"LLM网络错误, 等待{wait:.1f}s后重试: {type(e).__name__}")
-                last_error = e
-                time.sleep(wait)
+                if attempt < self.config.max_retries:
+                    wait = self._calc_backoff(attempt)
+                    log.warning(f"LLM网络错误, 等待{wait:.1f}s后重试: {type(e).__name__}")
+                    last_error = e
+                    _metrics.retry_count += 1
+                    time.sleep(wait)
+                else:
+                    _metrics.failed_calls += 1
+                    raise
                 
             except APIError as e:
-                # 其他 API 错误（500等）
-                if attempt < self.config.max_retries:
+                # 4xx（除限流/超时类）通常是凭据或参数问题，重试不会自行恢复。
+                status = getattr(e, "status_code", None)
+                retryable = status is None or status >= 500 or status in (408, 409)
+                if retryable and attempt < self.config.max_retries:
                     wait = self._calc_backoff(attempt)
                     log.warning(f"LLM API错误({e.status_code}), 等待{wait:.1f}s后重试: {e}")
                     last_error = e
+                    _metrics.retry_count += 1
                     time.sleep(wait)
                 else:
-                    log.error(f"LLM调用失败(已重试{self.config.max_retries}次): {e}")
+                    log.error(f"LLM调用失败(状态码={status}, 重试={attempt}次)")
                     _metrics.failed_calls += 1
                     raise
                     
@@ -171,7 +226,6 @@ class ResilientLLMClient:
         
         # 所有重试都失败
         _metrics.failed_calls += 1
-        _metrics.retry_count += self.config.max_retries
         log.error(f"LLM调用全部重试失败: {last_error}")
         raise last_error
 
@@ -196,6 +250,12 @@ class ResilientLLMClient:
         """
         _metrics.total_calls += 1
         start = time.monotonic()
+
+        try:
+            self._ensure_configured()
+        except LLMConfigurationError:
+            _metrics.failed_calls += 1
+            raise
         
         last_error = None
         full_text_collected = ""  # 已收集的内容，用于断线重连
@@ -262,6 +322,7 @@ class ResilientLLMClient:
                     log.warning(f"LLM流式断线(已收{len(full_text_collected)}字), "
                                f"等待{wait:.1f}s后重连: {type(e).__name__}")
                     last_error = e
+                    _metrics.retry_count += 1
                     
                     # 断线重连策略：在 messages 中追加已收集内容
                     # 让模型从断点继续
@@ -280,6 +341,7 @@ class ResilientLLMClient:
                     wait = self._get_retry_after(e, attempt)
                     log.warning(f"LLM流式限流, 等待{wait:.1f}s: {e}")
                     last_error = e
+                    _metrics.retry_count += 1
                     await asyncio.sleep(wait)
                 else:
                     _metrics.failed_calls += 1

@@ -177,7 +177,7 @@ async def tts_synthesize(req: TTSRequest, _owner_id: str = Depends(require_owner
 
 
 @router.get("/api/tts/voices")
-async def tts_voices():
+async def tts_voices(_owner_id: str = Depends(require_owner)):
     """全部中文音色列表（含风格标注 + 可用性标记）
 
     v3.2: 以 VOICE_STYLES 风格表为准返回全量（zh-CN 全部 + zh-HK + zh-TW），
@@ -247,10 +247,12 @@ async def tts_emotion_synthesize(req: EmotionTTSRequest, _owner_id: str = Depend
             EmotionTTS.get().synthesize, text, req.char_name, req.emotion,
             req.voice, req.rate, req.pitch, req.real_voice)
     except EmotionTTSUnavailable as e:
-        raise HTTPException(503, f"情感引擎不可用: {e}")
+        # v3.8: 引擎路径/进程细节只进日志，客户端收通用文案（前端据此降级 edge-tts）
+        log.warning(f"Emotion TTS unavailable: {e}")
+        raise HTTPException(503, "情感引擎暂不可用") from e
     except Exception as e:
         log.error(f"Emotion TTS failed: {e}")
-        raise HTTPException(503, f"情感合成失败: {type(e).__name__}")
+        raise HTTPException(503, "情感合成失败，请稍后重试") from e
     if not data:
         raise HTTPException(503, "情感合成失败（空结果）")
     # 修复：HTTP 头只允许 latin-1，中文情感名需 URL 编码
@@ -260,7 +262,7 @@ async def tts_emotion_synthesize(req: EmotionTTSRequest, _owner_id: str = Depend
 
 
 @router.get("/api/tts/emotion/status")
-async def tts_emotion_status():
+async def tts_emotion_status(_owner_id: str = Depends(require_owner)):
     """情感引擎状态 + 真人音色库（前端用于显示可用性和音色选择）"""
     from core.interactive.emotion_tts import EmotionTTS
     st = EmotionTTS.get().status

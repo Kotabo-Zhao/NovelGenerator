@@ -19,6 +19,13 @@ _WINDOWS_RESERVED_NAMES = {
     *(f"LPT{i}" for i in range(1, 10)),
 }
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+# 与 /api/novels/* 集合动作路由（POST /api/novels/create-stream 等）冲突的保留词，
+# 禁止作为作品 ID，否则会绕过中间件的归属校验（IDOR）。
+# 注意：这些词同时也是合法的集合动作路由名，路由级中间件（validate_novel_path_middleware）
+# 必须跳过它们，不能把它们当 novel_id 校验，否则 create-stream/generate 等端点会被误拦。
+RESERVED_NOVEL_IDS = {
+    "generate", "create-stream", "export", "repair-state", "repair-states",
+}
 
 
 def validate_novel_id(novel_id: str) -> str:
@@ -38,6 +45,8 @@ def validate_novel_id(novel_id: str) -> str:
         raise ValueError("小说 ID 包含非法路径字符")
     if ".." in novel_id or os.path.isabs(novel_id) or ntpath.isabs(novel_id):
         raise ValueError("小说 ID 包含非法路径序列")
+    if novel_id.strip() in RESERVED_NOVEL_IDS:
+        raise ValueError("小说 ID 与系统保留路由冲突")
 
     # Windows 会忽略文件名末尾的点/空格，并将这些名称映射到保留设备。
     trimmed = novel_id.rstrip(" .")

@@ -14,10 +14,12 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
 import shutil
+import threading
 import time
 from typing import Any, Optional
 
@@ -31,24 +33,48 @@ FACT_FULFILLED = "fulfilled"
 FACT_EXPIRED = "expired"
 FACT_BROKEN = "broken"
 
+_ATOMIC_LOCKS: dict[str, threading.RLock] = {}
+_ATOMIC_LOCKS_GUARD = threading.Lock()
+
+
+def _atomic_lock(path: str) -> threading.RLock:
+    key = os.path.abspath(path)
+    with _ATOMIC_LOCKS_GUARD:
+        return _ATOMIC_LOCKS.setdefault(key, threading.RLock())
+
+
+def _mark_interactive_state(novel_id: str, state: Optional[dict]) -> Optional[dict]:
+    """给旧互动存档补上线路标识，防止被误当成正式小说状态。"""
+    if not isinstance(state, dict):
+        return state
+    state["mode"] = "interactive"
+    state["line_id"] = f"interactive:{novel_id}"
+    return state
+
 
 def _atomic_write_json(path: str, data: Any):
-    """原子写 JSON（tmp + rename），Windows 下文件监控器可能短暂持锁 → 重试"""
+    """并发安全地原子写 JSON，避免同一进程请求共用临时文件。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + f".tmp{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    # v3.6.3: Windows 重试——uvicorn --reload 的 WatchFiles 可能瞬间持有目标文件句柄
-    for attempt in range(5):
+    lock = _atomic_lock(path)
+    tmp = path + f".tmp.{os.getpid()}.{threading.get_ident()}"
+    with lock:
         try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if attempt < 4:
-                time.sleep(0.02 * (attempt + 1))  # 20ms → 40ms → 60ms → 80ms
-            else:
-                raise  # 5 次都失败 → 不再吞异常
-
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            for attempt in range(5):
+                try:
+                    os.replace(tmp, path)
+                    return
+                except PermissionError:
+                    if attempt >= 4:
+                        raise
+                    time.sleep(0.02 * (attempt + 1))
+        finally:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
 
 def _read_json(path: str, default=None):
     try:
@@ -62,6 +88,23 @@ def _append_log(path: str, entry: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _rewrite_log(path: str, entries: list):
+    """原子重写 jsonl 日志（回退截断用）。"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + f".tmp.{os.getpid()}.{threading.get_ident()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            for e in entries:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
 
 
 def _read_logs(path: str, max_entries: Optional[int] = None) -> list:
@@ -82,6 +125,37 @@ def _read_logs(path: str, max_entries: Optional[int] = None) -> list:
     return entries
 
 
+def _read_logs_tail(path: str, n: int) -> list:
+    """只读 jsonl 末尾 n 行（倒序块扫描），避免长对话下每轮全文件读取越聊越慢。"""
+    if not os.path.exists(path) or n <= 0:
+        return []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            pos = f.tell()
+            buf = b""
+            while pos > 0:
+                read_len = min(pos, 8192)
+                pos -= read_len
+                f.seek(pos)
+                buf = f.read(read_len) + buf
+                if buf.count(b"\n") > n:
+                    break
+            tail = buf.split(b"\n")[-(n + 1):]
+    except OSError:
+        return []
+    entries = []
+    for raw in tail:
+        line = raw.decode("utf-8", "ignore").strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries[-n:]
+
+
 def new_state(novel_id: str, title: str, genre: str, style: str,
               protagonist_name: str = "") -> dict:
     """初始化剧情状态"""
@@ -90,6 +164,8 @@ def new_state(novel_id: str, title: str, genre: str, style: str,
         "title": title,
         "genre": genre,
         "style": style,
+        "mode": "interactive",
+        "line_id": f"interactive:{novel_id}",
         "scene_num": 0,
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "summary": "",
@@ -130,6 +206,14 @@ class InteractStore:
             log.warning(f"novels_dir 创建失败: {self.novels_dir}: {e}")
         self._dir_cache: dict[str, str] = {}
         self._state_cache: dict[str, Optional[dict]] = {}  # novel_id -> state or None
+        # per-novel 可重入锁：串行化同一作品的读-改-写，防止 SSE 生成器与后台线程
+        # 并发写覆盖（丢状态）。RLock 可重入，避免 update_state 内再调 save_state 死锁。
+        self._novel_locks: dict[str, threading.RLock] = {}
+        self._novel_locks_guard = threading.Lock()
+
+    def _novel_lock(self, novel_id: str) -> threading.RLock:
+        with self._novel_locks_guard:
+            return self._novel_locks.setdefault(novel_id, threading.RLock())
 
     # ── 路径 ──
     def _base_dir(self, novel_id: str) -> str:
@@ -161,31 +245,71 @@ class InteractStore:
         return os.path.exists(self._state_path(novel_id))
 
     def load_state(self, novel_id: str) -> Optional[dict]:
-        """读取状态（带内存缓存 + 损坏重放修复）"""
+        """读取状态（带内存缓存 + 损坏重放修复）。
+
+        返回 deepcopy，避免调用方拿到缓存里的同一可变对象后被并发篡改。
+        """
         if novel_id in self._state_cache:
-            return self._state_cache[novel_id]
-        st = _read_json(self._state_path(novel_id), None)
-        if st is None and os.path.exists(self._state_path(novel_id)):
-            log.warning(f"state.json 损坏，尝试重放修复: {novel_id}")
-            st = self._rebuild_from_logs(novel_id)
-        if st is not None and not isinstance(st.get("state"), dict):
-            log.warning(f"state.json 结构异常，尝试重放修复: {novel_id}")
-            st = self._rebuild_from_logs(novel_id)
-        # v3.6: 旧存档迁移——世界三支柱补全（幂等）
-        if st is not None and "world" not in st:
-            try:
-                from .world_state import ensure_world
-                ensure_world(st)
-            except Exception as e:
-                log.warning(f"world migration failed: {e}")
-        self._state_cache[novel_id] = st
-        return st
+            st = self._state_cache[novel_id]
+        else:
+            st = _read_json(self._state_path(novel_id), None)
+            if st is None and os.path.exists(self._state_path(novel_id)):
+                log.warning(f"state.json 损坏，尝试重放修复: {novel_id}")
+                st = self._rebuild_from_logs(novel_id)
+            if st is not None and not isinstance(st.get("state"), dict):
+                log.warning(f"state.json 结构异常，尝试重放修复: {novel_id}")
+                st = self._rebuild_from_logs(novel_id)
+            # 世界三支柱迁移与清洗（幂等）：已有 world 的旧存档也可能残留伪地点，
+            # 因此每次首次载入都执行一次，而不是只处理缺少 world 的存档。
+            if st is not None:
+                try:
+                    from .world_state import ensure_world
+                    ensure_world(st)
+                except Exception as e:
+                    log.warning(f"world migration failed: {e}")
+            st = _mark_interactive_state(novel_id, st)
+            self._state_cache[novel_id] = st
+        if st is None:
+            return None
+        return copy.deepcopy(st)
 
     def save_state(self, novel_id: str, state: dict):
-        """原子写状态 + 更新缓存"""
-        state["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        _atomic_write_json(self._state_path(novel_id), state)
-        self._state_cache[novel_id] = state
+        """原子写状态 + 更新缓存（在 per-novel 锁内串行化）"""
+        if not isinstance(state, dict) or not state:
+            raise ValueError("拒绝写入空状态，避免覆盖用户存档")
+        if not state.get("novel_id"):
+            state["novel_id"] = novel_id
+        with self._novel_lock(novel_id):
+            _mark_interactive_state(novel_id, state)
+            state["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            _atomic_write_json(self._state_path(novel_id), state)
+            self._state_cache[novel_id] = state
+
+    def update_state(self, novel_id: str, fn):
+        """在 per-novel 锁内执行 load→fn(mutate)→save，消除并发读-改-写丢失更新。
+
+        fn 接收最新 state 的副本并返回新 state（或原地修改后返回），
+        返回 None 表示无需保存。
+        """
+        lock = self._novel_lock(novel_id)
+        with lock:
+            st = _read_json(self._state_path(novel_id), None)
+            if st is None:
+                st = self._rebuild_from_logs(novel_id)
+            if st is None:
+                st = {"novel_id": novel_id, "state": {}, "facts": [], "casts": {},
+                      "recent_scenes": [], "recent_chat": []}
+            st = copy.deepcopy(st)
+            updated = fn(st)
+            if updated is None:
+                return st
+            if not isinstance(updated, dict):
+                raise ValueError("update_state 的 fn 必须返回 dict 或 None")
+            _mark_interactive_state(novel_id, updated)
+            updated["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            _atomic_write_json(self._state_path(novel_id), updated)
+            self._state_cache[novel_id] = updated
+            return updated
 
     # ── 快照 ──
     def snapshot(self, novel_id: str):
@@ -218,7 +342,7 @@ class InteractStore:
         return sorted(os.listdir(cp_dir), reverse=True)
 
     def rollback(self, novel_id: str) -> bool:
-        """回退到最近一份快照（不删除快照，保留可再回退）"""
+        """回退到最近一份快照（不删除快照，保留可再回退），并截断日志保持一致性。"""
         cps = self.list_checkpoints(novel_id)
         if not cps:
             return False
@@ -226,7 +350,31 @@ class InteractStore:
         st = _read_json(latest, None)
         if st is None:
             return False
-        self.save_state(novel_id, st)
+        lock = self._novel_lock(novel_id)
+        with lock:
+            self.save_state(novel_id, st)
+            # 截断 scene_logs：只保留 scene_num <= 快照 scene_num 的场景，
+            # 避免回退后前端历史/状态卡与 state 互相矛盾。
+            target_scene = int(st.get("scene_num", 0) or 0)
+            try:
+                scenes = _read_logs(self._scenes_path(novel_id))
+                kept = [s for s in scenes if int(s.get("scene_num", 0) or 0) <= target_scene]
+                if kept != scenes:
+                    _rewrite_log(self._scenes_path(novel_id), kept)
+            except Exception as e:
+                log.warning(f"rollback scene_logs truncation failed: {e}")
+            # v3.8: 同步截断 chat_logs——快照的 _last_chat_total 是 end-chat 增量游标，
+            # 若不截断，恢复旧快照后 total_now > last_chat_total，下一次 end-chat 会
+            # 重新提取"回退点之后的未来对话"为 facts（回退形同虚设甚至复活剧情）。
+            target_chat_total = int(st.get("_last_chat_total", 0) or 0)
+            if target_chat_total > 0:
+                try:
+                    chats = _read_logs(self._chats_path(novel_id))
+                    kept_chats = chats[:target_chat_total]
+                    if len(kept_chats) != len(chats):
+                        _rewrite_log(self._chats_path(novel_id), kept_chats)
+                except Exception as e:
+                    log.warning(f"rollback chat_logs truncation failed: {e}")
         log.info(f"Rollback {novel_id} -> {cps[0]}")
         return True
 
@@ -238,10 +386,10 @@ class InteractStore:
         _append_log(self._chats_path(novel_id), entry)
 
     def recent_scenes(self, novel_id: str, n: int = 3) -> list:
-        return _read_logs(self._scenes_path(novel_id), n)
+        return _read_logs_tail(self._scenes_path(novel_id), n)
 
     def recent_chats(self, novel_id: str, n: int = 20) -> list:
-        return _read_logs(self._chats_path(novel_id), n)
+        return _read_logs_tail(self._chats_path(novel_id), n)
 
     def chat_log_count(self, novel_id: str) -> int:
         """chat 日志总条数（end-chat 增量游标用）"""
@@ -323,10 +471,23 @@ class InteractStore:
 
     # ── 重放修复 ──
     def _rebuild_from_logs(self, novel_id: str) -> Optional[dict]:
-        """从 scene_logs 重建状态（丢失的 facts 无法还原，但场景链完整）"""
+        """从 scene_logs 重建状态（丢失的 facts 无法还原，但场景链完整）
+
+        覆盖写前先原子移走损坏的 state.json 为 ``state.json.corrupt-<ts>``，
+        重建结果打 ``recovered: True`` 标记，便于前端提示"存档已修复"。
+        """
         scenes = _read_logs(self._scenes_path(novel_id))
         if not scenes:
             return None
+        # 损坏原文先移走保留，绝不直接覆盖。
+        st_path = self._state_path(novel_id)
+        if os.path.exists(st_path):
+            corrupt_backup = f"{st_path}.corrupt-{int(time.time())}"
+            try:
+                os.replace(st_path, corrupt_backup)
+                log.warning(f"Corrupted interactive state moved aside: {corrupt_backup}")
+            except OSError as be:
+                log.error(f"Failed to move corrupted state {st_path}: {be}")
         # 用最后一份快照 + 场景链重建
         cps = self.list_checkpoints(novel_id)
         base = None
@@ -340,8 +501,9 @@ class InteractStore:
         st["scene_num"] = scenes[-1].get("scene_num", len(scenes))
         st["summary"] = scenes[-1].get("scene_text", "")[:200]
         st["recent_scenes"] = [s.get("scene_text", "")[:200] for s in scenes[-3:]]
+        st["recovered"] = True
         log.info(f"Rebuilt interactive state from {len(scenes)} scenes: {novel_id}")
-        _atomic_write_json(self._state_path(novel_id), st)
+        _atomic_write_json(st_path, st)
         return st
 
     # ── 重开 ──
@@ -350,7 +512,14 @@ class InteractStore:
 
         注意：不做目录删除/移动（Windows safe-delete 钩子会拦截），
         只做"复制备份 + 覆盖清空"，全程写操作。
+        v3.8: 全程持 per-novel 锁——否则持有旧 state 副本的后台任务在 restart 之后
+        save_state，会把已重置的存档"复活"（旧 scene_num/facts 覆盖空状态）。
         """
+        lock = self._novel_lock(novel_id)
+        with lock:
+            return self._restart_locked(novel_id)
+
+    def _restart_locked(self, novel_id: str) -> bool:
         base = self._base_dir(novel_id)
         st_path = self._state_path(novel_id)
         if not os.path.exists(st_path):

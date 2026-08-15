@@ -36,7 +36,6 @@ from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
 from .beat_decomposer import BeatDecomposer, Beat
 from .atomic_writer import AtomicWriter
 from .beat_assembler import BeatAssembler
-from .storygraph_interventions import analyze_and_inject
 from .coherence_validator import validate_and_repair_outline
 
 log = logging.getLogger(__name__)
@@ -58,9 +57,9 @@ from .mixins.character_profile import CharacterProfileMixin, FeedbackMixin
 class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                   RequirementsMixin, ExportMixin, CharacterProfileMixin, FeedbackMixin):
     """小说创作引擎 — 多智能体架构（2026-07-31 与实现对齐）:
-    Create:    RequirementDecomposer → Planner → StoryGraph/ArcPlanner → CharacterProfiler
+    Create:    RequirementDecomposer → Planner → CharacterProfiler
     Generate:  Writer(初稿+结尾) / AtomicWriter(逐beat) → PacingChecker质量门
-               → AIDetector/HumanRewriter → ConsistencyValidator(L1) → Summarizer → StoryGraph更新
+               → AIDetector/HumanRewriter → ConsistencyValidator(L1) → Summarizer
     Interactive: OutlineInteractive (反馈式大纲迭代) · CharacterProfiler (人设蒸馏)
     Support:   ContextUpdater → LogicSupervisor → TwistDesigner
     """
@@ -119,7 +118,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
             self._resilient = self.client  # 降级用普通客户端
 
         # v2.6: 批量流水线 — 后台桥接任务表 {(novel_id, chapter): asyncio.Future}
-        # 批量模式把桥接/storygraph/状态更新放后台，下一章启动前 await 上一章桥接即可
+        # 批量模式把桥接/状态更新放后台，下一章启动前 await 上一章桥接即可
         self._pending_bridges = {}
 
     async def await_pending_bridge(self, novel_id: str, chapter_num: int, timeout: float = 90.0):
@@ -140,6 +139,66 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         finally:
             self._pending_bridges.pop(key, None)
 
+    # ── 运行时 LLM 配置（设置页：API Key + 模型切换） ──
+
+    def _sub_components(self):
+        """返回所有持有 self.model 副本的子组件，便于统一热切换模型。"""
+        names = [
+            "planner", "writer", "fd_designer", "context_updater", "pacing_checker",
+            "consistency_validator", "logic_supervisor", "opening_optimizer",
+            "twist_designer", "feedback_decomposer", "outline_interactive",
+            "chapter_summarizer", "requirement_decomposer", "requirement_supervisor",
+            "character_profiler", "character_voices", "atomic_writer",
+        ]
+        return [getattr(self, n, None) for n in names]
+
+    def set_api_key(self, api_key: str) -> bool:
+        """运行时更新 OpenAI client 凭据（所有生成器共享同一 client，一次生效）。"""
+        api_key = (api_key or "").strip()
+        if not api_key.startswith("sk-"):
+            return False
+        self.client.api_key = api_key
+        config.DEEPSEEK_API_KEY = api_key
+        os.environ["DEEPSEEK_API_KEY"] = api_key
+        if getattr(self, "_resilient", None) is not None and hasattr(self._resilient, "client"):
+            try:
+                self._resilient.client.api_key = api_key
+            except Exception:
+                pass
+        log.info("LLM API key updated at runtime")
+        return True
+
+    def set_model(self, model: str) -> bool:
+        """运行时切换模型（deepseek-chat / deepseek-v4-flash），同步所有子组件。"""
+        model = (model or "").strip()
+        if model not in ("deepseek-chat", "deepseek-v4-flash"):
+            return False
+        self.model = model
+        config.DEEPSEEK_MODEL = model
+        os.environ["DEEPSEEK_MODEL"] = model
+        for comp in self._sub_components():
+            if comp is not None and hasattr(comp, "model"):
+                try:
+                    comp.model = model
+                except Exception:
+                    pass
+        if getattr(self, "_resilient", None) is not None:
+            try:
+                self._resilient.model = model
+            except Exception:
+                pass
+        log.info("LLM model switched to %s at runtime", model)
+        return True
+
+    def llm_config(self) -> dict:
+        """当前生效的 LLM 配置摘要（不泄露 key 本身）。"""
+        key = (config.DEEPSEEK_API_KEY or "").strip()
+        return {
+            "api_key_configured": bool(key) and not key.lower().startswith(("your_", "sk-placeholder")),
+            "model": self.model,
+            "allowed_models": ["deepseek-chat", "deepseek-v4-flash"],
+        }
+
     # ── Phase 1: 规划 ──
 
     def create_novel(self, creative_input: dict) -> dict:
@@ -153,6 +212,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
             plan dict (结构化设定文档)
         """
         inspiration = creative_input.get("inspiration", "")
+        requirements = {}
         
         # v2.2: 需求拆解
         if inspiration.strip():
@@ -161,7 +221,6 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                     inspiration, creative_input
                 )
                 requirements = enhanced_input.get("_requirements", {})
-                self._req_store.set(creative_input.get("title", inspiration[:20]), requirements)
                 log.info(f"Requirements decomposed: {requirements.get('total_count', 0)} subtasks")
             except Exception as e:
                 log.warning(f"Requirement decomposition failed: {e}")
@@ -174,17 +233,8 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
             raise RuntimeError("规划生成失败，请重试")
         
         # v2.2: 附加需求拆解元数据
-        if inspiration.strip():
-            reqs = self._req_store.get(plan.get("title", ""))
-            if reqs and not isinstance(plan.get("_meta"), dict):
-                plan["_meta"] = {}
-            if isinstance(plan.get("_meta"), dict) and reqs:
-                plan["_meta"]["requirements"] = {
-                    "summary": reqs.get("summary", ""),
-                    "core_theme": reqs.get("core_theme", ""),
-                    "subtask_count": reqs.get("total_count", 0),
-                    "decomposed_at": reqs.get("created_at", ""),
-                }
+        if inspiration.strip() and requirements:
+            self._sync_requirements_contract(plan["title"], plan, requirements)
         
         # 保存规划
         novel_dir = self.memory.get_novel_dir(plan["title"])
@@ -211,9 +261,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         
         # 初始化剧情图谱 + 弧规划（不阻断大纲生成）
         try:
-            self._init_storygraph_and_arcs(plan, novel_dir)
+            self._init_foreshadowing(plan, novel_dir)
         except Exception as e:
-            log.warning(f"StoryGraph init skipped: {e}")
+            log.warning(f"Foreshadowing init skipped: {e}")
         
         # v2.42: 初始化角色状态追踪系统
         try:
@@ -226,71 +276,39 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         log.info(f"Novel created: {plan['title']} ({total_chapters} chapters)")
         return plan
 
-    def _init_storygraph_and_arcs(self, plan: dict, novel_dir: str):
-        """初始化剧情图谱 + 弧规划"""
-        from .storygraph import StoryGraph
-        
-        sg_path = os.path.join(novel_dir, "storygraph.json")
-        sg = StoryGraph()
-        
-        # 从大纲初始化角色快照
-        volumes = plan.get("outline", {}).get("volumes", [])
-        all_chapters = []
-        for vol in volumes:
-            for ch in vol.get("chapters", []):
-                ch_chars = ch.get("characters", [])
-                for c_name in ch_chars:
-                    sg.ensure_char(c_name)
-                all_chapters.append(ch)
-        
-        # 根据核心冲突初始化主线
-        main_thread_desc = plan.get("worldbuilding", {}).get("core_conflict", "")
-        if main_thread_desc:
-            sg.add_thread("thread_main", "主线", "main_plot", 5, main_thread_desc[:100])
-        
-        # 运行弧规划器
+    def _init_foreshadowing(self, plan: dict, novel_dir: str):
+        """初始化正常小说线自己的伏笔表，不创建剧情图谱或弧规划文件。"""
+        hooks = []
         try:
-            from .arcplanner import plan_arcs
-            arcs = plan_arcs(
-                all_chapters,
-                plan.get("outline", {}).get("total_chapters", 0),
-                main_thread_desc,
-                plan.get("_meta", {}).get("requirements", {}).get("arcs_hint"),
-            )
-            if arcs:
-                sg.data["arcs"] = arcs
-                sg.data["current_arc"] = arcs[0] if arcs else {}
-                log.info(f"ArcPlanner: {len(arcs)} arcs planned")
-        except Exception as e:
-            log.warning(f"ArcPlanner skipped: {e}")
-
-        # 方案B: 全局伏笔规划 — 用 foreshadowing_designer 设计伏笔分布
-        try:
-            total_chs = plan.get("outline", {}).get("total_chapters", 0)
-            if total_chs >= 10:  # 至少10章才值得做全局伏笔规划
-                fds_result = self.fd_designer.design(plan, target_count=5)
-                if fds_result:
-                    # 保存到 storygraph 的伏笔账本
-                    for fs in fds_result:
-                        plant_ch = fs.get("plant_chapter", 1)
-                        reveal_ch = fs.get("reveal_chapter", total_chs)
-                        fs_id = f"fs_plan_{plant_ch}_{reveal_ch}"
-                        importance = {"high": 5, "medium": 3, "low": 1}.get(
-                            fs.get("importance", "medium"), 3)
-                        sg.add_foreshadow(
-                            fs_id=fs_id,
-                            description=fs.get("description", ""),
-                            planted_chapter=plant_ch,
-                            planned_payoff=reveal_ch,
-                            importance=importance,
-                        )
-                    log.info(f"Foreshadowing plan: {len(fds_result)} foreshadows designed")
+            total_chapters = int(plan.get("outline", {}).get("total_chapters", 0) or 0)
+            if total_chapters >= 10:
+                designed = self.fd_designer.design(plan, target_count=5) or []
+                for item in designed:
+                    if not isinstance(item, dict):
+                        continue
+                    description = str(item.get("description") or item.get("content") or "").strip()
+                    if not description:
+                        continue
+                    try:
+                        plant = max(1, int(item.get("plant_chapter", 1) or 1))
+                    except (TypeError, ValueError):
+                        plant = 1
+                    try:
+                        reveal = max(plant + 1, int(item.get("reveal_chapter", total_chapters) or total_chapters))
+                    except (TypeError, ValueError):
+                        reveal = max(plant + 1, total_chapters)
+                    hooks.append({
+                        "description": description[:240],
+                        "type": str(item.get("type") or "event")[:40],
+                        "plant_chapter": plant,
+                        "reveal_chapter": reveal,
+                        "plant_hint": str(item.get("plant_hint") or "")[:240],
+                        "resolved": False,
+                    })
         except Exception as e:
             log.warning(f"Foreshadowing planner skipped: {e}")
-
-        atomic_write_json(sg_path, sg.to_dict())
-        log.info(f"StoryGraph initialized for {plan['title']}")
-
+        atomic_write_json(os.path.join(novel_dir, "foreshadowing.json"), hooks)
+        log.info("Foreshadowing initialized for %s: %d hooks", plan.get("title", novel_dir), len(hooks))
     async def create_novel_stream(self, creative_input: dict) -> AsyncIterator[dict]:
         """流式创建小说 — 前端可显示分阶段进度条
         
@@ -304,6 +322,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         then saves plan + bible on 'done'.
         """
         inspiration = creative_input.get("inspiration", "")
+        requirements = {}
         
         # ── v2.2 Phase 0: 需求深度拆解 ──
         if inspiration.strip():
@@ -343,12 +362,17 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                         "description": t.get("description", t.get("generation_hint", ""))[:200],
                         "must_include": t.get("must_include", [])[:3],
                         "must_avoid": t.get("must_avoid", [])[:3],
+                        "generation_hint": t.get("generation_hint", "")[:240],
+                        "quality_criteria": t.get("quality_criteria", [])[:3],
+                        "scope": t.get("scope", "global"),
+                        "chapter_numbers": t.get("chapter_numbers", []),
                     } for t in subtasks],
                 }
                 
                 # 保存需求到内存
                 # novel_id 还没生成，先用临时 key
-                self._pending_requirements = requirements
+                # Keep the request-local snapshot until the planner produces the
+                # canonical title; never store it on the shared engine instance.
                 
             except Exception as e:
                 log.warning(f"Requirement decomposition failed, proceeding without it: {e}")
@@ -393,19 +417,18 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 os.makedirs(novel_dir, exist_ok=True)
                 
                 # v2.2: 将需求拆解结果附加到 plan._meta 中
-                if hasattr(self, '_pending_requirements') and self._pending_requirements:
+                if requirements:
                     if not isinstance(plan.get("_meta"), dict):
                         plan["_meta"] = {}
                     plan["_meta"]["requirements"] = {
-                        "summary": self._pending_requirements.get("summary", ""),
-                        "core_theme": self._pending_requirements.get("core_theme", ""),
-                        "subtask_count": self._pending_requirements.get("total_count", 0),
-                        "decomposed_at": self._pending_requirements.get("created_at", ""),
+                        "summary": requirements.get("summary", ""),
+                        "core_theme": requirements.get("core_theme", ""),
+                        "subtask_count": requirements.get("total_count", 0),
+                        "decomposed_at": requirements.get("created_at", ""),
                     }
                     
                     # 保存到 RequirementsStore (用 title 做 key, SQLite 持久化)
-                    self._req_store.set(plan["title"], self._pending_requirements)
-                    del self._pending_requirements
+                    self._sync_requirements_contract(plan["title"], plan, requirements)
                 
                 atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
                 
@@ -426,9 +449,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 
                 # 初始化剧情图谱 + 弧规划（不阻断大纲生成）
                 try:
-                    await asyncio.to_thread(self._init_storygraph_and_arcs, plan, novel_dir)
+                    await asyncio.to_thread(self._init_foreshadowing, plan, novel_dir)
                 except Exception as e:
-                    log.warning(f"StoryGraph init skipped in stream: {e}")
+                    log.warning(f"Foreshadowing init skipped in stream: {e}")
                 
                 # ── v2.10: 大纲因果链验证 ──
                 try:
@@ -450,6 +473,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 except Exception as e:
                     log.warning(f"CoherenceValidator skipped (non-fatal): {e}")
                 
+                if requirements:
+                    self._sync_requirements_contract(plan["title"], plan, requirements)
+                    atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
                 log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)"
                         f" — requirements: {self._req_store.get(plan['title']).get('total_count', 0)} subtasks")
 
@@ -512,7 +538,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                             atomic_write_json(
                                 os.path.join(novel_dir, "character_voices.json"), _voices_v
                             )
-                            self._merge_voices_into_bible(novel_id, _voices_v)
+                            self._merge_voices_into_bible(plan["title"], _voices_v)
                             log.info(f"Character voices generated: {len(_voices_v)} characters")
                             yield {"type": "progress", "phase": "character_voices", "pct": 100,
                                    "label": f"角色声音卡就绪（{len(_voices_v)} 个角色）"}
@@ -634,7 +660,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         # 保留 _meta 原始信息
         existing = self.get_novel(novel_id)
         if existing and "_meta" in existing:
-            plan_data["_meta"] = existing["_meta"]
+            preserved_meta = dict(existing.get("_meta") or {})
+            preserved_meta.update(plan_data.get("_meta") or {})
+            plan_data["_meta"] = preserved_meta
         
         # 标准化章节号
         for vol in plan_data.get("outline", {}).get("volumes", []):
@@ -650,6 +678,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         else:
             log.warning(f"update_plan: plan_data['outline'] is {type(plan_data.get('outline')).__name__}, not dict")
         
+        requirements, _ = self._load_requirements_contract(novel_id, existing or plan_data)
+        if requirements:
+            self._sync_requirements_contract(novel_id, plan_data, requirements)
         atomic_write_json(plan_path, plan_data)
         self.memory._invalidate(novel_id, "plan")  # 失效 plan 缓存（避免 build_writer_context 读到旧大纲）
         
@@ -932,6 +963,9 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                     for k in ("created_at", "model", "creative_input"):
                         if k in old_meta and k not in new_plan["_meta"]:
                             new_plan["_meta"][k] = old_meta[k]
+                requirements, _ = self._load_requirements_contract(novel_id, plan)
+                if requirements:
+                    self._sync_requirements_contract(novel_id, new_plan, requirements)
                 atomic_write_json(os.path.join(novel_dir, "plan.json"), new_plan)
                 self.memory._invalidate(novel_id, "plan")  # 失效缓存：章节生成立即使用新大纲
 
@@ -951,6 +985,12 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 diff = self.outline_interactive.get_diff_summary(old_plan, new_plan)
                 if diff:
                     yield {"type": "diff", "changes": diff}
+                if requirements:
+                    yield {
+                        "type": "requirements_sync",
+                        "version": new_plan.get("_meta", {}).get("requirements", {}).get("version", 1),
+                        "subtask_count": len(requirements.get("subtasks", [])),
+                    }
                 yield event
             else:
                 yield event

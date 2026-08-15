@@ -6,11 +6,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.webkit.*
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.novelgen.app.databinding.ActivityMainBinding
 import java.io.File
@@ -20,6 +17,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val handler = Handler(Looper.getMainLooper())
     private var frontendLoaded = false
+    private var serverStartRequested = false
     private var mainFrameErrorCount = 0  // v2.5.41: 主 frame 加载错误重试上限（防无限 reload 闪烁）
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -27,21 +25,38 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        setSupportActionBar(binding.toolbar)
         setupWebView()
         startLocalServer()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::binding.isInitialized) {
+            val configured = getSharedPreferences("novelgen", MODE_PRIVATE)
+                .getString("api_key", "")?.isNotBlank() == true
+            if (!frontendLoaded && !serverStartRequested
+                && (BuildConfig.INTERNAL_BUILD || configured)) {
+                startLocalServer()
+            }
+        }
+    }
+
     private fun startLocalServer() {
         val apiKey = getSharedPreferences("novelgen", MODE_PRIVATE).getString("api_key", "") ?: ""
-        if (apiKey.isBlank()) {
+        if (apiKey.isBlank() && !BuildConfig.INTERNAL_BUILD) {
             setStatus("请设置 API Key", R.color.error, R.drawable.dot_red)
             startActivity(Intent(this, ApiKeyActivity::class.java))
             return
         }
-        setStatus("启动服务器...", R.color.warning, R.drawable.dot_yellow)
+        if (serverStartRequested) return
+        serverStartRequested = true
+        val startupText = if (apiKey.isBlank()) "启动内部调试服务..." else "启动服务器..."
+        setStatus(startupText, R.color.warning, R.drawable.dot_yellow)
 
-        val intent = Intent(this, ServerService::class.java).apply { putExtra("api_key", apiKey) }
+        val intent = Intent(this, ServerService::class.java).apply {
+            putExtra("api_key", apiKey)
+            putExtra("internal_build", BuildConfig.INTERNAL_BUILD)
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
             startForegroundService(intent)
         else startService(intent)
@@ -144,20 +159,5 @@ class MainActivity : AppCompatActivity() {
             binding.webView.goBack(); return true
         }
         return super.onKeyDown(keyCode, event)
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main_menu, menu); return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        R.id.menu_refresh -> { binding.webView.reload(); true }
-        R.id.menu_config -> { startActivity(Intent(this, ApiKeyActivity::class.java)); true }
-        R.id.menu_about -> {
-            AlertDialog.Builder(this).setTitle("关于")
-                .setMessage("小说工坊 v1.1\n前后端一体化 · Chaquopy + FastAPI")
-                .setPositiveButton("确定", null).show(); true
-        }
-        else -> super.onOptionsItemSelected(item)
     }
 }

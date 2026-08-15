@@ -32,8 +32,9 @@ class _FakeStore:
 
 def fake_llm(system, user, temperature=0.2, max_tokens=400):
     """模拟 LLM 判定：按输入关键词返回意图（规则映射，模拟真实 LLM 的合理行为）。"""
-    m = re.search(r"读者输入: ([^\n]+)", user or "")
-    text = m.group(1) if m else ""
+    # 用户输入已被 <player_input>...</player_input> 包裹，从中提取原文。
+    m = re.search(r"<player_input>\s*(.*?)\s*</player_input>", user or "", re.S)
+    text = (m.group(1) if m else "").strip()
     if any(k in text for k in ("存档", "读档", "设置", "音量")):
         return '{"intent": "meta", "type": "other", "summary": "系统操作", "target": "", "end_chat": false, "reason": "系统指令"}'
     if any(k in text for k in ("回家", "回府", "回房", "上楼", "下楼", "进城", "出城", "去", "到", "前往", "离开")):

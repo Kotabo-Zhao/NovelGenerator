@@ -1,0 +1,136 @@
+[
+  {
+    "type": "status",
+    "message": "生成章节蓝图..."
+  },
+  {
+    "type": "blueprint",
+    "text": "..."
+  },
+  {
+    "type": "status",
+    "message": "拆解第1章为节拍..."
+  },
+  {
+    "type": "beats_decomposed",
+    "count": 5,
+    "functions": "['opening_hook', 'obstacle_build', 'character_highlight', 'turning_point', 'closing_hook']"
+  },
+  {
+    "type": "beat_progress",
+    "beat_index": 0,
+    "total_beats": 5,
+    "function": "opening_hook"
+  },
+  {
+    "type": "text",
+    "content": "凌晨两点十七分，陈默灌下第三杯速溶咖啡，删掉第无数行报错的日志代码。屏幕上的数据流像一条死鱼一样翻着白眼，公司号称\"新一代智慧物流调度核心\"的项目，在他手里已经卡了三天。\n\n他揉了揉干涩的眼睛，把最后一段冗余循环改成位运算，指尖敲下回车。屏幕突然闪了一下白，像是有人把整间办公室的灯焊进了显示器里，然后一行墨绿色的字从屏幕底部涌上来：\n\n【检测到宿主代码适配度98.7%，码神系统绑定中……】\n\n陈默"
+  },
+  {
+    "type": "beat_progress",
+    "beat_index": 1,
+    "total_beats": 5,
+    "function": "obstacle_build"
+  },
+  {
+    "type": "text",
+    "content": "屏幕上弹出一个新的窗口，像是一份功法图鉴。墨绿色的字迹勾勒出经脉走向，但那些\"经脉\"分明是他代码里的数据流节点，一条条从入口函数延伸到输出端。\n\n陈默盯着看了三十秒，忽然觉得有点荒谬。他写了三年代码，见过各种离谱的bug，但没见过能把代码画成人体的。他动了动鼠标，想把这个窗口关掉，却发现光标一靠近，那些经脉线条就跟着微微发光。\n\n他鬼使神差地把手放回键盘上，敲了一行注释。奇迹发生了——那行注释没有"
+  },
+  {
+    "type": "beat_progress",
+    "beat_index": 2,
+    "total_beats": 5,
+    "function": "character_highlight"
+  },
+  {
+    "type": "text",
+    "content": "陈默没有关掉那个窗口。\n\n他重新看了一遍自己的代码，从第一行到最后一行。那套被他改了三天的物流调度算法，此刻在屏幕上的投影完全不同了——原本枯燥的if-else嵌套成了经脉的分叉，循环语句是周天运转的轨迹，就连他随手加的异常处理，都变成了功法里标注的\"护体罡气\"。\n\n他忽然想起自己入行那年，师傅在离职前说过一句话：写代码写到极致，就是在跟机器说话。他当时没听懂，现在依然没懂，但那些经脉图上的节点位"
+  },
+  {
+    "type": "beat_progress",
+    "beat_index": 3,
+    "total_beats": 5,
+    "function": "turning_point"
+  },
+  {
+    "type": "text",
+    "content": "陈默盯着那个凹痕，拇指摩挲过去，指腹触到一丝余温。不是错觉。他重新掀开笔记本盖子，屏幕亮起，墨绿色的字迹还在原处，一行行静静地等着他。\n\n他坐回椅子上，脊背贴着椅背，忽然觉得自己像站在一扇门前面。门是什么时候出现的，他不知道。但门缝里透出来的那点光，他刚才已经伸手摸过了——凉的，活的，跟代码有关。\n\n他打开编辑器，把那段《物流调度真经·卷一》的经脉图调出来看。节点之间有几处断线，像是一式功法练到中"
+  },
+  {
+    "type": "beat_progress",
+    "beat_index": 4,
+    "total_beats": 5,
+    "function": "closing_hook"
+  },
+  {
+    "type": "text",
+    "content": "他敲下第一行代码，把那条断线的起点重新定义。光流比刚才更快地涌上手臂，这一次他看清了——那些流动的东西不是光，是一行行极细的字符，顺着他的血管排布，像刻在皮肤上的微型代码。\n\n陈默停住手，盯着自己的小臂看了很久。那些字符他认得，正是他昨天删掉的那段废弃代码，一个跑不通的排序算法。它们没有消失，只是换了个地方待着。\n\n他忽然意识到一件事。他写过的每一行代码，都在这门\"功法\"里留下了痕迹。那些他以为删"
+  },
+  {
+    "type": "status",
+    "message": "装配节拍..."
+  },
+  {
+    "type": "status",
+    "message": "质量评估..."
+  },
+  {
+    "type": "evaluation",
+    "overall_score": 71.5,
+    "verdict": "良好 — 建议小幅修改",
+    "distinct_1": 0.7413,
+    "hook_strength": 4,
+    "dopamine_density": 1.6,
+    "ai_slop_score": 96,
+    "coherence": "良好",
+    "duplicates_removed": 0,
+    "transitions_added": 0
+  },
+  {
+    "type": "status",
+    "message": "📋 正在校验大纲合规（核心事件/节拍落地）…"
+  },
+  {
+    "type": "outline_compliance",
+    "chapter": 1,
+    "pct": 100,
+    "passed": true,
+    "level": "ok",
+    "checked": "[{'id': 'summary', 'label': '本章核心事件', 'needle': '陈默深夜加班优化代码，屏幕突然弹出码神系统绑定提示。', 'critical': True, 'present': True, 'evidence': '凌晨两点十七分，陈默灌下第三杯速溶咖啡，删掉第无数行报错的日志代码。屏幕突然闪了一下白……【检测到宿主代码适配度98.7%，码神系统绑定中……】',",
+    "missing": "[]",
+    "patched_text": "",
+    "message": "📋 大纲合规 ✓ 100%"
+  },
+  {
+    "type": "requirement_compliance",
+    "chapter": 1,
+    "schema_version": 1,
+    "overall_status": "failed",
+    "overall_score": 0,
+    "failed_count": 18,
+    "review_count": 0,
+    "results": "[{'subtask_id': 'R001', 'title': '代码即功法体系', 'priority': 'P0', 'status': 'failed', 'passed': False, 'evidence': [], 'missing': ['代码转化为功法的具体机制', '灵力网络作为操作系统的概念', '修仙者运行程序的比喻'], 'forbidden': [], 'quality",
+    "checked_at": "2026-08-14T17:00:27.289196+00:00"
+  },
+  {
+    "type": "final_quality",
+    "version": "quality-gate-v3",
+    "stage": "post_outline_compliance",
+    "chapter_num": 1,
+    "score": 76,
+    "issues": "['水对话过多(73%)', '[叙事结构] 开篇缺少具体行动或立即冲突']",
+    "word_count": 2446,
+    "text_sha256": "1b04f01348c22aaa863be09ec1a19b13c17a68c8ecb2495fc3e14224c407c548",
+    "evaluated_at": 1786726827.330052,
+    "narrative_score": 58.5,
+    "narrative_metrics": "{'opening': 22, 'agency': 85, 'obstacle': 61, 'consequence': 52, 'scene_progress': 91, 'ending_hook': 40, 'outline_alignment': 100}",
+    "narrative_issues": "['开篇缺少具体行动或立即冲突']"
+  },
+  {
+    "type": "done",
+    "content": "# 第1章 深夜，屏幕亮起\n\n凌晨两点十七分，陈默灌下第三杯速溶咖啡，删掉第无数行报错的日志代码。屏幕上的数据流像一条死鱼一样翻着白眼，公司号称\"新一代智慧物流调度核心\"的项目，在他手里已经卡了三天。\n\n他揉了揉干涩的眼睛，把最后一段冗余循环改成位运算，指尖敲下回车。\n\n屏幕突然闪了一下白，像是有人把整间办公室的灯焊进了显示器里，然后一行墨绿色的字从屏幕底部涌上来：【检测到宿主代码适配度98.7%",
+    "chapter_num": 1,
+    "atomic": true,
+    "beat_count": 5
+  }
+]

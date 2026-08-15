@@ -95,47 +95,6 @@ TIME_UNITS = {
     "一刻钟": 0.25,      # 15分钟
 }
 
-# 角色关系规则
-RELATIONSHIP_RULES = [
-    {
-        "id": "R001",
-        "name": "同姓规则",
-        "description": "直系血亲（父子/兄弟/姐妹）必须同姓（入赘/继父等情况除外）",
-        "severity": "P0",
-        "check": lambda chars: _check_surname_rule(chars),
-    },
-    {
-        "id": "R002",
-        "name": "辈分一致",
-        "description": "师徒/叔侄等辈分关系不可混淆",
-        "severity": "P0",
-        "check": lambda chars: _check_generation_rule(chars),
-    },
-    {
-        "id": "R003",
-        "name": "年龄合理",
-        "description": "父辈至少比子辈大15岁，师徒至少差5岁",
-        "severity": "P1",
-        "check": lambda chars: _check_age_rule(chars),
-    },
-]
-
-# 力量体系一致性规则
-POWER_RULES = [
-    {
-        "id": "P001",
-        "name": "等级不可倒退",
-        "description": "已突破的境界不能在后续章节中降级",
-        "severity": "P0",
-    },
-    {
-        "id": "P002",
-        "name": "能力边界一致",
-        "description": "已展示的能力上限不能在同一状态下突破",
-        "severity": "P1",
-    },
-]
-
 
 class ConsistencyValidator:
     """逻辑一致性校验 Agent — L1规则引擎 + L2 LLM深度校验"""
@@ -201,6 +160,15 @@ class ConsistencyValidator:
             )
             violations.extend(l2.get("violations", []))
             warnings.extend(l2.get("warnings", []))
+            if l2.get("l2_failed"):
+                # L2 深度校验失败不可当"零违规"——显式降级，避免 fail-open 静默放行。
+                warnings.append({
+                    "id": "L2DEGRADED",
+                    "type": "validator",
+                    "severity": "P1",
+                    "description": "深度语义校验(L2)未执行，本章逻辑仅经规则层(L1)检查",
+                    "fix": "重试深度校验或人工复核",
+                })
 
         # 评分: P0 -30分/条, P1 -15分/条, P2 -5分/条
         score = 100
@@ -222,6 +190,8 @@ class ConsistencyValidator:
             "warnings": warnings,
             "l1_results": l1,
             "l2_results": l2,
+            "l2_failed": bool(l2.get("l2_failed")),
+            "degraded": bool(l2.get("l2_failed")),
         }
 
     def validate_outline(self, plan: dict) -> dict:
@@ -788,7 +758,7 @@ class ConsistencyValidator:
             
         except Exception as e:
             log.error(f"ConsistencyValidator L2 failed: {e}")
-            return {"violations": [], "warnings": [], "error": str(e)}
+            return {"violations": [], "warnings": [], "l2_failed": True, "error": str(e)}
 
     def build_fix_prompt(self, violations: list) -> str:
         """将违规报告转为 Writer 可用的修复提示"""
@@ -814,19 +784,3 @@ class ConsistencyValidator:
         
         return "\n".join(parts)
 
-
-# ═══════════════════════════════════════════
-# L1 辅助检查函数
-# ═══════════════════════════════════════════
-
-def _check_surname_rule(chars):
-    """检查同姓规则"""
-    return []  # 已整合到 _check_relations
-
-def _check_generation_rule(chars):
-    """检查辈分规则"""
-    return []
-
-def _check_age_rule(chars):
-    """检查年龄规则"""
-    return []

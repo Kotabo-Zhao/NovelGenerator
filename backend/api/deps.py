@@ -63,16 +63,12 @@ async def _sse_with_heartbeat(event_generator):
                 # 防御: 确保event是dict
                 if not isinstance(event, dict):
                     log.error(f"SSE producer got non-dict event: {type(event).__name__}: {str(event)[:200]}")
-                    event = {"type": "warning", "message": f"内部数据格式异常: {type(event).__name__}"}
+                    event = {"type": "warning", "message": "内部数据格式异常"}
                 await q.put(("event", event))
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
+        except Exception:
+            # v3.8: 异常详情只进日志（含 traceback），客户端只收通用文案，防内部信息泄漏
             log.exception("SSE producer crashed")
-            # v2.10: 返回异常类型以便快速定位
-            err_msg = f"生成过程出错 [{type(e).__name__}]: {str(e)[:300]}"
-            log.error(f"SSE crash details:\n{tb}")
-            await q.put(("error", err_msg))
+            await q.put(("error", "生成过程出错，请稍后重试"))
         await q.put(("done", None))
 
     async def heartbeater():
@@ -97,7 +93,8 @@ async def _sse_with_heartbeat(event_generator):
             elif kind == "ping":
                 yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
             elif kind == "error":
-                yield f"data: {json.dumps({'type':'error','message':f'生成过程出错: {data}'}, ensure_ascii=False)}\n\n"
+                # v3.8: data 已是通用文案，不再拼接原始异常
+                yield f"data: {json.dumps({'type':'error','message':data}, ensure_ascii=False)}\n\n"
                 cancelled = True; h_task.cancel(); break
     finally:
         h_task.cancel()

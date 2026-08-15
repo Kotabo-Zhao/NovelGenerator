@@ -218,6 +218,39 @@ async def recover_pending_jobs() -> dict:
     return {**recovered, "scheduled": scheduled, "invalid": invalid}
 
 
+# ── v3.8: 周期任务恢复（此前 requeue_stale 只在启动时执行一次）──
+
+_periodic_recovery_task: Optional[asyncio.Task] = None
+
+
+async def _periodic_recovery_loop() -> None:
+    """周期 requeue 卡死的 RUNNING 任务。
+
+    进程存活期间若 asyncio task 异常消亡（或任务在某处卡住未置终态），
+    这些任务会永久占用 max_active 名额，用户无法再提交新任务。
+    每 JOB_RECOVERY_STALE_SECONDS 秒扫描一次，恢复后重新调度。
+    """
+    while True:
+        await asyncio.sleep(JOB_RECOVERY_STALE_SECONDS)
+        try:
+            await recover_pending_jobs()
+        except Exception:
+            log.exception("Periodic job recovery failed")
+
+
+def start_periodic_recovery() -> None:
+    """启动周期任务恢复（幂等，可被 startup 重复调用）。"""
+    global _periodic_recovery_task
+    t = _periodic_recovery_task
+    if t is not None:
+        try:
+            if not t.done():
+                return
+        except Exception:
+            pass  # 旧任务所在 loop 已关闭等异常——视为失效，重新创建
+    _periodic_recovery_task = asyncio.create_task(_periodic_recovery_loop())
+
+
 @router.get("/novels")
 async def list_owned_novels(owner_id: str = Depends(require_consented_owner)):
     result = []
@@ -382,6 +415,25 @@ async def create_chapter_job(
     storage_id = _owned_storage_id(novel_id, owner_id)
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(status_code=400, detail="缺少 Idempotency-Key")
+    # v3.8: 锁文件预检——SSE 长生成与 job 共享 .generating_{chapter}.lock。
+    # 此前 job 创建不做预检：若 SSE 正在生成该章，job 会消费到 error 事件后失败，
+    # 用户看到的是"失败"而非"排队"。这里命中活跃锁时直接返回排队语义（409）。
+    try:
+        import os as _os
+        from core.mixins.generation import _gen_lock_is_stale
+        lock_file = _os.path.join(
+            engine.memory.get_novel_dir(storage_id),
+            f".generating_{int(req.chapter_num):04d}.lock",
+        )
+        if _os.path.exists(lock_file) and not _gen_lock_is_stale(lock_file):
+            raise HTTPException(
+                status_code=409,
+                detail=f"第{req.chapter_num}章正在生成中，请等待完成后再试",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # 预检失败不阻断任务（锁文件缺失等场景继续走正常流程）
     request_data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
     quota_request = {"novel_id": storage_id, **request_data}
     request_hash = hashlib.sha256(
@@ -444,7 +496,7 @@ async def create_export_job(
 
     storage_id = _owned_storage_id(novel_id, owner_id)
     if not idempotency_key or not idempotency_key.strip():
-        raise HTTPException(status_code=400, detail="缂哄皯 Idempotency-Key")
+        raise HTTPException(status_code=400, detail="缺少 Idempotency-Key")
     request_data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
     try:
         job = job_store.create_or_get(

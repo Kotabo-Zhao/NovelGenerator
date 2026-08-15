@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 # ── 时间档位表（确定性推进）──
 TIME_SLOTS = ["清晨", "上午", "正午", "下午", "傍晚", "夜晚", "深夜"]
+_LOCATION_GRAPH_VERSION = 2
 
 # v3.6 P2: 时段 → 场景氛围提示（时间驱动内容生成——LLM 描写必须体现）
 TIME_SCENE_HINTS = {
@@ -239,15 +240,45 @@ def ensure_world(state: dict) -> dict:
     w.setdefault("location", "")
     w.setdefault("chars", {})
     w.setdefault("locations", {})
-    # 图谱缺失时尝试构建（幂等：已有节点不动）
-    if not w.get("locations"):
-        w["locations"] = build_location_graph(state)
     # location 与 state.location / player_state.location 对齐（三处一致性）
     s = state.get("state") or {}
     ps = state.get("player_state") or {}
     cur = w.get("location") or clean_loc(s.get("location")) or clean_loc(ps.get("location")) or ""
+    locations = w.get("locations") if isinstance(w.get("locations"), dict) else {}
+    # 地点图谱迁移只执行一次。运行期图谱会动态注册地点、编辑连线；若每次
+    # world_brief/行动判定都重新推导和清洗，会把显式删除的节点复活，或误删
+    # 刚加入的合法连线。版本升级时才重新跑迁移。
+    if int(w.get("_location_graph_version", 0) or 0) < _LOCATION_GRAPH_VERSION:
+        discovered = build_location_graph(state)
+        for name, entry in discovered.items():
+            if name not in locations:
+                locations[name] = entry
+                continue
+            current_entry = locations[name] if isinstance(locations[name], dict) else {}
+            links = list(current_entry.get("connected") or [])
+            for target in entry.get("connected") or []:
+                if target not in links:
+                    links.append(target)
+            current_entry["connected"] = links[:8]
+            locations[name] = current_entry
+        trusted_locations = [
+            clean_loc(value)
+            for value in (state.get("known_locations") or [])
+            if clean_loc(value)
+        ]
+        trusted_locations.extend(
+            clean_loc(item.get("location"))
+            for item in (state.get("cast_states") or {}).values()
+            if isinstance(item, dict) and clean_loc(item.get("location"))
+        )
+        locations = _sanitize_location_graph(locations, cur, trusted_locations)
+        w["_location_graph_version"] = _LOCATION_GRAPH_VERSION
+    w["locations"] = locations
     if cur:
         w["location"] = cur
+        w["locations"].setdefault(
+            cur, {"desc": "", "connected": [], "chars": [], "items": []}
+        )
         if s.get("location") != cur:
             s["location"] = cur
         if ps.get("location") != cur:
@@ -272,6 +303,67 @@ def clean_loc(loc) -> str:
     return loc[:60]
 
 
+_NON_LOCATION_FRAGMENT_RE = re.compile(
+    r"era:|power_|core_|faction|世界观|规则|体系|市值|离婚|婚姻|父亲|母亲|家庭|"
+    r"声誉|社交|资本|商业|利益|象征|编织|丑闻|女主|男主|当代|年代|世纪|"
+    r"王朝名为|正值|不稳|玄功|境界|修为|春节|前后|租售|设定|背景|"
+    r"——|—|：|:|,|，|。"
+)
+_LOCATION_HINT_RE = re.compile(
+    r"(?:市|区|县|镇|村|城|关|山|峰|谷|岭|江|河|湖|海|岛|街|路|巷|桥|"
+    r"府|宅|院|屋|房|楼|阁|馆|店|门|港|坡|塔|场|客栈|酒楼|茶楼|码头|机场|车站|广场|"
+    r"宫|殿|堂|寺|庙|营|寨|洞|林|原|秘境|总部|办公室|医院|学校|大学|"
+    r"民政局|法院|警局|公司|集团|庄园|公寓|别墅|会所|酒吧|餐厅|咖啡馆|"
+    r"甜品店|书房|卧室|大厅|场景)$"
+)
+_LOCATION_EXACT = {"家", "街市", "集市", "码头", "茶楼", "客栈", "府", "宅", "宫"}
+
+
+def _is_location_candidate(text: str) -> bool:
+    """过滤世界观描述片段；保留短地名、专名与常见场所。"""
+    value = clean_loc(text)
+    if not value or len(value) > 24:
+        return False
+    if _NON_LOCATION_FRAGMENT_RE.search(value):
+        return False
+    if value.endswith(("时期", "时代", "制度", "能力", "冲突", "势力", "系统")):
+        return False
+    return value in _LOCATION_EXACT or bool(_LOCATION_HINT_RE.search(value))
+
+
+def _sanitize_location_graph(locations, current: str = "", trusted=()) -> dict:
+    """迁移旧地点图谱，剔除伪地点并清理对应连线。"""
+    if not isinstance(locations, dict):
+        return {}
+    cleaned = {}
+    current = clean_loc(current)
+    trusted_names = {clean_loc(value) for value in trusted if clean_loc(value)}
+    for raw_name, raw_entry in locations.items():
+        name = clean_loc(raw_name)
+        if not name or (
+            name != current
+            and name not in trusted_names
+            and not _is_location_candidate(name)
+        ):
+            continue
+        entry = dict(raw_entry) if isinstance(raw_entry, dict) else {}
+        entry.setdefault("desc", "")
+        entry.setdefault("chars", [])
+        entry.setdefault("items", [])
+        entry["connected"] = [
+            clean_loc(target)
+            for target in (entry.get("connected") or [])
+            if clean_loc(target)
+            and clean_loc(target) != name
+            and (
+                clean_loc(target) in trusted_names
+                or _is_location_candidate(target)
+            )
+        ][:8]
+        cleaned[name] = entry
+    return cleaned
+
+
 # ── 地点图谱 ──
 def build_location_graph(state: dict) -> dict:
     """规则构建地点图谱（零 LLM）：
@@ -291,12 +383,29 @@ def build_location_graph(state: dict) -> dict:
     for x in known + [cur] + char_locs:
         if x and x not in cands:
             cands.append(x)
-    # worldbuilding 地理串拆分（"上海，陆家嘴、前滩" → 上海/陆家嘴/前滩）
+    # worldbuilding 只解析 geography/地理/地点字段；如果是旧版无标签文本，
+    # 再对全文做兼容解析。禁止把 era/power_system/core_conflict 的句子建成地点。
     wb = str(state.get("worldbuilding_brief", ""))
-    for seg in re.split(r"[，,、;；\n]", wb):
-        seg = clean_loc(seg)
-        if seg and 1 <= len(seg) <= 12 and seg not in cands:
-            cands.append(seg)
+    geo_values = []
+    for line in wb.splitlines():
+        match = re.match(r"\s*(?:geography|starting_location|地理|地点)\s*[:：]\s*(.+)", line, re.I)
+        if match:
+            geo_values.append(match.group(1))
+    sources = geo_values or ([wb] if wb and "\n" not in wb else [])
+    for source in sources:
+        for match in re.finditer(
+            r"['\"]name['\"]\s*:\s*['\"]([^'\"]{1,24})['\"]",
+            source,
+        ):
+            named_location = clean_loc(match.group(1))
+            if (_is_location_candidate(named_location)
+                    and named_location not in cands):
+                cands.append(named_location)
+        for seg in re.split(r"[，,、;；\n]", source):
+            seg = clean_loc(seg)
+            if (_is_location_candidate(seg) and 1 <= len(seg) <= 12
+                    and seg not in cands):
+                cands.append(seg)
     for name in cands:
         locations[name] = {
             "desc": "",
@@ -515,7 +624,7 @@ def world_brief(state: dict, max_chars: int = 400) -> str:
 # ── v3.6 P3: 对话承诺 → 行动兑现（地点锚定）──
 # 约定地点模式（"在码头见/码头等你/去茶楼碰头"——图谱节点名 + 位置介词）
 _LOCATION_PATTERNS = [
-    re.compile(r"(?:在|到|去|回|来|上|于)\s*([\u4e00-\u9fff]{1,8})\s*(?:见|等|碰头|会合|汇合|找你|见面|赴宴|吃饭|喝茶|等)", re.S),
+    re.compile(r"(?:在|到|去|回|前往|赶到|来到|于)\s*([\u4e00-\u9fff]{1,8})\s*(?:见|等|碰头|会合|汇合|找你|见面|赴宴|吃饭|喝茶|等)", re.S),
     re.compile(r"([\u4e00-\u9fff]{1,8})\s*(?:见|碰头|会合|汇合|等我|找我)", re.S),
 ]
 
@@ -535,7 +644,10 @@ def extract_location_from_text(text: str, state: dict) -> str:
             for n in names:
                 if cand == n or cand in n or n in cand:
                     return n
-            return cand  # 图谱无此节点也返回候选（后续到达时图谱可能已注册）
+            # 图谱无此节点时仅接受形态明确的地点，避免把“晚上一起吃饭”
+            # 里的“上/一起”误建成地点锚点。
+            if _is_location_candidate(cand):
+                return cand
     for n in names:
         if n and n in text:
             return n
@@ -591,9 +703,9 @@ def pending_promises_brief(state: dict, location: str = "", max_chars: int = 200
 # 图谱节点清洗：worldbuilding 解析可能塞入设定描述片段（"era: 2020年代"/"市值超千亿"），
 # 这些不是地点，不能进行动按钮
 _NON_LOC_RE = re.compile(
-    r"era:|power_|core_|faction|世界观|规则|体系|市值|离婚|婚姻|父亲|母亲|家庭|"
-    r"声誉|社交|资本|权[力势]?$|商业|利益|象征|编织|丑闻|女主|男主|与|和|的$|"
-    r"当代|年代|世纪|——|—|：|:|,|，|。")
+    _NON_LOCATION_FRAGMENT_RE.pattern
+    + r"|权[力势]?$|与|和|的$"
+)
 _LOC_MAX_LEN = 8  # 地点名超过 8 字基本是描述片段（"上海陆家嘴金融区——甜品店内"除外，它带——）
 
 # 脏角色名清洗（LLM 状态提取把内心描写当角色名的历史脏数据）
@@ -606,7 +718,7 @@ def _clean_action_target(text: str, kind: str) -> bool:
     if not t or len(t) > 24:
         return False
     if kind == "travel":
-        if _NON_LOC_RE.search(t):
+        if _NON_LOC_RE.search(t) or not _is_location_candidate(t):
             return False
         if len(t) > _LOC_MAX_LEN and "——" not in t and "甜品店" not in t:
             return False

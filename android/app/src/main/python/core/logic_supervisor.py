@@ -328,6 +328,15 @@ class LogicSupervisor:
             violations.extend(l2.get("violations", []))
             warnings_list.extend(l2.get("warnings", []))
             suggestions.extend(l2.get("suggestions", []))
+            if l2.get("l2_failed"):
+                # 深度校验失败不可当"零违规"——显式标记降级，避免 fail-open 静默放行。
+                warnings_list.append({
+                    "id": "L2DEGRADED",
+                    "type": "validator",
+                    "severity": "P1",
+                    "description": "深度语义校验(L2)未执行，本章逻辑仅经规则层(L1)检查",
+                    "fix": "重试深度校验或人工复核",
+                })
 
         # ── 评分 ──
         score = 100
@@ -359,6 +368,8 @@ class LogicSupervisor:
             "category_scores": category_scores,
             "l1_checks": l1,
             "l2_result": l2,
+            "l2_failed": bool(l2.get("l2_failed")),
+            "degraded": bool(l2.get("l2_failed")),
             "total_issues": len(violations) + len(warnings_list),
         }
 
@@ -1344,10 +1355,10 @@ class LogicSupervisor:
 
         except json.JSONDecodeError as e:
             log.error(f"LogicSupervisor L2 JSON parse failed: {e}")
-            return {"violations": [], "warnings": [], "suggestions": [], "error": f"JSON parse failed: {e}"}
+            return {"violations": [], "warnings": [], "suggestions": [], "l2_failed": True, "error": f"JSON parse failed: {e}"}
         except Exception as e:
             log.error(f"LogicSupervisor L2 failed: {e}")
-            return {"violations": [], "warnings": [], "suggestions": [], "error": str(e)}
+            return {"violations": [], "warnings": [], "suggestions": [], "l2_failed": True, "error": str(e)}
 
     # ═══════════════════════════════════════════
     # 修复提示生成

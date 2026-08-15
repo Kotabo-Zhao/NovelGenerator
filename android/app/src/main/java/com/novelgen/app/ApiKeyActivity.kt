@@ -28,7 +28,18 @@ class ApiKeyActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             prefs.edit().putString("api_key", key).apply()
-            Toast.makeText(this, "已保存，重启生效", Toast.LENGTH_SHORT).show()
+            val serviceIntent = android.content.Intent(this, ServerService::class.java).apply {
+                putExtra("api_key", key)
+                putExtra("internal_build", BuildConfig.INTERNAL_BUILD)
+                putExtra("update_only", true)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+            setResult(RESULT_OK)
+            Toast.makeText(this, "API Key 已保存，当前服务已刷新", Toast.LENGTH_SHORT).show()
             finish()
         }
     }

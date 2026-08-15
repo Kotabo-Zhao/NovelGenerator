@@ -26,6 +26,8 @@ from core.interactive.interact_store import InteractStore
 engine = NovelEngine()
 store = InteractStore('novels')
 ae = ActionEngine(engine.client, engine.model, store)
+# 本文件验证规则兜底，必须完全离线且结果确定；真实模型质量另由 LLM/E2E 测试覆盖。
+ae._llm = lambda *a, **k: None
 
 def mk_state(wb: str, location: str = '青云山') -> dict:
     return {

@@ -146,7 +146,8 @@ class EmotionTTS:
         if emotion not in EMOTIONS:
             emotion = "平静"
         # 缓存
-        key = hashlib.md5(f"{text}|{char_name}|{emotion}|{voice}|{real_voice}".encode()).hexdigest()[:16]
+        # rate/pitch 必须进 key，否则调整语速/音高后命中旧缓存返回错误音色。
+        key = hashlib.md5(f"{text}|{char_name}|{emotion}|{voice}|{real_voice}|{rate}|{pitch}".encode()).hexdigest()[:16]
         cache_path = os.path.join(CACHE_DIR, f"{key}.wav")
         if os.path.exists(cache_path):
             if time.time() - os.path.getmtime(cache_path) < CACHE_TTL:

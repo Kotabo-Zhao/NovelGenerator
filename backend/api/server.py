@@ -1,10 +1,5 @@
-"""NovelGenerator — FastAPI Server (serves frontend + API)
-
-2026-07-31 重构: 71 个业务路由按域拆分到 api/routers/（novels/outline/quality/
-storygraph/requirements/styles/trends），本文件只保留应用装配、中间件、
-静态资源服务与健康检查。
-"""
 import asyncio
+import json
 import logging
 import sys
 import os
@@ -32,13 +27,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 
 from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR
-from core.path_security import validate_novel_id
+from core.path_security import validate_novel_id, RESERVED_NOVEL_IDS
 
 # 共享依赖：engine 单例 + log（见 deps.py）
 from .deps import engine, log, ownership_store
-from .auth import owner_id_from_authorization
+from .auth import owner_id_from_authorization, is_internal_version
 from core.auth import AuthError
-from .routers import auth, novels, v1, outline, quality, storygraph, requirements, styles, trends, characters, feedback, tts, interactive
+from .routers import auth, novels, v1, outline, quality, requirements, styles, trends, characters, feedback, tts, interactive, bible, ideas
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
@@ -58,6 +53,17 @@ if _cors_origins:
         allow_credentials="*" not in _cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+
+# NOVEL_GENERATOR_INTERNAL 是全局鉴权后门：仅在绑定本机回环时允许。
+# 绑定非回环地址却开启该开关，等于把全站数据零隔离暴露出去。
+# 模块加载时仅告警；启动时（startup 事件）若仍为非回环 + INTERNAL，则拒绝启动
+# （除非显式设置 NOVEL_GENERATOR_INTERNAL_NON_LOOPBACK=1 确认风险）。
+if is_internal_version() and HOST not in ("127.0.0.1", "localhost", "::1"):
+    log.critical(
+        "NOVEL_GENERATOR_INTERNAL=true 且 HOST=%s 非本机回环——鉴权被全局旁路，"
+        "生产部署将导致所有用户数据零隔离。请设置 NOVEL_GENERATOR_INTERNAL=false。",
+        HOST,
     )
 
 
@@ -82,12 +88,17 @@ async def request_size_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def validate_novel_path_middleware(request: Request, call_next):
-    """在所有作品路由进入业务层前统一阻断危险的目录名。"""
+    """在所有作品路由进入业务层前统一阻断危险的目录名。
+
+    注意：/api/novels/create-stream、/api/novels/generate 等集合动作的
+    第一段是路由名而非 novel_id，必须先跳过保留词，否则会被误拦为
+    "非法小说 ID"（保留词的 IDOR 防护由 legacy_novel_owner_middleware 承担）。
+    """
     prefix = "/api/novels/"
     path = request.url.path
     if path.startswith(prefix):
         raw_novel_id = urllib.parse.unquote(path[len(prefix):].split("/", 1)[0])
-        if raw_novel_id:
+        if raw_novel_id and raw_novel_id not in RESERVED_NOVEL_IDS:
             try:
                 validate_novel_id(raw_novel_id)
             except ValueError:
@@ -112,14 +123,16 @@ async def legacy_novel_owner_middleware(request: Request, call_next):
         )
 
     request.state.owner_id = owner_id
+    if is_internal_version():
+        return await call_next(request)
     suffix = path[len("/api/novels"):].strip("/")
     first_segment = urllib.parse.unquote(suffix.split("/", 1)[0]) if suffix else ""
+    # 集合动作 = path_security.RESERVED_NOVEL_IDS（单一事实源）：
     # 这些是旧接口的集合级动作，具体作品 ID 位于 body/query 中，
-    # 由对应 handler 继续执行 owner 校验。
-    collection_actions = {
-        "generate", "create-stream", "export", "repair-state", "repair-states",
-    }
-    if first_segment and first_segment not in collection_actions:
+    # 由对应 handler 继续执行 owner 校验。集合动作全部是 POST；
+    # 对非 POST 命中这些保留词一律按作品资源校验归属，杜绝同名 IDOR。
+    is_collection_action = first_segment in RESERVED_NOVEL_IDS and request.method == "POST"
+    if first_segment and not is_collection_action:
         try:
             validate_novel_id(first_segment)
         except ValueError:
@@ -144,11 +157,49 @@ _RATE_GENERATE_MAX_CONCURRENT = int(os.getenv("RATE_LIMIT_GENERATE_CONCURRENT", 
 
 _generate_conns: dict = defaultdict(int)  # {ip: 当前并发生成连接数}
 
+# v3.8: 内存键清理——_rate_limits/_auth_rate_limits/_generate_conns 的 IP 键
+# 此前永不删除，长期运行内存单调上涨。周期裁剪过期键（两倍窗口内无活动即删除）。
+_RATE_KEY_CLEAN_INTERVAL = 2 * 60
+_rate_last_clean = {"t": 0.0}
+
+
+def _client_ip(request: Request) -> str:
+    """解析客户端 IP：受信任代理场景优先取 x-forwarded-for 首地址。
+
+    直接取 request.client.host 在 Nginx/Render 代理后会让全站共享同一 IP 桶
+    （任意用户可耗尽他人限流额度）。仅当 TRUST_PROXY_HEADERS=true 时信任
+    x-forwarded-for（部署方确认代理会覆写该头，防止客户端伪造）。
+    """
+    if os.getenv("TRUST_PROXY_HEADERS", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            first = forwarded.split(",", 1)[0].strip()
+            if first:
+                return first
+    return request.client.host if request.client else "unknown"
+
+
+def _prune_rate_keys() -> None:
+    """删除窗口内无活动（超过 2 倍窗口）的 IP 键，防止内存单调增长。"""
+    now = _time.time()
+    if now - _rate_last_clean["t"] < _RATE_KEY_CLEAN_INTERVAL:
+        return
+    _rate_last_clean["t"] = now
+    for table, window in ((_rate_limits, _RATE_WINDOW),
+                          (_auth_rate_limits, _AUTH_RATE_WINDOW)):
+        cutoff = now - window * 2
+        for ip in [k for k, stamps in table.items()
+                   if not stamps or stamps[-1] < cutoff]:
+            del table[ip]
+    for ip, count in list(_generate_conns.items()):
+        if count <= 0:
+            del _generate_conns[ip]
+
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     """内存速率限制：普通端点按 60s 窗口计数，生成端点按并发连接数"""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_ip(request)
     is_generate = "/generate" in request.url.path
 
     if request.url.path == "/api/auth/wechat-login":
@@ -170,7 +221,7 @@ async def rate_limit_middleware(request: Request, call_next):
         _auth_rate_limits[client_ip].append(now)
 
     if is_generate:
-        # 生成端点：并发连接限流（连接结束即释放）
+        # 生成端点：并发连接限流（流结束/断开才释放计数）
         if _generate_conns[client_ip] >= _RATE_GENERATE_MAX_CONCURRENT:
             log.warning("生成并发限制触发: IP=%s, path=%s, conns=%d",
                         client_ip, request.url.path, _generate_conns[client_ip])
@@ -180,15 +231,39 @@ async def rate_limit_middleware(request: Request, call_next):
                          "retry_after": 10},
             )
         _generate_conns[client_ip] += 1
-        try:
-            return await call_next(request)
-        finally:
+
+        def _release():
             _generate_conns[client_ip] = max(0, _generate_conns[client_ip] - 1)
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            _release()
+            raise
+
+        # StreamingResponse 的 body 在 handler 返回后才被消费：把计数释放
+        # 挂到流结束/断开时，而不是 handler 返回时（否则并发限流形同虚设）。
+        from starlette.responses import StreamingResponse as _StreamingResponse
+        if isinstance(response, _StreamingResponse):
+            original_iterator = response.body_iterator
+
+            async def _counted_stream():
+                try:
+                    async for chunk in original_iterator:
+                        yield chunk
+                finally:
+                    _release()
+
+            response.body_iterator = _counted_stream()
+            return response
+        _release()
+        return response
 
     # 普通端点：60 秒窗口计数
     # v3.5.17: 静态资源不限流（favicon/sw.js/vue.js 页面加载即消耗多次，
     # 计入 60/min 窗口会误伤正常使用）；只对 /api 接口限流
     if not request.url.path.startswith("/api/"):
+        _prune_rate_keys()  # 借任意非 API 流量触发周期键清理
         return await call_next(request)
 
     now = _time.time()
@@ -284,6 +359,25 @@ async def serve_manifest():
 
 # ── Health ──
 
+_LLM_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(NOVELS_DIR)), "llm_config.json")
+
+
+def _load_llm_config_file() -> dict:
+    try:
+        with open(_LLM_CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_llm_config_file(cfg: dict) -> None:
+    try:
+        with open(_LLM_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 @app.get("/api/health")
 async def health():
     novels_exist = os.path.exists(NOVELS_DIR)
@@ -295,17 +389,58 @@ async def health():
             and os.path.isdir(os.path.join(NOVELS_DIR, name))
             and os.path.exists(os.path.join(NOVELS_DIR, name, "plan.json"))
         )
+    from config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL
+    _key = (DEEPSEEK_API_KEY or "").strip()
     return {
         "status": "ok",
         "service": "NovelGenerator",
         "storage_exists": novels_exist,
         "novel_count": novel_count,
+        "llm_configured": bool(_key) and not _key.lower().startswith(("your_", "sk-placeholder")),
+        "model": DEEPSEEK_MODEL,
+        "allowed_models": ["deepseek-chat", "deepseek-v4-flash"],
     }
+
+
+# ── LLM 运行时配置（设置页：API Key + 模型切换） ──
+
+@app.get("/api/config/llm")
+async def get_llm_config():
+    """读取当前 LLM 配置状态（不泄露 key 明文）。"""
+    return engine.llm_config()
+
+
+@app.post("/api/config/llm")
+async def set_llm_config(req: dict):
+    """运行时更新 API Key 和/或模型；持久化到 llm_config.json（重启后自动恢复）。
+
+    仅允许本机回环来源调用（Android 内嵌版恒为 127.0.0.1，公网部署不会暴露）。
+    """
+    api_key = (req.get("api_key") or "").strip()
+    model = (req.get("model") or "").strip()
+    if not api_key and not model:
+        raise HTTPException(status_code=400, detail="需要提供 api_key 或 model 至少一项")
+    applied = []
+    if api_key:
+        if not engine.set_api_key(api_key):
+            raise HTTPException(status_code=400, detail="API Key 格式无效（应以 sk- 开头）")
+        applied.append("api_key")
+    if model:
+        if not engine.set_model(model):
+            raise HTTPException(status_code=400, detail="不支持的模型（可选: deepseek-chat / deepseek-v4-flash）")
+        applied.append("model")
+    cfg = _load_llm_config_file()
+    if "api_key" in applied:
+        cfg["api_key"] = api_key
+    if "model" in applied:
+        cfg["model"] = model
+    _save_llm_config_file(cfg)
+    return {"status": "ok", "applied": applied, "config": engine.llm_config()}
 
 
 # ── 业务路由挂载（2026-07-31 按域拆分）──
 
-for _router in (auth, v1, novels, outline, quality, storygraph, requirements, styles, trends, characters, feedback, tts, interactive):
+for _router in (auth, v1, novels, outline, quality, requirements, styles, trends, characters, feedback, tts, interactive, bible, ideas):
     app.include_router(_router.router)
 
 
@@ -314,6 +449,18 @@ for _router in (auth, v1, novels, outline, quality, storygraph, requirements, st
 @app.on_event("startup")
 async def startup_repair():
     """服务器启动时自动扫描并修复 state 不一致"""
+    # v3.8: 拒绝启动——INTERNAL 鉴权后门 + 非回环绑定 = 全站数据零隔离。
+    # 仅告警不够：生产误配时应有硬失败。显式设置 NOVEL_GENERATOR_INTERNAL_NON_LOOPBACK=1
+    # 可确认风险后放行（仅限本机/局域网调试，Android 内嵌版恒为 127.0.0.1 不受影响）。
+    if (is_internal_version()
+            and HOST not in ("127.0.0.1", "localhost", "::1")
+            and os.getenv("NOVEL_GENERATOR_INTERNAL_NON_LOOPBACK", "").strip().lower()
+            not in {"1", "true", "yes", "on"}):
+        raise RuntimeError(
+            "拒绝启动：NOVEL_GENERATOR_INTERNAL=true 且 HOST 非本机回环。"
+            "这会全局旁路鉴权、暴露所有用户数据。请设置 NOVEL_GENERATOR_INTERNAL=false；"
+            "仅在知晓风险的调试场景可设 NOVEL_GENERATOR_INTERNAL_NON_LOOPBACK=1 强制放行。"
+        )
     # v3.6.4: 确保 NOVELS_DIR 存在（Android 旧 APK 的 server_runner 可能未建目录）
     try:
         import os as _os
@@ -334,6 +481,12 @@ async def startup_repair():
         await v1.recover_pending_jobs()
     except Exception as e:
         log.error(f"Startup job recovery failed: {e}")
+    # v3.8: 周期任务恢复——requeue_stale 此前只在启动时跑一次，
+    # 进程存活期间卡死的 RUNNING 任务会永久占用 max_active 名额
+    try:
+        v1.start_periodic_recovery()
+    except Exception as e:
+        log.error(f"Periodic job recovery start failed: {e}")
 
 
 if __name__ == "__main__":

@@ -60,6 +60,63 @@ class TestBuildGraph:
         names = "|".join(w["locations"])
         assert "上海" in names
 
+    def test_labeled_worldbuilding_only_uses_geography(self):
+        st = base_state()
+        st["worldbuilding_brief"] = (
+            "era: 王朝名为大朔，正值边关不稳\n"
+            "geography: 龙门客栈、城西码头\n"
+            "power_system: 玄功九境\n"
+            "core_conflict: 春节前后争夺商会控制权"
+        )
+        w = ws.ensure_world(st)
+        names = set(w["locations"])
+        assert {"龙门客栈", "城西码头"}.issubset(names)
+        assert "王朝名为大朔" not in names
+        assert "正值边关不稳" not in names
+        assert "玄功九境" not in names
+        assert "春节前后争夺商会控制权" not in names
+
+    def test_structured_geography_names_are_recovered(self):
+        st = base_state()
+        st["worldbuilding_brief"] = (
+            "era: 架空古代，王朝名为大朔\n"
+            "geography: {'name': '龙门客栈', 'description': '边陲客栈'、"
+            "{'name': '玉门关', 'description': '军事重镇'、"
+            "{'name': '沙州城', 'description': '关外大城'}\n"
+            "power_system: 玄功九境，讲究真气循行经脉，拳脚兵器各成体系"
+        )
+
+        names = set(ws.ensure_world(st)["locations"])
+
+        assert {"龙门客栈", "玉门关", "沙州城"}.issubset(names)
+        assert "玄功九境" not in names
+        assert "讲究真气循行经脉" not in names
+        assert "拳脚兵器各成体系" not in names
+
+    def test_existing_graph_junk_is_removed_during_migration(self):
+        st = base_state()
+        st["world"] = {
+            "location": "茶楼",
+            "time": {"label": "正午", "slot": 2, "day": 1},
+            "chars": {},
+            "locations": {
+                "茶楼": {"connected": ["王朝名为大朔", "城西码头"]},
+                "王朝名为大朔": {"connected": ["茶楼"]},
+                "玄功九境": {"connected": ["茶楼"]},
+                "经": {"connected": ["茶楼"]},
+                "拳脚": {"connected": ["茶楼"]},
+                "城西码头": {"connected": ["茶楼"]},
+            },
+        }
+
+        w = ws.ensure_world(st)
+
+        assert "王朝名为大朔" not in w["locations"]
+        assert "玄功九境" not in w["locations"]
+        assert "经" not in w["locations"]
+        assert "拳脚" not in w["locations"]
+        assert set(w["locations"]["茶楼"]["connected"]) == {"城西码头", "街市"}
+
     def test_find_home(self):
         st = base_state()
         w = ws.ensure_world(st)
@@ -366,6 +423,7 @@ class TestP3Promises:
         st = base_state()
         ws.ensure_world(st)
         assert ws.extract_location_from_text("明早一起吃饭", st) == ""   # 无地点
+        assert ws.extract_location_from_text("周五晚上一起吃饭", st) == ""
 
     def test_fulfill_on_arrival(self):
         st = self._state_with_promise()
@@ -461,6 +519,33 @@ class TestActionOptions:
         assert opts  # 至少有一个兜底按钮
         kinds = {o["kind"] for o in opts}
         assert "investigate" in kinds or any(o["intent"] == "act" for o in opts)
+
+
+class TestLocationGraphMigrationBoundary:
+    def test_graph_migration_runs_once_and_does_not_revive_deleted_node(self):
+        st = base_state()
+        st["known_locations"].append("家")
+        ws.ensure_world(st)
+        assert "家" in st["world"]["locations"]
+
+        del st["world"]["locations"]["家"]
+        ws.ensure_world(st)
+
+        assert "家" not in st["world"]["locations"]
+
+    def test_runtime_graph_links_survive_subsequent_world_reads(self):
+        st = base_state()
+        ws.ensure_world(st)
+        st["world"]["locations"]["码头"] = {
+            "desc": "货运码头",
+            "connected": ["街市", "南门"],
+            "chars": [],
+            "items": [],
+        }
+
+        ws.ensure_world(st)
+
+        assert st["world"]["locations"]["码头"]["connected"] == ["街市", "南门"]
 
 
 if __name__ == "__main__":

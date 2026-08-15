@@ -14,6 +14,10 @@ class QualityGateTests(unittest.TestCase):
         result = validate_chapter_text("正文" * 200 + "。", target_words=1000)
         self.assertGreater(result["chars"], result["minimum_chars"])
 
+    def test_sentence_ending_with_closing_quote_passes(self):
+        result = validate_chapter_text("body" * 200 + '?"', target_words=1000)
+        self.assertGreater(result["chars"], result["minimum_chars"])
+
     def test_marker_and_instruction_are_rejected(self):
         with self.assertRaises(ChapterQualityError):
             validate_chapter_text("正文" * 200 + "<!-- GENERATION_IN_PROGRESS -->")

@@ -9,7 +9,7 @@ import traceback
 
 router = APIRouter()
 
-from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
+from ..deps import engine, log, _validate_novel_id, _validate_chapter_range, ownership_store
 from ..auth import require_owner
 from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
 from core.trend_analyzer import quick_bizarre, BizarreNovelGenerator
@@ -23,8 +23,11 @@ async def analyze_trends(req: dict = None, _owner_id: str = Depends(require_owne
         from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
 
         analyzer = TrendAnalyzer(None, "")
-        novels = analyzer.fetch_trending_novels(req.get("max_count", 20))
-        patterns = analyzer.extract_patterns(novels)
+        # v3.8: 网络抓取 + 分析含同步调用，放线程池避免阻塞事件循环
+        import asyncio
+        novels, patterns = await asyncio.to_thread(
+            _fetch_and_extract, analyzer, req.get("max_count", 20)
+        )
 
         return {
             "ok": True,
@@ -36,6 +39,13 @@ async def analyze_trends(req: dict = None, _owner_id: str = Depends(require_owne
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def _fetch_and_extract(analyzer, max_count: int):
+    """同步抓取+分析，供 asyncio.to_thread 调用（避免在 async handler 内阻塞事件循环）"""
+    novels = analyzer.fetch_trending_novels(max_count)
+    patterns = analyzer.extract_patterns(novels)
+    return novels, patterns
 
 
 @router.post("/api/trends/bizarre")
@@ -84,9 +94,12 @@ async def quick_bizarre(req: dict, _owner_id: str = Depends(require_owner)):
         news_items = None
         if mode in ("topical", "mixed"):
             gen = BizarreNovelGenerator()
-            news_items = gen.fetch_hot_news(10)
+            # v3.8: 网络抓取放线程池避免阻塞事件循环
+            import asyncio
+            news_items = await asyncio.to_thread(gen.fetch_hot_news, 10)
 
-        novels = quick_bizarre(count, genre, mode, news_items=news_items)
+        # v3.8: 生成逻辑含同步 LLM，放线程池避免阻塞事件循环
+        novels = await asyncio.to_thread(quick_bizarre, count, genre, mode, news_items=news_items)
         return {
             "ok": True,
             "news_count": len(news_items) if news_items else 0,
@@ -133,10 +146,14 @@ async def create_bizarre_novel(req: dict, _owner_id: str = Depends(require_owner
         async for event in plan:
             if event.get("type") == "error":
                 raise HTTPException(status_code=500, detail=event.get("message", "创建失败"))
+            if event.get("type") == "done" and event.get("plan", {}).get("title"):
+                # v3.8: 创建成功即绑定归属，避免孤儿作品（此前从未 claim，作品不出现在用户书架）
+                ownership_store.claim(event["plan"]["title"], _owner_id)
 
         return {"ok": True, "title": title, "message": f"小说「{title}」创建成功"}
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        # v3.8: 异常详情只进日志，客户端收通用文案
+        raise HTTPException(status_code=500, detail="小说创建失败，请稍后重试") from e
 

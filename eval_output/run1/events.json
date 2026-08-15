@@ -1,0 +1,203 @@
+[
+  {
+    "type": "progress",
+    "phase": "decompose_requirements",
+    "pct": 2,
+    "label": "正在深度分析您的创作需求…"
+  },
+  {
+    "type": "progress",
+    "phase": "decompose_requirements",
+    "pct": 4,
+    "label": "已拆解出 19 条创作需求"
+  },
+  {
+    "type": "requirements_decomposed",
+    "subtask_count": 19,
+    "summary": "程序员陈默被'码神系统'绑定，用代码重构修仙世界，对抗垄断灵力的云上宗门，最终以开源精神解放世界。"
+  },
+  {
+    "type": "progress",
+    "phase": "start",
+    "pct": 5,
+    "label": "分析创意…"
+  },
+  {
+    "type": "progress",
+    "phase": "worldbuilding",
+    "pct": 10,
+    "label": "构建世界观体系…"
+  },
+  {
+    "type": "progress",
+    "phase": "worldbuilding",
+    "pct": 30,
+    "label": "世界观完成 ✓"
+  },
+  {
+    "type": "progress",
+    "phase": "characters",
+    "pct": 32,
+    "label": "设计角色关系网…"
+  },
+  {
+    "type": "progress",
+    "phase": "characters",
+    "pct": 55,
+    "label": "角色设计完成 ✓"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 58,
+    "label": "规划卷结构…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 62,
+    "label": "规划全书章节骨架…"
+  },
+  {
+    "type": "warning",
+    "phase": null,
+    "pct": null,
+    "label": ""
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 69,
+    "label": "展开第1卷「系统绑定与底层迷雾」(7章)…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 69,
+    "label": "第1卷 第1-4章…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 71,
+    "label": "第1卷 第5-7章…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 77,
+    "label": "展开第2卷「废墟之火与冲突升级」(7章)…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 77,
+    "label": "第2卷 第1-4章…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 79,
+    "label": "第2卷 第5-7章…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 84,
+    "label": "展开第3卷「开源协议与生死博弈」(7章)…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 84,
+    "label": "第3卷 第1-4章…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 86,
+    "label": "第3卷 第5-7章…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 92,
+    "label": "展开第4卷「根权限解放与代码浪漫」(4章)…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 92,
+    "label": "第4卷 第1-4章…"
+  },
+  {
+    "type": "progress",
+    "phase": "outline",
+    "pct": 92,
+    "label": "组装最终文档…"
+  },
+  {
+    "type": "progress",
+    "phase": "done",
+    "pct": 100,
+    "label": "创作方案完成！"
+  },
+  {
+    "type": "progress",
+    "phase": "character_profiling",
+    "pct": 97,
+    "label": "正在蒸馏角色人设（0/5）…"
+  },
+  {
+    "type": "progress",
+    "phase": "character_profiling",
+    "pct": 97,
+    "label": "正在蒸馏角色人设（1/5）：陈默…"
+  },
+  {
+    "type": "progress",
+    "phase": "character_profiling",
+    "pct": 97,
+    "label": "正在蒸馏角色人设（2/5）：苏婉…"
+  },
+  {
+    "type": "progress",
+    "phase": "character_profiling",
+    "pct": 97,
+    "label": "正在蒸馏角色人设（3/5）：李静…"
+  },
+  {
+    "type": "progress",
+    "phase": "character_profiling",
+    "pct": 97,
+    "label": "正在蒸馏角色人设（4/5）：老周…"
+  },
+  {
+    "type": "progress",
+    "phase": "character_profiling",
+    "pct": 97,
+    "label": "正在蒸馏角色人设（5/5）：周天衍…"
+  },
+  {
+    "type": "progress",
+    "phase": "character_profiling",
+    "pct": 98,
+    "label": "角色人设就绪（5 个角色）"
+  },
+  {
+    "type": "progress",
+    "phase": "character_voices",
+    "pct": 99,
+    "label": "正在设计角色声音卡…"
+  },
+  {
+    "type": "progress",
+    "phase": "character_voices",
+    "pct": 100,
+    "label": "角色声音卡就绪（5 个角色）"
+  },
+  {
+    "type": "done",
+    "title": "码上飞仙"
+  }
+]

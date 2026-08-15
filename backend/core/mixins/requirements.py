@@ -11,54 +11,84 @@ from ..atomic_io import atomic_write_json
 
 
 class RequirementsMixin:
+    def _load_requirements_contract(self, novel_id: str, plan: dict | None = None):
+        from ..requirements_contract import normalize_requirements
+
+        plan = plan if isinstance(plan, dict) else {}
+        meta = (plan.get("_meta") or {}).get("requirements") or {}
+        for key in (meta.get("store_key"), novel_id, plan.get("title")):
+            if key:
+                value = self._req_store.get(str(key))
+                if value:
+                    return normalize_requirements(value, novel_id=str(novel_id)), str(key)
+        return {}, str(novel_id)
+
+    def _persist_requirements_contract(self, novel_id: str, requirements: dict, plan: dict | None = None):
+        from ..requirements_contract import normalize_requirements
+
+        normalized = normalize_requirements(requirements, novel_id=str(novel_id))
+        self._req_store.set(str(novel_id), normalized)
+        if isinstance(plan, dict) and plan.get("title") and plan["title"] != str(novel_id):
+            self._req_store.set(str(plan["title"]), normalized)
+        return normalized
+
+    def _sync_requirements_contract(self, novel_id: str, plan: dict, requirements: dict | None = None):
+        from ..requirements_contract import assign_requirements_to_outline
+
+        if requirements is None:
+            requirements, _ = self._load_requirements_contract(novel_id, plan)
+        if not requirements:
+            return {}
+        normalized = assign_requirements_to_outline(requirements, plan)
+        normalized = self._persist_requirements_contract(novel_id, normalized, plan)
+        meta = plan.setdefault("_meta", {}).setdefault("requirements", {})
+        meta.update({
+            "store_key": str(novel_id),
+            "summary": normalized.get("summary", ""),
+            "core_theme": normalized.get("core_theme", ""),
+        })
+        return normalized
+
     def decompose_requirements(self, novel_id: str, inspiration: str) -> dict:
-        """拆解用户灵感为可执行子任务
-        
-        Args:
-            novel_id: 小说ID（已保存在plan中的）
-            inspiration: 用户输入的核心灵感
-        Returns:
-            requirements dict with subtasks
-        """
-        plan = self.get_novel(novel_id)
-        existing = self._req_store.get(novel_id)
-
-        result = self.requirement_decomposer.decompose(
-            inspiration, plan=plan, existing_requirements=existing
-        )
-        self._req_store.set(novel_id, result)
-        return result
-
+        plan = self.get_novel(novel_id) or {}
+        existing, _ = self._load_requirements_contract(novel_id, plan)
+        result = self.requirement_decomposer.decompose(inspiration, plan=plan, existing_requirements=existing)
+        normalized = self._sync_requirements_contract(novel_id, plan, result)
+        if plan and getattr(self, "memory", None):
+            novel_dir = self.memory.get_novel_dir(novel_id)
+            atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
+            try:
+                self.memory._invalidate(novel_id, "plan")
+            except Exception:
+                pass
+        return normalized
 
     def supervise_requirements(self, novel_id: str) -> dict:
-        """监督当前 plan 是否满足需求
-        
-        Returns:
-            supervision report with overall_score, results, etc.
-        """
-        requirements = self._req_store.get(novel_id)
-        if not requirements:
-            return {"error": "尚未拆解需求，请先提交灵感"}
-
         plan = self.get_novel(novel_id)
+        requirements, _ = self._load_requirements_contract(novel_id, plan)
+        if not requirements:
+            return {"error": "requirements_not_decomposed"}
         if not plan:
-            return {"error": f"小说 '{novel_id}' 不存在"}
-
-        return self.requirement_supervisor.supervise(requirements, plan)
-
+            return {"error": f"novel_not_found:{novel_id}"}
+        report = self.requirement_supervisor.supervise(requirements, plan)
+        # The supervisor mutates subtasks; persist the mutation before any feedback is read.
+        self._persist_requirements_contract(novel_id, requirements, plan)
+        report = dict(report or {})
+        report["requirements_version"] = requirements.get("version", 1)
+        report["requirements_key"] = str(novel_id)
+        return report
 
     def update_requirements(self, novel_id: str, new_inspiration: str) -> dict:
-        """追加/修改需求"""
-        existing = self._req_store.get(novel_id)
+        plan = self.get_novel(novel_id) or {}
+        existing, _ = self._load_requirements_contract(novel_id, plan)
         if existing:
-            result = self.requirement_decomposer.update_requirements(
-                existing, new_inspiration
-            )
+            result = self.requirement_decomposer.update_requirements(existing, new_inspiration)
         else:
-            result = self.decompose_requirements(novel_id, new_inspiration)
-        self._req_store.set(novel_id, result)
-        return result
-
+            result = self.requirement_decomposer.decompose(new_inspiration, plan=plan, existing_requirements={})
+        normalized = self._sync_requirements_contract(novel_id, plan, result)
+        if plan and getattr(self, "memory", None):
+            atomic_write_json(os.path.join(self.memory.get_novel_dir(novel_id), "plan.json"), plan)
+        return normalized
 
     async def verify_and_fix_loop(self, novel_id: str, max_iterations: int = 3
                                    ) -> dict:
@@ -91,6 +121,7 @@ class RequirementsMixin:
                 return
 
             # 收集失败反馈
+            requirements, _ = self._load_requirements_contract(novel_id, self.get_novel(novel_id))
             failed_feedback = self.requirement_supervisor.get_failed_feedback(
                 requirements
             )

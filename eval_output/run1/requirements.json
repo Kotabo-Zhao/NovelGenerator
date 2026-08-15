@@ -1,0 +1,468 @@
+{
+  "type": "requirements_decomposed",
+  "summary": "程序员陈默被'码神系统'绑定，用代码重构修仙世界，对抗垄断灵力的云上宗门，最终以开源精神解放世界。",
+  "core_theme": "代码重构修仙世界",
+  "subtask_count": 19,
+  "p0_count": 10,
+  "offline_mode": false,
+  "target_audience": "程序员、修仙小说爱好者、喜欢硬核设定的读者",
+  "subtasks": [
+    {
+      "id": "R001",
+      "title": "代码即功法体系",
+      "category": "worldbuilding",
+      "sub_category": "worldbuilding→power_system",
+      "priority": "P0",
+      "description": "设计'代码即功法'的独特设定：每一行代码都能转化为修仙功法，灵力网络是操作系统，修仙者运行程序。",
+      "must_include": [
+        "代码转化为功法的具体机制",
+        "灵力网络作为操作系统的概念",
+        "修仙者运行程序的比喻"
+      ],
+      "must_avoid": [
+        "传统修仙等级体系",
+        "灵力与代码脱节"
+      ],
+      "generation_hint": "在生成时，要详细描述代码如何映射到功法，例如：编写特定算法可提升修为，运行程序可施展法术。灵力网络类似互联网，修仙者通过运行程序来修炼和战斗。",
+      "quality_criteria": [
+        "是否明确说明代码与功法的转化规则",
+        "是否将灵力网络描述为操作系统",
+        "是否体现修仙者运行程序的设定"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R002",
+      "title": "代码操作规则",
+      "category": "worldbuilding",
+      "sub_category": "worldbuilding→special_rules",
+      "priority": "P0",
+      "description": "设定debug、注释、版本回滚等代码操作在修仙世界的具体效果：debug修复因果律错误，注释镇压心魔，版本回滚逆转时间线。",
+      "must_include": [
+        "debug修复因果律错误",
+        "注释镇压心魔",
+        "版本回滚逆转时间线"
+      ],
+      "must_avoid": [
+        "代码操作无限制",
+        "效果过于随意"
+      ],
+      "generation_hint": "在生成时，要明确每种代码操作的触发条件和限制，例如：debug需要定位到错误代码，注释需要写入特定位置，版本回滚有冷却时间或代价。",
+      "quality_criteria": [
+        "是否包含debug、注释、版本回滚三种操作",
+        "是否明确每种操作的效果和限制"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R003",
+      "title": "云上宗门垄断",
+      "category": "worldbuilding",
+      "sub_category": "worldbuilding→social_structure",
+      "priority": "P0",
+      "description": "设计反派势力'云上宗门'，他们垄断灵力，把底层修士当免费算力。",
+      "must_include": [
+        "云上宗门垄断灵力",
+        "底层修士被当作免费算力"
+      ],
+      "must_avoid": [
+        "反派脸谱化",
+        "垄断理由不合理"
+      ],
+      "generation_hint": "在生成时，要详细描述云上宗门的运作方式：他们控制灵力网络的核心节点，底层修士必须通过他们的平台修炼，但修炼产生的算力被他们无偿占用。",
+      "quality_criteria": [
+        "是否明确云上宗门的垄断地位",
+        "是否体现底层修士被当作免费算力"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R004",
+      "title": "核心矛盾设定",
+      "category": "worldbuilding",
+      "sub_category": "worldbuilding→core_conflict",
+      "priority": "P0",
+      "description": "设定世界核心矛盾：云上宗门垄断灵力与底层修士渴望自由修炼的冲突，以及主角用代码重构世界的目标。",
+      "must_include": [
+        "垄断与反垄断的冲突",
+        "主角重构世界的目标"
+      ],
+      "must_avoid": [
+        "矛盾过于简单",
+        "正邪分明无深度"
+      ],
+      "generation_hint": "在生成时，要深入挖掘矛盾的本质：云上宗门为何垄断？底层修士的困境是什么？主角的重构会带来什么影响？",
+      "quality_criteria": [
+        "是否明确核心矛盾",
+        "是否体现主角重构世界的目标"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R005",
+      "title": "主角陈默设定",
+      "category": "character",
+      "sub_category": "character→protagonist",
+      "priority": "P0",
+      "description": "设定主角陈默：程序员，冷静腹黑的架构师，不是传统废柴。",
+      "must_include": [
+        "程序员身份",
+        "冷静腹黑性格",
+        "架构师能力"
+      ],
+      "must_avoid": [
+        "废柴逆袭套路",
+        "性格单一"
+      ],
+      "generation_hint": "在生成时，要突出陈默的冷静和腹黑，例如：他善于分析系统漏洞，利用代码规则达成目的，表面不动声色，实则步步为营。",
+      "quality_criteria": [
+        "是否体现程序员身份",
+        "是否体现冷静腹黑性格",
+        "是否体现架构师能力"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R006",
+      "title": "主角金手指",
+      "category": "character",
+      "sub_category": "character→protagonist",
+      "priority": "P0",
+      "description": "设定主角金手指'码神系统'：绑定后写的代码转化为功法，系统提示灵力网络是操作系统。",
+      "must_include": [
+        "码神系统绑定",
+        "代码转化为功法",
+        "系统提示灵力网络是操作系统"
+      ],
+      "must_avoid": [
+        "金手指无敌无限制",
+        "系统过于机械"
+      ],
+      "generation_hint": "在生成时，要设计码神系统的具体功能：如何绑定？如何提示？系统是否有自己的意志？",
+      "quality_criteria": [
+        "是否包含码神系统",
+        "是否体现代码转化为功法",
+        "是否体现系统提示"
+      ],
+      "scope": "opening",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R007",
+      "title": "反派势力设定",
+      "category": "character",
+      "sub_category": "character→antagonist",
+      "priority": "P0",
+      "description": "设定反派'云上宗门'的具体人物和动机，他们垄断灵力，视底层修士为免费算力。",
+      "must_include": [
+        "云上宗门的具体人物",
+        "垄断灵力的动机",
+        "对底层修士的态度"
+      ],
+      "must_avoid": [
+        "反派无理由作恶",
+        "反派实力模糊"
+      ],
+      "generation_hint": "在生成时，要设计云上宗门的高层人物，如宗主、长老等，他们的动机可能是维持统治、追求力量，但要有合理性。",
+      "quality_criteria": [
+        "是否包含具体反派人物",
+        "是否明确垄断动机",
+        "是否体现对底层修士的态度"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R008",
+      "title": "配角设定",
+      "category": "character",
+      "sub_category": "character→supporting",
+      "priority": "P1",
+      "description": "设定至少2个配角，如主角的同事、底层修士代表，他们与主角互动，推动剧情。",
+      "must_include": [
+        "至少2个配角",
+        "配角身份和性格",
+        "与主角的关系"
+      ],
+      "must_avoid": [
+        "配角工具人化",
+        "配角无成长"
+      ],
+      "generation_hint": "在生成时，要设计配角的具体背景和性格，例如：一个被云上宗门压迫的底层修士，一个理解主角的同事，他们有自己的目标和弧线。",
+      "quality_criteria": [
+        "是否包含至少2个配角",
+        "是否明确配角身份和性格",
+        "是否体现与主角的关系"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R009",
+      "title": "主线剧情设计",
+      "category": "plot",
+      "sub_category": "plot→main_plot",
+      "priority": "P0",
+      "description": "设计主线：主角从被系统绑定到最终用开源精神解放修仙世界，核心冲突是与云上宗门的对抗。",
+      "must_include": [
+        "起点：被系统绑定",
+        "终点：开源解放世界",
+        "核心冲突：对抗云上宗门"
+      ],
+      "must_avoid": [
+        "主线松散",
+        "冲突解决无逻辑"
+      ],
+      "generation_hint": "在生成时，要规划主线的发展阶段：初期了解系统，中期对抗云上宗门，后期实现开源。",
+      "quality_criteria": [
+        "是否明确起点和终点",
+        "是否体现核心冲突"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R010",
+      "title": "关键转折点",
+      "category": "plot",
+      "sub_category": "plot→turning_points",
+      "priority": "P0",
+      "description": "设计至少3个重大转折点，如发现系统真相、云上宗门打压、开源计划实施。",
+      "must_include": [
+        "至少3个转折点",
+        "每个转折点推动剧情"
+      ],
+      "must_avoid": [
+        "转折生硬",
+        "转折无因果"
+      ],
+      "generation_hint": "在生成时，要设计转折点的具体事件和影响，例如：主角发现灵力网络的漏洞，云上宗门开始追杀，主角决定开源。",
+      "quality_criteria": [
+        "是否包含至少3个转折点",
+        "是否每个转折点推动剧情"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R011",
+      "title": "高潮设计",
+      "category": "plot",
+      "sub_category": "plot→climax",
+      "priority": "P0",
+      "description": "设计最终高潮：主角用开源精神解放修仙世界，与云上宗门的最终对决。",
+      "must_include": [
+        "最终对决",
+        "开源精神体现",
+        "解放世界的结果"
+      ],
+      "must_avoid": [
+        "无脑打脸",
+        "高潮无力"
+      ],
+      "generation_hint": "在生成时，要设计高潮的具体场景：主角如何用代码对抗云上宗门？开源如何实现？要体现程序员式浪漫。",
+      "quality_criteria": [
+        "是否包含最终对决",
+        "是否体现开源精神",
+        "是否体现解放世界"
+      ],
+      "scope": "ending",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R012",
+      "title": "子线设计",
+      "category": "plot",
+      "sub_category": "plot→subplots",
+      "priority": "P1",
+      "description": "设计子线，如主角的成长线、与配角的互动线、云上宗门内部矛盾等。",
+      "must_include": [
+        "至少一条子线",
+        "子线与主线相关"
+      ],
+      "must_avoid": [
+        "子线无关紧要",
+        "子线过多混乱"
+      ],
+      "generation_hint": "在生成时，要设计子线的具体内容，例如：主角从架构师到修仙者的成长，配角对主角的影响，云上宗门内部的权力斗争。",
+      "quality_criteria": [
+        "是否包含至少一条子线",
+        "是否与主线相关"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R013",
+      "title": "文笔风格",
+      "category": "style",
+      "sub_category": "style→tone",
+      "priority": "P1",
+      "description": "设定文笔风格：冷静、腹黑、硬核，避免无脑爽文。",
+      "must_include": [
+        "冷静叙述",
+        "腹黑主角心理描写",
+        "硬核设定解释"
+      ],
+      "must_avoid": [
+        "无脑打脸",
+        "浮夸描写"
+      ],
+      "generation_hint": "在生成时，要采用冷静客观的叙述风格，主角的心理活动要体现腹黑，对代码和修仙的设定要硬核解释。",
+      "quality_criteria": [
+        "是否体现冷静叙述",
+        "是否体现腹黑心理",
+        "是否硬核解释设定"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R014",
+      "title": "对话风格",
+      "category": "style",
+      "sub_category": "style→dialogue",
+      "priority": "P1",
+      "description": "设定对话风格：简洁有力，符合程序员和修仙者的身份。",
+      "must_include": [
+        "程序员术语",
+        "修仙者用语",
+        "对话简洁"
+      ],
+      "must_avoid": [
+        "对话冗长",
+        "不自然"
+      ],
+      "generation_hint": "在生成时，要设计对话内容，程序员角色使用技术术语，修仙者使用修炼术语，对话要简洁有力度。",
+      "quality_criteria": [
+        "是否包含程序员术语",
+        "是否包含修仙者用语",
+        "是否简洁有力"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R015",
+      "title": "节奏控制",
+      "category": "style",
+      "sub_category": "style→pacing",
+      "priority": "P1",
+      "description": "设定节奏：张弛有度，爽点硬核但合理，避免无脑打脸。",
+      "must_include": [
+        "张弛有度",
+        "爽点合理"
+      ],
+      "must_avoid": [
+        "节奏拖沓",
+        "爽点无脑"
+      ],
+      "generation_hint": "在生成时，要控制剧情节奏，战斗和修炼场景要紧张，日常和对话要放松，爽点要基于逻辑和设定。",
+      "quality_criteria": [
+        "是否张弛有度",
+        "是否爽点合理"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R016",
+      "title": "卷章规划",
+      "category": "structure",
+      "sub_category": "structure→volume_plan",
+      "priority": "P1",
+      "description": "规划全书卷数，建议3-5卷，每卷功能明确：开篇、发展、高潮、结局。",
+      "must_include": [
+        "3-5卷",
+        "每卷功能明确"
+      ],
+      "must_avoid": [
+        "卷数过多",
+        "功能模糊"
+      ],
+      "generation_hint": "在生成时，要规划卷的划分：第1卷开篇，主角绑定系统；第2卷发展，对抗云上宗门；第3卷高潮，开源计划；第4卷结局，解放世界。",
+      "quality_criteria": [
+        "是否规划3-5卷",
+        "是否每卷功能明确"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R017",
+      "title": "视角选择",
+      "category": "structure",
+      "sub_category": "structure→perspective",
+      "priority": "P1",
+      "description": "选择第三人称视角，以主角陈默为主，适当穿插其他角色视角。",
+      "must_include": [
+        "第三人称",
+        "主角视角为主"
+      ],
+      "must_avoid": [
+        "视角混乱",
+        "第一人称"
+      ],
+      "generation_hint": "在生成时，要采用第三人称限知视角，主要从陈默的视角叙述，偶尔切换到配角视角以补充信息。",
+      "quality_criteria": [
+        "是否第三人称",
+        "是否主角视角为主"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R018",
+      "title": "伏笔布局",
+      "category": "structure",
+      "sub_category": "structure→foreshadowing",
+      "priority": "P1",
+      "description": "设计跨章节伏笔，如码神系统的真相、灵力网络的漏洞、开源计划的关键。",
+      "must_include": [
+        "至少3个伏笔",
+        "伏笔有回收"
+      ],
+      "must_avoid": [
+        "伏笔无回收",
+        "伏笔生硬"
+      ],
+      "generation_hint": "在生成时，要设计伏笔的具体内容和回收时机，例如：码神系统的来源在后期揭示，灵力网络的漏洞在对抗中利用，开源计划的关键在结局体现。",
+      "quality_criteria": [
+        "是否包含至少3个伏笔",
+        "是否伏笔有回收"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    },
+    {
+      "id": "R019",
+      "title": "悬念布局",
+      "category": "structure",
+      "sub_category": "structure→suspense",
+      "priority": "P1",
+      "description": "设计开篇钩子、中期反转、结局收束，保持读者兴趣。",
+      "must_include": [
+        "开篇钩子",
+        "中期反转",
+        "结局收束"
+      ],
+      "must_avoid": [
+        "悬念无解",
+        "反转无逻辑"
+      ],
+      "generation_hint": "在生成时，要设计悬念的具体内容：开篇钩子可以是系统绑定，中期反转可以是云上宗门的真相，结局收束是开源实现。",
+      "quality_criteria": [
+        "是否包含开篇钩子",
+        "是否包含中期反转",
+        "是否包含结局收束"
+      ],
+      "scope": "global",
+      "chapter_numbers": []
+    }
+  ]
+}

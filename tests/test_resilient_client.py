@@ -2,14 +2,26 @@
 import unittest
 import time
 from unittest.mock import MagicMock, patch, PropertyMock
-from openai import RateLimitError, APITimeoutError, APIConnectionError, APIError
+import httpx
+from openai import (
+    RateLimitError,
+    APITimeoutError,
+    APIConnectionError,
+    APIError,
+    AuthenticationError,
+)
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from backend.core.resilient_client import (
-    ResilientLLMClient, RetryConfig, LLMCallMetrics,
-    get_metrics, reset_metrics,
+    LLMConfigurationError,
+    ResilientLLMClient,
+    RetryConfig,
+    LLMCallMetrics,
+    get_metrics,
+    llm_error_message,
+    reset_metrics,
 )
 
 
@@ -199,6 +211,34 @@ class TestResilientClientCreate(unittest.TestCase):
             )
         
         self.assertEqual(self.mock_client.chat.completions.create.call_count, 1)
+
+    def test_authentication_error_is_not_retried(self):
+        """凭据错误属于配置问题，等待重试不会自行恢复。"""
+        response = httpx.Response(
+            401,
+            request=httpx.Request("POST", "https://api.example.test/chat/completions"),
+        )
+        self.mock_client.chat.completions.create.side_effect = AuthenticationError(
+            "invalid api key", response=response, body=None,
+        )
+
+        with patch("backend.core.resilient_client.time.sleep") as sleep:
+            with self.assertRaises(AuthenticationError):
+                self.resilient.create(messages=[{"role": "user", "content": "test"}])
+
+        self.mock_client.chat.completions.create.assert_called_once()
+        sleep.assert_not_called()
+        self.assertEqual(get_metrics().retry_count, 0)
+
+    def test_placeholder_key_fails_before_network(self):
+        """测试占位 key 不应真的访问供应商。"""
+        self.mock_client.api_key = "sk-placeholder-for-tests"
+
+        with self.assertRaises(LLMConfigurationError):
+            self.resilient.create(messages=[{"role": "user", "content": "test"}])
+
+        self.mock_client.chat.completions.create.assert_not_called()
+        self.assertEqual(get_metrics().failed_calls, 1)
     
     def test_exponential_backoff(self):
         """验证退避时间递增"""
@@ -319,6 +359,41 @@ class TestResilientClientStream(unittest.TestCase):
         
         m = get_metrics()
         self.assertEqual(m.failed_calls, 1)
+
+    def test_stream_placeholder_key_fails_before_network(self):
+        import asyncio
+
+        self.mock_client.api_key = "sk-placeholder-for-tests"
+
+        async def _collect():
+            return [chunk async for chunk in self.resilient.create_stream(
+                messages=[{"role": "user", "content": "test"}],
+            )]
+
+        with self.assertRaises(LLMConfigurationError):
+            asyncio.run(_collect())
+        self.mock_client.chat.completions.create.assert_not_called()
+
+
+class TestPublicErrorMessage(unittest.TestCase):
+    def test_configuration_error_has_actionable_message(self):
+        message = llm_error_message(LLMConfigurationError("missing"), "场景生成")
+        self.assertIn("DEEPSEEK_API_KEY", message)
+        self.assertIn("重启服务器", message)
+
+    def test_authentication_error_does_not_expose_provider_body(self):
+        response = httpx.Response(
+            401,
+            request=httpx.Request("POST", "https://api.example.test/chat/completions"),
+        )
+        error = AuthenticationError(
+            "secret provider response", response=response, body={"token": "secret"},
+        )
+
+        message = llm_error_message(error, "角色对话")
+
+        self.assertIn("DEEPSEEK_API_KEY", message)
+        self.assertNotIn("secret", message)
 
 
 class TestGlobalMetrics(unittest.TestCase):

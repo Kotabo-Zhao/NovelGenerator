@@ -1139,6 +1139,11 @@ def get_style(name: str) -> dict:
     return _public_style_config(style_key)
 
 
+def has_style(name: str) -> bool:
+    """Return whether a style name/legacy alias is explicitly configured."""
+    return name in STYLES or name in _DISPLAY_TO_STYLE or name in STYLE_DISPLAY_NAMES
+
+
 def get_all_style_names() -> list:
     names = []
     for style_key in STYLES:

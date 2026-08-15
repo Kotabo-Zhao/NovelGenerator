@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from core.auth import AuthError
 
-from ..auth import require_owner, session_service
+from ..auth import is_internal_version, require_owner, session_service
 from ..deps import account_store, engine, job_store, ownership_store, quota_store
 from config import NOVELS_DIR
 
@@ -61,7 +61,11 @@ async def auth_me(owner_id: str = Depends(require_owner)):
     required_version = os.getenv("WECHAT_PRIVACY_VERSION", "v1")
     return {
         "authenticated": True,
-        "consent_required": not account_store.has_consent(owner_id, required_version),
+        "consent_required": (
+            False
+            if is_internal_version()
+            else not account_store.has_consent(owner_id, required_version)
+        ),
         "privacy_version": required_version,
     }
 

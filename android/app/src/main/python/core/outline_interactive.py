@@ -92,6 +92,15 @@ class OutlineInteractive:
             "summary": intent.get("summary", ""),
             "motivation": intent.get("deep_motivation", ""),
             "change_count": len(change_plan),
+            "change_plan": [
+                {
+                    "id": action.get("id", f"C{index + 1:03d}"),
+                    "priority": action.get("priority", 1),
+                    "description": (action.get("target") or {}).get("description", ""),
+                    "target": action.get("target", {}),
+                }
+                for index, action in enumerate(change_plan[:20])
+            ],
         }
         
         # ── Step 2: 逐条执行 ──

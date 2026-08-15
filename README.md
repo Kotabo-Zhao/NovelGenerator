@@ -163,8 +163,23 @@ python -m uvicorn api.server:app --host 0.0.0.0 --port 8000
 
 ### 导出
 
-- 单本导出 TXT / PDF
+- 单本导出 TXT / PDF / **EPUB**
 - 批量导出（勾选多本）
+
+### 创作者工具 (v2.8)
+
+面向长篇小说创作流程的 6 项增强功能（PC / 安卓双端）：
+
+| 功能 | 入口（PC） | 入口（安卓） | 说明 |
+|---|---|---|---|
+| **✂️ 章节精细操作** | 选中正文 → 悬浮工具条（续写/扩写/精简/重写）；工具栏「🕘版本」 | 选中正文 → 底部浮动条；「⋯」菜单 | 章节级局部修改 + 版本历史回滚（最多 5 版） |
+| **🔍 全文检索** | 书架头部 / 写作页工具栏 | 书架头部图标 / 「⋯」菜单 | 全书搜章节正文、大纲、角色卡 |
+| **📖 世界圣经** | 书卡悬停 / 写作页工具栏 | 书卡长按菜单 / 「⋯」菜单 | 人物/地点/专有名词档案 + 关系图 + AI 名词提取 |
+| **📊 统计仪表盘** | 书卡悬停 / 写作页工具栏 | 书卡长按菜单 / 「⋯」菜单 | 总字数/章节/均章/完成度 + 每章柱状 + 目标设定 |
+| **💡 灵感箱** | 书架头部 | 书架头部图标 | 随时记灵感 + 标签过滤 + 素材库 + 一键开新书 |
+| **🔬 设定扫描** | 写作页工具栏 | 「⋯」菜单 | 跨章扫描角色/地点/名词属性矛盾，报告可定位 |
+
+> 详细设计见 `docs/creator-tool-enhancements-design.md`（§0.5 前端双方案）。
 
 ---
 
@@ -346,6 +361,22 @@ NovelGenerator/
 | `POST` | `/api/novels/export/batch` | 批量导出 |
 | `GET` | `/api/health` | 健康检查 |
 | `POST` | `/api/repair-states` | 修复所有小说状态 (v2.2.1) |
+
+### 创作者工具 API (v2.8)
+
+| 方法 | 路径 | 说明 |
+|:---|:---|:---|
+| `GET` | `/api/novels/{id}/search?q=` | 全文检索（章节/大纲/角色卡） |
+| `POST` | `/api/novels/{id}/chapters/{n}/surgical` | 章节续写/扩写/精简/重写/拆分/合并 |
+| `GET` | `/api/novels/{id}/chapters/{n}/versions` | 版本历史列表 |
+| `POST` | `/api/novels/{id}/chapters/{n}/versions/rollback` | 回滚到指定版本 |
+| `GET/PUT` | `/api/novels/{id}/bible` | 世界圣经读写（人物/地点/名词/关系） |
+| `POST` | `/api/novels/{id}/bible/terms/extract` | AI 提取专有名词候选 |
+| `GET` | `/api/novels/{id}/bible/relations/render` | 关系图数据 |
+| `GET` | `/api/novels/{id}/stats` | 写作统计（字数/分布/目标） |
+| `PUT` | `/api/novels/{id}/stats/goal` | 保存写作目标 |
+| `GET/POST` | `/api/ideas` · `/api/ideas/materials` | 灵感箱 / 素材库 CRUD |
+| `POST` | `/api/novels/{id}/scan-consistency` | 跨章设定一致性扫描 |
 
 ---
 

@@ -24,8 +24,60 @@ from ..beat_decomposer import BeatDecomposer, Beat
 from ..pacing_checker import PacingChecker
 from ..evaluation_system import evaluate_chapter
 from ..chapter_summarizer import check_and_compress
-from ..storygraph_interventions import analyze_and_inject
 from ..usage_context import report_response_usage
+
+
+# ── 章节生成并发锁（防两个 Tab/进程并发生成同一章）──
+_GEN_LOCK_STALE_SECONDS = 900  # 15 分钟，必须大于一章真实生成时长（多次 LLM 调用常超 5 分钟）
+
+
+def _pid_alive(pid: int) -> bool:
+    """跨平台探测进程是否存活。无法判定时保守返回 True，绝不误删活跃锁。"""
+    if not pid or pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return True
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+def _read_lock_pid(path: str) -> int:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return int(f.read().strip().split("|", 1)[0])
+    except (OSError, ValueError):
+        return 0
+
+
+def _write_gen_lock(path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"{os.getpid()}|{time.time()}")
+
+
+def _gen_lock_is_stale(lock_file: str) -> bool:
+    """判断章节锁是否可安全清除：PID 已死，或无 PID 且超时。"""
+    try:
+        lock_age = time.time() - os.path.getmtime(lock_file)
+    except OSError:
+        return True
+    pid = _read_lock_pid(lock_file)
+    if pid:
+        return not _pid_alive(pid)
+    return lock_age >= _GEN_LOCK_STALE_SECONDS
 
 
 def _normalize_chapter_text(text: str) -> str:
@@ -273,22 +325,172 @@ class GenerationMixin:
                     return ch
         return None
 
+    # ── v2.8: 章节大纲细化（旧大纲只有一句话 summary → 扩成 scene_beats 事件契约）──
+
+    def _chapter_needs_outline_expansion(self, chapter_outline: dict) -> bool:
+        """判断本章大纲是否足够支撑正文生成：
+        - 缺 scene_beats（旧版大纲/手工编辑）
+        - 或 scene_beats 是占位符（key_action 与 summary 无关、全是通用描述）
+        """
+        try:
+            beats = chapter_outline.get("scene_beats") or []
+            if not beats:
+                return True
+            summary = str(chapter_outline.get("summary", "") or "").strip()
+            # 占位判定：summary 太短，或 beats 无具体 key_action
+            if len(summary) < 20:
+                return True
+            concrete = 0
+            for b in beats:
+                if isinstance(b, dict):
+                    ka = str(b.get("key_action", "") or "").strip()
+                    if ka and len(ka) > 8 and "未设定" not in ka and "占位" not in ka:
+                        concrete += 1
+                elif isinstance(b, str) and b.strip() and len(b.strip()) > 8:
+                    concrete += 1
+            if concrete < 3:
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _expand_chapter_outline(self, plan: dict, chapter_outline: dict,
+                                novel_id: str, chapter_num: int) -> bool:
+        """用 LLM 把单句 summary 细化成 5 个 scene_beats 事件契约，写回 plan.json。
+
+        返回是否成功。失败时静默返回 False（正文仍可按旧大纲生成，不阻断主流程）。
+        """
+        try:
+            summary = str(chapter_outline.get("summary", "") or "").strip()
+            title = str(chapter_outline.get("title", "") or f"第{chapter_num}章")
+            hook = str(chapter_outline.get("hook", "") or "").strip()
+            chars = ", ".join(chapter_outline.get("characters", []) or ["主角"])
+            bridge = str(chapter_outline.get("bridge_to_next", "") or "").strip()
+            cause = str(chapter_outline.get("cause_from_prev", "") or "").strip()
+            prev_tail = ""
+            if chapter_num > 1:
+                try:
+                    _pt = self.memory.read_chapter(novel_id, chapter_num - 1)
+                    if _pt:
+                        _lines = [l for l in _pt.strip().splitlines() if l.strip()]
+                        prev_tail = (_lines[-1] if _lines else _pt.strip()[-200:])[:150]
+                except Exception:
+                    pass
+
+            prompt = (
+                f"你是资深网文大纲细化师。现有章节大纲信息不足，请把这一章扩写成 5 个连续事件节拍（scene_beats），"
+                f"作为正文生成的硬性事件契约。\n\n"
+                f"小说：{plan.get('title', '')}（{plan.get('genre', '')} / {plan.get('style', '')}）\n"
+                f"章节：第{chapter_num}章「{title}」\n"
+                f"核心事件：{summary}\n"
+                f"章末钩子：{hook or '未指定，请自设'}\n"
+                f"出场角色：{chars}\n"
+                f"承接：{cause or '开篇'}\n"
+                f"后续：{bridge or '未指定'}\n"
+                + (f"上一章结尾：「{prev_tail}」\n" if prev_tail else "")
+                + (
+                    f"\n要求：\n"
+                    f"1. 输出 JSON 数组，5 个元素，依次为：开篇钩子、冲突升级、转折高潮、余波收束、章末钩子。\n"
+                    f"2. 每个 beat 字段：{{\"beat\":序号,\"name\":\"节拍名\",\"function\":\"该节拍在剧情中的作用\","
+                    f"\"key_action\":\"本章该节点发生的具体事件（谁对谁做了什么，15-40字，必须是本章具体情节，不得是通用描述）\"}}\n"
+                    f"3. key_action 必须承接「{summary}」展开具体动作与对话事件，禁止写「主角继续前进」「两人交谈」这类空话。\n"
+                    f"4. 5 个 beat 合起来必须完整覆盖本章核心事件并自然推进到章末钩子。\n"
+                    f"只输出 JSON 数组，不要任何解释、不要 markdown 代码块。"
+                )
+            )
+            resp = self.writer._create(
+                messages=[
+                    {"role": "system", "content": "你只输出合法 JSON，不输出任何其他文字。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                max_tokens=1800,
+            )
+            raw = (resp.choices[0].message.content or "").strip()
+            # 剥掉可能的 markdown 代码块围栏
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+            import json as _json
+            beats = _json.loads(raw)
+            if not isinstance(beats, list) or len(beats) < 3:
+                log.warning(f"Ch{chapter_num} outline expansion: bad beats shape ({type(beats).__name__})")
+                return False
+            # 规范化 beat 字段
+            norm = []
+            for i, b in enumerate(beats[:5], 1):
+                if isinstance(b, dict):
+                    norm.append({
+                        "beat": int(b.get("beat", i)),
+                        "name": str(b.get("name", f"节拍{i}"))[:20],
+                        "function": str(b.get("function", ""))[:100],
+                        "key_action": str(b.get("key_action", ""))[:120],
+                    })
+                elif isinstance(b, str):
+                    norm.append({"beat": i, "name": f"节拍{i}", "function": "", "key_action": str(b)[:120]})
+            if not any(n["key_action"] for n in norm):
+                log.warning(f"Ch{chapter_num} outline expansion: all beats lack key_action")
+                return False
+            # 写回 plan.json（持久化，后续生成/重生成直接复用）
+            chapter_outline["scene_beats"] = norm
+            if not chapter_outline.get("conflict_intensity"):
+                chapter_outline["conflict_intensity"] = 3
+            try:
+                from ..atomic_io import atomic_write_json
+                _plan_path = os.path.join(self.memory.get_novel_dir(novel_id), "plan.json")
+                atomic_write_json(_plan_path, plan)
+            except Exception as _save_err:
+                log.warning(f"Ch{chapter_num} outline expansion persist failed (non-fatal): {_save_err}")
+            log.info(f"Ch{chapter_num} outline expanded: {len(norm)} beats generated from one-line summary")
+            return True
+        except Exception as e:
+            log.warning(f"Ch{chapter_num} outline expansion failed (non-fatal): {e}")
+            return False
+
+    def _render_scene_beats(self, chapter_outline: dict) -> str:
+        """把 chapter_outline 的 scene_beats 渲染为紧凑文本（供精简版硬约束注入）。"""
+        try:
+            beats = chapter_outline.get("scene_beats") or []
+            if not beats:
+                return ""
+            lines = []
+            for i, b in enumerate(beats[:6], 1):
+                if isinstance(b, dict):
+                    ka = str(b.get("key_action", "") or "").strip()
+                    name = str(b.get("name", "") or "").strip()
+                    if ka:
+                        lines.append(f"  {i}. {name}：{ka}" if name else f"  {i}. {ka}")
+                elif b is not None and str(b).strip():
+                    lines.append(f"  {i}. {str(b).strip()}")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
+    def _hard_outline_text(self, chapter_outline: dict) -> str:
+        """精简版「本章大纲·硬约束」：含标题/核心事件/钩子/角色 + scene_beats（如有）。
+
+        与 build_writer_context 的 L5 完整大纲互补：本精简版保证 scene_beats 在
+        allocate_context 高优先级预算内必定保留，正文生成不会退化成只看一句话 summary。
+        """
+        text = (
+            "标题：{title}\n核心事件：{summary}\n结尾钩子：{hook}\n角色：{characters}".format(
+                title=chapter_outline.get("title", ""),
+                summary=chapter_outline.get("summary", ""),
+                hook=chapter_outline.get("hook", ""),
+                characters=", ".join(chapter_outline.get("characters", []) or []),
+            )
+        )
+        beats = self._render_scene_beats(chapter_outline)
+        if beats:
+            text += "\n场景节拍：\n" + beats
+        return text
+
     def _decompose_chapter_beats(self, chapter_outline: dict, chapter_num: int,
                                  novel_dir: str, is_first: bool = False) -> list:
         """AUDIT P1-1: 统一的章节 beat 分解助手（普通/原子路径共用节奏骨架）"""
-        is_climax = False
-        try:
-            from ..arcplanner import is_arc_climax
-            sg_path = os.path.join(novel_dir, "storygraph.json")
-            if os.path.exists(sg_path):
-                sg_data = safe_read_json(sg_path)
-                if sg_data and sg_data.get("arcs"):
-                    for arc in sg_data["arcs"]:
-                        if is_arc_climax(arc, chapter_num):
-                            is_climax = True
-                            break
-        except Exception:
-            pass
+        is_climax = bool(chapter_outline.get("is_climax") or chapter_outline.get("climax"))
         chars = chapter_outline.get("characters", []) or []
         decomposer = BeatDecomposer(seed=chapter_num * 100 + int(time.time()) % 100)
         return decomposer.decompose(
@@ -339,105 +541,83 @@ class GenerationMixin:
 
     def build_requirements_instruction(self, novel_id: str, chapter_num: int,
                                        plan: dict = None) -> str:
-        """v2.4.7: 将用户需求注入章节生成上下文
-
-        问题: 需求拆解在创建时执行、大纲阶段也注入了，但章节正文生成
-        (writer) 时需求完全丢失 → 用户感觉"生成结果没反映需求"。
-        修复: 从 RequirementsStore 读取需求，按章节范围过滤
-        (global/opening/ending)，只注入 P0/P1 与当前章节相关的条目，
-        压缩为轻量指令追加到 writer 上下文。
-
-        Args:
-            novel_id: 小说ID（目录名）
-            chapter_num: 当前章节号
-            plan: 已有 plan（用于解析 title 作为 req key，可空）
-
-        Returns:
-            需求指令文本（空字符串 = 无需求或读取失败）
-        """
+        """Build the complete, chapter-scoped requirement contract for the writer."""
         try:
+            from ..requirements_contract import active_requirements
+
             req_store = getattr(self, "_req_store", None)
             if req_store is None:
                 return ""
-
-            # requirements.db 以 plan title 为 key；先解析 title
-            title = ""
-            if plan and plan.get("title"):
-                title = plan["title"]
-            if not title:
+            plan_data = plan if isinstance(plan, dict) else {}
+            if not plan_data:
                 try:
-                    plan_data = self.memory.read("plan", novel_id)
-                    if isinstance(plan_data, dict):
-                        title = plan_data.get("title", "")
+                    loaded = self.memory.read("plan", novel_id)
+                    plan_data = loaded if isinstance(loaded, dict) else {}
                 except Exception:
-                    pass
-            if not title:
+                    plan_data = {}
+            meta_req = (plan_data.get("_meta") or {}).get("requirements") or {}
+            keys = [meta_req.get("store_key"), novel_id, plan_data.get("title")]
+            requirements = {}
+            for key in keys:
+                if key:
+                    requirements = req_store.get(str(key)) or {}
+                    if requirements:
+                        break
+            if not requirements:
                 return ""
-
-            reqs = req_store.get(title)
-            if not reqs:
-                return ""
-
-            subtasks = reqs.get("subtasks", [])
-            if not subtasks:
-                return ""
-
-            # 判断本章在全书的位置（用于 scope 过滤）
-            total = 0
-            if plan and plan.get("outline", {}).get("total_chapters"):
-                total = int(plan["outline"]["total_chapters"])
-            if not total:
-                try:
-                    total = int(plan_data.get("outline", {}).get("total_chapters", 0))
-                except Exception:
-                    total = 0
-            is_opening = chapter_num <= max(2, total // 10) if total else chapter_num <= 3
-            is_ending = chapter_num >= total - max(1, total // 10) if total else False
-
-            # 过滤：global 恒生效；opening 只在前 10% 章节；ending 只在最后 10%
-            active = []
-            for t in subtasks:
-                scope = t.get("scope", "global")
-                if scope == "opening" and not is_opening:
-                    continue
-                if scope == "ending" and not is_ending:
-                    continue
-                if t.get("status") == "resolved":
-                    continue
-                active.append(t)
-
+            total = int(((plan_data.get("outline") or {}).get("total_chapters") or 0))
+            active = active_requirements(requirements, int(chapter_num), total)
             if not active:
                 return ""
 
-            # 压缩为轻量指令：P0 全部 + P1 只留 title/must_include 关键信息
-            lines = ["## 🎯 用户需求（必须逐条满足，写入本章剧情）"]
-            for t in active[:20]:
-                pri = t.get("priority", "P1")
-                title_t = t.get("title", "")
-                must_inc = t.get("must_include", []) or []
-                desc = t.get("description", "") or ""
-                scope_label = {"opening": "【开篇】", "ending": "【结局】", "mid": "【中期】"}.get(
-                    t.get("scope", "global"), "")
-                if pri == "P0":
-                    line = f"- [P0]{scope_label}{title_t}"
-                    if must_inc:
-                        line += "：包含 " + "、".join(str(m)[:24] for m in must_inc[:3])
-                    lines.append(line)
-                elif len(lines) < 12:  # P1 限量，防止上下文膨胀
-                    line = f"- {scope_label}{title_t}"
-                    if must_inc:
-                        line += "（" + "、".join(str(m)[:18] for m in must_inc[:2]) + "）"
-                    lines.append(line)
-                del desc  # 描述不注入（大纲已体现），节省 token
-
-            text = "\n".join(lines)
-            log.info(f"Requirements injected for Ch{chapter_num}: {len(active)}/{len(subtasks)} active")
-            return text
-        except Exception as e:
-            log.warning(f"Requirements instruction build failed (non-fatal): {e}")
+            lines = [
+                "## USER REQUIREMENT CONTRACT",
+                "Satisfy every active item in this chapter. Do not mention this contract in the prose.",
+            ]
+            for item in active[:20]:
+                lines.append(
+                    f"- [{item.get('id', '')}][{item.get('priority', 'P1')}] "
+                    f"{item.get('title', '')} (scope={item.get('scope', 'global')})"
+                )
+                for label, value in (
+                    ("description", item.get("description")),
+                    ("must_include", ", ".join(map(str, item.get("must_include") or []))),
+                    ("must_avoid", ", ".join(map(str, item.get("must_avoid") or []))),
+                    ("generation_hint", item.get("generation_hint")),
+                    ("quality_criteria", "; ".join(map(str, item.get("quality_criteria") or []))),
+                ):
+                    if value:
+                        lines.append(f"  {label}: {str(value)[:700]}")
+            return "\n".join(lines)
+        except Exception as exc:
+            log.warning("Requirements contract build failed (non-fatal): %s", exc)
             return ""
 
-    # ── 尺度关键词（命中则注入成熟题材指令）──
+    def _evaluate_chapter_requirements(self, novel_id: str, chapter_num: int,
+                                       text: str, plan: dict | None = None) -> dict:
+        """Persist deterministic requirement evidence after the final text mutation."""
+        try:
+            from ..requirements_contract import evaluate_requirements_against_text
+
+            requirements = {}
+            if hasattr(self, "_load_requirements_contract"):
+                requirements, _ = self._load_requirements_contract(novel_id, plan)
+            if not requirements:
+                req_store = getattr(self, "_req_store", None)
+                key = (plan or {}).get("title") or novel_id
+                requirements = req_store.get(key) if req_store else {}
+            total = int(((plan or {}).get("outline") or {}).get("total_chapters") or 0)
+            report = evaluate_requirements_against_text(
+                text, requirements, chapter_num=chapter_num, total_chapters=total
+            )
+            state = self.memory.get_novel_state(novel_id)
+            state.setdefault("requirement_compliance", {})[str(chapter_num)] = report
+            self.memory.save_novel_state(novel_id, state)
+            return report
+        except Exception as exc:
+            log.warning("Chapter requirement evaluation skipped: %s", exc)
+            return {"overall_status": "error", "error": str(exc), "results": []}
+
     _SCALE_KEYWORDS = (
         "成人", "亲密", "情欲", "尺度", "暧昧", "激情", "欲望", "肉体",
         "性感", "擦边", "香艳", "露骨", "床戏", "缠绵", "荷尔蒙",
@@ -510,24 +690,17 @@ class GenerationMixin:
         novel_dir = self.memory.get_novel_dir(novel_id)
         lock_file = os.path.join(novel_dir, f".generating_{chapter_num:04d}.lock")
         
-        # 并发锁（与generate_chapter_stream共享）
+        # 并发锁（与generate_chapter_stream共享）—— PID 存活判定，不再按 300s 误删活跃锁
         if os.path.exists(lock_file):
+            if not _gen_lock_is_stale(lock_file):
+                yield {"type": "error", "message": f"第{chapter_num}章正在生成中"}
+                return
             try:
-                lock_age = time.time() - os.path.getmtime(lock_file)
-                if lock_age < 300:
-                    yield {"type": "error", "message": f"第{chapter_num}章正在生成中"}
-                    return
-                else:
-                    os.remove(lock_file)
+                os.remove(lock_file)
             except OSError:
                 pass
         
-        os.makedirs(novel_dir, exist_ok=True)
-        try:
-            with open(lock_file, "w") as lf:
-                lf.write(str(time.time()))
-        except IOError:
-            pass
+        _write_gen_lock(lock_file)
         
         try:
             plan = self.get_novel(novel_id)
@@ -544,6 +717,15 @@ class GenerationMixin:
                     "target_words": config.DEFAULT_CHAPTER_WORDS,
                 }
             
+            # ── v2.8: 大纲细化——旧大纲只有一句话 summary 时，先扩成 scene_beats 事件契约 ──
+            if self._chapter_needs_outline_expansion(chapter_outline):
+                yield {"type": "status", "message": f"细化第{chapter_num}章大纲（生成事件节拍）..."}
+                self._expand_chapter_outline(plan, chapter_outline, novel_id, chapter_num)
+                # 重新构建上下文以纳入新生成的 scene_beats
+                chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+            else:
+                chapter_context = None
+            
             # ── v2.9 Phase 0: 生成章节蓝图 ──
             yield {"type": "status", "message": "生成章节蓝图..."}
 
@@ -552,7 +734,8 @@ class GenerationMixin:
             style = plan.get("style", "热血爽文")
 
             # 构建完整写作上下文（常规Writer用的五层上下文）
-            chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
+            if chapter_context is None:
+                chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
             
             # v2.4.7: 注入用户需求（章节正文此前完全丢失需求传导）
             try:
@@ -602,12 +785,7 @@ class GenerationMixin:
                 [
                     ContextSection(
                         "本章大纲 · 硬约束",
-                        "标题：{title}\n核心事件：{summary}\n结尾钩子：{hook}\n角色：{characters}".format(
-                            title=chapter_outline.get("title", ""),
-                            summary=chapter_outline.get("summary", ""),
-                            hook=chapter_outline.get("hook", ""),
-                            characters=", ".join(chapter_outline.get("characters", []) or []),
-                        ),
+                        self._hard_outline_text(chapter_outline),
                         priority=100,
                         required=True,
                     ),
@@ -670,40 +848,9 @@ class GenerationMixin:
             
             is_first = (chapter_num == 1)
             
-            # 判断是否高潮章（检查 arcplan）
-            is_climax = False
-            try:
-                from ..arcplanner import is_arc_climax
-                sg_path = os.path.join(novel_dir, "storygraph.json")
-                if os.path.exists(sg_path):
-                    sg_data = safe_read_json(sg_path)
-                    if sg_data and sg_data.get("arcs"):
-                        for arc in sg_data["arcs"]:
-                            if is_arc_climax(arc, chapter_num):
-                                is_climax = True
-                                break
-            except Exception:
-                pass
-            
-            # 获取角色快照
-            chars = chapter_outline.get("characters", [])
-            try:
-                sg_path = os.path.join(novel_dir, "storygraph.json")
-                if os.path.exists(sg_path):
-                    sg_data = safe_read_json(sg_path)
-                    if sg_data:
-                        snaps = sg_data.get("char_snapshots", {})
-                        char_context = "\n".join(
-                            f"{n}: {s.get('current_emotion','?')} @{s.get('current_location','?')}"
-                            for n, s in snaps.items() if n in chars
-                        )
-                    else:
-                        char_context = ""
-                else:
-                    char_context = ""
-            except Exception:
-                char_context = ""
-            
+            is_climax = bool(chapter_outline.get("is_climax") or chapter_outline.get("climax"))
+            chars = chapter_outline.get("characters", []) or []
+            char_context = str(chapter_outline.get("character_context") or "")[:1200]
             decomposer = BeatDecomposer(seed=chapter_num * 100 + int(time.time()) % 100)
             beats = decomposer.decompose(
                 chapter_outline, chapter_num,
@@ -718,14 +865,6 @@ class GenerationMixin:
             # ── Phase 2: 逐 beat 独立生成 ──
             # (genre/style 已在 Phase 0 定义)
             style_guide = _get_style_guide(style, genre)
-            
-            # v2.3.1: 剧情图谱反哺 + 活人感注入
-            try:
-                intervention_ctx = analyze_and_inject(novel_dir, chapter_num, chapter_outline)
-                if intervention_ctx:
-                    char_context += "\n\n" + intervention_ctx
-            except Exception as e:
-                log.warning(f"Intervention injection skipped in atomic: {e}")
             
             beats_text = []
             async for beat_result in self.atomic_writer.write_beats_stream(
@@ -877,6 +1016,10 @@ class GenerationMixin:
                 full_text,
                 target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
             )
+            _requirement_report = self._evaluate_chapter_requirements(
+                novel_id, chapter_num, full_text, plan
+            )
+            yield {"type": "requirement_compliance", "chapter": chapter_num, **_requirement_report}
             _final_quality = await asyncio.to_thread(
                 PacingChecker(self.client, self.model).quick_quality_check,
                 full_text,
@@ -899,23 +1042,6 @@ class GenerationMixin:
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num,
                    "atomic": True, "beat_count": len(beats)}
             
-            # 更新校验
-            try:
-                from ..storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
-                sg_path = os.path.join(novel_dir, "storygraph.json")
-                sg_data = safe_read_json(sg_path) or {}
-                sg = StoryGraph.from_dict(sg_data)
-                extract_result = await asyncio.to_thread(
-                    extract_storygraph_from_chapter,
-                    chapter_text=full_text, current_graph=sg_data,
-                    chapter_num=chapter_num, chapter_outline=chapter_outline,
-                    client=self.client, model=self.model,
-                )
-                apply_extraction(sg, extract_result, chapter_num)
-                atomic_write_json(sg_path, sg.to_dict())
-                self.memory.invalidate_all(novel_id)
-            except Exception as e:
-                log.warning(f"StoryGraph update skipped in atomic: {e}")
             
         except Exception as e:
             log.exception(f"Atomic chapter generation failed: {e}")
@@ -1014,32 +1140,28 @@ class GenerationMixin:
             batch_mode: v2.6 批量模式 — 速度优先：
                 - Humanizer 质量阈值 70→60，改写后跳过再检测（省1-2次LLM）
                 - 一致性校验只跑 L1 规则（省1次LLM）
-                - 桥接/ContextUpdater/storygraph 提取后台化（省3次关键路径LLM）
+                - 桥接/ContextUpdater 后台化（省2次关键路径LLM）
                 单章模式保持全量校验（质量优先）
         """
-        # ── 并发锁：防止同一章被两个Tab同时生成 ──
+        # ── 并发锁：防止同一章被两个Tab同时生成（PID 存活判定）──
         novel_dir = self.memory.get_novel_dir(novel_id)
         lock_file = os.path.join(novel_dir, f".generating_{chapter_num:04d}.lock")
         if os.path.exists(lock_file):
-            # 检查锁是否过期（超过300秒视为僵尸锁）
+            if not _gen_lock_is_stale(lock_file):
+                try:
+                    lock_age = time.time() - os.path.getmtime(lock_file)
+                except OSError:
+                    lock_age = 0
+                yield {"type": "error", "message": f"⏳ 第{chapter_num}章正在生成中（已运行{int(lock_age)}秒），请等待完成后再试"}
+                return
             try:
-                lock_age = time.time() - os.path.getmtime(lock_file)
-                if lock_age < 300:
-                    yield {"type": "error", "message": f"⏳ 第{chapter_num}章正在生成中（已运行{int(lock_age)}秒），请等待完成后再试"}
-                    return
-                else:
-                    log.warning(f"Stale lock file for chapter {chapter_num}, removing")
-                    os.remove(lock_file)
+                log.warning(f"Stale lock file for chapter {chapter_num}, removing")
+                os.remove(lock_file)
             except OSError:
                 pass
         
-        # 写入锁文件
-        os.makedirs(novel_dir, exist_ok=True)
-        try:
-            with open(lock_file, "w") as lf:
-                lf.write(str(time.time()))
-        except IOError:
-            pass  # 锁写入失败不阻塞，继续生成
+        # 写入锁文件（含 PID）
+        _write_gen_lock(lock_file)
         
         try:
             plan = self.get_novel(novel_id)
@@ -1076,6 +1198,11 @@ class GenerationMixin:
                     "hook": _fb_hook,
                     "target_words": config.DEFAULT_CHAPTER_WORDS,
                 }
+
+            # ── v2.8: 大纲细化——旧大纲只有一句话 summary 时，先扩成 scene_beats 事件契约 ──
+            if self._chapter_needs_outline_expansion(chapter_outline):
+                yield {"type": "status", "message": f"细化第{chapter_num}章大纲（生成事件节拍）..."}
+                self._expand_chapter_outline(plan, chapter_outline, novel_id, chapter_num)
 
             # 组装上下文
             context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
@@ -1135,39 +1262,19 @@ class GenerationMixin:
                 log.warning(f"Voices injection skipped: {vce}")
             log.info(f"Character state injected into writer context ({len(char_ctx)} chars)")
 
-            # 方案C: 在弧高潮章自动注入反转设计
-            try:
-                sg_path = os.path.join(self.memory.get_novel_dir(novel_id), "storygraph.json")
-                if os.path.exists(sg_path):
-                    sg_data = safe_read_json(sg_path)
-                    if sg_data and sg_data.get("arcs"):
-                        from ..arcplanner import is_arc_climax
-                        for arc in sg_data["arcs"]:
-                            if is_arc_climax(arc, chapter_num):
-                                twist = self.twist_designer.design_chapter_twist(
-                                    chapter_num=chapter_num,
-                                    plan=plan,
-                                    chapter_outline=chapter_outline,
-                                )
-                                if twist and twist.get("suggestion"):
-                                    context += f"\n\n【建议反转】{twist['suggestion']}\n"
-                                    log.info(f"Twist injected for arc climax Ch{chapter_num}")
-                                break
-            except Exception as e:
-                log.warning(f"Twist injection skipped: {e}")
-
-            # ── v2.3.1: 剧情图谱反哺 — 主动干预指令注入 ──
-            try:
-                novel_dir = self.memory.get_novel_dir(novel_id)
-                intervention_ctx = analyze_and_inject(
-                    novel_dir, chapter_num, chapter_outline
-                )
-                if intervention_ctx:
-                    context += "\n\n" + intervention_ctx
-                    log.info(f"StoryGraph interventions injected for Ch{chapter_num}")
-            except Exception as e:
-                log.warning(f"Intervention injection skipped: {e}")
-
+            # 高潮标记由正常线大纲显式提供，不再依赖剧情图谱。
+            if chapter_outline.get("is_climax") or chapter_outline.get("climax"):
+                try:
+                    twist = self.twist_designer.design_chapter_twist(
+                        chapter_num=chapter_num,
+                        plan=plan,
+                        chapter_outline=chapter_outline,
+                    )
+                    if twist and twist.get("twist_text"):
+                        context += "\n\n## 本章反转设计\n" + str(twist["twist_text"])[:1200]
+                        log.info(f"Twist injected for climax chapter {chapter_num}")
+                except Exception as e:
+                    log.warning(f"Twist injection skipped: {e}")
             # 注入修改意见（重生成场景）
             if feedback and feedback.strip():
                 context = (
@@ -1203,12 +1310,7 @@ class GenerationMixin:
                 [
                     ContextSection(
                         "本章大纲 · 硬约束",
-                        "标题：{title}\n核心事件：{summary}\n结尾钩子：{hook}\n角色：{characters}".format(
-                            title=chapter_outline.get("title", ""),
-                            summary=chapter_outline.get("summary", ""),
-                            hook=chapter_outline.get("hook", ""),
-                            characters=", ".join(chapter_outline.get("characters", []) or []),
-                        ),
+                        self._hard_outline_text(chapter_outline),
                         priority=100,
                         required=True,
                     ),
@@ -1527,7 +1629,8 @@ class GenerationMixin:
                     # 任务完成后自动清理（防止未 await 时残留）
                     _btask.add_done_callback(lambda _fut, _k=_bkey: self._pending_bridges.pop(_k, None))
                 else:
-                    _extract_bridge()
+                    # 非批量路径也走线程池，避免同步 LLM 调用（含重试 time.sleep）阻塞事件循环。
+                    await asyncio.to_thread(_extract_bridge)
             except Exception as e:
                 log.warning(f"ChapterBridge extraction failed (non-fatal): {e}")
 
@@ -1589,7 +1692,7 @@ class GenerationMixin:
                     plan=plan,
                     prev_chapters=prev_chapters_ctx,
                     global_state=gs_ctx,
-                    run_deep=not batch_mode,  # v2.6: 批量模式只跑 L1 规则（省1次LLM），单章保持 L1+L2
+                    run_deep=False,  # 精简：此处只做 L1 规则快筛；L2 深度校验统一由下方「方案A」块执行，避免每章 2 次 L2 LLM 校验
                 )
                 all_v = cv_result.get("violations", [])
                 p0_v = [v for v in all_v if v.get("severity") == "P0"]
@@ -1726,43 +1829,11 @@ class GenerationMixin:
                 if batch_mode:
                     asyncio.ensure_future(asyncio.to_thread(_ctx_update))
                 else:
-                    _ctx_update()
+                    # v3.8: 单章模式也放线程池——ContextUpdater 内含同步 LLM（含 sleep 重试），
+                    # 直接调用会阻塞整个事件循环（其他用户的 SSE 心跳/请求全部卡死）
+                    await asyncio.to_thread(_ctx_update)
             except Exception as e:
                 log.warning(f"ContextUpdater skipped: {e}")
-
-            # ── 自动更新剧情图谱（storygraph）──
-            # v2.6: 批量模式后台化（不阻塞正文流程）；单章模式保持同步
-            try:
-                novel_dir = self.memory.get_novel_dir(novel_id)
-                sg_path = os.path.join(novel_dir, "storygraph.json")
-                sg_data = safe_read_json(sg_path) or {}
-
-                from ..storygraph import StoryGraph, extract_storygraph_from_chapter, apply_extraction
-
-                def _sg_update():
-                    sg = StoryGraph.from_dict(sg_data)
-                    # 用轻量模型提取
-                    extract_result = extract_storygraph_from_chapter(
-                        chapter_text=full_text,
-                        current_graph=sg_data,
-                        chapter_num=chapter_num,
-                        chapter_outline=chapter_outline,
-                        client=self.client,
-                        model=self.model,  # 可换成更便宜的模型
-                    )
-                    # 应用到图谱
-                    apply_extraction(sg, extract_result, chapter_num)
-                    # 保存
-                    atomic_write_json(sg_path, sg.to_dict())
-                    self.memory.invalidate_all(novel_id)
-                    log.info(f"StoryGraph updated after chapter {chapter_num}")
-
-                if batch_mode:
-                    asyncio.ensure_future(asyncio.to_thread(_sg_update))
-                else:
-                    _sg_update()
-            except Exception as e:
-                log.warning(f"StoryGraph update skipped: {e}")
 
             # ── 方案A: 一致性校验（ConsistencyValidator L1+L2 每章，P0 自动重写）──
             _post_consistency_validation = {
@@ -1970,6 +2041,10 @@ class GenerationMixin:
             _final_quality = _merge_quality_with_consistency(
                 _final_quality, _post_consistency_validation
             )
+            _requirement_report = self._evaluate_chapter_requirements(
+                novel_id, chapter_num, full_text, plan
+            )
+            yield {"type": "requirement_compliance", "chapter": chapter_num, **_requirement_report}
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
             _final_quality_record = _save_final_quality_report(
@@ -1981,38 +2056,6 @@ class GenerationMixin:
             )
             yield {"type": "final_quality", **_final_quality_record}
 
-            # ── 自动校准（每10章）──
-            try:
-                from ..autocalibrator import should_calibrate, calibrate
-                if should_calibrate(chapter_num):
-                    plan = self.get_novel(novel_id)
-                    sg_data = safe_read_json(sg_path) or {}
-                    report = calibrate(chapter_num, plan, sg_data,
-                                       completed_chapters=completed)
-                    
-                    # 将校准报告注入 storygraph
-                    if not sg.is_healthy():
-                        calib_ctx = report.to_context_block()
-                        if calib_ctx and sg_data:
-                            sg_data["_last_calibration"] = {
-                                "chapter": chapter_num,
-                                "report": report.to_context_block(),
-                                "score": report.score,
-                            }
-                            atomic_write_json(sg_path, sg_data)
-                            self.memory.invalidate("storygraph", novel_id)
-                        
-                        if not report.is_healthy():
-                            log.warning(f"Calibration issues found: "
-                                       f"{len(report.plot_drift_items)} drifts, "
-                                       f"{len(report.overdue_foreshadows)} overdue "
-                                       f"foreshadows, score={report.score}")
-                            yield {"type": "calibration", "report": report.to_context_block(),
-                                   "score": report.score}
-                    log.info(f"AutoCalibration done at chapter {chapter_num}: score={report.score}")
-            except Exception as e:
-                log.warning(f"AutoCalibration skipped: {e}")
-
             # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
             try:
                 chapter_text = self.get_chapter(novel_id, chapter_num) or full_text
@@ -2022,11 +2065,15 @@ class GenerationMixin:
                         chapter_num, chapter_text
                     )
                     if summary_result:
-                        state = self.memory.get_novel_state(novel_id)
-                        if "summaries" not in state:
-                            state["summaries"] = {}
-                        state["summaries"][str(chapter_num)] = summary_result
-                        self.memory.save_novel_state(novel_id, state)
+                        # 摘要必须写入 global_state.json（消费方 build_summary_context
+                        # 读的是 global_state），此前误写进 state.json 导致"前情摘要"
+                        # 永远拿不到。用 update() 原子读-改-写，避免并发覆盖。
+                        def _add_summary(gs):
+                            if not isinstance(gs, dict):
+                                gs = {}
+                            gs.setdefault("summaries", {})[str(chapter_num)] = summary_result
+                            return gs
+                        self.memory.update("global_state", novel_id, _add_summary)
                         log.info(f"Auto-summary for Ch{chapter_num}: {len(summary_result.get('summary',''))} chars")
             except Exception as e:
                 log.warning(f"Auto-summary for Ch{chapter_num} skipped: {e}")

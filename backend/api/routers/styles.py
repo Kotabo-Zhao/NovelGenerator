@@ -94,7 +94,17 @@ async def save_style_seed(seed: dict, owner_id: str = Depends(require_owner)):
 
 @router.delete("/api/styles/seeds/{name}")
 async def delete_style_seed(name: str, owner_id: str = Depends(require_owner)):
-    path = os.path.join(_owner_style_seeds_dir(owner_id), f"{name}.json")
+    # 与 save 同款白名单清洗，杜绝 ../../ 路径穿越删除任意 .json。
+    safe_name = "".join(c for c in name if c.isalnum() or c in " _-")
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="非法风格名称")
+    seed_dir = _owner_style_seeds_dir(owner_id)
+    path = os.path.join(seed_dir, f"{safe_name}.json")
+    # 双保险：realpath 必须仍落在 owner 的 seed 目录内。
+    real_seed_dir = os.path.realpath(seed_dir)
+    real_path = os.path.realpath(path)
+    if real_path != real_seed_dir and not real_path.startswith(real_seed_dir + os.sep):
+        raise HTTPException(status_code=400, detail="非法风格名称")
     if os.path.exists(path):
         os.remove(path)
     return {"success": True}

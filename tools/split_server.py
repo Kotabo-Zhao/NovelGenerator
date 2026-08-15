@@ -2,7 +2,7 @@
 """split_server.py — 将 server.py 的 71 个路由按域拆分为独立 router 文件（纯移动，零逻辑改动）
 
 用法: python tools/split_server.py
-生成: backend/api/routers/{novels,outline,quality,storygraph,requirements,styles,trends}.py
+生成: backend/api/routers/{novels,outline,quality,requirements,styles,trends}.py
 """
 import ast
 import os
@@ -28,10 +28,6 @@ for name in ["logic_check_chapter", "logic_check_batch", "validate_chapter_consi
              "design_twists", "summarize_chapters", "get_token_budget",
              "design_chapter_twist", "check_pacing"]:
     ROUTE_DOMAIN[name] = "quality"
-for name in ["get_storygraph", "get_arcs", "get_calibration", "get_storygraph_visualization",
-             "update_thread", "delete_thread", "update_foreshadow", "create_foreshadow",
-             "update_character", "quick_action"]:
-    ROUTE_DOMAIN[name] = "storygraph"
 for name in ["preview_decompose", "decompose_requirements", "update_requirements",
              "get_requirements", "supervise_requirements", "verify_and_fix_loop"]:
     ROUTE_DOMAIN[name] = "requirements"
@@ -46,10 +42,6 @@ HELPER_DOMAIN = {
     "_generate_quality_recommendations": "novels",
     "_checkpoint_path": "novels", "_save_batch_checkpoint": "novels",
     "_read_batch_checkpoint": "novels", "_clear_batch_checkpoint": "novels",
-    "_read_novel_file": "storygraph", "_filter_storygraph_to_chapter": "storygraph",
-    "_compute_storygraph_stats": "storygraph", "_write_novel_file": "storygraph",
-    "_validate_thread_fields": "storygraph", "_build_character_relation_graph": "storygraph",
-    "_build_plot_timeline": "storygraph",
     # 未被子路由直接调用的校验工具 → novels（通用校验）
     "_validate_novel_id": "novels", "_validate_chapter_range": "novels",
 }
@@ -115,7 +107,6 @@ def main():
         "novels": "小说 CRUD / 生成 / 导出 / 批次 / 状态修复",
         "outline": "大纲交互 / 反馈拆解 / 章节反馈",
         "quality": "逻辑校验 / 一致性 / 开局 / 反转 / 节奏 / 摘要",
-        "storygraph": "剧情图谱 / 弧 / 校准 / 可视化 / 快捷操作",
         "requirements": "需求拆解与监督",
         "styles": "风格系统 / 种子 / 指纹",
         "trends": "爆火分析 / 逆天生成",

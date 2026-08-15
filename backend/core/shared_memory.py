@@ -40,7 +40,6 @@ MEMORY_FILES = {
     "global_state":   {"file": "global_state.json",      "type": "json", "versioned": True},
     "character_bible":{"file": "character_bible.json",   "type": "json", "versioned": False},
     "foreshadowing":  {"file": "foreshadowing.json",     "type": "json", "versioned": False},
-    "storygraph":     {"file": "storygraph.json",        "type": "json", "versioned": False},
     "chapter_bridge": {"file": "chapter_bridges.json",   "type": "json", "versioned": False},
     "chapter":        {"file": "chapters/chapter_{:04d}.md", "type": "text", "versioned": False},
 }
@@ -73,7 +72,6 @@ class SharedMemoryManager:
             "plan": 30.0,          # plan 很少变化
             "character_bible": 60.0,  # 人物宝典几乎不变
             "foreshadowing": 10.0,
-            "storygraph": 10.0,    # storygraph 中等频率更新
             "chapter_bridge": 5.0, # 桥接数据频繁读写，5s TTL
         }
         self._cache_lock = threading.Lock()
@@ -84,7 +82,15 @@ class SharedMemoryManager:
         # 版本追踪（仅内存中，不落盘）: {path: version}
         self._versions: dict = {}
 
+        # per-path 可重入锁：串行化同一文件的读-改-写，替代"写后读校验"的伪乐观锁。
+        self._write_locks: dict = {}
+        self._write_locks_guard = threading.Lock()
+
         log.info(f"SharedMemoryManager initialized: {self.novels_dir}, TTL={cache_ttl}s")
+
+    def _path_lock(self, path: str) -> threading.Lock:
+        with self._write_locks_guard:
+            return self._write_locks.setdefault(os.path.abspath(path), threading.RLock())
 
     # ═══════════════════════════════════════════
     # 核心读写接口
@@ -135,13 +141,13 @@ class SharedMemoryManager:
 
     def write(self, memory_type: str, novel_id: str, data,
               max_retries: int = 3) -> bool:
-        """写入记忆（乐观锁 + 缓存失效）
-        
+        """写入记忆（per-path 锁串行化 + 缓存失效）
+
         Args:
             memory_type: plan|state|global_state|character_bible|foreshadowing
             novel_id: 小说ID
             data: 要写入的数据
-            max_retries: 乐观锁冲突最大重试次数
+            max_retries: 保留参数（兼容旧签名，串行化后不再需要乐观锁重试）
         """
         if memory_type not in MEMORY_FILES:
             raise ValueError(f"Unknown memory type: {memory_type}")
@@ -149,11 +155,12 @@ class SharedMemoryManager:
         file_info = MEMORY_FILES[memory_type]
         path = self._get_path(memory_type, novel_id)
 
-        if file_info["versioned"]:
-            success = self._write_with_lock(path, data, max_retries)
-        else:
-            atomic_write_json(path, data)
-            success = True
+        with self._path_lock(path):
+            if file_info["versioned"]:
+                success = self._write_with_lock(path, data, max_retries)
+            else:
+                atomic_write_json(path, data)
+                success = True
 
         if success:
             # 失效缓存
@@ -162,6 +169,29 @@ class SharedMemoryManager:
             self._notify(novel_id, memory_type, data)
 
         return success
+
+    def update(self, memory_type: str, novel_id: str, fn):
+        """在 per-path 锁内执行 load→fn(mutate)→save，消除并发读-改-写丢失更新。
+
+        fn 接收最新数据副本，返回新数据（或原地修改后返回该对象）；返回 None 表示
+        不写回。这是并发场景下修改 state/global_state/plan 的唯一正确入口。
+        """
+        if memory_type not in MEMORY_FILES:
+            raise ValueError(f"Unknown memory type: {memory_type}")
+        path = self._get_path(memory_type, novel_id)
+        default = [] if memory_type == "foreshadowing" else {}
+        with self._path_lock(path):
+            current = safe_read_json(path, default)
+            if not isinstance(current, (dict, list)):
+                current = default
+            current = copy.deepcopy(current)
+            updated = fn(current)
+            if updated is None:
+                return current
+            atomic_write_json(path, updated)
+            self._invalidate(novel_id, memory_type)
+            self._notify(novel_id, memory_type, updated)
+            return updated
 
     def read_chapter(self, novel_id: str, chapter_num: int) -> Optional[str]:
         """读取章节正文"""
@@ -849,11 +879,6 @@ class SharedMemoryManager:
         if hooks_ctx:
             parts.append(hooks_ctx)
 
-        # L4b: 剧情图谱上下文（storygraph）
-        sg_ctx = self._build_storygraph_context(novel_id, chapter_num, chapter_outline)
-        if sg_ctx:
-            parts.append(sg_ctx)
-
         # L5: 本章大纲
         beats_text = ""
         beats = chapter_outline.get("scene_beats", [])
@@ -1026,14 +1051,31 @@ class SharedMemoryManager:
             pass
         
         # ── v2.3.5: 上下文预算保护 — 总长超限时从尾部（低优先级段）截断 ──
+        # v2.8: 保护关键段（本章大纲/逻辑硬约束）——正文生成的事件契约绝不能被截断，
+        # 否则大纲→正文丢信息。预算提高到 11000，并为大纲段设置保护标记。
         _ctx = "\n\n---\n\n".join(parts)
-        _MAX_CTX = 9000  # 保留至少 60% token 给生成（AUDIT P0-3）
+        _MAX_CTX = 11000  # 保留至少 55% token 给生成（AUDIT P0-3）
+        _PROTECTED_MARKERS = ("## 本章大纲", "## 本章逻辑硬约束")
         if len(_ctx) > _MAX_CTX:
             _over = len(_ctx) - _MAX_CTX
-            # 从最后一个 section 开始逐段移除（保护 L1 核心设定在最前）
+            # 从最后一个 section 开始逐段移除（保护 L1 核心设定 + 本章大纲在最前/关键位）
             _ctx_parts = _ctx.split("\n\n---\n\n")
-            while len(_ctx_parts) > 3 and len("\n\n---\n\n".join(_ctx_parts)) > _MAX_CTX:
-                _ctx_parts.pop()
+            # 标记哪些段是受保护的（不可截断）
+            protected_idx = set()
+            for pi, seg in enumerate(_ctx_parts):
+                if any(seg.startswith(m) for m in _PROTECTED_MARKERS):
+                    protected_idx.add(pi)
+            while (len(_ctx_parts) - len(protected_idx)) > 3 \
+                    and len("\n\n---\n\n".join(_ctx_parts)) > _MAX_CTX:
+                # 从尾部找第一个非保护段删除
+                removed = False
+                for pi in range(len(_ctx_parts) - 1, -1, -1):
+                    if pi not in protected_idx:
+                        _ctx_parts.pop(pi)
+                        removed = True
+                        break
+                if not removed:
+                    break
             _ctx = "\n\n---\n\n".join(_ctx_parts)
             log.warning(f"Writer context budget: truncated {_over} chars (kept {len(_ctx)})")
         return _ctx
@@ -1113,65 +1155,6 @@ class SharedMemoryManager:
                 f"计划第{reveal}章回收] {h.get('description', '')}\n"
             )
         return "".join(lines)
-
-    def _build_storygraph_context(self, novel_id: str, chapter_num: int,
-                                   chapter_outline: dict) -> str:
-        """构建剧情图谱上下文（storygraph 注入）"""
-        try:
-            sg_data = self.read("storygraph", novel_id)
-        except Exception:
-            return ""
-
-        if not sg_data:
-            return ""
-        # 图谱可能只有伏笔、角色快照或因果链（例如刚完成首次提取，
-        # 尚未建立剧情线）。不能因为 plot_threads 为空就丢弃其余约束。
-        if not any(sg_data.get(key) for key in
-                   ("plot_threads", "foreshadow_ledger", "char_snapshots",
-                    "causal_links", "current_arc")):
-            return ""
-
-        from .storygraph import StoryGraph
-        sg = StoryGraph.from_dict(sg_data)
-
-        parts = []
-        chapter_chars = chapter_outline.get("characters", [])
-
-        # 1) 活跃剧情线摘要（按优先级取前5条）
-        thread_ctx = sg.get_thread_summaries()
-        if thread_ctx:
-            parts.append(thread_ctx)
-
-        # 2) 伏笔到期提醒（窗口3章内）
-        fs_ctx = sg.get_foreshadow_context(chapter_num)
-        if fs_ctx:
-            parts.append(fs_ctx)
-
-        # 4) 因果链（此前只用于诊断，未进入 Writer 上下文）
-        causal_ctx = sg.get_causal_context(chapter_num)
-        if causal_ctx:
-            parts.append(causal_ctx)
-
-        # 5) 角色快照（只取本章出场角色）
-        char_ctx = sg.get_char_snapshots_text(chapter_chars)
-        if char_ctx:
-            parts.append(char_ctx)
-
-        # 6) 当前剧情弧信息（如果有 arcplanner 规划的弧数据）
-        arc_data = sg.data.get("current_arc", {})
-        if arc_data:
-            arc_phase = {0: "铺垫阶段", 1: "升级阶段", 2: "高潮阶段",
-                         3: "余波阶段"}.get(arc_data.get("phase", 0), "")
-            parts.append(
-                f"## 🎯 当前剧情弧\n"
-                f"- 弧名: {arc_data.get('label', '')}\n"
-                f"- 阶段: {arc_phase}\n"
-                f"- 弧总章节: Ch{arc_data.get('start_chapter', '?')} "
-                f"- Ch{arc_data.get('end_chapter', '?')}\n"
-                f"- 弧目标: {arc_data.get('goal', '')}\n"
-            )
-
-        return "\n\n---\n\n".join(parts)
 
     def _format_state_snapshot(self, state: dict, chapter_num: int) -> str:
         """格式化角色状态快照（子字段类型守卫，防 global_state.json 损坏）"""
@@ -1342,42 +1325,25 @@ class SharedMemoryManager:
         return safe_novel_file(self.novels_dir, novel_id, rel_path)
 
     def _write_with_lock(self, path: str, data, max_retries: int = 3) -> bool:
-        """乐观锁写入：读取→版本检查→写入→冲突重试
-        注意: 防御性复制 data，避免修改调用方的原始数据（副作用 bug）
+        """版本化写入（调用方必须已持有 _path_lock）。
+
+        保留 _version 自增以兼容旧数据/乐观锁元数据，但并发正确性由
+        write()/update() 的 per-path 锁保证——这里不再依赖"写后读校验"
+        （那种校验在并发写者版本号碰撞时无法检测覆盖）。
         """
         # 防御性复制 — 避免修改调用方的数据对象
         write_data = copy.deepcopy(data)
 
-        for attempt in range(max_retries):
-            # 读取当前版本
-            current = safe_read_json(path, {})
-            if not isinstance(current, dict):
-                current = {}
-            current_version = current.get("_version", 0)
+        current = safe_read_json(path, {})
+        if not isinstance(current, dict):
+            current = {}
+        current_version = current.get("_version", 0)
 
-            # 设置新版本（只修改 write_data 副本，不影响原始数据）
-            if isinstance(write_data, dict):
-                write_data["_version"] = current_version + 1
+        if isinstance(write_data, dict):
+            write_data["_version"] = current_version + 1
 
-            # 原子写入
-            atomic_write_json(path, write_data)
-
-            # 读取验证
-            verify = safe_read_json(path, {})
-            if not isinstance(verify, dict):
-                verify = {}
-            verify_version = verify.get("_version", 0)
-            if verify_version == current_version + 1:
-                if attempt > 0:
-                    log.info(f"Optimistic lock OK after {attempt+1} attempts: {path}")
-                return True
-
-            # 版本冲突 → 重试
-            log.warning(f"Version conflict on {path}, retry {attempt+1}/{max_retries}")
-            time.sleep(0.05 * (attempt + 1))  # 退避
-
-        log.error(f"Optimistic lock FAILED after {max_retries} retries: {path}")
-        return False
+        atomic_write_json(path, write_data)
+        return True
 
     def _invalidate(self, novel_id: str, memory_type: str):
         """失效指定记忆的缓存"""

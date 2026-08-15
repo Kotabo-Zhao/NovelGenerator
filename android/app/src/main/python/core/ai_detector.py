@@ -172,23 +172,24 @@ class HumanRewriter:
         self.model = model
         if client and model:
             self._resilient = ResilientLLMClient(client, model)
-        if client and model:
-            self._resilient = ResilientLLMClient(client, model)
 
     def rewrite(self, text: str, detection: dict = None, 
                 examples: str = "", target_length: int = None) -> str:
         """改写 AI 文本为更自然的文风
-        
+
         Args:
             text: 需要改写的文本
             detection: AI检测结果（用于定位问题）
             examples: 真人写作示例（few-shot）
             target_length: 目标字数
+
+        长文本（>5000 字）按段落边界分块改写后再拼接，避免只改写开头
+        导致中部/结尾内容静默丢失。
         """
         if not self.client or not self.model:
             return text  # 离线模式原样返回
 
-        # 构建改写 prompt
+        # 构建改写 prompt 的公共素材
         issues = ""
         if detection and detection.get("flagged_sections"):
             issues = "## 需要修正的问题\n"
@@ -199,20 +200,56 @@ class HumanRewriter:
         if examples:
             example_block = f"\n## 真人写作参考\n{examples[:2000]}\n"
 
+        # 长文本分块改写（按段落边界，避免切断句子）
+        chunks = self._split_chunks(text, max_chars=4000) if len(text) > 5000 else [text]
+        if len(chunks) > 1:
+            log.info(f"HumanRewriter: rewriting {len(text)} chars in {len(chunks)} chunks")
+            parts = []
+            for chunk in chunks:
+                part = self._rewrite_single(chunk, issues, example_block, target_length,
+                                            is_fragment=True)
+                if not part:
+                    # 单块失败保留原文块，绝不丢内容
+                    parts.append(chunk)
+                else:
+                    parts.append(part)
+            return "\n\n".join(parts)
+
+        return self._rewrite_single(text, issues, example_block, target_length, is_fragment=False)
+
+    @staticmethod
+    def _split_chunks(text: str, max_chars: int = 4000) -> list:
+        """按段落边界把长文本切成不超过 max_chars 的块（段间空行拼接）。"""
+        paragraphs = text.split("\n\n")
+        chunks = []
+        current = ""
+        for para in paragraphs:
+            candidate = (current + "\n\n" + para) if current else para
+            if current and len(candidate) > max_chars:
+                chunks.append(current)
+                current = para
+            else:
+                current = candidate
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def _rewrite_single(self, text: str, issues: str, example_block: str,
+                        target_length: int = None, is_fragment: bool = False) -> str:
+        """改写单块文本（<5000 字）。失败时返回空串，由调用方决定保留原文。"""
+        fragment_hint = "（这是章节的一个片段，请只改写本片段内容，不要重复前文或自行收尾。）" if is_fragment else ""
         len_hint = f"目标字数约{target_length}字（±20%）。" if target_length else ""
 
-        prompt = f"""请改写以下文本，保留核心情节和对话，但用更自然、更像人写的方式表达。
+        prompt = f"""请改写以下文本，保留核心情节和对话，但用更自然、更像人写的方式表达。{fragment_hint}
 
 {issues}
 {example_block}
 ## 原文
-{text[:5000]}
+{text}
 
 {len_hint}
 
 只输出改写后的正文。"""
-
-        log.info(f"HumanRewriter: rewriting {len(text)} chars")
 
         try:
             response = self._resilient.create(
@@ -224,12 +261,12 @@ class HumanRewriter:
                 temperature=0.7,
                 max_tokens=8000,
             )
-            result = response.choices[0].message.content
-            log.info(f"HumanRewriter: output {len(result)} chars")
+            result = response.choices[0].message.content or ""
+            log.info(f"HumanRewriter: {len(text)} chars -> {len(result)} chars")
             return result
         except Exception as e:
             log.error(f"HumanRewriter failed: {e}")
-            return text
+            return ""
 
 
 # ═══════════════════════════════════════════
@@ -264,7 +301,8 @@ def humanize_pipeline(text: str, detector: AIDetector, rewriter: HumanRewriter,
     examples = get_examples_for_scene(scene_desc)
     rewritten = rewriter.rewrite(text, detection, examples, target_length)
     
-    if not rewritten or len(rewritten) < len(text) * 0.3:
+    if not rewritten or len(rewritten) < len(text) * 0.8:
+        # 改写结果显著短于原文（>20% 内容丢失）→ 保留原稿，绝不静默截断正文。
         return {"text": text, "ai_score_before": ai_score, "ai_score_after": ai_score,
                 "rewritten": False, "detection": detection, "error": "rewrite too short"}
     

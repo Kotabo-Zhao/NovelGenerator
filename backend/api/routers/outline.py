@@ -2,17 +2,19 @@
 import json
 import os
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range, _sse_with_heartbeat
+from .novels import _require_legacy_owner
 
 @router.post("/api/novels/{novel_id}/regenerate-outline")
-async def regenerate_outline(novel_id: str, req: dict):
+async def regenerate_outline(novel_id: str, req: dict, request: Request):
     """根据修改意见重新生成大纲（保留世界观和角色）+ 心跳"""
+    _require_legacy_owner(request, novel_id)
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
@@ -28,8 +30,9 @@ async def regenerate_outline(novel_id: str, req: dict):
 
 
 @router.post("/api/novels/{novel_id}/interactive-outline")
-async def interactive_outline(novel_id: str, req: dict):
+async def interactive_outline(novel_id: str, req: dict, request: Request):
     """v2 交互式大纲: FeedbackDecomposer 语义拆解 → 逐条精确执行 → diff输出 + 心跳"""
+    _require_legacy_owner(request, novel_id)
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
@@ -45,18 +48,22 @@ async def interactive_outline(novel_id: str, req: dict):
 
 
 @router.post("/api/novels/{novel_id}/decompose-feedback")
-async def decompose_feedback(novel_id: str, req: dict):
+async def decompose_feedback(novel_id: str, req: dict, request: Request):
     """仅拆解反馈为修改计划（不执行），供前端预览"""
+    _require_legacy_owner(request, novel_id)
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
-    result = engine.decompose_feedback(novel_id, feedback)
+    # v3.8: 拆解含同步 LLM 调用，放线程池避免阻塞事件循环
+    import asyncio
+    result = await asyncio.to_thread(engine.decompose_feedback, novel_id, feedback)
     return {"result": result}
 
 
 @router.post("/api/novels/{novel_id}/chapter-feedback/{chapter_num}")
-async def chapter_feedback(novel_id: str, chapter_num: int, req: dict):
+async def chapter_feedback(novel_id: str, chapter_num: int, req: dict, request: Request):
     """对已生成章节提出修改意见 — 拆解为具体指令"""
+    _require_legacy_owner(request, novel_id)
     feedback = req.get("feedback", "")
     if not feedback.strip():
         raise HTTPException(status_code=400, detail="请输入修改意见")
@@ -69,8 +76,11 @@ async def chapter_feedback(novel_id: str, chapter_num: int, req: dict):
     if not chapter_outline:
         raise HTTPException(status_code=404, detail=f"第{chapter_num}章大纲不存在")
 
-    result = engine.feedback_decomposer.decompose_for_chapter(
-        feedback, chapter_num, chapter_outline, plan
+    # v3.8: 拆解含同步 LLM 调用，放线程池避免阻塞事件循环
+    import asyncio
+    result = await asyncio.to_thread(
+        engine.feedback_decomposer.decompose_for_chapter,
+        feedback, chapter_num, chapter_outline, plan,
     )
     return {"result": result}
 

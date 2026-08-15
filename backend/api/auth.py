@@ -13,8 +13,17 @@ from .deps import account_store
 session_service = WeChatSessionService()
 
 
+def is_internal_version() -> bool:
+    """Whether this process is the private, local/internal build."""
+    return os.getenv("NOVEL_GENERATOR_INTERNAL", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def owner_id_from_authorization(authorization: Optional[str]) -> str:
     """Validate a Bearer header and return the pseudonymous owner id."""
+    if is_internal_version():
+        return "internal-local-owner"
     if not authorization or not authorization.startswith("Bearer "):
         raise AuthError("missing bearer token")
     token = authorization[7:].strip()
@@ -32,6 +41,8 @@ def owner_id_from_authorization(authorization: Optional[str]) -> str:
 
 def require_consented_owner(authorization: Optional[str] = Header(default=None)) -> str:
     owner_id = require_owner(authorization)
+    if is_internal_version():
+        return owner_id
     required_version = os.getenv("WECHAT_PRIVACY_VERSION", "v1")
     if not account_store.has_consent(owner_id, required_version):
         raise HTTPException(status_code=403, detail="请先同意隐私政策")
@@ -41,6 +52,8 @@ def require_consented_owner(authorization: Optional[str] = Header(default=None))
 def require_owner(authorization: Optional[str] = Header(default=None)) -> str:
     """Return the authenticated pseudonymous owner id from a Bearer token."""
 
+    if is_internal_version():
+        return "internal-local-owner"
     try:
         return owner_id_from_authorization(authorization)
     except AuthError as exc:

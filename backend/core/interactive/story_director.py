@@ -22,7 +22,7 @@ import time
 import uuid
 from typing import AsyncIterator, Optional
 
-from ..resilient_client import ResilientLLMClient
+from ..resilient_client import ResilientLLMClient, llm_error_message
 from .action_engine import _state_snapshot, clean_location
 
 log = logging.getLogger(__name__)
@@ -861,118 +861,6 @@ def generate_suggestions(client, model, store, state: dict, chars: list) -> list
     return []
 
 
-# ── v2.5.61: 章节回流重构——幂等标记 / 补漏判定 / global_state 同步 ──
-
-def sync_skip_check(state: dict, chapter_num: int, scene_start: int, scene_end: int) -> bool:
-    """回流幂等判定（纯函数）：该章是否已回流过覆盖 [scene_start, scene_end] 的场景区间。
-
-    返回 True = 已同步过（跳过回流，不重复生成）；False = 需要回流。
-    无记录/异常 → False（宁可多回流一次，不可漏）。
-    """
-    try:
-        ch_num = int(chapter_num)
-        if ch_num <= 0 or scene_end < scene_start:
-            return False
-        recs = ((state or {}).get("synced_chapters") or {}).get(str(ch_num)) or []
-        if not recs:
-            return False
-        for r in recs:
-            if int(r.get("start", 0) or 0) <= scene_start and scene_end <= int(r.get("end", 0) or 0):
-                return True
-        return False
-    except Exception:
-        return False
-
-
-def sync_mark_record(state: dict, chapter_num: int, scene_start: int, scene_end: int) -> None:
-    """回流完成后记录同步区间（纯函数）：同章区间追加并合并相邻，按 start 排序。"""
-    try:
-        ch_num = int(chapter_num)
-        if ch_num <= 0 or scene_end < scene_start:
-            return
-        recs = ((state or {}).get("synced_chapters") or {}).get(str(ch_num)) or []
-        # 合并：与新区间重叠/相邻的旧区间并入
-        new = {"start": int(scene_start), "end": int(scene_end)}
-        merged = []
-        for r in recs:
-            rs, re = int(r.get("start", 0) or 0), int(r.get("end", 0) or 0)
-            if rs <= new["end"] + 1 and new["start"] <= re + 1:  # 重叠或相邻
-                new["start"] = min(new["start"], rs)
-                new["end"] = max(new["end"], re)
-            else:
-                merged.append(r)
-        merged.append(new)
-        merged.sort(key=lambda x: int(x.get("start", 0) or 0))
-        (state or {}).setdefault("synced_chapters", {})[str(ch_num)] = merged
-    except Exception:
-        pass
-
-
-def backfill_list(state: dict, existing: dict, max_sync: int = 2) -> list:
-    """补漏判定（纯函数）：互动已完成、但正式章节缺失/未同步的章节号列表。
-
-    判定规则：大纲进度 idx 表示"正在玩第 idx+1 章"——已完成章节是 [1..idx]；
-    final_done 时 [1..len] 全部完成。existing 是 {文件名: 内容} 或 {章号: 存在}。
-    返回需要补漏的章号列表（升序，最多 max_sync 章，避免一次补太多 LLM 调用）。
-    """
-    try:
-        op = (state or {}).get("outline_progress") or {}
-        idx = int(op.get("idx", 0) or 0)
-        chs = (state or {}).get("outline_chapters") or []
-        if not chs:
-            return []
-        total = len(chs)
-        done_upto = total if op.get("final_done") else min(idx + 1, total)
-        if done_upto <= 0:
-            return []
-        # 章号 → 是否已存在正式章节（兼容 {文件名: 内容} 和 {章号: bool}）
-        need = []
-        for ch in chs[:done_upto]:
-            num = int(ch.get("number", 0) or 0)
-            if num <= 0:
-                continue
-            fname = f"chapter_{num:04d}.md"
-            exists = existing.get(fname) or existing.get(str(num)) or existing.get(num)
-            synced = sync_skip_check(state, num, 0, 10 ** 9)
-            if not exists and not synced:
-                need.append(num)
-        return need[:max_sync]
-    except Exception:
-        return []
-
-
-def gs_merge_sync(gs: dict, chapter_num: int, title: str, body: str, summary: str) -> dict:
-    """回流写入合并到 global_state.json（纯函数）：
-    chapters_summary / timeline.chapters 初始化 / chapter_titles——不覆盖已有时序与角色数据。
-
-    返回合并后的 gs（gs 为 None 时返回 None，调用方跳过）。
-    """
-    try:
-        if gs is None:
-            return None
-        ch_num = str(int(chapter_num))
-        # chapters_summary（正式小说体系的章节摘要——上下文更新/一致性校验消费）
-        if not isinstance(gs.get("chapters_summary"), dict):
-            gs["chapters_summary"] = {}
-        if summary:
-            gs["chapters_summary"][ch_num] = str(summary)[:300]
-        # timeline.chapters：只初始化缺失的章（已有 days_elapsed 的保留——时序归正式管线管）
-        tl = gs.get("timeline")
-        if not isinstance(tl, dict):
-            tl = {"total_days": 0, "chapters": {}}
-            gs["timeline"] = tl
-        if not isinstance(tl.get("chapters"), dict):
-            tl["chapters"] = {}
-        if ch_num not in tl["chapters"]:
-            tl["chapters"][ch_num] = {"days_elapsed": 0, "chapter_start_time": "夜晚"}
-        # chapter_titles（章节列表展示用）
-        if title:
-            gs.setdefault("chapter_titles", {})[ch_num] = str(title)[:60]
-        return gs
-    except Exception:
-        return gs or None
-
-
 # ── v2.5.62: 角色选择扮演——全角色预设 / 选择应用 ──
 
 def cast_presets_build(plan: dict) -> list:
@@ -1254,25 +1142,30 @@ import threading as _bthread
 _bg_queue = _bgqueue.Queue(maxsize=4)
 _bg_worker_started = False
 _bg_worker_lock = _bthread.Lock()
-main_flow_active = False  # 主流程（场景/对话/行动生成）活跃标志——后台任务须让路
+# v3.8: main_flow_active 从全局 bool 改为 per-novel dict——
+# 此前用户 A 流式生成时用户 B 的后台任务最多干等 90s（跨小说互相拖累）。
+main_flow_active: dict = {}  # {novel_id: bool} 主流程（场景/对话/行动生成）活跃标志
 
 
-def set_main_flow(v: bool):
-    """v3.5.47: 设置主流程活跃标志（场景/对话/行动生成期间 True）——
-    后台串行 worker 在 main_flow_active 时让路，用户操作优先不抢 LLM"""
-    global main_flow_active
-    main_flow_active = v
+def set_main_flow(novel_id, v: bool):
+    """v3.5.47/v3.8: 设置指定小说的主流程活跃标志（场景/对话/行动生成期间 True）——
+    后台串行 worker 在**同小说** main_flow_active 时让路，用户操作优先不抢 LLM；
+    per-novel 后不同小说的后台任务不再互相阻塞。"""
+    if v:
+        main_flow_active[novel_id] = True
+    else:
+        main_flow_active.pop(novel_id, None)
 
 
 def _bg_worker_loop():
     while True:
         try:
-            fn, args, critical = _bg_queue.get(timeout=5)
+            fn, args, critical, task_novel = _bg_queue.get(timeout=5)
         except _bgqueue.Empty:
             continue
         try:
             waited = 0
-            while main_flow_active and waited < 90:
+            while main_flow_active.get(task_novel, False) and waited < 90:
                 time.sleep(1)
                 waited += 1
             fn(*args)
@@ -1282,14 +1175,17 @@ def _bg_worker_loop():
             _bg_queue.task_done()
 
 
-def enqueue_background(fn, *args, critical: bool = False):
-    """后台任务入队：单 worker 串行执行，主流程优先。
+def enqueue_background(fn, *args, critical: bool = False, novel_id: str = None):
+    """后台任务入队：单 worker 串行执行，同小说主流程优先。
 
     critical=True（如章节回流）：队列满时丢弃最旧的非关键任务腾位，绝不丢。
     critical=False（如状态提取）：队列满直接丢弃（最新场景的状态会覆盖旧的，
     丢无妨——保持场景流不被阻塞）。
+    v3.8: novel_id 用于 per-novel 让路判定；缺省取 args[0]（约定后台任务首参为 novel_id）。
     """
     global _bg_worker_started
+    if novel_id is None:
+        novel_id = args[0] if args else None
     if not _bg_worker_started:
         with _bg_worker_lock:
             if not _bg_worker_started:
@@ -1303,7 +1199,7 @@ def enqueue_background(fn, *args, critical: bool = False):
             except Exception:
                 pass
     try:
-        _bg_queue.put_nowait((fn, args, critical))
+        _bg_queue.put_nowait((fn, args, critical, novel_id))
     except _bgqueue.Full:
         if critical:
             # 实在放不下（全是关键任务）→ 起临时线程，保证不丢
@@ -1606,90 +1502,8 @@ class StoryDirector:
         self.store = store
         self.engine = engine  # NovelEngine 引用（人设蒸馏/读取用，避免重复实例化）
         self._resilient = ResilientLLMClient(client, model)
-        self._tracker = None   # v3.5.22: 复用小说模式 CharacterStateTracker（懒加载）
-        self._supervisor = None  # v3.5.22: 复用小说模式 LogicSupervisor（懒加载）
 
     # ── v3.5.22: 复用小说模式逻辑引擎（不另起炉灶）──
-    def _logic_tracker(self):
-        """角色状态追踪器（小说模式 CharacterStateTracker）——跟踪角色位置/状态，
-        保证互动场景的空间连续性有结构化依据"""
-        if self._tracker is None and self.engine is not None:
-            try:
-                from ..character_state import CharacterStateTracker
-                self._tracker = CharacterStateTracker(
-                    self.engine.client, self.engine.model, self.engine.memory)
-            except Exception as e:
-                log.warning(f"CharacterStateTracker init failed: {e}")
-        return self._tracker
-
-    def _logic_supervisor(self):
-        """逻辑监督器（小说模式 LogicSupervisor）——L1 规则引擎检查
-        时间线/空间/行为/物品矛盾"""
-        if self._supervisor is None and self.engine is not None:
-            self._supervisor = getattr(self.engine, "logic_supervisor", None)
-        return self._supervisor
-
-    def _logic_context(self, novel_id: str) -> str:
-        """复用角色状态追踪：返回当前角色状态文本（位置/健康等）供场景注入"""
-        try:
-            tr = self._logic_tracker()
-            if tr is None:
-                return ""
-            tr.init_from_plan(novel_id)  # 幂等：已有状态不覆盖
-            return tr.build_context(novel_id) or ""
-        except Exception as e:
-            log.warning(f"logic_context failed: {e}")
-            return ""
-
-    def _storygraph_context(self, novel_id: str, state: dict) -> str:
-        """把正式写作模式的剧情图谱只读接入互动场景。
-
-        互动存档和正式章节存档是两套状态，过去互动场景只能看到
-        ``foreshadows_brief``，会漏掉正式模式已经积累的剧情线、角色快照和
-        因果链。这里不修改图谱，只把当前章节真正需要的约束压缩后注入，
-        避免两种写作模式各自长出一套互相矛盾的世界状态。
-        """
-        try:
-            root = getattr(self.store, "novels_dir", "")
-            if not root and self.engine is not None:
-                memory = getattr(self.engine, "memory", None)
-                if memory is not None:
-                    root = getattr(memory, "novels_dir", "")
-            if not root or not novel_id:
-                return ""
-            graph_path = os.path.join(root, novel_id, "storygraph.json")
-            if not os.path.exists(graph_path):
-                return ""
-            with open(graph_path, "r", encoding="utf-8") as graph_file:
-                graph_data = json.load(graph_file)
-            if not isinstance(graph_data, dict):
-                return ""
-            from ..storygraph import StoryGraph
-            graph = StoryGraph.from_dict(graph_data)
-            op = state.get("outline_progress") or {}
-            chapter_idx = int(op.get("idx", 0) or 0)
-            chapter_num = chapter_idx + 1
-            parts = []
-            thread_ctx = graph.get_thread_summaries()
-            if thread_ctx:
-                parts.append(thread_ctx)
-            foreshadow_ctx = graph.get_foreshadow_context(chapter_num)
-            if foreshadow_ctx:
-                parts.append(foreshadow_ctx)
-            char_names = list((state.get("casts") or {}).keys())[:8]
-            char_ctx = graph.get_char_snapshots_text(char_names)
-            if char_ctx:
-                parts.append(char_ctx)
-            causal_ctx = graph.get_causal_context(chapter_num, limit=3)
-            if causal_ctx:
-                parts.append(causal_ctx)
-            if not parts:
-                return ""
-            return "\n\n---\n\n".join(parts)[:1800]
-        except Exception as e:
-            log.warning(f"interactive storygraph context failed: {type(e).__name__}: {str(e)[:100]}")
-            return ""
-
     def enrich_location_descs(self, novel_id: str, state: dict):
         """v3.6: 地点图谱 desc 一次性补全（LLM 填内容，规则管结构——防幻觉）。
 
@@ -1910,45 +1724,6 @@ class StoryDirector:
                     self.store.save_state(novel_id, _st5)
             except Exception as e:
                 log.warning(f"state change detect failed: {e}")
-            # 1) 角色状态更新（提取位置/状态变化 → global_state.json）
-            tr = self._logic_tracker()
-            if tr is not None:
-                import asyncio
-                asyncio.run(tr.update_from_chapter(novel_id, scene_num, scene_text))
-            # 2) L1 逻辑监督（时间线/空间/行为/物品矛盾，规则引擎零 LLM 成本）
-            sup = self._logic_supervisor()
-            if sup is not None:
-                plan = None
-                gs = None
-                try:
-                    plan = self.engine.memory.read("plan", novel_id)
-                    gs = self.engine.memory.read("global_state", novel_id) or {}
-                except Exception:
-                    pass
-                prev = {}
-                if scene_num > 1:
-                    last_scenes = self.store.recent_scenes(novel_id, 1) or []
-                    if last_scenes:
-                        prev[scene_num - 1] = str(last_scenes[0].get("scene_text", ""))
-                res = sup.validate_chapter(scene_text, scene_num, plan or {},
-                                           prev, gs, run_deep=False)
-                # 视角适配：互动模式恒为第二人称（"你"指代主角），小说模式的
-                # "主角全名未出现"类检查是无条件误报——直接过滤（v1.1 修复：
-                # 原 count("你")>10 阈值在 300 字场景下不稳定导致误报反复出现）
-                violations = [v for v in (res.get("violations") or [])
-                              if "未出现" not in str(v.get("description", ""))]
-                p0 = [v for v in violations if v.get("severity") == "P0"]
-                if p0:
-                    cats = [f"{v.get('category', '?')}:{v.get('description', '')[:40]}" for v in p0[:3]]
-                    log.warning(f"[逻辑监督] 场景{scene_num} P0 矛盾: {' | '.join(cats)}")
-                    try:
-                        st = self.store.load_state(novel_id)
-                        if st:
-                            from .char_memory import add_event
-                            add_event(st, f"⚠ 检测到剧情矛盾（已记录待修正）: {p0[0].get('description', '')[:40]}", "warning")
-                            self.store.save_state(novel_id, st)
-                    except Exception:
-                        pass
         except Exception as e:
             log.warning(f"post_scene_logic_check failed: {type(e).__name__}: {str(e)[:100]}")
         # 3) AI 痕迹检测（复用小说模式 AIDetector 离线规则，零 LLM 成本）
@@ -2009,10 +1784,13 @@ class StoryDirector:
             return None
 
     async def _llm_stream(self, system: str, user: str,
-                          temperature: float = 0.8, max_tokens: int = 2500) -> AsyncIterator[str]:
+                          temperature: float = 0.8, max_tokens: int = 2500,
+                          novel_id: str = None) -> AsyncIterator[str]:
         # v3.5.47: 主流程 LLM 活跃标志——后台任务（状态提取/章节回流）让路，
         # 防止并发打 API 触发限流导致生成变慢
-        set_main_flow(True)
+        # v3.8: per-novel 化——只标记当前小说，不同小说的后台任务不再互相阻塞
+        if novel_id:
+            set_main_flow(novel_id, True)
         try:
             resilient = self._resilient_client()
             if resilient is None:
@@ -2028,9 +1806,10 @@ class StoryDirector:
                 yield chunk
         except Exception as e:
             log.warning(f"StoryDirector stream failed: {type(e).__name__}: {str(e)[:120]}")
-            yield ""  # 空 chunk，让前端感知结束
+            raise
         finally:
-            set_main_flow(False)
+            if novel_id:
+                set_main_flow(novel_id, False)
 
     # ── 上下文组装 ──
     def _build_scene_prompt(self, state: dict, summary: str) -> str:
@@ -2064,25 +1843,6 @@ class StoryDirector:
         wb = state.get("worldbuilding_brief") or ""
         if wb:
             parts.append(f"## 世界观设定（必须严格遵守，不得偏离）:\n{wb[:600]}")
-        # v3.5.20: 复用全局状态——时间线/章节脉络（剧情连续）+ 未回收伏笔（可呼应）
-        tl = state.get("timeline_brief") or ""
-        if tl:
-            parts.append(f"故事时间线（保持连续，不要与已发生的事件矛盾）: {tl[:200]}")
-        fs = state.get("foreshadows_brief") or ""
-        if fs:
-            parts.append(f"未揭晓的伏笔（剧情中可自然铺垫/呼应，不必强行回收）: {fs[:200]}")
-        nid = state.get("novel_id", "")
-        # v3.6.7: 与正式写作共享 StoryGraph（只读、限长），让互动选择也能
-        # 看到已建立的主线/角色状态/因果链，避免互动模式把图谱当成展示页。
-        if nid:
-            graph_ctx = self._storygraph_context(nid, state)
-            if graph_ctx:
-                parts.append("## 共享剧情图谱（互动场景必须遵守）:\n" + graph_ctx)
-        # v3.5.22: 复用小说模式角色状态追踪——当前角色位置/状态（结构化，防瞬移）
-        if nid:
-            ctx = self._logic_context(nid)
-            if ctx:
-                parts.append(f"当前角色状态（必须遵守，场景中角色的位置/状态以此为准）:\n{ctx[:300]}")
         parts.append(f"当前场景号: {state.get('scene_num', 0)}")
         # v3.5.28: 大纲驱动——当前章节目标（互动剧情按大纲章节推进）
         oc = state.get("outline_chapters") or []
@@ -2548,20 +2308,20 @@ class StoryDirector:
         try:
             # v3.5.55: max_tokens 300（≈200-280字）——架构级硬上限（API 物理截断，
             # 不依赖 LLM 自觉）；配合落盘前长度校验双保险
-            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=300):
+            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=300, novel_id=novel_id):
                 if chunk:
                     collected.append(chunk)
                     yield {"type": "scene_chunk", "scene_num": scene_num, "content": chunk}
         except Exception as e:
             log.error(f"Scene generation stream error: {e}")
-            yield {"type": "error", "message": f"场景生成失败: {type(e).__name__}"}
+            yield {"type": "error", "message": llm_error_message(e, "场景生成")}
             return
 
         scene_text = "".join(collected).strip()
         if not scene_text:
-            # 兜底文本
-            scene_text = f"【旁白】夜色渐深，{state.get('title', '故事')}还在继续。远处传来更鼓声，故事尚未落幕。"
-            yield {"type": "scene_chunk", "scene_num": scene_num, "content": scene_text}
+            log.error("Scene generation returned empty content")
+            yield {"type": "error", "message": "场景生成失败：模型返回空内容，请重试"}
+            return
 
         # v3.5.55: 架构级长度兜底——即使 max_tokens 截断/API 超发，
         # 落盘前按句子边界裁剪（只删尾部未完成内容，不切语义）
@@ -3418,118 +3178,6 @@ class StoryDirector:
         except Exception as e:
             log.warning(f"advance_outline save failed: {e}")
 
-    def _sync_chapter_from_interactive(self, novel_id: str, chapter_idx: int,
-                                       scene_start: int, scene_end: int):
-        """v3.5.29: 互动→章节回流——把一章的互动场景 + 玩家行动整合为正式章节正文
-
-        后台线程执行（不阻塞场景流）。场景文本（第二人称"你"）→ 章节正文
-        （第三人称主角名），玩家的选择与行动必须体现在正文中。
-        v2.5.61: 幂等重构——synced_chapters 区间标记防重复回流；
-        回流写入同步 global_state.json（timeline/chapters_summary），小说体系可感知。
-        """
-        try:
-            # ── v2.5.61: 幂等判定——该章该场景区间已回流过 → 跳过（防重复生成）──
-            _cur = self.store.load_state(novel_id) or {}
-            chs = _cur.get("outline_chapters") or []
-            if chapter_idx >= len(chs):
-                return
-            ch = chs[chapter_idx]
-            ch_num = int(ch.get("number", chapter_idx + 1))
-            if sync_skip_check(_cur, ch_num, scene_start, scene_end):
-                log.info(f"Chapter {ch_num} already synced [{scene_start}-{scene_end}], skip")
-                return
-            # 收集本章场景
-            scenes = []
-            for rec in self.store.recent_scenes(novel_id, 200):
-                sn = int(rec.get("scene_num", 0) or 0)
-                if scene_start <= sn <= max(scene_end, scene_start):
-                    scenes.append((sn, rec.get("scene_text", "")))
-            scenes.sort()
-            if not scenes:
-                return
-            # 收集玩家行动/对话
-            player_acts = []
-            try:
-                for h in self.store.recent_chats(novel_id, 200):
-                    if h.get("role") == "user" and h.get("content"):
-                        player_acts.append(str(h.get("content"))[:100])
-            except Exception:
-                pass
-            scene_text = "\n\n".join(f"[场景{sn}]\n{t}" for sn, t in scenes)
-            user = (
-                f"## 本章大纲摘要（骨架）\n第{ch_num}章《{ch.get('title', '')}》"
-                f"（{ch.get('volume', '')}）\n{ch.get('summary', '')}\n\n"
-                f"## 互动场景记录（本玩家真实经历，含其选择与行动）\n{scene_text[:6000]}\n\n"
-                + (f"## 玩家在互动中的行动/对话（必须体现在正文）\n"
-                   + "\n".join(f"- {a}" for a in player_acts[-8:]) if player_acts else "")
-                + f"\n\n请把以上内容整理成正式章节正文（{max(800, int(ch.get('target_words', 1500) or 1500))} 字左右）。"
-            )
-            raw = self._llm(INTERACTIVE_TO_CHAPTER_SYSTEM, user, temperature=0.7, max_tokens=4000)
-            body = (raw or "").strip()
-            if len(body) < 200:
-                return
-            # v3.5.29: LLM 输出可能自带章节标题（## 第X章），剥掉避免与文件头重复
-            import re as _re
-            body = _re.sub(r"^#{1,3}\s*第?\s*[一二三四五六七八九十百千零两\d]+\s*章.*?\n+", "", body, count=1)
-            # 写入 chapters/
-            import os
-            from config import NOVELS_DIR
-            ch_dir = os.path.join(NOVELS_DIR, novel_id, "chapters")
-            os.makedirs(ch_dir, exist_ok=True)
-            fname = f"chapter_{ch_num:04d}.md"
-            fpath = os.path.join(ch_dir, fname)
-            if os.path.exists(fpath):
-                os.replace(fpath, fpath + f".bak_{int(time.time())}")  # 保底备份
-            content = f"# 第{ch_num}章 {ch.get('title', '')}\n\n{body}\n"
-            with open(fpath, "w", encoding="utf-8") as f:
-                f.write(content)
-            # 同步根 state 进度
-            gs_path = os.path.join(NOVELS_DIR, novel_id, "state.json")
-            if os.path.exists(gs_path):
-                try:
-                    with open(gs_path, "r", encoding="utf-8") as f:
-                        gs = json.load(f)
-                    gs["current_chapter"] = ch_num
-                    if ch_num not in (gs.get("completed_chapters") or []):
-                        gs.setdefault("completed_chapters", []).append(ch_num)
-                    gs["total_words"] = int(gs.get("total_words", 0) or 0) + len(body)
-                    gs.setdefault("summaries", {})[str(ch_num)] = body[:120]
-                    with open(gs_path, "w", encoding="utf-8") as f:
-                        json.dump(gs, f, ensure_ascii=False, indent=2)
-                except Exception as e:
-                    log.warning(f"gs update failed: {e}")
-            # ── v2.5.61: global_state.json 同步（timeline/chapters_summary——正式小说体系感知互动进度）──
-            try:
-                _gs_path = os.path.join(NOVELS_DIR, novel_id, "global_state.json")
-                if os.path.exists(_gs_path):
-                    with open(_gs_path, "r", encoding="utf-8") as f:
-                        _gs = json.load(f)
-                    _summary = body[:150].replace("\n", " ")
-                    gs_merge_sync(_gs, ch_num, ch.get("title", ""), body, _summary)
-                    with open(_gs_path, "w", encoding="utf-8") as f:
-                        json.dump(_gs, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                log.warning(f"global_state sync failed: {e}")
-            # ── v2.5.61: 幂等标记——本区间已回流 ──
-            try:
-                sync_mark_record(_cur, ch_num, scene_start, max(scene_end, scene_start))
-                self.store.save_state(novel_id, _cur)
-            except Exception as e:
-                log.warning(f"sync mark failed: {e}")
-            log.info(f"Chapter {ch_num} synced from interactive ({len(scenes)} scenes, {len(body)} chars)")
-        except Exception as e:
-            log.warning(f"_sync_chapter_from_interactive failed: {type(e).__name__}: {str(e)[:100]}")
-        # v3.5.31: 章节结束 → 滚动压缩角色记忆（后台，LLM 提炼旧记忆为长期摘要）
-        try:
-            from .char_memory import compress_all_memories
-            _st = self.store.load_state(novel_id)
-            if _st and compress_all_memories(_st, self._llm):
-                self.store.save_state(novel_id, _st)
-                log.info("Memories compressed after chapter sync")
-        except Exception as e:
-            log.warning(f"memory compress failed: {type(e).__name__}: {str(e)[:80]}")
-
-    # ── v3.6.6: 互动模式 → 导出为小说（互动与正式写作分离后的唯一成书通道）──
     def export_novel_from_interactive(self, novel_id: str, progress_cb=None) -> dict:
         """把互动模式的全部剧情导出为独立小说（手动触发，写独立目录）。
 
@@ -3653,47 +3301,3 @@ class StoryDirector:
         if changed:
             state["casts"] = casts
             self.store.save_state(novel_id, state)
-
-    def backfill_sync(self, novel_id: str, max_sync: int = 2):
-        """v2.5.61: 回流补漏——互动已完成但正式章节缺失的章节自动补回流。
-
-        进入互动模式 / 打开小说页时调用（幂等：已同步区间跳过，不重复生成）。
-        后台执行，不阻塞主流程。
-        """
-        try:
-            state = self.store.load_state(novel_id)
-            if not state or not state.get("outline_chapters"):
-                return
-            # 现有正式章节清单
-            import os
-            from config import NOVELS_DIR
-            ch_dir = os.path.join(NOVELS_DIR, novel_id, "chapters")
-            existing = {}
-            if os.path.isdir(ch_dir):
-                for fn in os.listdir(ch_dir):
-                    if fn.startswith("chapter_") and fn.endswith(".md"):
-                        existing[fn] = True
-            need = backfill_list(state, existing, max_sync=max_sync)
-            if not need:
-                return
-            chs = state.get("outline_chapters") or []
-            # 补漏：按章号找 idx + 场景区间（取该章对应的场景区间）
-            for ch_num in need:
-                for idx, ch in enumerate(chs):
-                    if int(ch.get("number", 0) or 0) == ch_num:
-                        # 场景区间：章号 → 章节场景数估算（每章场景数 = beats 数或 3）
-                        _sb = ch.get("scene_beats") or []
-                        per = max(2, len(_sb)) if _sb else 3
-                        s_start = (idx * per) + 1
-                        s_end = s_start + per - 1
-                        if sync_skip_check(state, ch_num, s_start, s_end):
-                            continue
-                        log.info(f"Backfill sync: 第{ch_num}章 场景[{s_start}-{s_end}]")
-                        enqueue_background(
-                            self._sync_chapter_from_interactive,
-                            novel_id, idx, s_start, s_end,
-                            critical=False,
-                        )
-                        break
-        except Exception as e:
-            log.warning(f"backfill_sync failed: {type(e).__name__}: {str(e)[:100]}")

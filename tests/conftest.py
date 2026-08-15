@@ -1,4 +1,15 @@
-"""Keep manual/live scripts out of deterministic pytest collection."""
+"""Keep manual/live scripts out of deterministic pytest collection.
+
+Also raises API rate limits for the whole test run: the shared TestClient IP
+accumulates /api calls across all test files (60/min default would 429 flaky).
+Must run before any `api.server` import, hence placed at module top.
+"""
+
+import os
+
+# 全量测试共享 TestClient IP，提高限流阈值避免 429 抖动
+os.environ.setdefault("RATE_LIMIT", "10000")
+os.environ.setdefault("AUTH_RATE_LIMIT", "10000")
 
 collect_ignore = [
     "integration_test.py",

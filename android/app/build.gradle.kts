@@ -12,17 +12,46 @@ android {
         applicationId = "com.novelgen.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 56
-        versionName = "2.5.68"
+        versionCode = 60
+        versionName = "2.6.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
     }
 
+    // 本地/CI release 签名：通过 Gradle 属性注入，避免把密码写入源码。
+    signingConfigs {
+        create("release") {
+            val storeFilePath = providers.gradleProperty("RELEASE_STORE_FILE").orNull
+            val storePasswordValue = providers.gradleProperty("RELEASE_STORE_PASSWORD").orNull
+            val keyAliasValue = providers.gradleProperty("RELEASE_KEY_ALIAS").orNull
+            val keyPasswordValue = providers.gradleProperty("RELEASE_KEY_PASSWORD").orNull
+            if (!storeFilePath.isNullOrBlank() && !storePasswordValue.isNullOrBlank()
+                && !keyAliasValue.isNullOrBlank() && !keyPasswordValue.isNullOrBlank()) {
+                storeFile = file(storeFilePath)
+                storePassword = storePasswordValue
+                keyAlias = keyAliasValue
+                keyPassword = keyPasswordValue
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            // Internal debug APK: bypasses WeChat-login gating only. Provider API Key
+            // remains runtime-configurable and is never embedded in the APK.
+            versionNameSuffix = "-internal"
+            buildConfigField("boolean", "INTERNAL_BUILD", "true")
+        }
         release {
             isMinifyEnabled = true
+            buildConfigField("boolean", "INTERNAL_BUILD", "false")
+            val hasReleaseSigning = providers.gradleProperty("RELEASE_STORE_FILE").orNull?.isNotBlank() == true
+                && providers.gradleProperty("RELEASE_STORE_PASSWORD").orNull?.isNotBlank() == true
+                && providers.gradleProperty("RELEASE_KEY_ALIAS").orNull?.isNotBlank() == true
+                && providers.gradleProperty("RELEASE_KEY_PASSWORD").orNull?.isNotBlank() == true
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -37,7 +66,16 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         viewBinding = true
+    }
+
+    // Compress native Python libraries so the internal APK stays within common
+    // chat-file limits; Android extracts them at install time on minSdk 26+.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
