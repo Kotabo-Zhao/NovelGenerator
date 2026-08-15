@@ -1011,6 +1011,21 @@ class GenerationMixin:
             except Exception as _ce:
                 log.warning(f"Outline compliance step skipped: {_ce}")
 
+            # ── v2.0: 生成后自动设定一致性检查（正文内联标注）──
+            try:
+                _setting_annos = []
+                async for _sev in self._setting_annotation_step(
+                        novel_id, chapter_num, full_text):
+                    if isinstance(_sev, list):
+                        _setting_annos = _sev
+                    else:
+                        yield _sev
+                if _setting_annos:
+                    yield {"type": "outline_compliance_annotations",
+                           "chapter": chapter_num, "annotations": _setting_annos}
+            except Exception as _se:
+                log.warning(f"Setting annotation step skipped: {_se}")
+
             from ..quality_gate import validate_chapter_text
             validate_chapter_text(
                 full_text,
@@ -1128,6 +1143,28 @@ class GenerationMixin:
                "level": level, "checked": report.get("results", []),
                "missing": missing_labels, "patched_text": patched_text,
                "message": message}
+
+    async def _setting_annotation_step(self, novel_id: str, chapter_num: int,
+                                       full_text: str) -> list:
+        """v2.0: 生成后自动设定一致性检查（本章 vs 前文），返回 annotations。
+
+        与大纲合规并行，输出可直接供前端标注的格式。
+        """
+        try:
+            from ..settings_scanner import SettingsScanner
+            scanner = SettingsScanner(self.client, self.model)
+            novel_dir = self.memory.get_novel_dir(novel_id)
+            annotations = await asyncio.to_thread(
+                scanner.check_chapter_against_prior,
+                novel_id, novel_dir, chapter_num, full_text)
+            log.info(f"Ch{chapter_num} setting check done: {len(annotations)} annotations")
+            if annotations:
+                yield {"type": "status",
+                       "message": f"⚠️ 发现 {len(annotations)} 处设定疑点（已在正文标注）"}
+            yield annotations
+        except Exception as e:
+            log.warning(f"Setting annotation step failed (non-fatal): {e}")
+            yield []
 
     async def generate_chapter_stream(
         self, novel_id: str, chapter_num: int, writing_mode: str = "webnovel",
@@ -1811,6 +1848,21 @@ class GenerationMixin:
                     yield _cev
             except Exception as _ce:
                 log.warning(f"Outline compliance step skipped: {_ce}")
+
+            # ── v2.0: 生成后自动设定一致性检查（正文内联标注）──
+            try:
+                _setting_annos = []
+                async for _sev in self._setting_annotation_step(
+                        novel_id, chapter_num, full_text):
+                    if isinstance(_sev, list):
+                        _setting_annos = _sev
+                    else:
+                        yield _sev
+                if _setting_annos:
+                    yield {"type": "outline_compliance_annotations",
+                           "chapter": chapter_num, "annotations": _setting_annos}
+            except Exception as _se:
+                log.warning(f"Setting annotation step skipped: {_se}")
 
             # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
             # v2.6: 批量模式后台化（不阻塞正文流程）；单章模式保持同步

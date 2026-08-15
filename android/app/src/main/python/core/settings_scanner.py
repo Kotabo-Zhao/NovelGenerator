@@ -160,3 +160,105 @@ class SettingsScanner:
             "conflict_count": len(all_conflicts),
             "conflicts": all_conflicts[:50],
         }
+
+    # ── v2.0: 单章生成后自动设定检查（供生成流程内联标注）──
+
+    def check_chapter_against_prior(self, novel_id: str, novel_dir: str,
+                                    chapter_num: int, chapter_text: str) -> list:
+        """检查本章正文与已写前文的实体属性矛盾，返回 annotations 列表。
+
+        用于生成流程（_outline_compliance_step 集成）：生成第 N 章后自动调用，
+        轻量（最多查 3 个实体），输出可直接供前端标注的格式：
+        [{text, issue, type: "setting", chapter_ref, entity}]
+        """
+        if not chapter_text or len(chapter_text) < 30:
+            return []
+        # 读取前文（第 1..N-1 章）
+        chapters = self._load_chapters(novel_id, novel_dir)
+        prior = {k: v for k, v in chapters.items() if k < chapter_num}
+        if not prior:
+            return []
+        prior_text = "\n".join(prior.values())[-4000:]  # 只取前文尾部，控制 token
+        # 实体名单：bible/plan + 本章高频词（取 3 个最相关的）
+        entities = self._load_entities(novel_id, novel_dir)
+        # 优先选本章出现的实体
+        ch_entities = [e for e in entities if e in chapter_text][:3]
+        if not ch_entities:
+            return []
+        annotations = []
+        for entity in ch_entities:
+            # 本章该实体的句子
+            cur_mentions = [l.strip()[:120] for l in chapter_text.splitlines() if entity in l][:2]
+            # 前文中该实体的关键属性句（年龄/关系/地点/能力）
+            prior_lines = [l.strip()[:120] for l in prior_text.splitlines() if entity in l]
+            prior_attr = prior_lines[-2:]  # 最近 2 句
+            if not cur_mentions or not prior_attr:
+                continue
+            conflicts = self._judge_chapter_vs_prior(entity, cur_mentions, prior_attr)
+            for c in conflicts:
+                annotations.append({
+                    "text": c.get("cur_text", cur_mentions[0]),
+                    "issue": c.get("issue", ""),
+                    "type": "setting",
+                    "chapter_ref": c.get("chapter_ref"),
+                    "entity": entity,
+                })
+        return annotations[:5]
+
+    def _judge_chapter_vs_prior(self, entity: str, cur_mentions: list,
+                                prior_attr: list) -> list:
+        """单章 vs 前文矛盾判定（LLM 单次调用，无 LLM 时规则兜底）。"""
+        if not self.client or not self.model:
+            return self._rule_chapter_vs_prior(entity, cur_mentions, prior_attr)
+        try:
+            prompt = (
+                f"以下是同一角色/设定「{entity}」在前文与本章的描述，判断是否存在**属性矛盾**"
+                f"（年龄/关系/地点/能力/时间线等前后不一致）。\n\n"
+                f"【前文】\n" + "\n".join(f"- {l}" for l in prior_attr)
+                + f"\n\n【本章】\n" + "\n".join(f"- {l}" for l in cur_mentions)
+                + '\n\n只输出 JSON 数组，每个元素：{"issue": "矛盾说明（20-40字）", '
+                  '"chapter_ref": 前文对应章节号(整数,未知给null)}。无矛盾输出 []。只输出 JSON。'
+            )
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是小说设定一致性审核员，只输出合法 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                max_tokens=800,
+            )
+            raw = (resp.choices[0].message.content or "").strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            conflicts = json.loads(raw)
+            if not isinstance(conflicts, list):
+                return []
+            out = []
+            for c in conflicts[:3]:
+                if isinstance(c, dict) and c.get("issue"):
+                    out.append({
+                        "cur_text": cur_mentions[0] if cur_mentions else "",
+                        "issue": str(c.get("issue", ""))[:80],
+                        "chapter_ref": c.get("chapter_ref"),
+                    })
+            return out
+        except Exception as e:
+            log.warning(f"Chapter-vs-prior LLM judge failed for {entity}: {e}")
+            return []
+
+    def _rule_chapter_vs_prior(self, entity, cur_mentions, prior_attr):
+        """规则兜底：年龄数字前后不一致。"""
+        out = []
+        age_pattern = re.compile(r"(\d{1,2})\s*[岁岁]")
+        prior_ages = [int(m.group(1)) for l in prior_attr for m in [age_pattern.search(l)] if m]
+        cur_ages = [int(m.group(1)) for l in cur_mentions for m in [age_pattern.search(l)] if m]
+        if prior_ages and cur_ages and cur_ages[0] < prior_ages[-1]:
+            out.append({
+                "cur_text": cur_mentions[0],
+                "issue": f"「{entity}」本章年龄 {cur_ages[0]} 岁，前文为 {prior_ages[-1]} 岁，前后矛盾",
+                "chapter_ref": None,
+            })
+        return out

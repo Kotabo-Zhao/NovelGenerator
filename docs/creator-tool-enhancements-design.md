@@ -38,6 +38,127 @@
 
 ---
 
+## 实施记录 v2.0：改造定稿（2026-08-15）
+
+> 依据真实验证（后端 11 项 API 实测全过；前端 CDP 发现展示层粗糙、定位脱节）与用户反馈
+> （设定扫描不应是独立按钮，应生成时自动检查 + 正文内联标注），整合确定以下改造方案。
+
+### V2.0-A. 功能定位（每项一句话）
+
+| 功能 | 定位 | 解决的核心痛点 |
+|---|---|---|
+| ✂️ 章节精细操作 | 改稿手术刀 | 不想整章重生成，只改某段且可回滚 |
+| 🔍 全文检索 | 定位工具 | 长篇忘了设定/情节在哪，快速找到 |
+| 📖 世界圣经 | 设定总账（可增删改） | 前后矛盾、设定记不清 |
+| 📊 统计仪表盘 | 进度感知 | 不知道写了多少、离目标多远 |
+| 💡 灵感箱 | 素材收集 | 好点子随手记、一键成书 |
+| 🔬 设定扫描 | **质量体检（生成时自动）** | 长文越写越乱，主动找矛盾 |
+
+### V2.0-B. 真实验证结论（现状与设计的差距）
+
+后端 ✅ 全部兑现设计（11 项实测）：
+- 搜索命中章节/大纲/角色卡 ✓
+- 圣经读取/写入持久化/名词提取/关系图数据 ✓
+- 统计字数与磁盘一致、目标持久化 ✓
+- 灵感增删查 ✓
+- 真实 LLM 续写/精简/版本历史 ✓
+- 设定扫描执行（6 章 3 实体）✓
+
+前端 ❌ 展示层粗糙（CDP 实测）：
+- 世界圣经 **0 编辑按钮、0 输入框**（设计 CRUD，实现只有展示）
+- 搜索 **无命中高亮**
+- 灵感箱 **无内联输入**（依赖原生 prompt）
+- 统计 **无 SVG 趋势折线**
+- 设定扫描是**独立按钮手动触发**（用户要求改为生成时自动）
+
+### V2.0-C. 改造清单（按优先级）
+
+#### 🔴 P0：设定扫描并入生成流程 + 正文内联标注（用户核心诉求）
+
+**定位变化**：设定扫描从"独立按钮"改为"章节生成时自动检查 + 正文标注不符合项"。
+
+**后端**（`backend/core/mixins/generation.py` + `core/settings_scanner.py`）：
+1. 扩展 `_outline_compliance_step`：生成后校验大纲合规时，**同时跑设定一致性检查**
+   - 实体名单自动提取：plan.json（角色/地点/势力）+ bible.json + 已写章节高频词（复用 settings_scanner._load_entities，无需用户手动建 bible）
+   - 检查本章正文与**已写前文**的实体属性矛盾（年龄/关系/地点/能力/时间线）
+2. SSE `outline_compliance` 事件新增 `annotations` 字段：
+   ```json
+   {"type": "outline_compliance", "chapter": 5, "pct": 85, "level": "partial",
+    "annotations": [
+      {"text": "林晚今年30岁，已是长老", "issue": "第3章设定25岁，年龄冲突", "type": "setting", "chapter_ref": 3},
+      {"text": "他答应过报仇", "issue": "大纲节拍2（冲突升级）未落地", "type": "outline", "chapter_ref": null}
+    ]}
+   ```
+3. 不阻断生成：仅提示 + 标注（自动补写逻辑保留给大纲缺失）
+
+**前端**（`web/index.html`）：
+1. 生成完成收到 `outline_compliance.annotations` → 存储到 `writing.annotations`
+2. 正文渲染：问题句用 `<mark class="anno">` 高亮（设定冲突=红色底纹，大纲缺失=黄色底纹）
+3. 悬停/点击标注 → tooltip 显示 `issue` + 「查看参照章」按钮（跳转 chapter_ref）
+4. 章节卡/正文顶部显示合规摘要：`✓ 100%` / `⚠ 85% · 2 处标注`
+
+#### 🔴 P0：世界圣经完整 CRUD（定位"设定总账"）
+
+- 人物/地点/名词卡片：加「编辑」「新增」「删除」按钮
+- 内联表单（名称/身份/描述/备注/首次出场），保存调 `PUT /bible`
+- 关系图 Tab：加「添加关系」（from/to/type/note 下拉表单）
+- 复用现有 `PUT /api/novels/{id}/bible`（已实测可持久化）
+
+#### 🟠 P1：搜索增强
+
+- 命中关键词 `<mark>` 高亮（snippet 内）
+- 搜索范围：当前书 / 全部书（后端需支持跨书，或前端循环调用）
+- 搜索历史（最近 5 条，localStorage）
+
+#### 🟠 P1：统一弹窗组件（消除 7 处原生 prompt/confirm）
+
+- 新增 `modal` 状态 + 通用弹窗（支持输入框/文本域/多字段）
+- 替换：灵感新增/编辑、素材新增、重写意见、删除确认、回滚确认、风格命名
+
+#### 🟠 P1：统计仪表盘补全
+
+- 每日字数 SVG 折线（后端 stats 已返回 daily 数据）
+- 目标进度条（当前字数/目标字数）
+
+#### 🟡 P2：章节操作反馈
+
+- 操作完成后 toast 显示改动量（`修改后 N 字`）
+- 续写支持目标字数输入（modal）
+
+### V2.0-D. 实施顺序
+
+| 步 | 内容 |
+|---|---|
+| 1 | 后端：`_outline_compliance_step` 集成设定检查 + annotations 事件 |
+| 2 | 前端：正文标注渲染（mark 高亮 + tooltip） |
+| 3 | 前端：世界圣经 CRUD（编辑/新增/删除/关系） |
+| 4 | 前端：统一弹窗组件 + 替换 prompt/confirm |
+| 5 | 前端：搜索高亮 + 范围 |
+| 6 | 前端：统计 SVG 趋势 + 目标进度 |
+| 7 | 全量测试 + CDP 双端验证 + 同步 + APK |
+
+### V2.0-E. 验收标准（v2.0）
+
+- [x] 生成章节后正文自动标注设定冲突/大纲缺失，无独立"设定扫描"按钮
+- [x] 世界圣经可编辑（增删改持久化）
+- [x] 搜索命中高亮 + 跨书可选
+- [x] 无原生 prompt/confirm 对话框（新功能）
+- [x] 统计有趋势折线 + 目标进度
+- [x] 301+148 测试通过，CDP 双端通过
+
+### V2.0-F. 实施记录（已完成）
+
+| 项 | 实现 |
+|---|---|
+| 设定扫描并入生成 | `_outline_compliance_step` 后集成 `_setting_annotation_step`（settings_scanner.check_chapter_against_prior，本章 vs 前文 LLM 判定），SSE 产出 `outline_compliance_annotations` 事件 |
+| 正文标注 | `annotatedContent` computed（mark.anno-setting/outline 高亮）+ `onAnnoClick` tooltip（issue + 跳转参照章） |
+| 圣经 CRUD | bibleStartNew/Edit/Save/Delete + relation 表单，内联编辑弹层，PUT /bible 持久化 |
+| 统一弹窗 | `modal` 响应式 + openModal/confirmModal，替换灵感/素材/重写/回滚/圣经删除 5 处 prompt/confirm |
+| 搜索高亮 | `highlightSnippet`（mark.search-mark）+ 当前书/全部书范围切换 + 跨书跳转 |
+| 统计趋势 | `trendPoints`/`trendMax` computed + SVG polyline + goal-progress-fill 进度条 |
+
+---
+
 ## 0. 现状盘点与设计原则
 
 ### 0.1 现有能力（本设计复用，不重复造轮子）

@@ -841,12 +841,18 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .term-candidates{display:flex;flex-wrap:wrap;gap:6px}
 .term-candidates .tag:hover{transform:translateY(-1px)}
 .term-item{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-light);font-size:13px}
+.relation-list{display:flex;flex-direction:column;gap:6px}
+.relation-item{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg2);border:1px solid var(--border-light);border-radius:8px;font-size:13px}
 
 /* 统计 */
 .stats-bars{display:flex;align-items:flex-end;gap:3px;height:90px;overflow-x:auto;padding-bottom:20px}
 .stat-bar-col{display:flex;flex-direction:column;align-items:center;flex-shrink:0;width:16px}
 .stat-bar{width:12px;background:linear-gradient(180deg,var(--accent),var(--pink));border-radius:3px 3px 0 0;min-height:3px;transition:height .3s var(--ease)}
 .stat-bar-label{font-size:8px;color:var(--text3);margin-top:2px}
+.goal-progress{margin-bottom:10px}
+.goal-progress-track{height:8px;background:var(--border-light);border-radius:4px;overflow:hidden}
+.goal-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--pink));border-radius:4px;transition:width .5s var(--ease);box-shadow:0 0 10px rgba(201,167,255,.5)}
+.goal-progress-label{font-size:11px;color:var(--text3);margin-top:5px;font-variant-numeric:tabular-nums}
 
 /* 灵感箱 */
 .idea-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
@@ -864,6 +870,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .search-hit-body{min-width:0}
 .search-hit-title{font-size:13px;font-weight:600;color:var(--text)}
 .search-hit-snippet{font-size:11.5px;color:var(--text3);margin-top:2px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+mark.search-mark{background:rgba(255,212,121,.35);color:inherit;border-radius:3px;padding:0 2px}
 .scan-conflict{padding:10px 12px;border-radius:10px;background:rgba(255,107,129,.06);border:1px solid rgba(255,107,129,.2);margin-top:8px;cursor:pointer;transition:all .15s}
 .scan-conflict:hover{border-color:var(--red);background:rgba(255,107,129,.12)}
 .version-item{padding:10px 12px;border-radius:10px;background:var(--bg2);border:1px solid var(--border-light);margin-bottom:8px;cursor:pointer;transition:all .15s}
@@ -888,6 +895,15 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .sel-bar{top:auto;bottom:90px;left:8px;right:8px;transform:none;justify-content:space-between}
   .sel-bar-text{display:none}
 }
+
+/* v2.0 正文标注 */
+mark.anno{padding:1px 3px;border-radius:4px;cursor:pointer;transition:filter .15s}
+mark.anno:hover{filter:brightness(1.25)}
+mark.anno-setting{background:rgba(255,107,129,.22);border-bottom:2px solid rgba(255,107,129,.7);color:inherit}
+mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(255,212,121,.7);color:inherit}
+.anno-tooltip{position:fixed;z-index:300;background:rgba(30,25,60,.97);border:1px solid rgba(255,107,129,.4);border-radius:12px;padding:12px 14px;max-width:250px;box-shadow:var(--shadow-lg);backdrop-filter:blur(16px);animation:toastDrop .2s var(--ease) both}
+.anno-tooltip-type{font-size:11px;font-weight:700;color:var(--red);letter-spacing:1px;margin-bottom:4px}
+.anno-tooltip-issue{font-size:12.5px;color:var(--text);line-height:1.6}
 </style>
 </head>
 <body>
@@ -1340,7 +1356,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
               </div>
 
               <!-- 正文 -->
-              <div v-if="writing.content" class="chapter-content" ref="preview">{{ writing.content }}</div>
+              <div v-if="writing.content" class="chapter-content" ref="preview" v-html="annotatedContent" @click="onAnnoClick"></div>
               <div v-else-if="!loading.write && (activeNovel.state.completed_chapters||[]).includes(writing.chapter) && writing.done" class="chapter-empty glass">
                 <div class="ce-icon">☐</div><p>第{{ writing.chapter }}章</p><p class="text-xs color-text3 mt-8">点击章节序号查看</p>
               </div>
@@ -1800,11 +1816,18 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <!-- 人物 -->
       <div v-if="bibleTab==='characters'" class="bible-grid">
         <div v-for="(c, name) in bibleData.characters" :key="name" class="bible-card glass">
-          <div class="bible-card-title">{{ name }}</div>
+          <div class="flex justify-between items-center">
+            <div class="bible-card-title">{{ name }}</div>
+            <div class="flex gap-6">
+              <button class="btn btn-xs btn-ghost" @click="bibleStartEdit('character', name, {...c, name})">✏️</button>
+              <button class="btn btn-xs btn-ghost" style="color:var(--red)" @click="bibleDeleteEntry('character', name)">✕</button>
+            </div>
+          </div>
           <div class="text-xs color-text3">{{ c.identity || '未设定身份' }}</div>
           <div v-if="c.note" class="text-xs color-text3" style="margin-top:4px">{{ c.note }}</div>
-          <div style="font-size:12px;color:var(--text2);margin-top:6px;white-space:pre-wrap">{{ c.personality?.surface || '' }}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:6px;white-space:pre-wrap">{{ c.personality?.surface || c.description || '' }}</div>
         </div>
+        <button class="btn btn-secondary btn-sm" style="grid-column:1/-1" @click="bibleStartNew">＋ 新增人物</button>
         <div v-if="!Object.keys(bibleData.characters||{}).length" class="empty-state glass" style="grid-column:1/-1">
           <p>暂无人物档案。可先关闭本页，从写作页「📖」或书卡进入后由系统自动合并。</p>
         </div>
@@ -1812,9 +1835,16 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <!-- 地点 -->
       <div v-if="bibleTab==='locations'" class="bible-grid">
         <div v-for="(loc, name) in bibleData.locations" :key="name" class="bible-card glass">
-          <div class="bible-card-title">{{ name }}</div>
+          <div class="flex justify-between items-center">
+            <div class="bible-card-title">{{ name }}</div>
+            <div class="flex gap-6">
+              <button class="btn btn-xs btn-ghost" @click="bibleStartEdit('location', name, {...loc, name})">✏️</button>
+              <button class="btn btn-xs btn-ghost" style="color:var(--red)" @click="bibleDeleteEntry('location', name)">✕</button>
+            </div>
+          </div>
           <div class="text-xs color-text3">{{ loc.description || '暂无描述' }}</div>
         </div>
+        <button class="btn btn-secondary btn-sm" style="grid-column:1/-1" @click="bibleStartNew">＋ 新增地点</button>
         <div v-if="!Object.keys(bibleData.locations||{}).length" class="empty-state glass" style="grid-column:1/-1">
           <p>暂无地点档案。可切换到「专有名词」提取正文中的地名。</p>
         </div>
@@ -1835,15 +1865,79 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
             <div v-for="(t, name) in bibleData.terms" :key="name" class="term-item">
               <span style="font-weight:600">{{ name }}</span>
               <span class="text-xs color-text3"> · {{ t.category || '术语' }}</span>
+              <span style="flex:1"></span>
+              <button class="btn btn-xs btn-ghost" @click="bibleStartEdit('term', name, {...t, name})">✏️</button>
+              <button class="btn btn-xs btn-ghost" style="color:var(--red)" @click="bibleDeleteEntry('term', name)">✕</button>
             </div>
           </div>
         </div>
       </div>
       <!-- 关系图 -->
       <div v-if="bibleTab==='relations'" class="glass panel">
-        <div class="panel-title" style="margin:0 0 12px">💞 人物关系</div>
-        <canvas id="relationCanvas" width="800" height="400" style="width:100%;height:auto;max-width:800px;background:rgba(255,255,255,.03);border-radius:12px"></canvas>
-        <div class="text-xs color-text3" style="margin-top:8px">关系图：绿=盟友 红=敌对 粉=暧昧 蓝=导师。可在 bible.json 中维护 relations。</div>
+        <div class="panel-head">
+          <div class="panel-title" style="margin:0">💞 人物关系</div>
+          <button class="btn btn-secondary btn-xs" @click="bibleStartRelation">＋ 添加关系</button>
+        </div>
+        <div class="relation-list" v-if="bibleData.relations.length">
+          <div v-for="(r, idx) in bibleData.relations" :key="idx" class="relation-item">
+            <span style="font-weight:600">{{ r.from }}</span>
+            <span class="text-xs" :style="{color: r.type==='敌对'?'var(--red)':r.type==='盟友'?'var(--green)':'var(--accent)'}">→ {{ r.type }} →</span>
+            <span style="font-weight:600">{{ r.to }}</span>
+            <span v-if="r.note" class="text-xs color-text3"> · {{ r.note }}</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-xs btn-ghost" @click="bibleEditRelation(idx)">✏️</button>
+            <button class="btn btn-xs btn-ghost" style="color:var(--red)" @click="bibleDeleteRelation(idx)">✕</button>
+          </div>
+        </div>
+        <canvas id="relationCanvas" width="800" height="400" style="width:100%;height:auto;max-width:800px;background:rgba(255,255,255,.03);border-radius:12px;margin-top:12px"></canvas>
+        <div class="text-xs color-text3" style="margin-top:8px">关系图：绿=盟友 红=敌对 粉=暧昧 蓝=导师。</div>
+      </div>
+
+      <!-- 圣经编辑表单 -->
+      <div v-if="bibleEdit.active" class="toast-overlay" @click.self="bibleCancelEdit">
+        <div class="search-panel" style="max-width:440px">
+          <div class="panel-title" style="margin:0 0 12px">{{ bibleEdit.kind==='relation' ? '💞 关系' : (bibleEdit.name ? '✏️ 编辑' : '＋ 新增') }}</div>
+          <template v-if="bibleEdit.kind!=='relation'">
+            <label class="text-xs">名称</label>
+            <input v-model="bibleEdit.form.name" placeholder="名称" style="margin-bottom:8px">
+          </template>
+          <template v-if="bibleEdit.kind==='character'">
+            <label class="text-xs">身份</label>
+            <input v-model="bibleEdit.form.identity" placeholder="身份（如：剑修 / 设计师）" style="margin-bottom:8px">
+            <label class="text-xs">外貌</label>
+            <textarea v-model="bibleEdit.form.appearance" rows="2" placeholder="外貌描述" style="margin-bottom:8px"></textarea>
+            <label class="text-xs">备注</label>
+            <textarea v-model="bibleEdit.form.note" rows="2" placeholder="备注" style="margin-bottom:8px"></textarea>
+          </template>
+          <template v-else-if="bibleEdit.kind==='location'">
+            <label class="text-xs">描述</label>
+            <textarea v-model="bibleEdit.form.description" rows="3" placeholder="地点描述" style="margin-bottom:8px"></textarea>
+            <label class="text-xs">备注</label>
+            <textarea v-model="bibleEdit.form.note" rows="2" placeholder="备注" style="margin-bottom:8px"></textarea>
+          </template>
+          <template v-else-if="bibleEdit.kind==='term'">
+            <label class="text-xs">分类</label>
+            <input v-model="bibleEdit.form.category" placeholder="功法/组织/物品/能力" style="margin-bottom:8px">
+            <label class="text-xs">描述</label>
+            <textarea v-model="bibleEdit.form.description" rows="2" placeholder="描述" style="margin-bottom:8px"></textarea>
+          </template>
+          <template v-else>
+            <label class="text-xs">从</label>
+            <input v-model="bibleEdit.form.from" placeholder="人物A" style="margin-bottom:8px">
+            <label class="text-xs">关系类型</label>
+            <select v-model="bibleEdit.form.type" style="margin-bottom:8px">
+              <option>盟友</option><option>敌对</option><option>暧昧</option><option>导师</option><option>其他</option>
+            </select>
+            <label class="text-xs">到</label>
+            <input v-model="bibleEdit.form.to" placeholder="人物B" style="margin-bottom:8px">
+            <label class="text-xs">备注</label>
+            <input v-model="bibleEdit.form.note" placeholder="关系备注" style="margin-bottom:8px">
+          </template>
+          <div class="flex gap-6" style="justify-content:flex-end">
+            <button class="btn btn-ghost btn-sm" @click="bibleCancelEdit">取消</button>
+            <button class="btn btn-primary btn-sm" @click="bibleSaveEntry">保存</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -1865,6 +1959,19 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <div class="stat-card"><div class="stat-num">{{ statsData.avg_chars_per_chapter }}</div><div class="stat-label">平均每章字数</div></div>
         <div class="stat-card"><div class="stat-num">{{ statsData.planned_chapters ? Math.round(statsData.total_chapters/statsData.planned_chapters*100) : 0 }}%</div><div class="stat-label">完成度</div></div>
       </div>
+      <!-- 每日字数趋势（SVG 折线） -->
+      <div v-if="statsData && statsData.daily && statsData.daily.length > 1" class="glass panel">
+        <div class="panel-title" style="margin:0 0 12px">📅 每日字数趋势</div>
+        <svg :viewBox="'0 0 '+trendW+' '+trendH" style="width:100%;height:auto;max-height:160px" :ref="'trendSvg'">
+          <polyline :points="trendPoints" fill="none" stroke="url(#trendGrad)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          <defs>
+            <linearGradient id="trendGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#c9a7ff"/><stop offset="100%" stop-color="#7ee0e2"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <div class="text-xs color-text3" style="margin-top:4px">最近 {{ statsData.daily.length }} 天 · 峰值 {{ trendMax }} 字/日</div>
+      </div>
       <!-- 每章字数分布（CSS 柱状） -->
       <div v-if="statsData && statsData.per_chapter.length" class="glass panel">
         <div class="panel-title" style="margin:0 0 12px">📈 每章字数</div>
@@ -1878,7 +1985,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
       <!-- 目标 -->
       <div v-if="statsData" class="glass panel">
         <div class="panel-title" style="margin:0 0 12px">🎯 写作目标</div>
-        <div class="flex gap-8 items-center" style="flex-wrap:wrap">
+        <div v-if="statsData.goal && statsData.goal.target_chars > 0" class="goal-progress">
+          <div class="goal-progress-track">
+            <div class="goal-progress-fill" :style="{width: Math.min(100, statsData.total_chars/statsData.goal.target_chars*100)+'%'}"></div>
+          </div>
+          <div class="goal-progress-label">{{ (statsData.total_chars/10000).toFixed(1) }}万 / {{ (statsData.goal.target_chars/10000).toFixed(1) }}万字 · {{ Math.round(statsData.total_chars/Math.max(statsData.goal.target_chars,1)*100) }}%</div>
+        </div>
+        <div class="flex gap-8 items-center" style="flex-wrap:wrap;margin-top:10px">
           <label class="text-xs">目标字数 <input v-model.number="statsData.goal.target_chars" type="number" style="width:90px"></label>
           <label class="text-xs">目标章节 <input v-model.number="statsData.goal.target_chapters" type="number" style="width:70px"></label>
           <label class="text-xs">每日字数 <input v-model.number="statsData.goal.daily_target" type="number" style="width:80px"></label>
@@ -1944,12 +2057,16 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
         <button class="btn btn-primary btn-sm" @click="runSearch" :disabled="searchLoading">{{ searchLoading ? '…' : '搜索' }}</button>
         <button class="btn btn-ghost btn-sm" @click="closeSearch">✕</button>
       </div>
+      <div class="seg" style="margin-bottom:12px">
+        <button :class="{on:searchScope==='novel'}" @click="searchScope='novel'">当前书</button>
+        <button :class="{on:searchScope==='all'}" @click="searchScope='all'">全部书</button>
+      </div>
       <div v-if="searchResults.length" class="search-results">
         <div v-for="(hit, i) in searchResults" :key="i" class="search-hit" @click="jumpToSearchHit(hit)">
           <span class="search-hit-src">{{ hit.source==='chapter' ? '📄Ch'+hit.chapter_num : (hit.source==='outline' ? '📋大纲' : '🎭角色') }}</span>
           <div class="search-hit-body">
-            <div class="search-hit-title">{{ hit.title }}</div>
-            <div class="search-hit-snippet">{{ hit.snippet }}</div>
+            <div class="search-hit-title">{{ hit.novel ? hit.novel + ' · ' : '' }}{{ hit.title }}</div>
+            <div class="search-hit-snippet" v-html="highlightSnippet(hit.snippet)"></div>
           </div>
         </div>
       </div>
@@ -2021,6 +2138,35 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
     </div>
   </div>
 
+  <!-- 统一弹窗（替代 prompt/confirm） -->
+  <div v-if="modal.visible" class="toast-overlay" @click.self="closeModal">
+    <div class="search-panel" style="max-width:420px">
+      <div class="panel-title" style="margin:0 0 12px">{{ modal.title }}</div>
+      <template v-if="modal.kind==='input'">
+        <label class="text-xs">{{ modal.label }}</label>
+        <textarea v-if="modal.textarea" v-model="modal.value" :rows="modal.rows" style="margin-bottom:12px" placeholder="输入…"></textarea>
+        <input v-else v-model="modal.value" style="margin-bottom:12px" placeholder="输入…" @keyup.enter="confirmModal">
+      </template>
+      <template v-else>
+        <div class="text-sm" style="color:var(--text2);margin-bottom:12px">{{ modal.label }}</div>
+      </template>
+      <div class="flex gap-6" style="justify-content:flex-end">
+        <button class="btn btn-ghost btn-sm" @click="closeModal">取消</button>
+        <button class="btn btn-primary btn-sm" @click="confirmModal">{{ modal.confirmText }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 正文标注 tooltip -->
+  <div v-if="annoTooltip.visible" class="anno-tooltip" :style="{left:annoTooltip.x+'px', top:annoTooltip.y+'px'}" @click.stop>
+    <div class="anno-tooltip-type">{{ annoTooltip.type==='setting' ? '⚠️ 设定疑点' : '📋 大纲疑点' }}</div>
+    <div class="anno-tooltip-issue">{{ annoTooltip.issue }}</div>
+    <div class="flex gap-6" style="margin-top:8px;justify-content:flex-end">
+      <button v-if="annoTooltip.chapter_ref" class="btn btn-xs btn-primary" @click="gotoAnnoRef">查看第{{ annoTooltip.chapter_ref }}章</button>
+      <button class="btn btn-xs btn-ghost" @click="hideAnnoTooltip">知道了</button>
+    </div>
+  </div>
+
   <!-- ═══ 移动端底部导航 ═══ -->
   <nav class="bottom-nav">
     <div class="bn-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="bn-icon">📚</span>书架</div>
@@ -2066,12 +2212,48 @@ const app = createApp({
     const bibleTab = ref('characters');
     const bibleLoading = ref(false);
     const termCandidates = ref([]);
+    // v2.0: 圣经 CRUD 编辑状态
+    const bibleEdit = reactive({active:false, kind:'character', name:'', form:{}});
+    const bibleNewKind = ref('character');
     const statsData = ref(null);
     const statsLoading = ref(false);
+    // v2.0: 每日趋势折线计算
+    const trendW = 600, trendH = 140, trendPad = 10;
+    const trendPoints = computed(() => {
+      const daily = (statsData.value?.daily) || [];
+      if (daily.length < 2) return '';
+      const max = Math.max(...daily.map(d => d.chars), 1);
+      const stepX = (trendW - trendPad*2) / Math.max(daily.length - 1, 1);
+      return daily.map((d, i) => {
+        const x = trendPad + i*stepX;
+        const y = trendH - trendPad - (d.chars/max)*(trendH - trendPad*2);
+        return x.toFixed(1)+','+y.toFixed(1);
+      }).join(' ');
+    });
+    const trendMax = computed(() => Math.max(...((statsData.value?.daily)||[]).map(d => d.chars), 0));
     const ideasData = ref([]); const ideasTags = ref([]);
     const ideasTab = ref('ideas');             // 'ideas' | 'materials'
     const materialsData = ref([]);
     const ideasLoading = ref(false);
+    // v2.0: 统一弹窗（替代 prompt/confirm）
+    const modal = reactive({visible:false, title:'', kind:'input', label:'', value:'', rows:1,
+                            confirmText:'确定', onConfirm:null, textarea:false});
+    function openModal(opts) {
+      modal.visible = true; modal.title = opts.title || '';
+      modal.kind = opts.kind || 'input';
+      modal.label = opts.label || '';
+      modal.value = opts.value || '';
+      modal.rows = opts.rows || 1;
+      modal.textarea = !!opts.textarea;
+      modal.confirmText = opts.confirmText || '确定';
+      modal.onConfirm = opts.onConfirm || null;
+    }
+    function closeModal() { modal.visible = false; modal.onConfirm = null; }
+    function confirmModal() {
+      const cb = modal.onConfirm;
+      closeModal();
+      if (cb) cb(modal.value);
+    }
     const searchOpen = ref(false); const searchQuery = ref('');
     const searchResults = ref([]); const searchLoading = ref(false);
     const searchScope = ref('novel');          // 'novel' | 'all'
@@ -2242,7 +2424,46 @@ const app = createApp({
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
-    const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write' });
+    const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write', annotations:[] });
+    // v2.0: 正文标注渲染（设定冲突/大纲缺失高亮）
+    const annoTooltip = reactive({visible:false, x:0, y:0, issue:'', chapter_ref:null, type:'setting'});
+    const annotatedContent = computed(() => {
+      const text = writing.content || '';
+      const annos = writing.annotations || [];
+      if (!annos.length) return text.replace(/\n/g, '<br>');
+      // 按位置标记（text 在正文中出现的位置），用 mark 包裹 + data 属性供 tooltip
+      let html = text;
+      annos.forEach((a, i) => {
+        const t = a.text || '';
+        if (!t) return;
+        const esc = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(esc, 'g');
+        html = html.replace(re, `<mark class="anno anno-${a.type || 'setting'}" data-anno="${i}" data-issue="${encodeURIComponent(a.issue || '')}" data-ref="${a.chapter_ref || ''}" title="">${t}</mark>`);
+      });
+      return html.replace(/\n/g, '<br>');
+    });
+    function onAnnoClick(e) {
+      const m = e.target.closest('mark.anno');
+      if (!m) return;
+      const i = parseInt(m.dataset.anno || '0', 10);
+      const a = (writing.annotations || [])[i];
+      if (!a) return;
+      annoTooltip.visible = true;
+      annoTooltip.issue = a.issue || '';
+      annoTooltip.chapter_ref = a.chapter_ref;
+      annoTooltip.type = a.type || 'setting';
+      annoTooltip.x = Math.min(e.clientX + 10, window.innerWidth - 260);
+      annoTooltip.y = e.clientY + 10;
+    }
+    function hideAnnoTooltip() { annoTooltip.visible = false; }
+    function gotoAnnoRef() {
+      if (!annoTooltip.chapter_ref || !activeNovel.value) return;
+      hideAnnoTooltip();
+      openNovel(activeNovel.value);
+      writing.chapter = annoTooltip.chapter_ref; writing.content=''; writing.done=false;
+      fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+annoTooltip.chapter_ref)
+        .then(r=>r.ok?r.json():null).then(d=>{ if(d&&d.content){writing.content=d.content;writing.done=true;} }).catch(()=>{});
+    }
 
     async function deleteNovel(novel) {
       if (!confirm(`永久删除「${novel.title}」？\n\n这将删除所有章节和大纲，不可恢复！`)) return;
@@ -2654,14 +2875,32 @@ const app = createApp({
       if (!q) { searchResults.value=[]; return; }
       searchLoading.value=true;
       try {
-        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value?.id||'')+'/search?q='+encodeURIComponent(q)+'&limit=50');
-        const d = await r.json();
-        searchResults.value = d.results || [];
+        if (searchScope.value==='all' && novels.value.length) {
+          // 跨书搜索：循环每本书
+          const all = [];
+          for (const n of novels.value) {
+            try {
+              const r = await fetch(API+'/api/novels/'+encodeURIComponent(n.id)+'/search?q='+encodeURIComponent(q)+'&limit=10');
+              const d = await r.json();
+              (d.results||[]).forEach(hit => { hit.novel = n.title; all.push(hit); });
+            } catch(e) {}
+          }
+          searchResults.value = all.slice(0, 50);
+        } else {
+          const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value?.id||'')+'/search?q='+encodeURIComponent(q)+'&limit=50');
+          const d = await r.json();
+          searchResults.value = d.results || [];
+        }
       } catch(e) { searchResults.value=[]; reportError('搜索失败: '+e.message); }
       finally { searchLoading.value=false; }
     }
     function jumpToSearchHit(hit) {
       searchOpen.value=false;
+      // 跨书搜索：先切到命中书
+      if (hit.novel && activeNovel.value?.id !== hit.novel) {
+        const n = novels.value.find(x => x.id === hit.novel || x.title === hit.novel);
+        if (n) { activeNovel.value = n; _saveSession(); }
+      }
       if (hit.source==='chapter' && hit.chapter_num>0) {
         if (!activeNovel.value) return;
         openNovel(activeNovel.value);
@@ -2673,6 +2912,13 @@ const app = createApp({
       } else if (hit.source==='bible') {
         openBible();
       }
+    }
+    // v2.0: snippet 关键词高亮
+    function highlightSnippet(snippet) {
+      const q = searchQuery.value.trim();
+      if (!q || !snippet) return snippet || '';
+      const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return String(snippet).replace(new RegExp(esc, 'g'), '<mark class="search-mark">$&</mark>');
     }
 
     function openBible() {
@@ -2701,6 +2947,71 @@ const app = createApp({
         showToast('世界圣经已保存', '保存成功', '✅');
       } catch(e) { reportError('保存失败: '+e.message); }
       finally { bibleLoading.value=false; }
+    }
+    // ── v2.0: 圣经 CRUD ──
+    function bibleStartNew() {
+      const kind = bibleTab.value==='locations' ? 'location' : (bibleTab.value==='terms' ? 'term' : 'character');
+      bibleEdit.active = true; bibleEdit.kind = kind; bibleEdit.name = '';
+      bibleEdit.form = {};
+      if (kind==='location') bibleEdit.form = {description:'', note:''};
+      else if (kind==='term') bibleEdit.form = {category:'术语', description:'', note:''};
+      else bibleEdit.form = {identity:'', appearance:'', note:''};
+    }
+    function bibleStartEdit(kind, name, entry) {
+      bibleEdit.active = true; bibleEdit.kind = kind; bibleEdit.name = name;
+      bibleEdit.form = JSON.parse(JSON.stringify(entry || {}));
+    }
+    function bibleCancelEdit() { bibleEdit.active = false; bibleEdit.name=''; bibleEdit.form={}; }
+    function bibleSaveEntry() {
+      const kind = bibleEdit.kind;
+      const name = (bibleEdit.name || '').trim();
+      const newName = (bibleEdit.form.name || name || '').trim();
+      if (!newName) { reportError('名称不能为空'); return; }
+      // 收集表单字段（去掉 name 字段本身，它作为 key）
+      const entry = JSON.parse(JSON.stringify(bibleEdit.form));
+      delete entry.name;
+      // 删除旧 key（如果是改名）
+      if (kind==='character') {
+        if (name && name !== newName) delete bibleData.value.characters[name];
+        bibleData.value.characters[newName] = entry;
+      } else if (kind==='location') {
+        if (name && name !== newName) delete bibleData.value.locations[name];
+        bibleData.value.locations[newName] = entry;
+      } else if (kind==='term') {
+        if (name && name !== newName) delete bibleData.value.terms[name];
+        bibleData.value.terms[newName] = entry;
+      } else if (kind==='relation') {
+        // 关系：新增/编辑
+        const idx = bibleEdit.form._idx;
+        const rel = {from: bibleEdit.form.from, to: bibleEdit.form.to, type: bibleEdit.form.type, note: bibleEdit.form.note};
+        if (idx !== undefined && idx !== null && bibleData.value.relations[idx]) bibleData.value.relations[idx] = rel;
+        else bibleData.value.relations.push(rel);
+      }
+      bibleCancelEdit();
+      showToast('已保存，点击「💾 保存」写入', '编辑完成', '✅');
+    }
+    function bibleDeleteEntry(kind, name) {
+      openModal({
+        title: '删除「'+name+'」', kind: 'confirm', label: '确定从世界圣经删除？', confirmText: '删除',
+        onConfirm: () => {
+          if (kind==='character') delete bibleData.value.characters[name];
+          else if (kind==='location') delete bibleData.value.locations[name];
+          else if (kind==='term') delete bibleData.value.terms[name];
+          showToast('已删除，点击「💾 保存」写入', '删除完成', '✅');
+        }
+      });
+    }
+    function bibleStartRelation() {
+      bibleEdit.active = true; bibleEdit.kind = 'relation'; bibleEdit.name = '';
+      bibleEdit.form = {from:'', to:'', type:'盟友', note:''};
+    }
+    function bibleEditRelation(idx) {
+      const r = bibleData.value.relations[idx] || {};
+      bibleEdit.active = true; bibleEdit.kind = 'relation'; bibleEdit.name = '';
+      bibleEdit.form = {from:r.from||'', to:r.to||'', type:r.type||'盟友', note:r.note||'', _idx:idx};
+    }
+    function bibleDeleteRelation(idx) {
+      bibleData.value.relations.splice(idx, 1);
     }
     async function extractTerms() {
       if (!activeNovel.value) return;
@@ -2804,33 +3115,49 @@ const app = createApp({
       } catch(e) {}
     }
     async function addIdea() {
-      const text = prompt('记一条灵感：');
-      if (!text || !text.trim()) return;
-      try {
-        const r = await fetch(API+'/api/ideas', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:text.trim(), tags:[]})});
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        await loadIdeas();
-      } catch(e) { reportError('添加失败: '+e.message); }
+      openModal({
+        title: '💡 记一条灵感', kind: 'input', label: '灵感内容', rows: 3, textarea: true,
+        confirmText: '保存灵感',
+        onConfirm: async (text) => {
+          if (!text || !text.trim()) return;
+          try {
+            const r = await fetch(API+'/api/ideas', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:text.trim(), tags:[]})});
+            if (!r.ok) throw new Error('HTTP '+r.status);
+            await loadIdeas();
+          } catch(e) { reportError('添加失败: '+e.message); }
+        }
+      });
     }
     async function deleteIdea(id) {
-      if (!confirm('删除这条灵感？')) return;
-      try {
-        await fetch(API+'/api/ideas/'+encodeURIComponent(id), {method:'DELETE'});
-        await loadIdeas();
-      } catch(e) { reportError('删除失败: '+e.message); }
+      openModal({
+        title: '删除灵感', kind: 'confirm', label: '删除这条灵感？', confirmText: '删除',
+        onConfirm: async () => {
+          try {
+            await fetch(API+'/api/ideas/'+encodeURIComponent(id), {method:'DELETE'});
+            await loadIdeas();
+          } catch(e) { reportError('删除失败: '+e.message); }
+        }
+      });
     }
     async function addMaterial() {
-      const title = prompt('素材标题：');
-      if (!title || !title.trim()) return;
-      const content = prompt('素材内容：');
-      if (!content || !content.trim()) return;
-      const category = prompt('分类（桥段/对白/场景/设定）：', '桥段') || '桥段';
-      try {
-        const r = await fetch(API+'/api/ideas/materials', {method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({category:category.trim(), title:title.trim(), content:content.trim()})});
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        await loadMaterials();
-      } catch(e) { reportError('添加失败: '+e.message); }
+      openModal({
+        title: '📚 新增素材', kind: 'input', label: '素材（格式：分类｜标题｜内容）', rows: 3, textarea: true,
+        confirmText: '保存素材',
+        onConfirm: async (raw) => {
+          if (!raw || !raw.trim()) return;
+          const parts = String(raw).split('｜');
+          const category = (parts[0]||'桥段').trim();
+          const title = (parts[1]||'').trim();
+          const content = (parts.slice(2).join('｜')||parts[1]||'').trim();
+          if (!title || !content) { reportError('格式：分类｜标题｜内容'); return; }
+          try {
+            const r = await fetch(API+'/api/ideas/materials', {method:'POST', headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({category:category, title:title, content:content})});
+            if (!r.ok) throw new Error('HTTP '+r.status);
+            await loadMaterials();
+          } catch(e) { reportError('添加失败: '+e.message); }
+        }
+      });
     }
     function ideaToNovel(text) {
       openCreate();
@@ -2873,17 +3200,21 @@ const app = createApp({
     }
     function closeVersions() { versionsOpen.value=false; }
     async function rollbackVersion(v) {
-      if (!confirm('回滚到版本 v'+v+'？当前版本会先保存为快照。')) return;
-      try {
-        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+versionsChapter.value+'/versions/rollback', {
-          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({to_version:v})
-        });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.detail || ('HTTP '+r.status));
-        writing.content = d.content; writing.done=true;
-        showToast('已回滚到版本 v'+v, '回滚成功', '✅');
-        closeVersions(); loadShelfDebounced();
-      } catch(e) { reportError('回滚失败: '+e.message); }
+      openModal({
+        title: '回滚到 v'+v, kind: 'confirm', label: '回滚到版本 v'+v+'？当前版本会先保存为快照。', confirmText: '回滚',
+        onConfirm: async () => {
+          try {
+            const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+versionsChapter.value+'/versions/rollback', {
+              method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({to_version:v})
+            });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.detail || ('HTTP '+r.status));
+            writing.content = d.content; writing.done=true;
+            showToast('已回滚到版本 v'+v, '回滚成功', '✅');
+            closeVersions(); loadShelfDebounced();
+          } catch(e) { reportError('回滚失败: '+e.message); }
+        }
+      });
     }
 
     // 选中正文工具条（PC 顶部浮动）
@@ -2904,13 +3235,21 @@ const app = createApp({
     function hideSelBar() { selBar.visible=false; }
     async function surgicalEdit(op) {
       if (!activeNovel.value) return;
-      let instruction = '';
       if (op==='rewrite') {
-        instruction = prompt('重写意见：');
-        if (!instruction || !instruction.trim()) return;
-      } else if (op==='condense' || op==='expand') {
-        instruction = '';
+        // 用统一弹窗收集重写意见
+        openModal({
+          title: '✏️ 按意见重写', kind: 'input', label: '重写意见', rows: 2, textarea: true,
+          confirmText: '开始重写',
+          onConfirm: (instruction) => {
+            if (!instruction || !instruction.trim()) return;
+            _doSurgical(op, instruction.trim());
+          }
+        });
+        return;
       }
+      _doSurgical(op, '');
+    }
+    async function _doSurgical(op, instruction) {
       loading.write = true;
       try {
         const body = {op:op, instruction:instruction};
@@ -3098,6 +3437,9 @@ const app = createApp({
             };
             chapterProgressLabel.value = evt.message||'大纲合规校验完成';
             if (evt.patched_text) writing.content += '\n\n' + evt.patched_text;
+          }
+          else if(evt.type==='outline_compliance_annotations'){
+            writing.annotations = evt.annotations||[];
           }
           else if(evt.type==='quality_retry'){
             chapterProgressLabel.value = `✨ 优化完成：${evt.score_before}分 → ${evt.score_after}分`;
@@ -4211,6 +4553,9 @@ const app = createApp({
             else if(evt.type==='outline_compliance'){
               batchStatus.value = evt.message||'';
             }
+            else if(evt.type==='outline_compliance_annotations'){
+              writing.annotations = evt.annotations||[];
+            }
             else if(evt.type==='quality_warning'){
               batchStatus.value = '质量优化中…';
             }
@@ -4271,6 +4616,9 @@ const app = createApp({
               patched: !!evt.patched_text,
             };
             if (evt.patched_text) writing.content += '\n\n' + evt.patched_text;
+          }
+          else if(evt.type==='outline_compliance_annotations'){
+            writing.annotations = evt.annotations||[];
           }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
@@ -4505,13 +4853,17 @@ const app = createApp({
        searchOpen,searchQuery,searchResults,searchLoading,searchScope,
        scanOpen,scanLoading,scanReport,versionsOpen,versionsList,versionsChapter,
        selBar,novelActions,writeMoreOpen,
-       openSearch,closeSearch,runSearch,jumpToSearchHit,
+       openSearch,closeSearch,runSearch,jumpToSearchHit,highlightSnippet,
        openBible,loadBible,saveBible,extractTerms,addTermFromCandidate,switchBibleTab,drawRelationGraph,
-       openStats,loadStats,saveGoal,
+       bibleEdit,bibleStartNew,bibleStartEdit,bibleCancelEdit,bibleSaveEntry,bibleDeleteEntry,
+       bibleStartRelation,bibleEditRelation,bibleDeleteRelation,
+       openStats,loadStats,saveGoal,trendPoints,trendMax,trendW,trendH,
        openIdeas,loadIdeas,loadMaterials,addIdea,deleteIdea,addMaterial,ideaToNovel,switchIdeasTab,filterIdeasByTag,
        openScanPanel,closeScanPanel,runConsistencyScan,jumpToConflict,
        openVersions,closeVersions,rollbackVersion,
        onTextSelection,hideSelBar,surgicalEdit,
+       annotatedContent,onAnnoClick,hideAnnoTooltip,gotoAnnoRef,annoTooltip,
+       modal,openModal,closeModal,confirmModal,
        openNovelActions,closeNovelActions,novelActionGo,toggleWriteMore,writeMoreGo,returnToPrevious,
        onTileTouchStart,onTileTouchMove,onTileTouchEnd,
       };
