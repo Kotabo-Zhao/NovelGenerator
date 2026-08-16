@@ -809,6 +809,10 @@ class SharedMemoryManager:
                                 break
                         if s:
                             break
+                    # v2.7.5: 缺真实摘要时 fallback 的是大纲计划，必须标注
+                    # 「未确认发生」，不得冒充已发生事件（防重复清单依赖真实性）
+                    if s:
+                        s = f"[大纲计划·未确认] {s}"
                 if s:
                     summaries.append(f"第{ch_num}章: {str(s)[:100]}")
             
@@ -827,6 +831,9 @@ class SharedMemoryManager:
                                 break
                         if s:
                             break
+                    # v2.7.5: 同上——大纲计划不得标注「已发生」
+                    if s:
+                        s = f"[大纲计划·未确认] {s}"
                 if s:
                     summaries.append(f"第{ch_num}章(已发生): {str(s)[:60]}")
             

@@ -800,3 +800,37 @@ POST /api/novels/{novel_id}/scan-consistency    # 触发全量扫描（异步？
 
 - §1 大纲可视化总览 + 拖拽重组（P0，原设计见 v1.0 文档 §1）
 - §6 导出扩展（Markdown）+ 整书备份打包（P2，原设计见 v1.0 文档 §6；注意 EPUB 导出已实现，仅缺 Markdown 与 zip 备份）
+
+---
+
+## 实施记录 v2.7.5：摘要完整性修复（长文隐患复盘）
+
+> 背景：复盘长篇生成隐患时发现——**原子化模式（前端默认开启）生成路径完全没有摘要逻辑**，
+> 导致大量章节缺失 `summaries` 条目，L2c 已发生事件清单 fallback 到大纲「计划」内容冒充
+> 「已发生」，长文防重复机制依赖失真数据。
+
+### 根因（实测证据链）
+
+1. 前端 `web/index.html` `useAtomicMode = ref(true)` **默认原子化** → 单章生成走 `/generate/atomic`
+2. `atomic_generate_chapter_stream` 末尾只有 final_quality + done，**无 summarize_chapter、无 check_and_compress**
+   （摘要+压缩只在 `generate_chapter_stream` 标准路径）
+3. 实测：熵破苍穹第 11 章完整（3583 字）但无摘要；替身的告别 1-6 章永久缺；万界篡改者 1-4 缺；天命骗局全缺
+4. 无任何补回机制（历史章节缺摘要永远缺）
+
+### 修复内容
+
+| 项 | 文件 | 说明 |
+|---|---|---|
+| 懒补机制 | `backend/core/mixins/generation.py` `_backfill_missing_summaries` | 生成前补「事件清单窗口（最近 19 章）内缺失摘要」的章节；最新优先、上限 5 章/次、正文 <200 字符跳过、失败降级不阻塞 |
+| 两条生成路径接入 | 同上（generate_chapter_stream + atomic_generate_chapter_stream 开头） | 锁内、build_writer_context 之前调用，yield status 提示 |
+| 原子路径补摘要+压缩 | 同上（atomic 末尾 final_quality 与 done 之间） | 与标准路径对齐：单章摘要 + check_and_compress（每 8 章间隔） |
+| fallback 语义修正 | `backend/core/shared_memory.py` L2c | 缺摘要 fallback 大纲时标注「[大纲计划·未确认]」，不再冒充「已发生」 |
+
+### 验证
+
+- 新增 `tests/test_fix_v275.py`（8 项）：backfill 窗口/最新优先/上限/跳过已有/短内容跳过/首章跳过/异常降级；L2c fallback 标注（tempfile 最小书）
+- 全量测试：**467 passed + 1 skipped + 33 subtests**（基线 311+148 + 新增 8）
+- 真实 LLM 验证：替身的告别（9 章仅 7/8/9 有摘要）生成第 10 章前 backfill 补齐 1-6 章真实摘要 ✓
+- CDP 前端健康：页面加载、书架渲染、0 控制台错误
+- APK 2.7.5（versionCode 61）构建成功
+- android 三副本已同步（sync_android_core.py）

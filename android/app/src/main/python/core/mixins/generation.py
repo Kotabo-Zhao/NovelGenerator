@@ -703,6 +703,14 @@ class GenerationMixin:
         _write_gen_lock(lock_file)
         
         try:
+            # v2.7.5: 生成前懒补窗口内缺失摘要（历史/原子章节欠账）
+            try:
+                _bf = await self._backfill_missing_summaries(novel_id, chapter_num)
+                if _bf:
+                    yield {"type": "status", "message": f"补齐 {_bf} 章缺失的剧情摘要…"}
+            except Exception as _bfe:
+                log.warning(f"Backfill call failed (atomic, non-fatal): {_bfe}")
+
             plan = self.get_novel(novel_id)
             if not plan:
                 yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
@@ -1054,6 +1062,39 @@ class GenerationMixin:
                 stage="post_outline_compliance",
             )
             yield {"type": "final_quality", **_final_quality_record}
+
+            # ── v2.7.5: 原子化路径补每章自动摘要（与 generate_chapter_stream 对齐）──
+            # 此前 atomic 路径完全无摘要逻辑 → 原子章节不进 summaries → L2c
+            # 事件清单 fallback 大纲计划（失真）。此处补上与标准路径一致的
+            # summarize + check_and_compress。
+            try:
+                chapter_text = self.get_chapter(novel_id, chapter_num) or full_text
+                if chapter_text and len(chapter_text) > 200:
+                    summary_result = await asyncio.to_thread(
+                        self.chapter_summarizer.summarize_chapter,
+                        chapter_num, chapter_text
+                    )
+                    if summary_result:
+                        def _add_summary(gs):
+                            if not isinstance(gs, dict):
+                                gs = {}
+                            gs.setdefault("summaries", {})[str(chapter_num)] = summary_result
+                            return gs
+                        self.memory.update("global_state", novel_id, _add_summary)
+                        log.info(f"Auto-summary for Ch{chapter_num} (atomic): {len(summary_result.get('summary',''))} chars")
+            except Exception as e:
+                log.warning(f"Auto-summary for Ch{chapter_num} (atomic) skipped: {e}")
+
+            # 渐进式摘要压缩（每8章间隔，与标准路径一致）
+            try:
+                compress_result = check_and_compress(
+                    self.memory, novel_id, chapter_num, self.chapter_summarizer
+                )
+                if compress_result:
+                    yield {"type": "compression", "chapters_summarized": len(compress_result)}
+            except Exception as e:
+                log.warning(f"Auto-compression skipped (atomic): {e}")
+
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num,
                    "atomic": True, "beat_count": len(beats)}
             
@@ -1069,7 +1110,63 @@ class GenerationMixin:
             except OSError:
                 pass
 
+    async def _backfill_missing_summaries(self, novel_id: str, chapter_num: int) -> int:
+        """v2.7.5: 生成前懒补「事件清单窗口内缺失摘要」的章节
 
+        背景: 原子化路径此前没有摘要逻辑，且历史章节（自动摘要机制上线前
+        生成）永远缺摘要 → L2c 已发生事件清单 fallback 到大纲「计划」内容，
+        防重复依赖失真数据。此方法在生成前补齐窗口内缺失的摘要，让事件清单
+        使用真实发生内容。
+
+        窗口: L2c 覆盖最近 3 章 + 最近 15 早章 → [chapter-18, chapter-1]，
+        这里保险起见检查最近 19 章。从最新往前补（最新章在窗口内待最久，
+        价值最大），上限 5 章/次避免拖慢首章（旧书首次补完即不再缺）。
+
+        Returns: 本次补齐的章节数
+        """
+        if chapter_num <= 1:
+            return 0
+        try:
+            state = self.memory.read("global_state", novel_id) or {}
+            summaries = state.get("summaries", {}) if isinstance(state, dict) else {}
+            disk = set(self.memory.scan_chapters(novel_id))
+            missing = []
+            for ch in range(max(1, chapter_num - 19), chapter_num):
+                if str(ch) not in summaries and ch in disk:
+                    missing.append(ch)
+            if not missing:
+                return 0
+            missing.sort(reverse=True)  # 最新优先
+            contents = {}
+            for ch in missing[:5]:
+                content = self.memory.read_chapter(novel_id, ch)
+                if content and len(content) > 200:
+                    contents[ch] = content
+            if not contents:
+                return 0
+            results = await asyncio.to_thread(
+                self.chapter_summarizer.summarize_batch, contents, novel_id
+            )
+            if not results:
+                return 0
+
+            def _merge(gs):
+                if not isinstance(gs, dict):
+                    gs = {}
+                gs.setdefault("summaries", {})
+                for ch_num, summary in results.items():
+                    gs["summaries"][str(ch_num)] = summary
+                return gs
+
+            self.memory.update("global_state", novel_id, _merge)
+            log.info(
+                f"Summary backfill for Ch{chapter_num}: {len(results)} chapters "
+                f"{sorted(contents.keys())}"
+            )
+            return len(results)
+        except Exception as e:
+            log.warning(f"Summary backfill skipped (Ch{chapter_num}): {e}")
+            return 0
 
     async def _outline_compliance_step(
         self, novel_id: str, chapter_num: int, chapter_outline: dict,
@@ -1201,6 +1298,15 @@ class GenerationMixin:
         _write_gen_lock(lock_file)
         
         try:
+            # v2.7.5: 生成前懒补窗口内缺失摘要（历史/原子章节欠账），
+            # 让 L2c 事件清单使用真实发生内容而非大纲计划
+            try:
+                _bf = await self._backfill_missing_summaries(novel_id, chapter_num)
+                if _bf:
+                    yield {"type": "status", "message": f"补齐 {_bf} 章缺失的剧情摘要…"}
+            except Exception as _bfe:
+                log.warning(f"Backfill call failed (non-fatal): {_bfe}")
+
             plan = self.get_novel(novel_id)
             if not plan:
                 yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
