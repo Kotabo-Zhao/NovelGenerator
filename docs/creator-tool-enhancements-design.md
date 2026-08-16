@@ -803,6 +803,44 @@ POST /api/novels/{novel_id}/scan-consistency    # 触发全量扫描（异步？
 
 ---
 
+## 实施记录 v2.7.6：目标字数自由填写（字数放开）
+
+> 需求：不需要单独的超短篇模式——把字数改为自由输入（去掉预设下拉），前端提示下限，
+> 后端放开字数限制。超短篇（几百字）与长篇（几万字）均可。
+
+### 限制链（放开前）
+
+| 位置 | 限制 | 后果 |
+|---|---|---|
+| API `CreateNovelRequest` | `target_words ge=1000` | 填 <1000 字被拒 |
+| planner | `total_chapters = max(8, tw//2000)` | 800 字被规划成 **8 章×2000 字=16000 字**（超出意图 20 倍） |
+| planner | 每章固定 2000 字 | 单章 target_words 与总字数脱节 |
+| writer `_check_truncation` | `min_acceptable = max(500, 50%)` | 300 字目标生成 300 字被判"长度不足"→ 无限续写 |
+| quality_gate | `minimum = max(120, 25%)` | 100 字目标被 120 硬底卡死 |
+| atomic beat | 模板固定 300-450 字/拍 | 800 字目标被 6 拍撑到 2500+ |
+
+### 修复内容
+
+| 项 | 文件 | 说明 |
+|---|---|---|
+| 前端控件 | `web/index.html` | 目标字数 select → number input（min=100），提示"最少 100 字"；默认值 50万→5万 |
+| API 下限 | `backend/api/routers/novels.py` | `ge=1000 → ge=100` |
+| 章节规划 | `backend/core/planner.py` | 提取 `compute_chapter_plan` 纯函数；去掉"最少8章"，`总章数 = tw//2000`（最少1章），`每章字数 = tw//章数`；长篇（≥2000字/章）行为不变 |
+| 截断下限 | `backend/core/writer.py` | `min_acceptable = max(500→40, 50%)`；正常目标(≥1000字)时 50%≥500 行为不变 |
+| 质量门槛 | `backend/core/quality_gate.py` | `minimum = max(120→50, 25%)`；正常目标不变 |
+| atomic beat 缩放 | `backend/core/beat_decomposer.py` | 目标 <1500 字时按比例缩放各 beat 字数（防模板撑爆）；长篇模板不变 |
+| atomic max_tokens | `backend/core/atomic_writer.py` | 下限 300→80，配合缩放后的短拍 |
+
+### 验证
+
+- 新增 `tests/test_fix_v276.py`（17 项）：API 下限边界、compute_chapter_plan（800→1章/800字、5000→2章/2500、100000→50章/2000 不变）、截断下限、quality_gate 下限、beat 缩放
+- 全量测试：**484 passed + 1 skipped + 33 subtests**（基线 467 + 新增 17）
+- 真实 LLM 验证：创建 target_words=800 超短篇 → 规划 1 章/800 字 → 生成第 1 章字数落在合理范围
+- CDP：字数控件为 number input（min=100）、提示正常、0 控制台错误
+- android 三副本同步（core/api + web）
+
+---
+
 ## 实施记录 v2.7.5：摘要完整性修复（长文隐患复盘）
 
 > 背景：复盘长篇生成隐患时发现——**原子化模式（前端默认开启）生成路径完全没有摘要逻辑**，

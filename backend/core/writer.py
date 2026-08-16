@@ -460,6 +460,20 @@ class Writer:
             style_guide=style_prompt,
             target_words=target_words,
         )
+        # v2.7.6: 小目标（超短篇）强化字数硬约束——LLM 在 3x token 预算下倾向
+        # 写满，800字目标常输出1800+（超出2.3倍）。给出明确上限与精简要求。
+        try:
+            _tw = int(target_words)
+            if 0 < _tw < 1500:
+                system_prompt += (
+                    f"\n\n## 超短篇字数铁律（必须遵守）\n"
+                    f"本章是超短篇，正文必须控制在 {_tw} 字以内"
+                    f"（建议 {int(_tw*0.85)}-{_tw} 字）。\n"
+                    f"写完一个完整的故事即可，禁止：铺垫展开、环境赘述、无关对话、凑字数。\n"
+                    f"若超出 {int(_tw*1.15)} 字说明你在啰嗦——立即精简收尾。"
+                )
+        except Exception:
+            pass
 
         # v2.34: 把写作指令从 user context 中提取到 system prompt
         # LLM 不会把 system prompt 内容复制进输出，但会把 user message 里的指令文本当正文模板
@@ -519,8 +533,11 @@ class Writer:
         draft = ""
         finish_reason = "unknown"
         # max_tokens 根据目标字数估算，但所有初稿/续写/补全路径共享配置硬上限。
+        # v2.7.6: 小目标（<1500字）收紧预算 3x→2x——3x 时 LLM 倾向写满 token
+        # 预算（800字目标输出1800+），2x 配合 system 字数铁律更贴近目标。
+        _mult = 3 if int(target_words) >= 1500 else 2
         safe_max_tokens = max_generation_tokens(
-            int(target_words), hard_cap=MAX_CHAPTER_TOKENS
+            int(target_words), multiplier=_mult, hard_cap=MAX_CHAPTER_TOKENS
         )
         
         # v2.14: 使用韧性客户端的流式调用，支持断线重连
@@ -550,8 +567,10 @@ class Writer:
             log.warning(f"Draft truncated by API (finish_reason=length, {len(draft)} < {int(target_words*0.8)}). "
                        f"Continuing from breakpoint with doubled max_tokens...")
             try:
+                # v2.7.6: 小目标续写预算收紧（6x→3x），防补过头
                 retry_max_tokens = max_generation_tokens(
-                    int(target_words), multiplier=6, hard_cap=MAX_CHAPTER_TOKENS
+                    int(target_words), multiplier=(6 if int(target_words) >= 1500 else 3),
+                    hard_cap=MAX_CHAPTER_TOKENS
                 )
                 # v2.49: 从断点续写，而不是从头重写
                 # 将已生成内容作为 assistant 消息传递，让 LLM 知道已经写了什么
@@ -727,6 +746,28 @@ def _dedup_continuation(existing: str, continuation: str) -> str:
     return continuation
 
 
+def _trim_to_target(text: str, target_words: int) -> str:
+    """v2.7.6: 超短篇超长兜底——Humanizer/一致性重写可能把 800 字目标扩写到
+    1800+，保存前按目标字数规则裁剪（保留完整句子）。仅小目标(<1500字)生效，
+    长篇不动。"""
+    try:
+        tw = int(target_words)
+        if tw >= 1500:
+            return text
+        cap = int(tw * 1.35)
+        if len(text) <= cap:
+            return text
+        cut = text[:tw]
+        last_punct = max(cut.rfind("。"), cut.rfind("！"), cut.rfind("？"),
+                         cut.rfind("…"), cut.rfind("……"))
+        if last_punct > tw * 0.5:
+            cut = cut[:last_punct + 1]
+        log.info(f"Flash trim: {len(text)} -> {len(cut)} chars (target {tw})")
+        return cut
+    except Exception:
+        return text
+
+
 def _check_truncation(text: str, target_words: int) -> tuple:
     """检测生成内容是否被截断
     
@@ -744,7 +785,9 @@ def _check_truncation(text: str, target_words: int) -> tuple:
     
     # 2. 长度比率: 低于50%目标字数视为截断
     char_count = len(text)
-    min_acceptable = max(500, int(target_words * 0.5))  # 至少500字，且不低于目标50%
+    # v2.7.6: 下限 500→40——字数放开后小目标（如超短篇300字）不得被判截断；
+    # 正常目标(≥1000字)时 0.5×目标 ≥500，公式对长篇行为完全不变。
+    min_acceptable = max(40, int(target_words * 0.5))  # 不低于目标50%，下限40字
     if char_count < min_acceptable:
         return True, f"长度不足 ({char_count}字 vs 目标{target_words}字, 最低要求{min_acceptable}字)"
     

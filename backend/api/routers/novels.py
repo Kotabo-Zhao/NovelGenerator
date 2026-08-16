@@ -22,7 +22,7 @@ class CreateNovelRequest(BaseModel):
     genre: str = Field("玄幻", min_length=1, max_length=40)
     style: str = Field("热血爽文", min_length=1, max_length=100)
     inspiration: str = Field("", max_length=20000)
-    target_words: int = Field(500000, ge=1000, le=2000000)
+    target_words: int = Field(50000, ge=100, le=2000000)
     title: str = Field("", max_length=100)
     natural_names: bool = True  # 自然命名，去AI味
     normal_pacing: bool = False  # v2.2: 默认快节奏

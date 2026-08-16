@@ -931,6 +931,9 @@ class GenerationMixin:
             
             # ── Phase 4: 保存 ──
             from ..quality_gate import validate_chapter_text
+            # v2.7.6: 超短篇超长兜底（装配/一致性可能扩写）
+            from ..writer import _trim_to_target
+            full_text = _trim_to_target(full_text, chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS))
             validate_chapter_text(
                 full_text,
                 target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
@@ -1619,7 +1622,10 @@ class GenerationMixin:
             ai_report = None
             # v2.6: 批量模式阈值 70→60（更多章节直接通过，跳过 humanizer 2-3次LLM）
             _quality_ok = quality_report and quality_report.get("score", 0) >= (60 if batch_mode else 70)  # v2.3.5: 50→70 提高润色覆盖
-            if not _quality_ok:
+            # v2.7.6: 超短篇（小目标<1500字）跳过 Humanizer——重写不受字数约束，
+            # 常把 800 字目标扩写到 1800+，且短内容 AI 味影响小
+            _flash_target = int(target_words) < 1500
+            if not _quality_ok and not _flash_target:
                 yield {"type": "status", "message": "🎨 正在消除 AI 痕迹、润色文笔…"}
                 try:
                     from ..ai_detector import AIDetector, HumanRewriter, humanize_pipeline
@@ -2203,6 +2209,9 @@ class GenerationMixin:
                 novel_id, chapter_num, full_text, plan
             )
             yield {"type": "requirement_compliance", "chapter": chapter_num, **_requirement_report}
+            # v2.7.6: 超短篇超长兜底——一致性重写等环节可能扩写小目标章节
+            from ..writer import _trim_to_target
+            full_text = _trim_to_target(full_text, target_words)
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             self.memory.save_chapter(novel_id, chapter_num, formatted)
             _final_quality_record = _save_final_quality_report(

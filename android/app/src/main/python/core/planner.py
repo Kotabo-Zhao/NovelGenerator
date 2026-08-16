@@ -8,6 +8,101 @@ from .styles import get_style, build_style_prompt, build_custom_style
 
 log = logging.getLogger(__name__)
 
+
+def compute_chapter_plan(target_words: int, normal_pacing: bool = False,
+                         chapter_words_default: int = 2000) -> dict:
+    """v2.7.6: 由总字数计算章节规划（纯函数，可单测）
+
+    放开「最少8章」硬约束后：小字数目标自然规划少章节（800字→1章、
+    5000字→2-3章），每章字数 = 总字数/章数，生成字数与用户意图精确匹配。
+    长篇目标（每章≥2000字）行为与原「每章2000字」逻辑完全一致。
+
+    Returns: {total_chapters, vol_count, ch_per_vol, chapter_words}
+    """
+    tw = max(1, int(target_words))
+    total_chapters = max(1, tw // chapter_words_default)  # 每章约2000字，最少1章
+    if normal_pacing:
+        vol_count = max(1, min(6, total_chapters // 6))   # 正常:每卷6章左右
+    else:
+        vol_count = max(1, min(5, total_chapters // 10))  # 快节奏:每卷10章
+    ch_per_vol = max(1, (total_chapters + vol_count - 1) // vol_count)  # 向上取整均分
+    chapter_words = max(1, tw // total_chapters)  # 每章字数 = 总字数/章数
+    return {
+        "total_chapters": total_chapters,
+        "vol_count": vol_count,
+        "ch_per_vol": ch_per_vol,
+        "chapter_words": chapter_words,
+    }
+
+
+def _clamp_outline_to_plan(outline: dict, total_chapters_target: int,
+                           target_words: int) -> dict:
+    """v2.7.6: 强制大纲章节数与每章字数 = 规划值
+
+    LLM（尤其单次调用路径）常无视字数约束：800 字目标被拆成 3 章×266 字，
+    单章过短导致生成流程不适配（初稿超长/续写循环）。此函数：
+    1. 章节数截断/补占到 total_chapters_target（尊重用户意图：800字=1篇）
+    2. 被丢弃章节的 summary/hook 并入保留章——800 字生成时仍覆盖完整故事
+    3. 每章 target_words = 总字数/规划章数，总字数精确
+    """
+    total = max(1, int(total_chapters_target))
+    tw_per = max(1, int(target_words) // total)
+    vols = [v for v in outline.get("volumes", []) if isinstance(v, dict)]
+    flat = []
+    for v in vols:
+        flat.extend(v.get("chapters", []) or [])
+    flat = [c for c in flat if isinstance(c, dict)]
+
+    # 截断：丢弃多余章节，但其概要并入保留章（保证超短篇覆盖完整故事）
+    if len(flat) > total:
+        kept, dropped = flat[:total], flat[total:]
+        for d in dropped:
+            ds = str(d.get("summary", "") or "").strip()
+            if ds and ds not in ("待补充", "待填写"):
+                kept[-1]["summary"] = (str(kept[-1].get("summary", "") or "")
+                                       + "；" + ds)[:600]
+            if not kept[-1].get("hook") and d.get("hook"):
+                kept[-1]["hook"] = d["hook"]
+        flat = kept
+    # 补占位
+    while len(flat) < total:
+        flat.append({
+            "number": len(flat) + 1, "title": f"第{len(flat)+1}章",
+            "summary": "待补充", "emotion_curve": "平稳→起伏→悬念",
+            "characters": ["主角"], "hook": "悬念", "target_words": tw_per,
+        })
+
+    for j, ch in enumerate(flat):
+        ch["number"] = j + 1
+        ch["target_words"] = tw_per
+
+    # 重组卷：保持原卷边界，不足的合并到最后卷
+    if not vols:
+        vols = [{"number": 1, "title": "第一卷", "act": "完整故事",
+                 "theme": "", "act_function": "", "chapters": []}]
+    new_vols = []
+    idx = 0
+    for v in vols:
+        if idx >= len(flat):
+            break
+        orig_count = len([c for c in v.get("chapters", []) if isinstance(c, dict)])
+        nv = dict(v)
+        nv["chapters"] = flat[idx:idx + orig_count]
+        idx += orig_count
+        new_vols.append(nv)
+    if idx < len(flat):
+        rest = flat[idx:]
+        if new_vols:
+            last = dict(new_vols[-1])
+            last["chapters"] = last.get("chapters", []) + rest
+            new_vols[-1] = last
+        else:
+            new_vols.append({"number": 1, "title": "第一卷", "act": "完整故事",
+                             "theme": "", "act_function": "", "chapters": rest})
+    outline["volumes"] = [v for v in new_vols if v.get("chapters")]
+    outline["total_chapters"] = len(flat)
+    return outline
+
 PLANNER_SYSTEM = """你是一位资深的小说策划编辑，专精于网文和类型小说的世界观搭建、角色设计和大纲规划。
 
 你的任务是根据用户提供的创意，生成结构化的设定文档。你必须严格按照 JSON 格式输出。
@@ -390,6 +485,11 @@ class Planner:
                 log.warning("Plan: missing/invalid outline, using fallback structure")
                 plan["outline"] = {"volumes": [], "total_chapters": 0,
                                    "three_act_map": "", "rhythm_notes": ""}
+            # v2.7.6: _force_extract 路径无 title 校验 → 缺 title 时兜底
+            # （此前 engine.create_novel 的 _sync_requirements_contract(plan["title"])
+            # 直接 KeyError 崩溃，仅偶发于 LLM 全失败走强制提取时）
+            if not plan.get("title"):
+                plan["title"] = title or (inspiration[:15] if inspiration else "未命名小说")
             # 标准化章节号
             for vol in plan.get("outline", {}).get("volumes", []):
                 if not isinstance(vol, dict):
@@ -403,6 +503,15 @@ class Planner:
                 plan["outline"]["total_chapters"] = int(plan.get("outline", {}).get("total_chapters", 0))
             plan["target_words"] = int(plan.get("target_words", 0))
             plan["style"] = style_name
+
+            # v2.7.6: 强制章节数与每章字数 = 规划值——LLM 常无视字数约束
+            # （800字被拆3章×266字，单章过短生成不适配）；截断多余章节并
+            # 将其概要并入保留章，800字目标生成时仍覆盖完整故事。
+            _tw_user = max(1, int(creative_input.get("target_words", 500000)))
+            _total_target = compute_chapter_plan(
+                _tw_user, normal_pacing=normal_pacing).get("total_chapters", 1)
+            plan["outline"] = _clamp_outline_to_plan(
+                plan["outline"], _total_target, _tw_user)
             
             # v2: 大纲验证与自动修复
             plan["outline"] = self.repair_outline(plan["outline"])
@@ -668,17 +777,17 @@ class Planner:
         # ── Phase 3: 大纲 (55% → 95%) ──
         # ── Phase 3: 大纲（分卷生成，每卷独立 LLM 调用，杜绝截断）──
         # v2.2: 固定每章2000字，按总字数反推章数。章节数是硬约束，LLM不能随意增减。
+        # v2.7.6: 放开「最少8章」硬约束——字数自由填写后（下限100字），小字数目标
+        # 应自然规划出少章节（如800字→1章、5000字→2-3章），而不是被强制撑成
+        # 8章×2000字=16000字（超出用户意图20倍）。
         CHAPTER_WORDS = 2000
-        tw = target_words
-        total_chapters_target = max(8, tw // CHAPTER_WORDS)  # 最少8章
-        # 节奏只影响卷数，不影响章数：快节奏少卷多章/卷，正常节奏多卷少章/卷
-        if normal_pacing:
-            vol_count = max(2, min(6, total_chapters_target // 6))   # 正常:每卷6章左右
-        else:
-            vol_count = max(2, min(5, total_chapters_target // 10))  # 快节奏:每卷10章
-        ch_per_vol = max(3, (total_chapters_target + vol_count - 1) // vol_count)  # 向上取整均分
-        # 章节总数硬约束
-        chapter_words = CHAPTER_WORDS
+        tw = max(1, target_words)
+        _plan = compute_chapter_plan(tw, normal_pacing=normal_pacing,
+                                     chapter_words_default=CHAPTER_WORDS)
+        total_chapters_target = _plan["total_chapters"]
+        vol_count = _plan["vol_count"]
+        ch_per_vol = _plan["ch_per_vol"]
+        chapter_words = _plan["chapter_words"]
 
         # v2.2: 构建角色花名册 — 每卷生成时注入，防止重新发明角色
         protagonist = chars.get('characters', {}).get('protagonist', {})
@@ -1136,6 +1245,10 @@ class Planner:
                     ch["number"] = int(ch.get("number", 1))
                     ch["target_words"] = int(ch.get("target_words", 1500))
         plan["outline"]["total_chapters"] = chapter_counter
+
+        # v2.7.6: 强制章节数与每章字数 = 规划值——LLM 可能无视 structure_prompt
+        # 的硬约束（800字拆2-3章×266字）；截断多余章节、概要并入保留章。
+        plan["outline"] = _clamp_outline_to_plan(plan["outline"], total_chapters_target, tw)
         plan["target_words"] = int(plan.get("target_words", 0))
 
         # ── v2: 大纲验证与自动修复 ──

@@ -1,4 +1,4 @@
-"""NovelGenerator — BeatDecomposer: 章节→节拍拆解器
+﻿"""NovelGenerator — BeatDecomposer: 章节→节拍拆解器
 
 将一章大纲拆解为 5-7 个独立节拍（beat），每个 beat 有独立的功能、情绪弧、冲突类型、钩子类型。
 这是原子化生成的第一步：拆得越碎，随机性空间越大。
@@ -273,6 +273,22 @@ class BeatDecomposer:
         for beat in beats:
             beat.temperature = round(beat.temperature + self.rng.uniform(-0.05, 0.05), 2)
             beat.temperature = max(0.7, min(1.0, beat.temperature))
+        
+        # ── v2.7.6: 小目标字数缩放 ──
+        # 字数自由填写后，超短篇目标（如300-800字）会被模板固定 beat 字数撑爆
+        # （6拍×300-500字≈2500字）。仅当目标字数低于模板总量时按比例缩放，
+        # 长篇目标（≥1500字）保持模板行为不变。
+        try:
+            _tw = int(chapter_outline.get("target_words") or 0)
+            if 0 < _tw < 1500:
+                _total_max = sum(b.max_words for b in beats)
+                if _total_max > 0:
+                    _scale = _tw / _total_max
+                    for b in beats:
+                        b.min_words = max(1, int(b.min_words * _scale))
+                        b.max_words = max(2, int(b.max_words * _scale))
+        except Exception:
+            pass
         
         return beats
     

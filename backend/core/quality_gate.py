@@ -1,4 +1,4 @@
-"""Deterministic pre-persistence checks for generated chapter text."""
+﻿"""Deterministic pre-persistence checks for generated chapter text."""
 
 from __future__ import annotations
 
@@ -26,7 +26,9 @@ def validate_chapter_text(text: str, *, target_words: int = 1500) -> dict:
     )
     if any(marker.lower() in normalized.lower() for marker in forbidden):
         raise ChapterQualityError("chapter contains an instruction leak")
-    minimum = max(120, min(600, int(max(1, target_words) * 0.25)))
+    # v2.7.6: 硬底 120→50——字数放开后小目标（超短篇100-300字）不得被卡死；
+    # 正常目标(≥1000字)时 0.25×目标 ≥250，公式对长篇行为完全不变。
+    minimum = max(50, min(600, int(max(1, target_words) * 0.25)))
     if len(normalized) < minimum:
         raise ChapterQualityError(f"chapter text is too short: {len(normalized)} < {minimum}")
     # A Chinese dialogue often ends with a closing quote/book-title bracket after

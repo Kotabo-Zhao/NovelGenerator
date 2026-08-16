@@ -1041,7 +1041,7 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
         <div class="panel-title">📖 创作设定</div>
         <div class="form-row">
           <div class="form-group"><label>题材</label><select v-model="form.genre"><option v-for="g in genres" :value="g">{{ g }}</option></select></div>
-          <div class="form-group"><label>目标字数</label><select v-model="form.target_words"><option :value="10000">1万字</option><option :value="50000">5万字</option><option :value="100000">10万字</option><option :value="150000">15万字</option><option :value="200000">20万字</option><option :value="300000">30万字</option></select></div>
+          <div class="form-group"><label>目标字数</label><input type="number" v-model.number="form.target_words" min="100" max="2000000" step="100" placeholder="整本目标字数，如 5万 填 50000"><small style="display:block;color:var(--text3);font-size:12px;margin-top:4px">自由填写，最少 100 字（超短篇几百字、长篇几万字均可）</small></div>
         </div>
         <div class="form-group"><label>书名（留空自动生成）</label><input v-model="form.title" placeholder="我在修真界写代码"></div>
         <div class="form-group"><label>核心灵感</label><textarea v-model="form.inspiration" rows="3" placeholder="用几句话描述你的故事创意，越具体效果越好…"></textarea></div>
@@ -2419,7 +2419,7 @@ const app = createApp({
       }
     }
 
-    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false, creativeEnhance:false });
+    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:50000, title:'', naturalNames:true, normalPacing:false, fastFood:false, creativeEnhance:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false, health:false });
     
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
