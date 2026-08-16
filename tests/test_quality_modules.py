@@ -157,10 +157,14 @@ class TestChapterSummarizer(unittest.TestCase):
         self.assertIn(2, results)
 
     def test_should_compress(self):
-        self.assertTrue(self.s.should_compress(10))
-        self.assertTrue(self.s.should_compress(20))
+        # v2.7.1: 改为"距上次压缩 ≥ 8 章"间隔触发（原 %10 在续传时可能长期不触发）
         self.assertFalse(self.s.should_compress(5))
-        self.assertFalse(self.s.should_compress(11))
+        self.assertTrue(self.s.should_compress(8))
+        # 模拟压缩成功 → 记录压缩点
+        self.s._last_compressed = 8
+        self.assertFalse(self.s.should_compress(9))
+        self.assertFalse(self.s.should_compress(15))
+        self.assertTrue(self.s.should_compress(16))
 
     def test_token_budget_calculation(self):
         budget = self.s.get_token_budget(100)

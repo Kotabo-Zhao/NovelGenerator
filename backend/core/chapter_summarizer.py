@@ -64,6 +64,7 @@ class ChapterSummarizer:
         self.model = model
         self._resilient = ResilientLLMClient(client, model) if client else None
         self._key_chapters = set()  # 用户标记为关键的章节号
+        self._last_compressed = 0   # v2.7.1: 上次压缩的章节号
 
     # ── 公开接口 ──
 
@@ -76,10 +77,16 @@ class ChapterSummarizer:
         self._key_chapters.discard(chapter_num)
 
     def should_compress(self, chapter_num: int) -> bool:
-        """判断是否应该触发压缩（每10章一次）"""
+        """判断是否应该触发压缩（v2.7.1: 距上次压缩 ≥ 8 章即触发）
+
+        原实现 `chapter_num % 10 == 0` 在续传/跳章（如从12章单独生成）
+        时可能长期不触发 → 摘要缺失 → 长文上下文缺前情。现改为连续
+        8 章间隔触发，兼容任意起始点。
+        """
         if chapter_num in self._key_chapters:
             return False
-        return chapter_num % 10 == 0
+        # 距上次压缩 ≥ 8 章（含首次：chapter_num >= 8）
+        return (chapter_num - self._last_compressed) >= 8
 
     def summarize_chapter(self, chapter_num: int, chapter_content: str) -> dict:
         """对单章生成摘要
@@ -266,5 +273,11 @@ def check_and_compress(smm, novel_id: str, current_chapter: int,
     log.info(f"Compression done: {len(results)} chapters summarized. "
              f"Token budget: full={budget['full_inject']}, "
              f"hybrid={budget['hybrid']}, safe={budget['is_safe']}")
+    
+    # v2.7.1: 记录压缩点，供 should_compress 计算间隔
+    try:
+        summarizer._last_compressed = current_chapter
+    except Exception:
+        pass
     
     return results

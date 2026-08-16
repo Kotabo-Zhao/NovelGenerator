@@ -237,6 +237,36 @@ class ContextUpdater:
             self._auto_tag_roles(current_state["characters"])
             
             log.info(f"ContextUpdater v3: {len(new_chars)} chars updated for Ch{chapter_num}")
+            # ── v2.7.1: 滚动清理防 global_state 无限膨胀（长篇小说性能）──
+            # chapters_summary 只保留最近 8 章全文摘要（更早的由压缩 summaries 兜底）
+            try:
+                _cs = current_state.get("chapters_summary")
+                if isinstance(_cs, dict):
+                    _keys = sorted([int(k) for k in _cs.keys() if str(k).isdigit()])
+                    for _k in _keys[:-8]:
+                        current_state["chapters_summary"].pop(str(_k), None)
+                # timeline.chapters 只保留最近 20 章
+                _tl = current_state.get("timeline")
+                if isinstance(_tl, dict) and isinstance(_tl.get("chapters"), dict):
+                    _tkeys = sorted([int(k) for k in _tl["chapters"].keys() if str(k).isdigit()])
+                    for _k in _tkeys[:-20]:
+                        _tl["chapters"].pop(str(_k), None)
+                # active_characters 只保留最近 15 个（按 last_appeared）
+                _ac = current_state.get("active_characters")
+                if isinstance(_ac, dict) and len(_ac) > 15:
+                    _sorted_ac = sorted(
+                        [v for v in _ac.values() if isinstance(v, dict)],
+                        key=lambda c: c.get("last_appeared", 0), reverse=True,
+                    )[:15]
+                    current_state["active_characters"] = {
+                        c.get("name", f"c{i}"): c for i, c in enumerate(_sorted_ac)
+                    }
+                # 角色 equipment 历史裁剪（避免无限累积）
+                for _cname, _cdata in current_state.get("characters", {}).items():
+                    if isinstance(_cdata, dict) and isinstance(_cdata.get("equipment"), list) and len(_cdata["equipment"]) > 10:
+                        _cdata["equipment"] = _cdata["equipment"][-10:]
+            except Exception as _cleanup_err:
+                log.warning(f"global_state cleanup skipped: {_cleanup_err}")
             return current_state
             
         except Exception as e:
