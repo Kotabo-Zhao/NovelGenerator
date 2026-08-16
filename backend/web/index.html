@@ -624,6 +624,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:16px;
   background:rgba(20,16,42,.5);border:1px solid var(--border-light);
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  position:relative;  /* v2.0.1: 「⋯」下拉菜单定位锚点 */
 }
 .wb-tab{
   display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:11px;border:none;background:transparent;
@@ -884,7 +885,7 @@ mark.search-mark{background:rgba(255,212,121,.35);color:inherit;border-radius:3p
 .novel-actions-sheet{position:fixed;bottom:0;left:0;right:0;background:rgba(30,25,60,.96);border-top:1px solid var(--border);border-radius:18px 18px 0 0;padding:16px 18px calc(16px + env(safe-area-inset-bottom));z-index:210;animation:toastDrop .25s var(--ease) both;backdrop-filter:blur(20px)}
 .novel-action-item{display:block;width:100%;text-align:left;padding:14px 16px;background:transparent;border:none;border-bottom:1px solid var(--border-light);color:var(--text);font-size:15px;font-family:var(--font-ui);cursor:pointer}
 .novel-action-item:last-child{border-bottom:none}
-.write-more-menu{position:absolute;top:52px;right:10px;z-index:150;min-width:180px;padding:8px;border-radius:12px;animation:toastDrop .2s var(--ease) both}
+.write-more-menu{position:absolute;top:52px;right:10px;z-index:300;min-width:190px;padding:8px;border-radius:12px;animation:toastDrop .2s var(--ease) both;box-shadow:var(--shadow-lg)}
 .write-more-item{display:block;width:100%;text-align:left;padding:10px 14px;background:transparent;border:none;color:var(--text);font-size:13.5px;font-family:var(--font-ui);cursor:pointer;border-radius:8px}
 .write-more-item:hover{background:var(--bg2)}
 

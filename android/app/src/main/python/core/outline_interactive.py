@@ -357,20 +357,27 @@ class OutlineInteractive:
         chars = plan.get("characters", {})
         
         if mode == "global":
-            prompt = f"""你是小说大纲规划师。请根据以下精确指令重新生成完整大纲。
+            # v2.0.1: 注入当前大纲全文作为保留基线——LLM 只按指令修改，
+            # 未提及的部分必须原样保留，防止"新大纲与原大纲毫无关联"
+            current_outline = json.dumps(plan.get("outline", {}), ensure_ascii=False)[:6000]
+            prompt = f"""你是小说大纲规划师。请根据精确指令，在【当前大纲】基础上做修改，重新生成完整大纲。
 
 【当前设定】
 世界观: {json.dumps(wb, ensure_ascii=False)[:300]}
 角色: {json.dumps(chars, ensure_ascii=False)[:200]}
 题材: {genre}  风格: {style}  总目标: {target_words}字
 
-【修改指令（请逐条严格执行）】
+【当前大纲（修改基线——未提及的部分必须原样保留）】
+{current_outline}
+
+【修改指令（请逐条严格执行，仅改动指令涉及的部分）】
 {regen_prompt}
 
 【输出要求】
-- 严格按指令修改，不改变指令未提及的部分
-- 确保章节间逻辑连贯
-- 每章摘要控制在30字内
+- **以当前大纲为基础**：保留所有卷/章的结构、标题、摘要、节拍，除非指令明确要求改动
+- 指令说"加X"就在不破坏现有结构的前提下插入；说"改X"只改X相关章节；说"删X"才删除
+- 严禁重写整套大纲——读者/已写章节依赖现有大纲的连续性
+- 确保章节间逻辑连贯，每章摘要控制在30字内
 
 只输出JSON:
 ```json
@@ -383,16 +390,31 @@ class OutlineInteractive:
             vol_title = vol.get("title", f"第{volume_num}卷")
             vol_act = vol.get("act", "")
             chapter_count = len(vol.get("chapters", []))
+            volumes = plan.get("outline", {}).get("volumes", [])
+            prev_vol = volumes[volume_index - 1] if volume_index > 0 else None
+            next_vol = volumes[volume_index + 1] if volume_index + 1 < len(volumes) else None
+            # v2.0.1: 注入本卷现状 + 前后卷衔接，防止重规划后与全书脱节
+            current_vol = json.dumps(vol, ensure_ascii=False)[:3000]
+            prev_brief = f"第{prev_vol.get('number')}卷「{prev_vol.get('title','')}」结尾: {prev_vol.get('chapters',[{}])[-1].get('summary','') if prev_vol.get('chapters') else ''}" if prev_vol else "（无前卷）"
+            next_brief = f"第{next_vol.get('number')}卷「{next_vol.get('title','')}」开头: {next_vol.get('chapters',[{}])[0].get('summary','') if next_vol.get('chapters') else ''}" if next_vol else "（无后卷）"
             
             prompt = f"""重新规划第{volume_num}卷「{vol_title}」({vol_act})的章节大纲。
+
+【本卷当前大纲（修改基线——未提及的章节必须保留）】
+{current_vol}
+
+【前后卷衔接（必须保持逻辑连续）】
+前情: {prev_brief}
+后续: {next_brief}
 
 【修改指令】
 {regen_prompt}
 
 【约束】
+- **保留本卷现有章节**（指令要求增减的除外），只改指令涉及的部分
 - 保持约{chapter_count}章（指令要求增减的除外）
 - 题材: {genre}  风格: {style}
-- 保持与前后卷的逻辑衔接
+- 本卷结尾必须自然衔接后续卷的开头
 
 输出JSON数组:
 ```json

@@ -780,14 +780,17 @@ class SharedMemoryManager:
             else:
                 log.warning(f"Previous chapter {prev_chapter} content not found on disk!")
         
-        # L2c: 前几章剧情摘要（优先使用实际生成摘要，降级用大纲summary）
+        # L2c: 已发生事件清单（v2.0.1：全书已写章节摘要，防长文重复）
+        # 长文时 LLM 只看到最近3章容易重复更早情节 → 提供全书紧凑事件线，
+        # 明确"这些已发生，不得重演"（配合 WRITER_SYSTEM 防重复铁律）。
         if chapter_num > 2:
             state = self.read("global_state", novel_id)
             generated_summaries = state.get("summaries", {}) if isinstance(state, dict) else {}
+            disk_chapters = self.scan_chapters(novel_id)
             
             summaries = []
+            # 最近 3 章：完整摘要（关键衔接）
             for ch_num in range(max(1, chapter_num - 3), chapter_num):
-                # 优先：实际生成的摘要（v2.14 每章自动生成）
                 gen_summary = generated_summaries.get(str(ch_num))
                 if gen_summary:
                     if isinstance(gen_summary, dict):
@@ -798,7 +801,6 @@ class SharedMemoryManager:
                     else:
                         s = str(gen_summary)
                 else:
-                    # 降级：大纲中的summary
                     s = ""
                     for vol in plan.get("outline", {}).get("volumes", []):
                         for ch in vol.get("chapters", []):
@@ -807,12 +809,32 @@ class SharedMemoryManager:
                                 break
                         if s:
                             break
-                
                 if s:
-                    summaries.append(f"第{ch_num}章: {s}")
+                    summaries.append(f"第{ch_num}章: {str(s)[:100]}")
+            
+            # 更早章节：只列一句话摘要（防重复清单），最多 15 章
+            early_chs = [c for c in sorted(disk_chapters) if c < chapter_num - 3][-15:]
+            for ch_num in early_chs:
+                s = ""
+                gen_summary = generated_summaries.get(str(ch_num))
+                if gen_summary:
+                    s = (gen_summary.get("summary", "") if isinstance(gen_summary, dict) else str(gen_summary))
+                if not s:
+                    for vol in plan.get("outline", {}).get("volumes", []):
+                        for ch in vol.get("chapters", []):
+                            if int(ch.get("number", 0)) == ch_num:
+                                s = ch.get("summary", "")
+                                break
+                        if s:
+                            break
+                if s:
+                    summaries.append(f"第{ch_num}章(已发生): {str(s)[:60]}")
             
             if summaries:
-                parts.append(f"## 📚 前几章剧情线\n" + "\n".join(summaries))
+                parts.append(
+                    "## 📚 已发生事件清单（硬约束——本章严禁重演/复述清单中的任何事件）\n"
+                    + "\n".join(summaries)
+                )
 
         # L2d: 后续章节反向连续性（如果后一章已存在，必须与之衔接）
         next_chapter = chapter_num + 1
