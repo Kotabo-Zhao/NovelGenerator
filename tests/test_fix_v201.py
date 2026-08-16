@@ -75,38 +75,46 @@ class EventTimelineTests(unittest.TestCase):
 
 
 class OutlineRegenBaselineTests(unittest.TestCase):
-    """问题3：大纲修改必须带当前大纲作为基线。"""
+    """问题3：大纲修改必须带当前大纲作为基线（完整覆盖长篇）。"""
 
-    def test_global_regen_includes_current_outline(self):
+    def test_global_regen_includes_full_compressed_outline(self):
         import asyncio
         from core.outline_interactive import OutlineInteractive
-        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
 
         oi = OutlineInteractive(client=MagicMock(), model="mock")
+        # 长篇 30 章（模拟）
+        chapters = [{"number": i, "title": f"第{i}章", "summary": f"事件{i}", "hook": "h"} for i in range(1, 31)]
         plan = {
             "genre": "玄幻", "style": "热血", "target_words": 100000,
             "worldbuilding": {"era": "古代"}, "characters": {"protagonist": {"name": "林晚"}},
-            "outline": {"volumes": [{"number": 1, "title": "第一卷", "chapters": [
-                {"number": 1, "title": "旧章", "summary": "旧事件", "hook": "h"}
-            ]}], "total_chapters": 1},
+            "outline": {"volumes": [{"number": 1, "title": "第一卷", "chapters": chapters}],
+                        "total_chapters": 30},
         }
 
         captured = {}
         async def fake_call(prompt, planner, name, max_tokens):
             captured["prompt"] = prompt
-            # 模拟 LLM 返回保留旧大纲
-            return {"volumes": [{"number": 1, "title": "第一卷", "chapters": [
-                {"number": 1, "title": "旧章", "summary": "旧事件", "hook": "h"}]}],
-                    "total_chapters": 1}
+            captured["max_tokens"] = max_tokens
+            return {"volumes": [{"number": 1, "title": "第一卷", "chapters": chapters}], "total_chapters": 30}
 
         oi._safe_llm_call = fake_call
         result = asyncio.run(oi._regenerate_with_prompt(plan, "加一条感情线", MagicMock(), mode="global"))
-        # prompt 必须包含当前大纲基线
-        self.assertIn("当前大纲", captured["prompt"])
-        self.assertIn("旧章", captured["prompt"])
-        self.assertIn("保留", captured["prompt"])
-        # 结果保留旧章节
-        self.assertEqual(result["volumes"][0]["chapters"][0]["title"], "旧章")
+        # 压缩基线必须包含全部 30 章（不是 6000 截断丢后半）
+        for i in (1, 15, 30):
+            self.assertIn(f"Ch{i}", captured["prompt"], f"压缩基线缺少 Ch{i}（长篇后半丢失）")
+        self.assertIn("事件30", captured["prompt"])
+        self.assertGreaterEqual(captured["max_tokens"], 20000)  # 输出容量足够
+
+    def test_decomposer_sees_all_chapters(self):
+        """feedback_decomposer 的 outline context 必须含全部章节（原只前10章）。"""
+        from core.feedback_decomposer import FeedbackDecomposer
+        fd = FeedbackDecomposer()
+        chapters = [{"number": i, "title": f"第{i}章", "summary": f"事件{i}"} for i in range(1, 21)]
+        plan = {"outline": {"total_chapters": 20, "volumes": [{"number": 1, "title": "V1", "chapters": chapters}]}}
+        ctx = fd._build_outline_context(plan)
+        self.assertIn("Ch20", ctx)   # 原 [:10] 会丢 Ch11-20
+        self.assertIn("事件20", ctx)
 
 
 class WriteMoreMenuTests(unittest.TestCase):

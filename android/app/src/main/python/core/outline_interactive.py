@@ -357,9 +357,22 @@ class OutlineInteractive:
         chars = plan.get("characters", {})
         
         if mode == "global":
-            # v2.0.1: 注入当前大纲全文作为保留基线——LLM 只按指令修改，
-            # 未提及的部分必须原样保留，防止"新大纲与原大纲毫无关联"
-            current_outline = json.dumps(plan.get("outline", {}), ensure_ascii=False)[:6000]
+            # v2.0.1: 注入压缩版当前大纲作为保留基线（一行一章，完整覆盖长篇全部章节，
+            # 原 [:6000] 截断导致长篇后半不可见 → LLM 凭片段重写，与原文无关）。
+            # 未提及的部分必须原样保留，防止"新大纲与原大纲毫无关联"。
+            outline = plan.get("outline", {})
+            vols = outline.get("volumes", [])
+            outline_lines = []
+            for v in vols:
+                chs = v.get("chapters", [])
+                outline_lines.append(f"[第{v.get('number','?')}卷 {v.get('title','')} · {len(chs)}章]")
+                for ch in chs:
+                    outline_lines.append(
+                        f"Ch{ch.get('number','?')}「{str(ch.get('title',''))[:20]}」"
+                        f" {str(ch.get('summary',''))[:40]}"
+                        + (f" |钩子:{str(ch.get('hook',''))[:30]}" if ch.get("hook") else "")
+                    )
+            current_outline = "\n".join(outline_lines) or "（无现有大纲）"
             prompt = f"""你是小说大纲规划师。请根据精确指令，在【当前大纲】基础上做修改，重新生成完整大纲。
 
 【当前设定】
@@ -367,23 +380,24 @@ class OutlineInteractive:
 角色: {json.dumps(chars, ensure_ascii=False)[:200]}
 题材: {genre}  风格: {style}  总目标: {target_words}字
 
-【当前大纲（修改基线——未提及的部分必须原样保留）】
+【当前大纲（修改基线——以下每一章都必须保留，未提及的部分原样保留）】
 {current_outline}
 
 【修改指令（请逐条严格执行，仅改动指令涉及的部分）】
 {regen_prompt}
 
 【输出要求】
-- **以当前大纲为基础**：保留所有卷/章的结构、标题、摘要、节拍，除非指令明确要求改动
-- 指令说"加X"就在不破坏现有结构的前提下插入；说"改X"只改X相关章节；说"删X"才删除
+- **必须保留【当前大纲】中的全部章节**（结构/标题/摘要/钩子），除非指令明确要求改动该章
+- 指令说"加X"就在不破坏现有结构的前提下插入新章；说"改X"只改X相关章节；说"删X"才删除
 - 严禁重写整套大纲——读者/已写章节依赖现有大纲的连续性
-- 确保章节间逻辑连贯，每章摘要控制在30字内
+- 章节数必须与当前大纲一致（除非指令要求增删），确保章节间逻辑连贯
+- 每章摘要控制在30字内
 
 只输出JSON:
 ```json
 {{"volumes":[{{"number":1,"title":"","act":"第一幕·建置","theme":"","act_function":"","chapters":[{{"number":1,"title":"","summary":"","emotion_curve":"","conflict":"","characters":[""],"hook":"","target_words":3000}}]}}],"total_chapters":0,"three_act_map":"","rhythm_notes":""}}
 ```"""
-            return await self._safe_llm_call(prompt, planner, "global_regenerate", max_tokens=16384)
+            return await self._safe_llm_call(prompt, planner, "global_regenerate", max_tokens=24576)
         
         elif mode == "volume":
             vol = plan.get("outline", {}).get("volumes", [])[volume_index]

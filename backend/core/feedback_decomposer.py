@@ -416,7 +416,11 @@ class FeedbackDecomposer:
     # ═══════════════════════════════════════════
 
     def _build_outline_context(self, plan: dict) -> str:
-        """构建大纲上下文摘要（供 LLM 理解当前结构）"""
+        """构建大纲上下文摘要（供 LLM 理解当前结构）
+
+        v2.0.1: 每卷展示**全部**章节（原只前10章，长篇后半不可见导致修改误判为 global 重写）。
+        用一行一章的紧凑格式控制 token 量，保证长篇也能完整呈现。
+        """
         outline = plan.get("outline", {})
         volumes = outline.get("volumes", [])
         
@@ -427,7 +431,7 @@ class FeedbackDecomposer:
         parts.append(f"三幕分布: {outline.get('three_act_map', '未知')}")
         parts.append(f"节奏说明: {outline.get('rhythm_notes', '无')}")
         parts.append("")
-        parts.append("## 卷/章结构")
+        parts.append("## 卷/章结构（全部章节，压缩一行一章）")
         
         for vol in volumes:
             vol_num = vol.get("number", "?")
@@ -437,14 +441,11 @@ class FeedbackDecomposer:
             parts.append(f"\n### 第{vol_num}卷「{title}」({act}) — {theme}")
             
             chapters = vol.get("chapters", [])
-            for ch in chapters[:10]:  # 每卷最多展示10章
+            for ch in chapters:  # v2.0.1: 全部章节，不再 [:10]
                 ch_num = ch.get("number", "?")
-                summary = ch.get("summary", "")
-                hook = ch.get("hook", "")
-                conflict = ch.get("conflict", "")
-                parts.append(f"  Ch{ch_num}: {summary}")
-                if hook:
-                    parts.append(f"    钩子: {hook[:40]}")
+                summary = str(ch.get("summary", ""))[:60]
+                hook = str(ch.get("hook", ""))[:30]
+                parts.append(f"  Ch{ch_num}: {summary}" + (f" | 钩子:{hook}" if hook else ""))
         
         # 附加角色信息
         chars = plan.get("characters", {})
