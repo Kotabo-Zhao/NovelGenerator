@@ -170,27 +170,13 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .style-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
 .style-card{
   padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);
-  cursor:pointer;transition:all .2s var(--ease);text-align:center;
+  min-height:88px;color:var(--text);font:inherit;cursor:pointer;transition:all .2s var(--ease);text-align:center;
   backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
 }
 .style-card:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 4px 16px rgba(201,167,255,.2)}
 .style-card.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset, 0 0 20px rgba(201,167,255,.2);background:rgba(201,167,255,.12)}
 .style-card .sc-name{font-size:13px;font-weight:600;margin-bottom:3px;font-family:var(--font);letter-spacing:1px}
-.style-card .sc-author{font-size:10px;color:var(--text3)}
 .style-card .sc-desc{font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-
-.param-panel{margin-top:4px}
-.param-hint{font-size:12px;color:var(--text3);margin-bottom:16px;padding:8px 12px;background:var(--bg2);border-radius:var(--radius-sm);border:1px solid var(--border-light)}
-.param-group{margin-bottom:14px}
-.param-label{font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text)}
-.param-options{display:flex;flex-wrap:wrap;gap:6px}
-.param-btn{
-  padding:6px 12px;border:1px solid var(--border);border-radius:20px;background:var(--bg2);
-  font-size:12px;cursor:pointer;transition:all .15s;color:var(--text2);white-space:nowrap;
-  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-}
-.param-btn:hover{border-color:var(--accent);color:var(--accent);box-shadow:0 0 12px rgba(201,167,255,.15)}
-.param-btn.active{background:linear-gradient(135deg,var(--accent),#8b7bff);color:#1a1030;border-color:var(--accent);font-weight:600}
 
 .req-list{max-height:200px;overflow-y:auto}
 .req-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border-left:3px solid var(--border);margin-bottom:3px;font-size:12px;border-radius:4px;transition:background .15s}
@@ -1083,11 +1069,10 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
       <!-- 风格面板 -->
       <div class="glass panel">
         <div class="panel-head">
-          <div class="panel-title">🎨 风格</div>
+          <div class="panel-title">🎨 叙事取向</div>
           <div class="seg">
-            <button :class="{on:styleMode==='library'}" @click="styleMode='library'">风格库</button>
-            <button :class="{on:styleMode==='params'}" @click="styleMode='params';loadStyleParams()">参数化</button>
-            <button :class="{on:styleMode==='custom'}" @click="styleMode='custom'">自由描述</button>
+            <button :class="{on:styleMode==='library'}" @click="styleMode='library'">推荐取向</button>
+            <button :class="{on:styleMode==='custom'}" @click="styleMode='custom'">自定义要求</button>
           </div>
         </div>
 
@@ -1095,29 +1080,16 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
           <template v-for="(authors, cat) in styleCategories">
             <div class="style-cat-title">{{ cat }}</div>
             <div class="style-grid">
-              <div v-for="s in authors" :key="s.name" class="style-card" :class="{active:form.style===s.name}" @click="form.style=s.name">
+              <button type="button" v-for="s in authors" :key="s.name" class="style-card" :class="{active:form.style===s.name}" @click="form.style=s.name">
                 <div class="sc-name">{{ s.name }}</div>
-                <div class="sc-author">{{ s.author }}</div>
                 <div class="sc-desc" v-if="s.desc">{{ s.desc }}</div>
-              </div>
+              </button>
             </div>
           </template>
         </template>
 
-        <div v-if="styleMode==='params'" class="param-panel">
-          <div class="param-hint">选择各维度参数，AI 将据此生成精准匹配的风格。</div>
-          <div v-for="(cfg, key) in styleParams" :key="key" class="param-group">
-            <div class="param-label">{{ cfg.label }}</div>
-            <div class="param-options">
-              <button v-for="opt in cfg.options" :key="opt.value" class="param-btn" :class="{active:customParams[key]===opt.value}" @click="customParams[key]=opt.value">{{ opt.label }}</button>
-            </div>
-          </div>
-          <div class="param-group"><div class="param-label">额外关键词</div><input v-model="customParams.keyword" placeholder="如：赛博朋克背景 / 带点王小波式的黑色幽默…"></div>
-          <button class="btn btn-primary w-full" @click="applyParamStyle" :disabled="isBusy">{{ form.style==='自定义参数化风格' ? '✓ 已应用参数化风格' : '应用参数化风格' }}</button>
-        </div>
-
         <div v-if="styleMode==='custom'" class="mt-8">
-          <textarea v-model="customStyleDesc" rows="3" placeholder="描述你想要的文笔风格…&#10;如：王小波的黑色幽默 + 村上春树的孤独感 + 中国武侠的江湖气。"></textarea>
+          <textarea v-model="customStyleDesc" rows="3" placeholder="描述你想要的阅读感受…&#10;如：克制的黑色幽默、略带疏离感，关键时刻保留一点江湖气。"></textarea>
           <div class="flex gap-8 mt-8">
             <button class="btn btn-secondary btn-sm flex-1" @click="applyCustomStyle" :disabled="!customStyleDesc.trim()">{{ form.style.startsWith('自定义') && !form.style.includes('参数化') ? '✓ 已应用' : '应用此风格' }}</button>
             <button class="btn btn-ghost btn-sm" @click="saveStyleSeed" :disabled="!customStyleDesc.trim()">保存种子</button>
@@ -2311,33 +2283,6 @@ const app = createApp({
     const styleCategories = ref({}); const exportSelected = reactive({});
     const editSaved = ref(false); const styleMode = ref('library');
     const customStyleDesc = ref(''); const styleSeeds = ref([]);
-    const styleParams = ref({
-      narrative_person:{label:'叙事人称',options:[
-        {value:'first',label:'第一人称（我）'},{value:'third_limited',label:'第三人称限知'},{value:'third_omniscient',label:'第三人称全知'}
-      ]},
-      tone:{label:'文风基调',options:[
-        {value:'hot_blood',label:'热血昂扬'},{value:'calm',label:'冷静克制'},{value:'humorous',label:'幽默轻松'},{value:'dark',label:'暗黑沉重'},{value:'warm',label:'温馨治愈'}
-      ]},
-      pacing:{label:'节奏控制',options:[
-        {value:'fast',label:'快节奏'},{value:'balanced',label:'张弛有度'},{value:'slow',label:'舒缓细腻'}
-      ]},
-      dialogue_ratio:{label:'对话比例',options:[
-        {value:'low',label:'少对话'},{value:'medium',label:'叙事对话均衡'},{value:'high',label:'对话驱动'}
-      ]},
-      description_density:{label:'描写密度',options:[
-        {value:'sparse',label:'简洁留白'},{value:'moderate',label:'适中'},{value:'rich',label:'浓墨重彩'}
-      ]},
-      emotion_tendency:{label:'情感倾向',options:[
-        {value:'positive',label:'积极向上'},{value:'bittersweet',label:'悲喜交加'},{value:'tragic',label:'悲剧底色'},{value:'neutral',label:'冷静旁观'}
-      ]},
-      length_preference:{label:'篇幅偏好',options:[
-        {value:'short',label:'短篇精炼'},{value:'medium',label:'中篇展开'},{value:'long',label:'长篇铺陈'}
-      ]}
-    }); const customParams = reactive({
-      narrative_person:'third_limited', tone:'hot_blood', pacing:'balanced',
-      dialogue_ratio:'medium', description_density:'moderate',
-      emotion_tendency:'positive', length_preference:'medium', keyword:''
-    });
     const requirements = reactive({subtasks:[]}); const reqInspiration = ref(''); const showReqInput = ref(false);
     const supervisionReport = ref(null);
     const outlineChangePlan = ref([]); const outlineExecutionSummary = ref(null);
@@ -2488,7 +2433,7 @@ const app = createApp({
       }
     }
 
-    const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:50000, title:'', naturalNames:true, normalPacing:false, fastFood:false, creativeEnhance:false });
+    const form = reactive({ genre:'修仙', style:'紧凑推进', inspiration:'', target_words:50000, title:'', naturalNames:true, normalPacing:false, fastFood:false, creativeEnhance:false });
     const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false, health:false });
     
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
@@ -4842,14 +4787,6 @@ const app = createApp({
     }
 
     function applyCustomStyle() { const d=customStyleDesc.value.trim(); if(d) form.style='自定义: '+d; }
-    async function loadStyleParams() { try { const r=await fetch(API+'/api/styles/params'); const d=await r.json(); styleParams.value=d.params; } catch(e){ console.error(e); } }
-    async function applyParamStyle() {
-      try {
-        const r=await fetch(API+'/api/styles/build-custom',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...customParams})});
-        const d=await r.json();
-        if(d.style){ form.style=d.style.name; form._customStyle=d.style; }
-      } catch(e){ console.error(e); }
-    }
     
     // ── 需求管理系统 ──
     async function decomposeRequirements() {
@@ -4933,9 +4870,9 @@ const app = createApp({
       requirementsForKind,requirementKindLabel,requirementKindHelp,requirementScopeText,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       outlineCompliance,outlineChangePlan,outlineExecutionSummary,
-      requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,
+      requirements,reqInspiration,showReqInput,supervisionReport,
       decomposeRequirements,superviseRequirements,runVerifyLoop,addRequirements,
-      loadStyleSeeds,loadStyleParams,applyParamStyle,
+      loadStyleSeeds,
       // v3.0: 互动模式
       interactive,openInteractive,startSelectedInteractive,sendInteractiveChat,continueInteractive,
       onActionButton,execAction,

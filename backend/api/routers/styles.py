@@ -30,7 +30,7 @@ async def get_styles():
                 "name": n,
                 # 保留旧字段，避免旧客户端崩溃；新接口不再返回作者署名。
                 "author": "",
-                "desc": s.get("prose", "")[:80] + "…",
+                "desc": s.get("description") or (s.get("prose", "")[:80] + "…"),
                 "is_custom": s.get("is_custom", False),
             })
         if items:
