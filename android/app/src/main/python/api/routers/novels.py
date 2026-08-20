@@ -200,12 +200,18 @@ def _generate_quality_recommendations(completeness, ai_score, total_hooks, resol
 
 @router.get("/api/novels/{novel_id}/chapters/{chapter_num}")
 async def get_chapter(novel_id: str, chapter_num: int, request: Request):
-    """读取单章正文"""
+    """读取单章正文与独立修订草稿。"""
     _require_legacy_owner(request, novel_id)
     content = engine.get_chapter(novel_id, chapter_num)
-    if content is None:
+    draft = engine.memory.read_chapter_draft(novel_id, chapter_num)
+    if content is None and draft is None:
         raise HTTPException(status_code=404, detail=f"第{chapter_num}章不存在")
-    return {"content": content, "chapter_num": chapter_num}
+    return {
+        "content": content,
+        "draft": draft,
+        "is_published": content is not None,
+        "chapter_num": chapter_num,
+    }
 
 
 @router.get("/api/novels/{novel_id}/chapters/{chapter_num}/exists")
@@ -413,7 +419,7 @@ async def generate_batch(novel_id: str, req: BatchGenerationRequest, request: Re
                         novel_id, ch_num, writing_mode, batch_mode=True  # v2.6: 批量模式（9次LLM→1-3次）
                     ):
                         yield event
-                        if event.get("type") == "error":
+                        if event.get("type") in {"error", "needs_revision"}:
                             chapter_error = event.get("message", "未知错误")
                     if not chapter_error:
                         yield {"type": "chapter_done", "chapter": ch_num}
