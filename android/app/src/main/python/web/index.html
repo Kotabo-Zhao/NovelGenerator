@@ -1326,8 +1326,7 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
             </div>
             <div class="mode-row mt-12">
               <div class="mode-pill"><span>🐉 网文</span><label class="toggle-switch"><input type="checkbox" v-model="writingModeLiterary" @change="onModeChange"><span class="toggle-slider"></span></label><span>📖 文学</span></div>
-              <div class="mode-pill"><span>📦 标准</span><label class="toggle-switch toggle-sm"><input type="checkbox" v-model="useAtomicMode" @change="onModeChange"><span class="toggle-slider"></span></label><span>🧬 原子化</span></div>
-              <span class="text-xs color-text3">逐beat生成 · 高随机性</span>
+              <span class="text-xs color-text3">系统会按章节契约自动选择最合适的生成策略</span>
             </div>
           </details>
 
@@ -2483,7 +2482,6 @@ const app = createApp({
     
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
-    const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
     const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write', annotations:[] });
     // v2.0: 正文标注渲染（设定冲突/大纲缺失高亮）
     const annoTooltip = reactive({visible:false, x:0, y:0, issue:'', chapter_ref:null, type:'setting'});
@@ -3461,7 +3459,7 @@ const app = createApp({
       chapterProgress.value=0; chapterProgressLabel.value='准备中…';
       const targetChars = (currentOutline.value?.target_words || 3000) * 2;
       try {
-        const endpoint = useAtomicMode.value ? '/api/novels/generate/atomic' : '/api/novels/generate';
+        const endpoint = '/api/novels/generate';
         const genBody = () => JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel'});
         // v3.8: 断线自动重连（1s/2s/4s 指数退避，最多3次）——网络抖动不再让数分钟生成作废。
         // 重连复用同一章节号，后端 .generating_XXXX.lock + PID 存活判定保证幂等（不会双写）。
@@ -4664,7 +4662,7 @@ const app = createApp({
       if(loading.batch){ error.value='批量生成运行中，请等待完成'; return; }
       loading.write=true; writing.content=''; writing.done=false; error.value=''; chapterProgress.value=0;
       try {
-        const endpoint = useAtomicMode.value ? '/api/novels/generate/atomic' : '/api/novels/generate';
+        const endpoint = '/api/novels/generate';
         const r=await fetch(API+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel',feedback:reviewFeedback.value.trim()})});
         await readSSE(r, (evt) => {
           if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
@@ -4870,7 +4868,7 @@ const app = createApp({
       // v2.7: 设置页（服务状态 + 外观应用）
       health,refreshHealth,applyAppearance,
       llmApiKey,llmModel,llmSaving,llmKeySaved,llmModelSaved,saveLLMConfig,
-      batchStart,batchEnd,batchProgress,batchCurrent,batchStatus,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
+      batchStart,batchEnd,batchProgress,batchCurrent,batchStatus,batchStreaming,exportProgress,writingModeLiterary,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,requirementSnapshot,requirementKindOrder,
       requirementsForKind,requirementKindLabel,requirementKindHelp,requirementScopeText,reviewFeedback,doRegenerate,
