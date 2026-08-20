@@ -7,10 +7,10 @@
 
 每个风格包含:
 - prose/tone/pacing/dialogue/structure: 六维风格描述
-- openings: 2-3 段少样本示例 (few-shot)
-- signatures: 标志性句式/词汇
-- anti_patterns: 禁用写法 + AI 常见坏习惯
+- 历史 openings/signatures/anti_patterns 仅保留作旧存档兼容，不进入生产提示词
 """
+
+import re
 
 
 # 风格预设曾使用作者姓名作为营销标签。运行时统一转换为可复用的
@@ -54,28 +54,46 @@ def _clean_style_text(value: object) -> str:
     return text
 
 
+def _abstract_style_text(value: object, max_chars: int = 240) -> str:
+    """把旧预设压缩为写作属性，移除范文、作品名和机械数字配额。"""
+    text = _clean_style_text(value)
+    text = re.sub(r"《[^》]{1,80}》", "同类题材", text)
+    text = text.replace("方法论", "叙事取向")
+    text = re.sub(r"\d+(?:\s*[-—~～]\s*\d+)?\s*%\+?", "按场景需要", text)
+    text = re.sub(
+        r"每\s*\d+(?:\s*[-—~～]\s*\d+)?\s*(?:字|章|节|回|卷)[^，。；\n]*",
+        "按剧情阶段安排",
+        text,
+    )
+    text = re.sub(r"每卷\s*(?:约|大约)?\s*\d+\s*章", "分卷长度随故事容量调整", text)
+    text = re.sub(r"第\s*\d+\s*章\s*[:：]", "开篇：", text)
+    text = re.sub(
+        r"\d+(?:\s*[-—~～]\s*\d+)?\s*(?:字|章|节|回|卷|年|条|个|行)",
+        "若干阶段",
+        text,
+    )
+    text = re.sub(r"「[^」\n]{5,}」|“[^”\n]{5,}”|'[^'\n]{5,}'", "具体表达", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > max_chars:
+        cut = text[:max_chars]
+        boundary = max(cut.rfind("。"), cut.rfind("；"), cut.rfind("！"), cut.rfind("？"))
+        text = cut[:boundary + 1] if boundary >= max_chars // 2 else cut.rstrip("，；： ") + "。"
+    return text
+
+
 def build_style_prompt(style_config: dict) -> str:
-    """构建完整的风格注入 prompt"""
+    """构建紧凑的属性式风格提示，不注入范文或标志性句子。"""
     parts = [
-        f"### 文笔特征\n{_clean_style_text(style_config.get('prose', ''))}",
-        f"### 语气基调\n{_clean_style_text(style_config.get('tone', ''))}",
-        f"### 节奏控制\n{_clean_style_text(style_config.get('pacing', ''))}",
-        f"### 对话风格\n{_clean_style_text(style_config.get('dialogue', ''))}",
-        f"### 结构偏好\n{_clean_style_text(style_config.get('structure', ''))}",
+        f"### 文笔特征（句式与描写）\n{_abstract_style_text(style_config.get('prose', ''))}",
+        f"### 语气与叙述距离\n{_abstract_style_text(style_config.get('tone', ''))}",
+        f"### 节奏控制\n{_abstract_style_text(style_config.get('pacing', ''))}",
+        f"### 对话倾向\n{_abstract_style_text(style_config.get('dialogue', ''))}",
+        f"### 场景结构\n{_abstract_style_text(style_config.get('structure', ''))}",
+        (
+            "### 应用原则\n以上是可调节的叙事倾向，不是逐章数字配额。"
+            "优先服从人物动机、章节契约和当前场景，不复刻任何范文或标志性句子。"
+        ),
     ]
-    
-    openings = style_config.get('openings', '')
-    if openings:
-        parts.append(f"### 风格示例（请遵守属性要求，不复刻具体作品）\n{_clean_style_text(openings)}")
-    
-    signatures = style_config.get('signatures', '')
-    if signatures:
-        parts.append(f"### 语言特征（适当使用）\n{_clean_style_text(signatures)}")
-    
-    anti = style_config.get('anti_patterns', '')
-    if anti:
-        parts.append(f"### 严禁写法\n{_clean_style_text(anti)}")
-    
     return "\n\n".join(parts)
 
 
