@@ -1368,11 +1368,15 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
               </div>
 
               <!-- 生成按钮 + 进度 -->
-              <button class="btn btn-primary btn-lg w-full mb-12" v-if="!writing.done && !(activeNovel.state.completed_chapters||[]).includes(writing.chapter)" @click="doGenerateChapter" :disabled="isBusy">
+              <button class="btn btn-primary btn-lg w-full mb-12" v-if="!writing.done && (writing.needsRevision || !(activeNovel.state.completed_chapters||[]).includes(writing.chapter))" @click="doGenerateChapter" :disabled="isBusy">
                 <span v-if="loading.write"><span class="spinner"></span> 写作中…</span>
                 <span v-else-if="loading.batch">⏳ 批量中…</span>
-                <span v-else>✍️ 生成第{{ writing.chapter }}章</span>
+                <span v-else>{{ writing.needsRevision ? '↻ 重新生成第'+writing.chapter+'章' : '✍️ 生成第'+writing.chapter+'章' }}</span>
               </button>
+              <div v-if="writing.needsRevision && !loading.write" class="error-msg" style="margin-bottom:12px">
+                {{ writing.revisionReason || '本章未通过发布校验。' }}<br>
+                新版本已保留为独立草稿；修订通过前不会误计为已完成。
+              </div>
               <div v-if="loading.write && writing.content" class="chapter-progress">
                 <div class="cp-bar"><div class="cp-fill" :style="{width:chapterProgress+'%'}"></div></div>
                 <div class="cp-text">{{ chapterProgressLabel || chapterProgress+'%' }}</div>
@@ -2482,7 +2486,7 @@ const app = createApp({
     
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
-    const writing = reactive({ chapter:1, content:'', done:false, activeTab:'write', annotations:[] });
+    const writing = reactive({ chapter:1, content:'', done:false, needsRevision:false, revisionReason:'', activeTab:'write', annotations:[] });
     // v2.0: 正文标注渲染（设定冲突/大纲缺失高亮）
     const annoTooltip = reactive({visible:false, x:0, y:0, issue:'', chapter_ref:null, type:'setting'});
     const annotatedContent = computed(() => {
@@ -3389,6 +3393,9 @@ const app = createApp({
       planResult.value=null;
       let next=1; while(next<=total && done.includes(next)) next++;
       writing.chapter=Math.min(next, total); writing.content=''; writing.done=false;
+      const revisionStatus = novel.state.chapter_statuses?.[String(writing.chapter)];
+      writing.needsRevision = revisionStatus?.status === 'needs_revision';
+      writing.revisionReason = writing.needsRevision ? (revisionStatus.reason||'') : '';
       currentView.value='write';
       batchStart.value=Math.min(next, total); batchEnd.value=Math.min(total, next+9);
       // 异步加载plan和章节内容（仅当仍是当前导航时落值）
@@ -3437,16 +3444,26 @@ const app = createApp({
     function selectChapter(ch, skipFetch) {
       if(isBusy.value) return;
       writing.chapter=ch; writing.content=''; writing.done=false; error.value='';
+      const revisionStatus = activeNovel.value?.state?.chapter_statuses?.[String(ch)];
+      writing.needsRevision = revisionStatus?.status === 'needs_revision';
+      writing.revisionReason = writing.needsRevision ? (revisionStatus.reason||'') : '';
       // 取消进行中的请求
       if (_chFetchAbort) { _chFetchAbort.abort(); _chFetchAbort=null; }
       if (skipFetch) return;
       if(!activeNovel.value) return;
       const done=activeNovel.value.state.completed_chapters||[];
-      if(!done.includes(ch)) return;
+      if(!done.includes(ch) && !writing.needsRevision) return;
       const ctrl=new AbortController(); _chFetchAbort=ctrl;
       fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+ch, {signal:ctrl.signal})
         .then(r=>r.ok?r.json():null)
-        .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
+        .then(d=>{
+          if(!d) return;
+          const revisionDraft = writing.needsRevision && d.draft;
+          if(revisionDraft || d.content){
+            writing.content = revisionDraft || d.content;
+            writing.done = Boolean(d.is_published && !writing.needsRevision);
+          }
+        })
         .catch(()=>{})
         .finally(()=>{if(_chFetchAbort===ctrl) _chFetchAbort=null;});
     }
@@ -3454,8 +3471,8 @@ const app = createApp({
     async function doGenerateChapter() {
       if(!activeNovel.value) return;
       if(isBusy.value){ reportError('有任务正在进行中，请等待完成'); return; }
-      if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter)) return;
-      loading.write=true; writing.content=''; writing.done=false; reviewFeedback.value=''; error.value='';
+      if((activeNovel.value.state.completed_chapters||[]).includes(writing.chapter) && !writing.needsRevision) return;
+      loading.write=true; writing.content=''; writing.done=false; writing.needsRevision=false; writing.revisionReason=''; reviewFeedback.value=''; error.value='';
       chapterProgress.value=0; chapterProgressLabel.value='准备中…';
       const targetChars = (currentOutline.value?.target_words || 3000) * 2;
       try {
@@ -3508,7 +3525,7 @@ const app = createApp({
             nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight});
           }
           else if(evt.type==='done'){
-            writing.done=true; chapterProgress.value=100; chapterProgressLabel.value='完成';
+            writing.done=true; writing.needsRevision=false; writing.revisionReason=''; chapterProgress.value=100; chapterProgressLabel.value='完成';
             const ch=activeNovel.value.state; if(!ch.completed_chapters) ch.completed_chapters=[];
             if(!ch.completed_chapters.includes(evt.chapter_num)) ch.completed_chapters.push(evt.chapter_num);
             ch.completed_chapters.sort((a,b)=>a-b); ch.current_chapter=Math.max(...ch.completed_chapters);
@@ -3519,6 +3536,16 @@ const app = createApp({
               .then(r=>r.ok?r.json():null)
               .then(d=>{if(d&&d.content){writing.content=d.content;}})
               .catch(()=>{});
+          }
+          else if(evt.type==='needs_revision'){
+            writing.done=false; writing.needsRevision=true; chapterProgress.value=100;
+            writing.revisionReason=evt.message||'本章未通过发布校验';
+            chapterProgressLabel.value=writing.revisionReason;
+            if(activeNovel.value?.state){
+              if(!activeNovel.value.state.chapter_statuses) activeNovel.value.state.chapter_statuses = {};
+              activeNovel.value.state.chapter_statuses[String(evt.chapter_num)] = {status:'needs_revision',reason:writing.revisionReason,published_chapter_preserved:Boolean(evt.published_chapter_preserved)};
+            }
+            showToast('正文已保留为待修订草稿，不会计入完成进度', '需要修订', '⚠️');
           }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         }, 300000, retryFactory);
@@ -4660,13 +4687,19 @@ const app = createApp({
     async function doRegenerate() {
       if(!activeNovel.value||!reviewFeedback.value.trim()){ error.value='请输入修改意见'; return; }
       if(loading.batch){ error.value='批量生成运行中，请等待完成'; return; }
-      loading.write=true; writing.content=''; writing.done=false; error.value=''; chapterProgress.value=0;
+      loading.write=true; writing.content=''; writing.done=false; writing.needsRevision=false; writing.revisionReason=''; error.value=''; chapterProgress.value=0;
       try {
         const endpoint = '/api/novels/generate';
         const r=await fetch(API+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({novel_id:activeNovel.value.id,chapter_num:writing.chapter,writing_mode:writingModeLiterary.value?'literary':'webnovel',feedback:reviewFeedback.value.trim()})});
         await readSSE(r, (evt) => {
           if(evt.type==='text'){ writing.content+=evt.content; nextTick(()=>{if(preview.value)preview.value.scrollTop=preview.value.scrollHeight}); }
-          else if(evt.type==='done'){ writing.done=true; reviewFeedback.value=''; chapterProgress.value=100; }
+          else if(evt.type==='done'){ writing.done=true; writing.needsRevision=false; writing.revisionReason=''; reviewFeedback.value=''; chapterProgress.value=100; }
+          else if(evt.type==='needs_revision'){
+            writing.done=false; writing.needsRevision=true; chapterProgress.value=100;
+            writing.revisionReason=evt.message||'本章未通过发布校验';
+            chapterProgressLabel.value=writing.revisionReason;
+            showToast('正文已保留为待修订草稿，不会计入完成进度', '需要修订', '⚠️');
+          }
           else if(evt.type==='outline_compliance'){
             outlineCompliance.value = {
               chapter: evt.chapter, pct: evt.pct, level: evt.level,

@@ -211,6 +211,14 @@ def choose_draft_strategy(chapter_outline: dict | None, *, batch_mode: bool = Fa
     return "atomic" if chapter.get("contract_status") == "ready" and concrete >= 3 else "standard"
 
 
+def _hard_requirement_failures(report: dict | None) -> list[dict]:
+    return [
+        item
+        for item in ((report or {}).get("results") or [])
+        if item.get("status") == "failed" and item.get("hard_gate") is True
+    ]
+
+
 
 
 # ===== _extract_key_ending (从 engine.py 迁移) =====
@@ -331,6 +339,116 @@ def _get_style_guide(style: str, genre: str) -> str:
 
 
 class GenerationMixin:
+    def _record_revision_candidate(
+        self,
+        novel_id: str,
+        chapter_num: int,
+        text: str,
+        formatted: str,
+        *,
+        reason: str,
+        requirement_ids: list[str] | None = None,
+        quality_record: dict | None = None,
+    ) -> dict:
+        """Preserve a rejected candidate outside the published chapter directory."""
+        draft_saved = False
+        try:
+            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
+            draft_saved = True
+        except Exception as exc:
+            log.warning("Could not preserve revision draft for chapter %s: %s", chapter_num, exc)
+        finally:
+            self.memory.remove_incomplete_chapter(novel_id, chapter_num)
+
+        repaired = self.memory.repair_state(novel_id)
+        state = dict(repaired.get("state") or self.memory.get_novel_state(novel_id) or {})
+        published_chapter_preserved = self.memory.chapter_exists(novel_id, chapter_num)
+        completed = list(state.get("completed_chapters") or [])
+        if not published_chapter_preserved:
+            completed = [value for value in completed if int(value) != int(chapter_num)]
+        state["completed_chapters"] = sorted(set(completed))
+        state["current_chapter"] = max(completed) if completed else 0
+        digest = hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+        status = {
+            "status": "needs_revision",
+            "reason": reason,
+            "requirement_ids": list(requirement_ids or []),
+            "quality_score": (quality_record or {}).get("score"),
+            "text_sha256": digest,
+            "draft_saved": draft_saved,
+            "published_chapter_preserved": published_chapter_preserved,
+            "updated_at": time.time(),
+        }
+        state.setdefault("chapter_statuses", {})[str(chapter_num)] = status
+        self.memory.save_novel_state(novel_id, state)
+        return {"chapter_num": chapter_num, **status}
+
+    def _preserve_generation_failure(
+        self,
+        novel_id: str,
+        chapter_num: int,
+        text: str,
+        formatted: str,
+        error: Exception,
+    ) -> dict | None:
+        """Keep usable generated text when a post-generation check raises."""
+        candidate = str(text or "").strip()
+        if not candidate:
+            self.memory.remove_incomplete_chapter(novel_id, chapter_num)
+            return None
+        rendered = str(formatted or "").strip() or candidate
+        return self._record_revision_candidate(
+            novel_id,
+            chapter_num,
+            candidate,
+            rendered,
+            reason=f"生成后校验失败：{error}",
+        )
+
+    def _finalize_chapter_candidate(
+        self,
+        novel_id: str,
+        chapter_num: int,
+        text: str,
+        formatted: str,
+        requirement_report: dict | None,
+        quality_record: dict | None,
+    ) -> dict:
+        """Apply hard gates, then atomically expose one completed candidate."""
+        failures = _hard_requirement_failures(requirement_report)
+        if failures:
+            ids = [str(item.get("subtask_id") or "") for item in failures if item.get("subtask_id")]
+            titles = [str(item.get("title") or item.get("subtask_id") or "未命名需求") for item in failures]
+            return self._record_revision_candidate(
+                novel_id,
+                chapter_num,
+                text,
+                formatted,
+                reason="P0 需求未满足：" + "；".join(titles),
+                requirement_ids=ids,
+                quality_record=quality_record,
+            )
+
+        self.memory.save_chapter(novel_id, chapter_num, formatted)
+        repaired = self.memory.repair_state(novel_id)
+        state = dict(repaired.get("state") or self.memory.get_novel_state(novel_id) or {})
+        completed = [int(value) for value in (state.get("completed_chapters") or [])]
+        if chapter_num not in completed:
+            completed.append(chapter_num)
+        state["completed_chapters"] = sorted(set(completed))
+        state["current_chapter"] = max(completed) if completed else 0
+        digest = hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+        status = {
+            "status": "completed",
+            "quality_score": (quality_record or {}).get("score"),
+            "text_sha256": digest,
+            "updated_at": time.time(),
+        }
+        state.setdefault("chapter_statuses", {})[str(chapter_num)] = status
+        self.memory.save_novel_state(novel_id, state)
+        self.memory.delete_chapter_draft(novel_id, chapter_num)
+        return {"chapter_num": chapter_num, **status}
+
     async def unified_generate_chapter_stream(
         self,
         novel_id: str,
@@ -1038,11 +1156,7 @@ class GenerationMixin:
                 full_text,
                 target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
             )
-            self.memory.save_chapter(
-                novel_id,
-                chapter_num,
-                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-            )
+            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
             
             # v2.40: 第一章生成后自动检测叙事人称
             if chapter_num == 1:
@@ -1111,11 +1225,7 @@ class GenerationMixin:
                                              chapter_title=chapter_outline.get(
                                                  "title", f"第{chapter_num}章"),
                                              full_text=full_text))
-                        self.memory.save_chapter(
-                            novel_id,
-                            chapter_num,
-                            formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-                        )
+                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
                         self.memory.invalidate("state", novel_id)
                     yield _cev
             except Exception as _ce:
@@ -1150,11 +1260,7 @@ class GenerationMixin:
                 full_text,
                 target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
             )
-            self.memory.save_chapter(
-                novel_id,
-                chapter_num,
-                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-            )
+            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
             _requirement_report = self._evaluate_chapter_requirements(
                 novel_id, chapter_num, full_text, plan
             )
@@ -1179,16 +1285,22 @@ class GenerationMixin:
             )
             yield {"type": "final_quality", **_final_quality_record}
 
-            # Publish only after every mutation and final report refer to the same text.
-            self.memory.save_chapter(novel_id, chapter_num, formatted)
-            _state_result = self.memory.repair_state(novel_id)
-            state = _state_result["state"]
-            completed = list(state.get("completed_chapters", []))
-            if chapter_num not in completed:
-                completed.append(chapter_num)
-            state["completed_chapters"] = sorted(completed)
-            state["current_chapter"] = max(completed) if completed else 0
-            self.memory.save_novel_state(novel_id, state)
+            # Both drafting strategies share this hard gate and final committer.
+            _completion = self._finalize_chapter_candidate(
+                novel_id,
+                chapter_num,
+                full_text,
+                formatted,
+                _requirement_report,
+                _final_quality_record,
+            )
+            if _completion["status"] == "needs_revision":
+                yield {
+                    "type": "needs_revision",
+                    "message": _completion["reason"],
+                    **_completion,
+                }
+                return
 
             # ── v2.7.5: 原子化路径补每章自动摘要（与 generate_chapter_stream 对齐）──
             # 此前 atomic 路径完全无摘要逻辑 → 原子章节不进 summaries → L2c
@@ -1228,8 +1340,17 @@ class GenerationMixin:
             
         except Exception as e:
             log.exception(f"Atomic chapter generation failed: {e}")
-            self.memory.remove_incomplete_chapter(novel_id, chapter_num)
-            yield {"type": "error", "message": str(e)}
+            _preserved = self._preserve_generation_failure(
+                novel_id,
+                chapter_num,
+                locals().get("full_text", ""),
+                locals().get("formatted", ""),
+                e,
+            )
+            if _preserved:
+                yield {"type": "needs_revision", "message": _preserved["reason"], **_preserved}
+            else:
+                yield {"type": "error", "message": f"章节生成失败：{e}"}
         finally:
             try:
                 if os.path.exists(lock_file):
@@ -1609,8 +1730,8 @@ class GenerationMixin:
                 # 每500字增量保存一次
                 if len(full_text) - last_save_len >= 500:
                     try:
-                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}\n\n<!-- GENERATION_IN_PROGRESS -->"
-                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
                         last_save_len = len(full_text)
                     except Exception as e:
                         log.warning(f"Incremental save failed (non-fatal): {e}")
@@ -1863,11 +1984,7 @@ class GenerationMixin:
             from ..quality_gate import validate_chapter_text
             validate_chapter_text(_text_to_save, target_words=target_words)
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{_text_to_save}"
-            self.memory.save_chapter(
-                novel_id,
-                chapter_num,
-                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-            )
+            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
 
             # v2.40: 第一章生成后自动检测叙事人称
             if chapter_num == 1:
@@ -1962,11 +2079,7 @@ class GenerationMixin:
                         if rewritten and len(rewritten) > len(full_text) * 0.6:
                             full_text = rewritten
                             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                            self.memory.save_chapter(
-                                novel_id,
-                                chapter_num,
-                                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-                            )
+                            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
                             self.memory.invalidate("state", novel_id)
                             yield {"type": "consistency_fixed", "chapter": chapter_num,
                                    "fixed": [v.get("description", "")[:80] for v in p0_v[:3]]}
@@ -2057,11 +2170,7 @@ class GenerationMixin:
                     if _cev.get("type") == "outline_compliance" and _cev.get("patched_text"):
                         full_text = full_text.rstrip() + "\n\n" + _cev["patched_text"]
                         formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.save_chapter(
-                            novel_id,
-                            chapter_num,
-                            formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-                        )
+                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
                         self.memory.invalidate("state", novel_id)
                     yield _cev
             except Exception as _ce:
@@ -2182,11 +2291,7 @@ class GenerationMixin:
                             full_text = fixed_text
                             # 重新保存
                             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{fixed_text}"
-                            self.memory.save_chapter(
-                                novel_id,
-                                chapter_num,
-                                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-                            )
+                            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
                             _post_consistency_auto_fixed = True
                             log.info(f"Auto-fix completed for chapter {chapter_num}")
                             yield {"type": "auto_fix", "applied": True, "violations_fixed": p0_count}
@@ -2273,11 +2378,7 @@ class GenerationMixin:
                             break
                         full_text = repaired_text
                         formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.save_chapter(
-                            novel_id,
-                            chapter_num,
-                            formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-                        )
+                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
                         yield {
                             "type": "consistency_fixed",
                             "round": repair_round + 2,
@@ -2290,11 +2391,7 @@ class GenerationMixin:
                         full_text = best_recheck_text
                         _post_consistency_validation = best_recheck_validation
                         formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.save_chapter(
-                            novel_id,
-                            chapter_num,
-                            formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-                        )
+                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
                         log.info(
                             "Consistency repair selected best candidate: rank=%s",
                             best_recheck_rank,
@@ -2315,11 +2412,7 @@ class GenerationMixin:
             full_text = _trim_to_target(full_text, target_words)
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             validate_chapter_text(full_text, target_words=target_words)
-            self.memory.save_chapter(
-                novel_id,
-                chapter_num,
-                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
-            )
+            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
 
             # ── 最终质量报告：必须位于所有改写/一致性修复之后 ──
             _final_quality = await asyncio.to_thread(
@@ -2349,17 +2442,22 @@ class GenerationMixin:
             )
             yield {"type": "final_quality", **_final_quality_record}
 
-            # Publish only after the frozen text has passed validation and its
-            # final quality/requirement reports have been persisted.
-            self.memory.save_chapter(novel_id, chapter_num, formatted)
-            _state_result = self.memory.repair_state(novel_id)
-            state = _state_result["state"]
-            completed = list(state.get("completed_chapters", []))
-            if chapter_num not in completed:
-                completed.append(chapter_num)
-            state["completed_chapters"] = sorted(completed)
-            state["current_chapter"] = max(completed) if completed else 0
-            self.memory.save_novel_state(novel_id, state)
+            # Both drafting strategies share this hard gate and final committer.
+            _completion = self._finalize_chapter_candidate(
+                novel_id,
+                chapter_num,
+                full_text,
+                formatted,
+                _requirement_report,
+                _final_quality_record,
+            )
+            if _completion["status"] == "needs_revision":
+                yield {
+                    "type": "needs_revision",
+                    "message": _completion["reason"],
+                    **_completion,
+                }
+                return
 
             # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
             try:
@@ -2399,8 +2497,17 @@ class GenerationMixin:
 
         except Exception as e:
             log.exception(f"Chapter generation failed: {e}")
-            self.memory.remove_incomplete_chapter(novel_id, chapter_num)
-            yield {"type": "error", "message": f"❌ 章节生成失败：{e}。请检查网络连接或稍后重试。"}
+            _preserved = self._preserve_generation_failure(
+                novel_id,
+                chapter_num,
+                locals().get("full_text", ""),
+                locals().get("formatted", ""),
+                e,
+            )
+            if _preserved:
+                yield {"type": "needs_revision", "message": _preserved["reason"], **_preserved}
+            else:
+                yield {"type": "error", "message": f"章节生成失败：{e}"}
         finally:
             # 清理并发锁
             try:
