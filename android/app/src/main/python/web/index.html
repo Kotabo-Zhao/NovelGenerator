@@ -3967,6 +3967,10 @@ const app = createApp({
           } else if (evt.type==='scene_chunk' && evt.content) {
             interactive.typing = true;
             _appendTyping(evt.content);
+          } else if (evt.type==='scene_retry') {
+            interactive.typing = false;
+            _dropTypingDraft();
+            interactive.loadingMsg = evt.message || '检测到重复场景，正在重新推进剧情…';
           } else if (evt.type==='scene_end') {
             interactive.typing = false;
             // v3.5.10: 历史保留——新场景 append 到历史流（带场景分隔），不清空
@@ -4019,6 +4023,11 @@ const app = createApp({
       if (last && last.type === 'typing' && !String(last.content || '').trim()) {
         interactive.blocks.pop();
       }
+    }
+
+    function _dropTypingDraft() {
+      const last = interactive.blocks[interactive.blocks.length - 1];
+      if (last && last.type === 'typing') interactive.blocks.pop();
     }
 
     // v3.5.1: 设置角色的真人音色（持久化）；v3.5.4 融合：选真人音色自动生效
@@ -4532,6 +4541,10 @@ const app = createApp({
             if (last && last.type==='typing') last.content += evt.content;
             else interactive.blocks.push({type:'typing', speaker:'', content:evt.content});
             _scrollStory();
+          } else if (evt.type==='scene_retry') {
+            interactive.typing = false;
+            _dropTypingDraft();
+            _setPhase(evt.message || '检测到重复场景，正在重新推进剧情…');
           } else if (evt.type==='scene_end') {
             interactive.typing = false;
             interactive.pendingNode = false;
