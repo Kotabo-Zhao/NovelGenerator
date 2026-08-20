@@ -702,4 +702,5 @@ check('非法角色不污染状态', not st14c.get('player_char') and not st14c.
 
 # ═══════════════ 汇总 ═══════════════
 print(f'\n═══ 结果: {PASS} 通过 / {FAIL} 失败 ═══')
-sys.exit(0 if FAIL == 0 else 1)
+if __name__ == '__main__':
+    sys.exit(0 if FAIL == 0 else 1)
