@@ -1432,20 +1432,31 @@ class SharedMemoryManager:
         missing = [c for c in disk_chapters if c not in state_chapters]
         # 也检查 state 中有但磁盘没有的（可能是误判，只 warn 不删除）
         phantom = [c for c in state_chapters if c not in disk_chapters]
+        disk_total_words = self._published_total_words(novel_id, disk_chapters)
+        try:
+            state_total_words = int(current_state.get("total_words") or 0)
+        except (TypeError, ValueError):
+            state_total_words = 0
+        total_words_mismatch = state_total_words != disk_total_words
         
-        if not missing and not phantom:
+        if not missing and not phantom and not total_words_mismatch:
             return {"repaired": False, "added": [], "removed": [], "state": current_state}
         
         # 以磁盘为准重建
         repaired_state = dict(current_state)
         repaired_state["completed_chapters"] = sorted(disk_chapters)
         repaired_state["current_chapter"] = max(disk_chapters) if disk_chapters else 0
+        repaired_state["total_words"] = disk_total_words
         
         # 写入
         try:
             atomic_write_json(state_path, repaired_state)
             self._invalidate(novel_id, "state")
-            log.warning(f"repair_state [{novel_id}]: added {missing}, phantom chapters in state: {phantom}")
+            log.warning(
+                f"repair_state [{novel_id}]: added {missing}, "
+                f"phantom chapters in state: {phantom}, "
+                f"total_words {state_total_words}->{disk_total_words}"
+            )
         except Exception as e:
             log.error(f"repair_state [{novel_id}]: write failed: {e}")
             return {"repaired": False, "added": [], "removed": [], "state": current_state, "error": str(e)}
@@ -1457,6 +1468,22 @@ class SharedMemoryManager:
             "phantom_warnings": phantom,
             "state": repaired_state,
         }
+
+    def _published_total_words(self, novel_id: str, chapter_numbers: list[int]) -> int:
+        """Count published body characters without Markdown chapter headings."""
+
+        total = 0
+        for chapter_num in chapter_numbers:
+            content = self.read_chapter(novel_id, chapter_num)
+            if not content:
+                continue
+            lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if lines and lines[0].lstrip().startswith("#"):
+                lines.pop(0)
+                while lines and not lines[0].strip():
+                    lines.pop(0)
+            total += len("\n".join(lines).strip())
+        return total
 
     def repair_all_states(self) -> list:
         """扫描所有小说的 state.json 并修复不一致"""

@@ -934,11 +934,16 @@ class GenerationMixin:
             # v2.7.6: 超短篇超长兜底（装配/一致性可能扩写）
             from ..writer import _trim_to_target
             full_text = _trim_to_target(full_text, chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS))
+            formatted = f"# 第{chapter_num}章 {chapter_outline.get('title', f'第{chapter_num}章')}\n\n{full_text}"
             validate_chapter_text(
                 full_text,
                 target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
             )
-            self.memory.save_chapter(novel_id, chapter_num, formatted)
+            self.memory.save_chapter(
+                novel_id,
+                chapter_num,
+                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+            )
             
             # v2.40: 第一章生成后自动检测叙事人称
             if chapter_num == 1:
@@ -974,15 +979,6 @@ class GenerationMixin:
             except Exception as e:
                 log.warning(f"ChapterBridge extraction failed in atomic (non-fatal): {e}")
             
-            # 更新状态
-            state = self.memory.get_novel_state(novel_id)
-            completed = state.get("completed_chapters", [])
-            if chapter_num not in completed:
-                completed.append(chapter_num)
-                completed.sort()
-            state["completed_chapters"] = completed
-            self.memory.save_novel_state(novel_id, state)
-            
             # ── Phase 5: 质量评估 ──
             yield {"type": "status", "message": "质量评估..."}
             
@@ -1016,7 +1012,11 @@ class GenerationMixin:
                                              chapter_title=chapter_outline.get(
                                                  "title", f"第{chapter_num}章"),
                                              full_text=full_text))
-                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        self.memory.save_chapter(
+                            novel_id,
+                            chapter_num,
+                            formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+                        )
                         self.memory.invalidate("state", novel_id)
                     yield _cev
             except Exception as _ce:
@@ -1038,9 +1038,23 @@ class GenerationMixin:
                 log.warning(f"Setting annotation step skipped: {_se}")
 
             from ..quality_gate import validate_chapter_text
+            from ..writer import _trim_to_target
+            full_text = _trim_to_target(
+                full_text,
+                chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
+            )
+            formatted = (
+                f"# 第{chapter_num}章 "
+                f"{chapter_outline.get('title', f'第{chapter_num}章')}\n\n{full_text}"
+            )
             validate_chapter_text(
                 full_text,
                 target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
+            )
+            self.memory.save_chapter(
+                novel_id,
+                chapter_num,
+                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
             )
             _requirement_report = self._evaluate_chapter_requirements(
                 novel_id, chapter_num, full_text, plan
@@ -1065,6 +1079,17 @@ class GenerationMixin:
                 stage="post_outline_compliance",
             )
             yield {"type": "final_quality", **_final_quality_record}
+
+            # Publish only after every mutation and final report refer to the same text.
+            self.memory.save_chapter(novel_id, chapter_num, formatted)
+            _state_result = self.memory.repair_state(novel_id)
+            state = _state_result["state"]
+            completed = list(state.get("completed_chapters", []))
+            if chapter_num not in completed:
+                completed.append(chapter_num)
+            state["completed_chapters"] = sorted(completed)
+            state["current_chapter"] = max(completed) if completed else 0
+            self.memory.save_novel_state(novel_id, state)
 
             # ── v2.7.5: 原子化路径补每章自动摘要（与 generate_chapter_stream 对齐）──
             # 此前 atomic 路径完全无摘要逻辑 → 原子章节不进 summaries → L2c
@@ -1739,7 +1764,11 @@ class GenerationMixin:
             from ..quality_gate import validate_chapter_text
             validate_chapter_text(_text_to_save, target_words=target_words)
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{_text_to_save}"
-            self.memory.save_chapter(novel_id, chapter_num, formatted)
+            self.memory.save_chapter(
+                novel_id,
+                chapter_num,
+                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+            )
 
             # v2.40: 第一章生成后自动检测叙事人称
             if chapter_num == 1:
@@ -1783,14 +1812,10 @@ class GenerationMixin:
             except Exception as e:
                 log.warning(f"ChapterBridge extraction failed (non-fatal): {e}")
 
-            # 更新状态（v2.2.1: 加重试+验证）
+            # Keep the published state unchanged while consistency, outline,
+            # requirement and final quality passes can still mutate the draft.
             state = self.memory.get_novel_state(novel_id)
-            completed = state.get("completed_chapters", [])
-            if chapter_num not in completed:
-                completed.append(chapter_num)
-            state["completed_chapters"] = sorted(completed)
-            state["current_chapter"] = max(completed) if completed else 0
-            state["total_words"] = state.get("total_words", 0) + len(full_text)
+            completed = list(state.get("completed_chapters", []))
 
             # 一致性校验用上下文（前文章节 + 全局状态）
             prev_chapters_ctx = {}
@@ -1802,34 +1827,7 @@ class GenerationMixin:
             _gs_path = os.path.join(novel_dir, "global_state.json")
             gs_ctx = safe_read_json(_gs_path, {}) if os.path.exists(_gs_path) else {}
             
-            # 保存 state（最多重试3次，每次验证）
-            state_saved = False
-            for retry in range(3):
-                self.memory.save_novel_state(novel_id, state)
-                # 验证：重新读取确认写入了最新数据
-                verify_state = self.memory.read("state", novel_id, skip_cache=True)
-                if isinstance(verify_state, dict):
-                    verify_completed = verify_state.get("completed_chapters", [])
-                    if chapter_num in verify_completed:
-                        state_saved = True
-                        break
-                log.warning(f"State write verification failed for chapter {chapter_num}, retry {retry+1}/3")
-                await asyncio.sleep(0.1 * (retry + 1))
-            
-            if not state_saved:
-                log.error(f"CRITICAL: Failed to persist state for chapter {chapter_num} after 3 retries!")
-                # 降级：直接用 atomic_write_json 写入
-                state_path = os.path.join(novel_dir, "state.json")
-                try:
-                    state["_version"] = (state.get("_version", 0) or 0) + 1
-                    atomic_write_json(state_path, state)
-                    self.memory.invalidate_all(novel_id)
-                    log.info(f"State repaired via fallback direct write for chapter {chapter_num}")
-                except Exception as fe:
-                    log.error(f"State fallback write also failed: {fe}")
-
-            yield {"type": "status", "message": "💾 正在保存章节、更新伏笔与剧情图谱…"}
-            log.info(f"Chapter {chapter_num} saved: {len(full_text)} chars")
+            yield {"type": "status", "message": "📝 草稿已暂存，正在执行最终校验…"}
 
             # ── v2.3.5: 一致性校验（L1 规则 + L2 LLM 语义，P0 自动重写）──
             try:
@@ -1864,7 +1862,12 @@ class GenerationMixin:
                             rewritten += text
                         if rewritten and len(rewritten) > len(full_text) * 0.6:
                             full_text = rewritten
-                            self.memory.save_chapter(novel_id, chapter_num, full_text)
+                            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                            self.memory.save_chapter(
+                                novel_id,
+                                chapter_num,
+                                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+                            )
                             self.memory.invalidate("state", novel_id)
                             yield {"type": "consistency_fixed", "chapter": chapter_num,
                                    "fixed": [v.get("description", "")[:80] for v in p0_v[:3]]}
@@ -1955,7 +1958,11 @@ class GenerationMixin:
                     if _cev.get("type") == "outline_compliance" and _cev.get("patched_text"):
                         full_text = full_text.rstrip() + "\n\n" + _cev["patched_text"]
                         formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        self.memory.save_chapter(
+                            novel_id,
+                            chapter_num,
+                            formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+                        )
                         self.memory.invalidate("state", novel_id)
                     yield _cev
             except Exception as _ce:
@@ -2076,7 +2083,11 @@ class GenerationMixin:
                             full_text = fixed_text
                             # 重新保存
                             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{fixed_text}"
-                            self.memory.save_chapter(novel_id, chapter_num, formatted)
+                            self.memory.save_chapter(
+                                novel_id,
+                                chapter_num,
+                                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+                            )
                             _post_consistency_auto_fixed = True
                             log.info(f"Auto-fix completed for chapter {chapter_num}")
                             yield {"type": "auto_fix", "applied": True, "violations_fixed": p0_count}
@@ -2163,7 +2174,11 @@ class GenerationMixin:
                             break
                         full_text = repaired_text
                         formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        self.memory.save_chapter(
+                            novel_id,
+                            chapter_num,
+                            formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+                        )
                         yield {
                             "type": "consistency_fixed",
                             "round": repair_round + 2,
@@ -2176,7 +2191,11 @@ class GenerationMixin:
                         full_text = best_recheck_text
                         _post_consistency_validation = best_recheck_validation
                         formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.save_chapter(novel_id, chapter_num, formatted)
+                        self.memory.save_chapter(
+                            novel_id,
+                            chapter_num,
+                            formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+                        )
                         log.info(
                             "Consistency repair selected best candidate: rank=%s",
                             best_recheck_rank,
@@ -2189,6 +2208,19 @@ class GenerationMixin:
                         "error": str(recheck_error),
                     }
                     log.warning(f"Consistency recheck skipped: {recheck_error}")
+
+            # Freeze the exact candidate before any final report is calculated.
+            # No text mutation is allowed after this point.
+            from ..writer import _trim_to_target
+            from ..quality_gate import validate_chapter_text
+            full_text = _trim_to_target(full_text, target_words)
+            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+            validate_chapter_text(full_text, target_words=target_words)
+            self.memory.save_chapter(
+                novel_id,
+                chapter_num,
+                formatted + "\n\n<!-- GENERATION_IN_PROGRESS -->",
+            )
 
             # ── 最终质量报告：必须位于所有改写/一致性修复之后 ──
             _final_quality = await asyncio.to_thread(
@@ -2209,11 +2241,6 @@ class GenerationMixin:
                 novel_id, chapter_num, full_text, plan
             )
             yield {"type": "requirement_compliance", "chapter": chapter_num, **_requirement_report}
-            # v2.7.6: 超短篇超长兜底——一致性重写等环节可能扩写小目标章节
-            from ..writer import _trim_to_target
-            full_text = _trim_to_target(full_text, target_words)
-            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-            self.memory.save_chapter(novel_id, chapter_num, formatted)
             _final_quality_record = _save_final_quality_report(
                 self.memory,
                 novel_id,
@@ -2222,6 +2249,18 @@ class GenerationMixin:
                 stage="final",
             )
             yield {"type": "final_quality", **_final_quality_record}
+
+            # Publish only after the frozen text has passed validation and its
+            # final quality/requirement reports have been persisted.
+            self.memory.save_chapter(novel_id, chapter_num, formatted)
+            _state_result = self.memory.repair_state(novel_id)
+            state = _state_result["state"]
+            completed = list(state.get("completed_chapters", []))
+            if chapter_num not in completed:
+                completed.append(chapter_num)
+            state["completed_chapters"] = sorted(completed)
+            state["current_chapter"] = max(completed) if completed else 0
+            self.memory.save_novel_state(novel_id, state)
 
             # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
             try:
@@ -2255,9 +2294,7 @@ class GenerationMixin:
             except Exception as e:
                 log.warning(f"Auto-compression skipped: {e}")
             
-            yield {"type": "status", "message": "💾 正在保存章节、更新伏笔与剧情图谱…"}
-            from ..quality_gate import validate_chapter_text
-            validate_chapter_text(full_text, target_words=target_words)
+            yield {"type": "status", "message": "✅ 章节正文与质量报告已同步保存"}
             yield {"type": "text", "content": "\n\n"}
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num}
 
@@ -2272,4 +2309,3 @@ class GenerationMixin:
                     os.remove(lock_file)
             except OSError:
                 pass
-
