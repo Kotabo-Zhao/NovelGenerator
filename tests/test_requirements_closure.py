@@ -6,6 +6,7 @@ from backend.core.requirements_contract import (
 )
 from backend.core.mixins.generation import GenerationMixin
 from backend.core.mixins.requirements import RequirementsMixin
+from backend.core.requirement_decomposer import DECOMPOSER_SYSTEM, RequirementDecomposer
 
 
 def _requirements():
@@ -189,6 +190,43 @@ def test_active_requirements_keep_global_guidance_but_exclude_planning_items():
     ids = [item["id"] for item in active_requirements(requirements, 2, 4)]
 
     assert ids == ["R_RULE", "R_PREF", "R_EVENT"]
+
+
+def test_offline_decomposition_emits_a_typed_v2_contract():
+    result = RequirementDecomposer().decompose("开篇发现一封信，结局揭露背叛")
+
+    assert result["schema_version"] == 2
+    assert result["kind_counts"]["planning_only"] >= 1
+    assert result["kind_counts"]["preference"] >= 1
+    assert result["kind_counts"]["book_invariant"] >= 1
+    assert all(item.get("kind") in result["kind_counts"] for item in result["subtasks"])
+    assert '"kind": "book_invariant|milestone|chapter_event|planning_only|preference"' in DECOMPOSER_SYSTEM
+
+
+def test_updating_requirements_keeps_existing_ids_and_assigns_unique_ids_to_new_items():
+    decomposer = RequirementDecomposer()
+    existing = decomposer.decompose("都市职场成长")
+    existing_ids = [item["id"] for item in existing["subtasks"]]
+
+    updated = decomposer.update_requirements(existing, "主角必须戴红围巾")
+
+    updated_ids = [item["id"] for item in updated["subtasks"]]
+    assert updated_ids[: len(existing_ids)] == existing_ids
+    assert len(updated_ids) > len(existing_ids)
+    assert len(updated_ids) == len(set(updated_ids))
+    assert updated["schema_version"] == 2
+    assert any(item.get("source_text") == "主角必须戴红围巾" for item in updated["subtasks"])
+
+
+def test_requirement_details_are_visible_for_new_and_existing_works():
+    from pathlib import Path
+
+    html = (Path(__file__).parents[1] / "web" / "index.html").read_text(encoding="utf-8")
+
+    assert "requirementSnapshot" in html
+    assert "requirementKindLabel(kind)" in html
+    assert "仅大纲规划" in html
+    assert "风格偏好" in html
 
 
 def test_assign_requirements_to_outline_creates_chapter_contract():

@@ -12,6 +12,7 @@ import logging
 from typing import Optional
 from openai import OpenAI
 from .resilient_client import ResilientLLMClient
+from .requirements_contract import infer_requirement_kind, normalize_requirements
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +89,9 @@ DECOMPOSER_SYSTEM = """你是一位资深小说策划编辑和需求分析师。
       "generation_hint": "给生成Agent的具体提示（注入到prompt中），说明这个子任务在生成时要注意什么",
       "quality_criteria": ["达标标准1（可判断是/否）", "达标标准2"],
       "priority": "P0|P1|P2",
+      "kind": "book_invariant|milestone|chapter_event|planning_only|preference",
       "scope": "global|opening|mid|ending",
+      "chapter_numbers": ["仅 chapter_event 或已明确落点的 milestone 填章节号，否则为空数组"],
       "scope_volume": "在第几卷体现（global=全部，opening=第1卷，ending=最后一卷，具体数字指明卷号）",
       "depends_on": ["依赖的其他子任务ID"]
     }
@@ -110,6 +113,9 @@ DECOMPOSER_SYSTEM = """你是一位资深小说策划编辑和需求分析师。
 - 用户提到的每个人物、地点、事件都必须有独立子任务
 - generation_hint 必须具体、可执行，不是泛泛的"注意XX"
 - must_include 和 must_avoid 必须明确
+- kind 必须按责任分类：全书事实/禁令=book_invariant；阶段转折/伏笔回收=milestone；明确某章发生=chapter_event；卷数/章数/总体结构=planning_only；文风/节奏/对话倾向=preference
+- planning_only 只服务大纲，不得伪装成正文事件；preference 是软目标，不得写成逐字命中要求
+- 只有 chapter_event 和已明确落点的 milestone 可以填写 chapter_numbers
 
 只输出 JSON，不要其他内容。"""
 
@@ -227,7 +233,7 @@ class RequirementDecomposer:
                 log.warning(f"RequirementDecomposer: only {count} subtasks (expected >=12), "
                            f"consider more detailed inspiration input")
             
-            return result
+            return normalize_requirements(result)
 
         except json.JSONDecodeError as e:
             log.error(f"RequirementDecomposer JSON parse failed: {e}")
@@ -259,6 +265,7 @@ class RequirementDecomposer:
                 "p0_requirements": ["P0级别的强制要求1", ...],
             }
         """
+        requirements = normalize_requirements(requirements)
         subtasks = requirements.get("subtasks", [])
         if not subtasks:
             return self._default_context()
@@ -555,7 +562,7 @@ class RequirementDecomposer:
             "伏笔是读者回看时惊叹'原来如此'的设计，需要提前规划回收点",
             ["伏笔≥3个", "每个伏笔有回收章节", "开篇有吸引力"])
 
-        return {
+        return normalize_requirements({
             "original_inspiration": inspiration,
             "summary": f"用户需求: {inspiration[:100]}",
             "core_theme": inspiration[:20] if inspiration else "待定",
@@ -570,7 +577,7 @@ class RequirementDecomposer:
                 "user_keywords_covered": ["离线模式，关键词覆盖"],
                 "missing_aspects": [],
             }
-        }
+        })
 
     def _default_context(self) -> dict:
         """空上下文的默认值"""
@@ -593,20 +600,90 @@ class RequirementDecomposer:
     def update_requirements(self, requirements: dict, 
                             new_inspiration: str) -> dict:
         """追加/修改需求后重新拆解，标记变更项"""
-        old_subtasks = requirements.get("subtasks", [])
-        old_ids = {t["id"] for t in old_subtasks}
+        normalized = normalize_requirements(requirements)
+        old_subtasks = [dict(item) for item in normalized.get("subtasks", [])]
+        old_ids = {str(t.get("id") or "") for t in old_subtasks}
+        old_signatures = {
+            (
+                str(t.get("category") or "").casefold(),
+                str(t.get("sub_category") or "").casefold(),
+                str(t.get("title") or "").casefold(),
+            )
+            for t in old_subtasks
+        }
         
         new_req = self.decompose(new_inspiration)
         new_subtasks = new_req.get("subtasks", [])
-        
-        for t in new_subtasks:
-            if t["id"] not in old_ids:
-                t["change_type"] = "new"
-        
-        merged = dict(requirements)
-        merged["subtasks"] = old_subtasks + [t for t in new_subtasks if t["id"] not in old_ids]
+
+        def next_id() -> str:
+            numbers = []
+            for value in old_ids:
+                if value.startswith("R") and value[1:].isdigit():
+                    numbers.append(int(value[1:]))
+            number = max(numbers, default=0) + 1
+            while f"R{number:03d}" in old_ids:
+                number += 1
+            result = f"R{number:03d}"
+            old_ids.add(result)
+            return result
+
+        additions = []
+        for raw in new_subtasks:
+            item = dict(raw or {})
+            signature = (
+                str(item.get("category") or "").casefold(),
+                str(item.get("sub_category") or "").casefold(),
+                str(item.get("title") or "").casefold(),
+            )
+            if signature in old_signatures:
+                continue
+            item["id"] = next_id()
+            item["change_type"] = "new"
+            item["source_text"] = new_inspiration
+            item["kind"] = infer_requirement_kind(item)
+            additions.append(item)
+            old_signatures.add(signature)
+
+        if not additions:
+            import re
+
+            chapter_match = re.search(r"第\s*(\d+)\s*章", new_inspiration)
+            if chapter_match:
+                kind = "chapter_event"
+                scope = "chapter"
+                chapter_numbers = [int(chapter_match.group(1))]
+            elif any(word in new_inspiration for word in ("卷数", "章数", "分卷", "总体结构", "篇幅")):
+                kind, scope, chapter_numbers = "planning_only", "global", []
+            elif any(word in new_inspiration for word in ("结局", "转折", "高潮", "伏笔", "回收")):
+                kind, scope, chapter_numbers = "milestone", "ending" if "结局" in new_inspiration else "global", []
+            elif any(word in new_inspiration for word in ("文风", "语气", "对话", "节奏", "克制", "华丽")):
+                kind, scope, chapter_numbers = "preference", "global", []
+            else:
+                kind, scope, chapter_numbers = "book_invariant", "global", []
+            additions.append({
+                "id": next_id(),
+                "kind": kind,
+                "category": "plot" if kind in {"milestone", "chapter_event"} else "other",
+                "sub_category": "user_addition",
+                "title": "追加创作要求",
+                "description": new_inspiration,
+                "must_include": [new_inspiration] if kind in {"milestone", "chapter_event"} else [],
+                "must_avoid": [],
+                "generation_hint": new_inspiration,
+                "quality_criteria": [f"创作结果体现：{new_inspiration}"],
+                "priority": "P0",
+                "scope": scope,
+                "chapter_numbers": chapter_numbers,
+                "status": "pending",
+                "change_type": "new",
+                "source_text": new_inspiration,
+            })
+
+        merged = dict(normalized)
+        merged["subtasks"] = old_subtasks + additions
         merged["total_count"] = len(merged["subtasks"])
         merged["updated_at"] = __import__("datetime").datetime.now().isoformat()
+        merged["version"] = int(normalized.get("version") or 1) + 1
         merged["status"] = "active"
-        
-        return merged
+
+        return normalize_requirements(merged)

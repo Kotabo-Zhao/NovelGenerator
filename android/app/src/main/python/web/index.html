@@ -198,6 +198,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .req-status{flex-shrink:0}
 .req-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .req-priority{flex-shrink:0;font-size:10px;font-weight:600}
+.req-kind-group{margin-top:10px;border:1px solid var(--border-light);border-radius:10px;overflow:hidden}
+.req-kind-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:rgba(255,255,255,.035);font-size:12px;font-weight:650}
+.req-kind-help{padding:0 10px 8px;color:var(--text3);font-size:11px;line-height:1.45;background:rgba(255,255,255,.035)}
+.req-kind-badge{flex-shrink:0;padding:2px 7px;border:1px solid rgba(201,167,255,.35);border-radius:999px;color:var(--accent);font-size:10px}
 
 /* ═══════ Shelf（玻璃书架） ═══════ */
 @keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
@@ -1130,33 +1134,43 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
       <button v-else class="btn btn-primary btn-lg w-full" @click="doCreate" v-if="!planReady">✨ 生成大纲</button>
 
       <!-- 需求分析结果 -->
-      <div v-if="decomposeSummary" class="glass panel" style="margin-top:12px;border-color:rgba(201,167,255,.4)">
+      <div v-if="requirementSnapshot && requirementSnapshot.subtasks?.length" class="glass panel" style="margin-top:12px;border-color:rgba(201,167,255,.4)">
         <div class="panel-head">
           <div class="panel-title" style="color:var(--accent)">📋 需求分析</div>
-          <span class="text-xs" style="color:var(--text3)">{{ decomposeSummary.p0_count || 0 }}个P0 · 共{{ decomposeSummary.subtask_count || 0 }}项</span>
+          <span class="text-xs" style="color:var(--text3)">{{ requirementSnapshot.p0_count || 0 }}个P0 · 共{{ requirementSnapshot.subtask_count || requirementSnapshot.total_count || 0 }}项</span>
         </div>
         <div style="font-size:13px;color:var(--text2);line-height:1.6">
-          <div v-if="decomposeSummary.core_theme"><b>核心主题：</b>{{ decomposeSummary.core_theme }}</div>
-          <div v-if="decomposeSummary.target_audience"><b>目标读者：</b>{{ decomposeSummary.target_audience }}</div>
-          <div v-if="decomposeSummary.summary" style="color:var(--text3);font-size:12px;margin-top:4px">{{ decomposeSummary.summary }}</div>
-          <div v-if="decomposeSummary.offline_mode" style="color:var(--orange);font-size:12px;margin-top:4px">⚠️ 离线模式拆解（AI服务暂时不可用，已使用关键词规则分析）</div>
+          <div v-if="requirementSnapshot.core_theme"><b>核心主题：</b>{{ requirementSnapshot.core_theme }}</div>
+          <div v-if="requirementSnapshot.target_audience"><b>目标读者：</b>{{ requirementSnapshot.target_audience }}</div>
+          <div v-if="requirementSnapshot.summary" style="color:var(--text3);font-size:12px;margin-top:4px">{{ requirementSnapshot.summary }}</div>
+          <div v-if="requirementSnapshot.offline_mode" style="color:var(--orange);font-size:12px;margin-top:4px">⚠️ 离线模式拆解（AI服务暂时不可用，已使用关键词规则分析）</div>
         </div>
       </div>
-      <div v-if="decomposeSummary && decomposeSummary.subtasks?.length" class="glass panel" style="margin-top:10px">
-        <div class="panel-title" style="font-size:13px;margin:0 0 8px">需求明细与章节追踪</div>
-        <details v-for="item in decomposeSummary.subtasks" :key="item.id" style="border-top:1px solid var(--border-light);padding:8px 0">
-          <summary style="cursor:pointer;font-size:12px;display:flex;gap:8px;align-items:center">
-            <span class="req-priority" :style="{color:item.priority==='P0'?'#ff6b81':'var(--text3)'}">{{ item.priority }}</span>
-            <span style="flex:1">{{ item.id }} · {{ item.title }}</span>
-            <span style="color:var(--text3)">{{ item.scope || 'global' }}</span>
-          </summary>
-          <div style="font-size:12px;color:var(--text2);line-height:1.6;padding:7px 4px 0">
-            <div v-if="item.description"><b>目标：</b>{{ item.description }}</div>
-            <div v-if="item.must_include?.length"><b>必须包含：</b>{{ item.must_include.join('、') }}</div>
-            <div v-if="item.must_avoid?.length"><b>避免：</b>{{ item.must_avoid.join('、') }}</div>
-            <div v-if="item.generation_hint"><b>写法提示：</b>{{ item.generation_hint }}</div>
+      <div v-if="requirementSnapshot && requirementSnapshot.subtasks?.length" class="glass panel" style="margin-top:10px">
+        <div class="panel-title" style="font-size:13px;margin:0 0 4px">需求明细与生效范围</div>
+        <div class="text-xs color-text3">先确认需求属于哪一层；仅“章节事件”和已落点的“剧情里程碑”会成为单章硬任务。</div>
+        <template v-for="kind in requirementKindOrder" :key="kind">
+          <div v-if="requirementsForKind(kind).length" class="req-kind-group">
+            <div class="req-kind-head">
+              <span>{{ requirementKindLabel(kind) }}</span>
+              <span class="req-kind-badge">{{ requirementsForKind(kind).length }} 项</span>
+            </div>
+            <div class="req-kind-help">{{ requirementKindHelp(kind) }}</div>
+            <details v-for="item in requirementsForKind(kind)" :key="item.id" style="border-top:1px solid var(--border-light);padding:8px 10px">
+              <summary style="cursor:pointer;font-size:12px;display:flex;gap:8px;align-items:center">
+                <span class="req-priority" :style="{color:item.priority==='P0'?'#ff6b81':'var(--text3)'}">{{ item.priority }}</span>
+                <span style="flex:1">{{ item.id }} · {{ item.title }}</span>
+                <span style="color:var(--text3)">{{ requirementScopeText(item) }}</span>
+              </summary>
+              <div style="font-size:12px;color:var(--text2);line-height:1.6;padding:7px 4px 0">
+                <div v-if="item.description"><b>目标：</b>{{ item.description }}</div>
+                <div v-if="item.must_include?.length"><b>{{ item.kind==='preference' ? '倾向' : '必须包含' }}：</b>{{ item.must_include.join('、') }}</div>
+                <div v-if="item.must_avoid?.length"><b>避免：</b>{{ item.must_avoid.join('、') }}</div>
+                <div v-if="item.generation_hint"><b>执行提示：</b>{{ item.generation_hint }}</div>
+              </div>
+            </details>
           </div>
-        </details>
+        </template>
       </div>
 
       <!-- 大纲预览 -->
@@ -2313,6 +2327,36 @@ const app = createApp({
     const llmModelSaved = ref(false);
     const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
     const decomposeSummary = ref(null);  // v2.2: 需求拆解摘要
+    const requirementKindOrder = ['book_invariant','milestone','chapter_event','planning_only','preference'];
+    const requirementSnapshot = computed(() => {
+      const fresh = decomposeSummary.value;
+      if (fresh && Array.isArray(fresh.subtasks) && fresh.subtasks.length) return fresh;
+      return requirements;
+    });
+    function requirementsForKind(kind) {
+      const list = requirementSnapshot.value?.subtasks;
+      return Array.isArray(list) ? list.filter(item => item && (item.kind || 'book_invariant') === kind) : [];
+    }
+    function requirementKindLabel(kind) {
+      return ({
+        book_invariant:'全书规则', milestone:'剧情里程碑', chapter_event:'章节事件',
+        planning_only:'仅大纲规划', preference:'风格偏好'
+      })[kind] || '全书规则';
+    }
+    function requirementKindHelp(kind) {
+      return ({
+        book_invariant:'人物、世界规则和禁写内容；每章保持一致，但不要求逐字重复。',
+        milestone:'转折、高潮和伏笔回收；只在安排的进度窗口内生效。',
+        chapter_event:'明确绑定到某一章的事件，是该章必须完成的硬任务。',
+        planning_only:'卷数、章数和总体结构；只用于蓝图与大纲，不会塞入正文。',
+        preference:'文风、节奏和对话倾向；作为软质量目标，不阻塞章节完成。'
+      })[kind] || '';
+    }
+    function requirementScopeText(item) {
+      const chapters = Array.isArray(item?.chapter_numbers) ? item.chapter_numbers : [];
+      if (chapters.length) return '第' + chapters.join('、') + '章';
+      return ({global:'全书',opening:'开篇',mid:'中段',ending:'结局',chapter:'指定章节'})[item?.scope] || '待分配';
+    }
     // v2.3: 按 category 分组子任务（带防御）
     function groupedSubtasks(cat) {
       try {
@@ -4813,7 +4857,8 @@ const app = createApp({
       llmApiKey,llmModel,llmSaving,llmKeySaved,llmModelSaved,saveLLMConfig,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStatus,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
-      createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
+      createProgress,createPhase,createPhaseLabel,decomposeSummary,requirementSnapshot,requirementKindOrder,
+      requirementsForKind,requirementKindLabel,requirementKindHelp,requirementScopeText,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       outlineCompliance,outlineChangePlan,outlineExecutionSummary,
       requirements,reqInspiration,showReqInput,supervisionReport,styleParams,customParams,
