@@ -9,10 +9,21 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
-# Storage — 绝对路径，环境变量覆盖
+# Storage — 环境变量允许覆盖；相对路径固定相对于项目根目录，
+# 不能随着 uvicorn 的启动目录漂移到 backend/novels。
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_DEFAULT_NOVELS = os.path.join(os.path.dirname(_HERE), "novels")
-NOVELS_DIR = os.path.abspath(os.getenv("NOVELS_DIR", _DEFAULT_NOVELS))
+_PROJECT_ROOT = os.path.dirname(_HERE)
+_DEFAULT_NOVELS = os.path.join(_PROJECT_ROOT, "novels")
+
+
+def _resolve_project_path(value: str) -> str:
+    expanded = os.path.expanduser(value)
+    if not os.path.isabs(expanded):
+        expanded = os.path.join(_PROJECT_ROOT, expanded)
+    return os.path.abspath(expanded)
+
+
+NOVELS_DIR = _resolve_project_path(os.getenv("NOVELS_DIR", _DEFAULT_NOVELS))
 
 # Server
 HOST = os.getenv("HOST", "0.0.0.0")
