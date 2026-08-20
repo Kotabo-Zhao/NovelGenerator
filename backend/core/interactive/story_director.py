@@ -2300,52 +2300,88 @@ class StoryDirector:
             log.warning(f"anchor trigger check failed: {e}")
 
         prompt = self._build_scene_prompt(state, summary)
-        collected = []
-
-        # v3.5.19: 阶段提示——生成前告知前端（显示"正在生成…"避免用户以为卡住）
-        yield {"type": "phase", "label": "📖 正在展开剧情…"}
-        yield {"type": "scene_chunk", "scene_num": scene_num, "content": ""}
         try:
-            # v3.5.55: max_tokens 300（≈200-280字）——架构级硬上限（API 物理截断，
-            # 不依赖 LLM 自觉）；配合落盘前长度校验双保险
-            async for chunk in self._llm_stream(SCENE_SYSTEM, prompt, max_tokens=300, novel_id=novel_id):
-                if chunk:
-                    collected.append(chunk)
-                    yield {"type": "scene_chunk", "scene_num": scene_num, "content": chunk}
+            # 多看两场，避免 A-B-A 式回放；检测只针对互动存档，不读取正常小说正文。
+            recent_old = [
+                scene.get("scene_text", "")
+                for scene in self.store.recent_scenes(novel_id, 4)
+            ]
         except Exception as e:
-            log.error(f"Scene generation stream error: {e}")
-            yield {"type": "error", "message": llm_error_message(e, "场景生成")}
-            return
+            log.warning(f"load recent scenes for repeat check failed: {e}")
+            recent_old = []
 
-        scene_text = "".join(collected).strip()
-        if not scene_text:
-            log.error("Scene generation returned empty content")
-            yield {"type": "error", "message": "场景生成失败：模型返回空内容，请重试"}
-            return
-
-        # v3.5.55: 架构级长度兜底——即使 max_tokens 截断/API 超发，
-        # 落盘前按句子边界裁剪（只删尾部未完成内容，不切语义）
-        # （v3.5.33 旧注释：不硬截断——已被 v3.5.55 架构强制替代，
-        #   max_tokens 300 + 此处校验双保险，LLM 无法输出超长文本）
-        if len(scene_text) > 330:
-            _cut = scene_text[:330]
-            _last_end = max(_cut.rfind("。"), _cut.rfind("！"), _cut.rfind("？"),
-                            _cut.rfind("…"), _cut.rfind("”"), _cut.rfind("】"))
-            if _last_end > 200:  # 只在有完整句号边界时裁剪，避免切掉关键收尾
-                scene_text = _cut[:_last_end + 1]
-
-        # v2.5.55: 场景重复检测（规则兜底，零 LLM）——与最近 2 个旧场景比对，
-        # 命中 → 标记 scene_repeat（下一场景 prompt 强制全新事件）
-        try:
-            _recent_old = [s.get("scene_text", "") for s in self.store.recent_scenes(novel_id, 2)]
-            if scene_repeat_check(scene_text, _recent_old, 0.35):
-                state["scene_repeat"] = True
-                log.warning(f"场景{scene_num} 与最近场景重复（规则兜底触发，下一场景强制全新）")
+        scene_text = ""
+        for attempt in range(2):
+            if attempt:
+                # 第一次候选不会落盘。重建 prompt，让 scene_repeat 约束立即生效，
+                # 并要求剧情在动作、信息结果或空间位置上产生可验证的新进展。
+                prompt = self._build_scene_prompt(state, summary)
+                prompt += (
+                    "\n\n【本次重写】上一版因与近期场景重复已被系统拒绝。"
+                    "不要改写或概括旧场景；必须更换主要动作，并带来一个此前未发生的"
+                    "信息结果、关系变化或空间推进。结尾要给玩家一个新的可行动局面。"
+                )
+                yield {
+                    "type": "scene_retry",
+                    "scene_num": scene_num,
+                    "message": "检测到重复场景，正在重新推进剧情…",
+                }
+                yield {"type": "phase", "label": "♻️ 正在避开重复剧情并重写…"}
             else:
+                # 生成前告知前端，避免首个 token 到达前看起来像卡住。
+                yield {"type": "phase", "label": "📖 正在展开剧情…"}
+
+            yield {"type": "scene_chunk", "scene_num": scene_num, "content": ""}
+            collected = []
+            try:
+                # max_tokens 300（≈200-280字）+ 落盘前按句界裁剪双保险。
+                async for chunk in self._llm_stream(
+                    SCENE_SYSTEM, prompt, max_tokens=300, novel_id=novel_id
+                ):
+                    if chunk:
+                        collected.append(chunk)
+                        yield {"type": "scene_chunk", "scene_num": scene_num, "content": chunk}
+            except Exception as e:
+                log.error(f"Scene generation stream error: {e}")
+                yield {"type": "error", "message": llm_error_message(e, "场景生成")}
+                return
+
+            candidate = "".join(collected).strip()
+            if not candidate:
+                log.error("Scene generation returned empty content")
+                yield {"type": "error", "message": "场景生成失败：模型返回空内容，请重试"}
+                return
+
+            if len(candidate) > 330:
+                cut = candidate[:330]
+                last_end = max(
+                    cut.rfind("。"), cut.rfind("！"), cut.rfind("？"),
+                    cut.rfind("…"), cut.rfind("”"), cut.rfind("】"),
+                )
+                if last_end > 200:
+                    candidate = cut[:last_end + 1]
+
+            is_repeat = scene_repeat_check(candidate, recent_old, 0.22)
+            if not is_repeat:
+                scene_text = candidate
                 state.pop("scene_repeat", None)
+                self.store.save_state(novel_id, state)
+                break
+
+            state["scene_repeat"] = True
             self.store.save_state(novel_id, state)
-        except Exception as e:
-            log.warning(f"scene repeat check failed: {e}")
+            log.warning(
+                "场景%s 与近期场景重复（第%s次候选，已拒绝落盘）",
+                scene_num,
+                attempt + 1,
+            )
+
+        if not scene_text:
+            yield {
+                "type": "error",
+                "message": "连续两次生成的场景都与近期剧情重复，内容未写入存档。请换一个行动或稍后重试。",
+            }
+            return
 
         # 解析 + 持久化
         blocks = parse_scene_markup(scene_text)
