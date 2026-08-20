@@ -32,14 +32,14 @@ CHECK_SYSTEM = """你是网络小说大纲合规检查员。核对章节正文�
 输出格式：
 {"results": [{"id": "检查项id", "present": true或false, "evidence": "正文中的一句话摘录（20-60字，无则空字符串）"}]}"""
 
-PATCH_SYSTEM = """你是网络小说编辑。本章正文遗漏了大纲中承诺的核心事件，请从断点续写一段（300-450字），把缺失事件【自然补入】并衔接已有情节。
+SCENE_REVISION_SYSTEM = """你是网络小说的场景编辑。这不是续写任务，不得把缺失事件追加到章末。
 
-要求：
-1. 与已有正文的风格、视角、节奏一致
-2. 不重复已有内容，从断点直接延续
-3. 每个缺失事件必须有实际情节展开（有过程/有反应/有结果），不能只提一句
-4. 补写的段落要像原本就属于本章，不出现"补写""大纲""缺失"等元话语
-5. 只输出正文文本，不要标题、不要解释"""
+你只修订给定的一个目标场景：
+1. 保留该场景已经成立的人物、地点、道具、视角和因果。
+2. 把缺失的事件放回它所属的情节位置，写出欲望、阻力和不可逆变化，不能只提一句。
+3. 与前后场景自然衔接，不得提前透支后续钩子，不得重复已发生的事件。
+4. 不出现“补写”“大纲”“缺失”“修订”等元话语。
+5. 只输出修订后的目标场景正文，不要标题、不要解释。"""
 
 
 def _parse_json(content: str) -> Optional[dict]:
@@ -162,29 +162,39 @@ class OutlineComplianceChecker:
                 }
             elif it["id"].startswith("beat"):
                 present = it["needle"] in text
-                results[it["id"]] = {
-                    "present": present,
-                    "evidence": "" if present else f"未检索到节拍关键词「{it['needle'][:30]}」",
-                    "by": "rule",
-                }
+                # 原句出现可以快速确认；原句不出现不能反推情节没发生，
+                # 否则会把正常的文学化改写误判为缺失。深度模式交给 LLM
+                # 语义判定，批量模式则标记为 skipped，不制造假硬失败。
+                if present:
+                    results[it["id"]] = {
+                        "present": True,
+                        "evidence": it["needle"][:80],
+                        "by": "rule",
+                    }
         return results
 
     # ── L2 LLM 精判 ──
     def _llm_check(self, text: str, items: list) -> Optional[dict]:
         if not self._resilient:
             return None
-        # 只精判非规则项（summary / conflict / 无关键词节拍）
-        pending = [it for it in items
-                   if not it["id"].startswith("char_") and not it["id"].startswith("beat")]
+        # 角色出场用规则检查；事件、冲突与 scene beat 全部交给
+        # 语义精判。节拍文案通常不会在正文中原句出现，不能只靠字符串。
+        pending = [it for it in items if not it["id"].startswith("char_")]
         if not pending:
             return {}
         brief = "\n".join(
             f"- {it['id']}: {it['label']}｜要求: {it['needle']}" for it in pending)
-        excerpt = text[:1500]
-        if len(text) > 2300:
-            excerpt += "\n……（正文中间省略）……\n" + text[-800:]
-        elif len(text) > 1500:
-            excerpt += "\n……（正文中间省略）……\n" + text[-300:]
+        if len(text) <= 6000:
+            excerpt = text
+        else:
+            middle = max(0, len(text) // 2 - 600)
+            excerpt = (
+                text[:2800]
+                + "\n……（正文中间节选）……\n"
+                + text[middle:middle + 1200]
+                + "\n……（正文后段）……\n"
+                + text[-2000:]
+            )
         user = (
             f"章节正文（节选）:\n{excerpt}\n\n"
             f"待核对的大纲要求:\n{brief}\n\n"
@@ -216,32 +226,119 @@ class OutlineComplianceChecker:
             log.warning(f"OutlineCompliance LLM check failed: {type(e).__name__}: {str(e)[:120]}")
             return None
 
-    # ── 自动补写 ──
-    def patch_missing(self, text: str, missing_items: list) -> str:
-        """fail 时补写缺失核心事件（同步 LLM 调用，返回补写文本）"""
-        if not self._resilient or not missing_items:
-            return ""
-        missing_lines = "\n".join(
-            f"- {it['label']}｜要求: {it['needle']}" for it in missing_items)
-        user = (
-            f"缺失的核心事件:\n{missing_lines}\n\n"
-            f"已有正文末尾:\n{text[-400:]}\n\n"
-            "请续写一段，把上述缺失事件自然补入本章。"
-        )
-        try:
-            resp = self._resilient.create(
-                messages=[
-                    {"role": "system", "content": PATCH_SYSTEM},
-                    {"role": "user", "content": user},
-                ],
-                temperature=0.7,
-                max_tokens=800,
+    @staticmethod
+    def _paragraphs(text: str) -> list[str]:
+        return [part.strip() for part in re.split(r"\n\s*\n", str(text or "")) if part.strip()]
+
+    @staticmethod
+    def _scene_ranges(paragraph_count: int, scene_count: int) -> list[tuple[int, int]]:
+        if paragraph_count <= 0:
+            return []
+        count = max(1, min(scene_count, paragraph_count))
+        ranges = []
+        for index in range(count):
+            start = round(index * paragraph_count / count)
+            end = round((index + 1) * paragraph_count / count)
+            ranges.append((start, max(start + 1, end)))
+        return ranges
+
+    @staticmethod
+    def _target_scene(item: dict, beat_count: int, scene_count: int) -> int:
+        match = re.match(r"beat(\d+)$", str(item.get("id") or ""))
+        if match:
+            beat_number = max(1, int(match.group(1)))
+            if beat_count <= 1 or scene_count <= 1:
+                return 0
+            ratio = min(1.0, (beat_number - 1) / max(1, beat_count - 1))
+            return min(scene_count - 1, round(ratio * (scene_count - 1)))
+        return scene_count // 2
+
+    def revise_missing_scenes(
+        self,
+        text: str,
+        missing_items: list,
+        chapter_outline: dict,
+    ) -> dict:
+        """把缺失节拍修回它所在的场景，返回完整的修订后正文。
+
+        编辑器只能替换按节拍位置选中的局部场景；它不接受“章末追加”
+        这种操作，也不直接整章覆盖。
+        """
+        paragraphs = self._paragraphs(text)
+        beats = (chapter_outline or {}).get("scene_beats") or []
+        beat_count = max(1, len(beats))
+        scene_count = min(len(paragraphs), beat_count) if paragraphs else 0
+        if not self._resilient or not missing_items or not paragraphs or not scene_count:
+            return {"text": str(text or ""), "applied": False, "edits": [], "reason": "no_revision_target"}
+
+        ranges = self._scene_ranges(len(paragraphs), scene_count)
+        grouped: dict[int, list[dict]] = {}
+        for item in missing_items:
+            target = self._target_scene(item, beat_count, scene_count)
+            grouped.setdefault(target, []).append(item)
+
+        replacements = []
+        for scene_index, items in sorted(grouped.items()):
+            start, end = ranges[scene_index]
+            original_scene = "\n\n".join(paragraphs[start:end])
+            previous_tail = paragraphs[start - 1][-180:] if start > 0 else "（本章开场）"
+            next_head = paragraphs[end][:180] if end < len(paragraphs) else "（本章收束）"
+            missing_lines = "\n".join(
+                f"- {item.get('label') or item.get('id')}｜必须落地: {item.get('needle') or ''}"
+                for item in items
             )
-            content = resp.choices[0].message.content if hasattr(resp, "choices") else resp
-            return _clean_patch(str(content)) if content else ""
-        except Exception as e:
-            log.warning(f"OutlineCompliance patch failed: {type(e).__name__}: {str(e)[:120]}")
-            return ""
+            user = (
+                f"缺失的场景契约:\n{missing_lines}\n\n"
+                f"前一场尾部（只用于衔接）:\n{previous_tail}\n\n"
+                f"目标场景（需要局部修订）:\n{original_scene}\n\n"
+                f"后一场开头（只用于衔接）:\n{next_head}"
+            )
+            try:
+                resp = self._resilient.create(
+                    messages=[
+                        {"role": "system", "content": SCENE_REVISION_SYSTEM},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=0.55,
+                    max_tokens=1200,
+                )
+                content = resp.choices[0].message.content if hasattr(resp, "choices") else resp
+                revised_scene = _clean_patch(str(content)) if content else ""
+            except Exception as exc:
+                log.warning(
+                    "OutlineCompliance scene revision failed: %s: %s",
+                    type(exc).__name__, str(exc)[:120],
+                )
+                continue
+
+            minimum = max(20, int(len(original_scene) * 0.4))
+            maximum = max(len(original_scene) * 3, len(original_scene) + 900)
+            if len(revised_scene) < minimum or len(revised_scene) > maximum:
+                log.warning(
+                    "Rejected scene revision %s: length %s outside %s-%s",
+                    scene_index + 1, len(revised_scene), minimum, maximum,
+                )
+                continue
+            replacements.append((start, end, revised_scene, scene_index, items))
+
+        edited = list(paragraphs)
+        edit_records = []
+        for start, end, revised_scene, scene_index, items in sorted(replacements, reverse=True):
+            edited[start:end] = self._paragraphs(revised_scene)
+            edit_records.append({
+                "operation": "replace_scene",
+                "scene": scene_index + 1,
+                "paragraph_start": start,
+                "paragraph_end": end - 1,
+                "item_ids": [str(item.get("id") or "") for item in items],
+            })
+        edit_records.sort(key=lambda item: item["scene"])
+        return {
+            "text": "\n\n".join(edited),
+            "applied": bool(edit_records),
+            "edits": edit_records,
+            "reason": "scene_revised" if edit_records else "revision_rejected",
+        }
 
     # ── 主入口 ──
     def check_chapter(self, chapter_text: str, chapter_outline: dict,

@@ -219,6 +219,18 @@ def _hard_requirement_failures(report: dict | None) -> list[dict]:
     ]
 
 
+def _hard_outline_failures(report: dict | None) -> list[dict]:
+    if (report or {}).get("ok") is False:
+        return [{"id": "validation_unavailable", "label": "大纲合规校验未完成"}]
+    if (report or {}).get("passed") is not False:
+        return []
+    return [
+        item
+        for item in ((report or {}).get("critical_missing") or [])
+        if isinstance(item, dict)
+    ]
+
+
 
 
 # ===== _extract_key_ending (从 engine.py 迁移) =====
@@ -413,18 +425,41 @@ class GenerationMixin:
         formatted: str,
         requirement_report: dict | None,
         quality_record: dict | None,
+        outline_report: dict | None = None,
     ) -> dict:
         """Apply hard gates, then atomically expose one completed candidate."""
-        failures = _hard_requirement_failures(requirement_report)
-        if failures:
-            ids = [str(item.get("subtask_id") or "") for item in failures if item.get("subtask_id")]
-            titles = [str(item.get("title") or item.get("subtask_id") or "未命名需求") for item in failures]
+        requirement_failures = _hard_requirement_failures(requirement_report)
+        outline_failures = _hard_outline_failures(outline_report)
+        if requirement_failures or outline_failures:
+            ids = [
+                str(item.get("subtask_id") or "")
+                for item in requirement_failures
+                if item.get("subtask_id")
+            ]
+            ids.extend(
+                f"outline:{item.get('id')}"
+                for item in outline_failures
+                if item.get("id")
+            )
+            reasons = []
+            if requirement_failures:
+                titles = [
+                    str(item.get("title") or item.get("subtask_id") or "未命名需求")
+                    for item in requirement_failures
+                ]
+                reasons.append("P0 需求未满足：" + "；".join(titles))
+            if outline_failures:
+                labels = [
+                    str(item.get("label") or item.get("id") or "未命名核心事件")
+                    for item in outline_failures
+                ]
+                reasons.append("大纲核心事件未落地：" + "；".join(labels))
             return self._record_revision_candidate(
                 novel_id,
                 chapter_num,
                 text,
                 formatted,
-                reason="P0 需求未满足：" + "；".join(titles),
+                reason="｜".join(reasons),
                 requirement_ids=ids,
                 quality_record=quality_record,
             )
@@ -1212,21 +1247,24 @@ class GenerationMixin:
             
             # ── done 事件（正文已逐 beat 流式输出过，这里不再重复 yield full_text，
             #    避免前端 writing.content 收到「逐beat文本 + 全文」两遍重复）──
-            # ── v3.10: 大纲合规校验（核心事件/节拍落地；fail 自动补写）──
+            # 大纲合规校验：缺失节拍只做场景级局部修订。
+            _outline_compliance_report = None
             try:
                 async for _cev in self._outline_compliance_step(
                     novel_id, chapter_num, chapter_outline, plan, full_text,
                     batch_mode=False,
                 ):
-                    if _cev.get("type") == "outline_compliance" and _cev.get("patched_text"):
-                        full_text = full_text.rstrip() + "\n\n" + _cev["patched_text"]
-                        formatted = ("# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                                     .format(chapter_num=chapter_num,
-                                             chapter_title=chapter_outline.get(
-                                                 "title", f"第{chapter_num}章"),
-                                             full_text=full_text))
-                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
-                        self.memory.invalidate("state", novel_id)
+                    if _cev.get("type") == "outline_compliance":
+                        _outline_compliance_report = _cev
+                        if _cev.get("revised_text"):
+                            full_text = _cev["revised_text"]
+                            formatted = ("# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                                         .format(chapter_num=chapter_num,
+                                                 chapter_title=chapter_outline.get(
+                                                     "title", f"第{chapter_num}章"),
+                                                 full_text=full_text))
+                            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
+                            self.memory.invalidate("state", novel_id)
                     yield _cev
             except Exception as _ce:
                 log.warning(f"Outline compliance step skipped: {_ce}")
@@ -1293,6 +1331,7 @@ class GenerationMixin:
                 formatted,
                 _requirement_report,
                 _final_quality_record,
+                _outline_compliance_report,
             )
             if _completion["status"] == "needs_revision":
                 yield {
@@ -1420,8 +1459,10 @@ class GenerationMixin:
         self, novel_id: str, chapter_num: int, chapter_outline: dict,
         plan: dict, full_text: str, batch_mode: bool = False,
     ) -> AsyncGenerator[dict, None]:
-        """大纲合规校验（v3.10）：核对本章是否落地大纲核心事件/节拍/角色；
-        fail 且非批量 → 自动补写缺失核心事件。
+        """大纲合规校验：核对本章是否落地核心事件/节拍/角色。
+
+        缺失核心节拍时只允许替换对应局部场景，修订后必须重新校验；
+        不再将一段“补丁”追加到章末。
 
         Yields: {type: outline_compliance, chapter, pct, passed, level,
                  missing, checked, patched_text, message}
@@ -1444,49 +1485,91 @@ class GenerationMixin:
             yield {"type": "outline_compliance", "chapter": chapter_num,
                    "ok": False, "error": str(e)[:80]}
             return
+        pre_edit_pct = None
+        revised_text = ""
+        scene_edits = []
+        revision_result = "not_needed"
         pct = report.get("pct", 100)
         level = report.get("level", "ok")
-        passed = report.get("passed", True)
         missing = report.get("missing", [])
+        critical_missing = report.get("critical_missing", [])
+        repair_items = critical_missing or (missing if level == "fail" else [])
+
+        if repair_items and not batch_mode:
+            yield {"type": "status", "message": "✍️ 正在将缺失事件修回对应场景…"}
+            try:
+                revision = await asyncio.to_thread(
+                    checker.revise_missing_scenes,
+                    full_text,
+                    repair_items,
+                    chapter_outline,
+                )
+                if revision.get("applied") and revision.get("text"):
+                    candidate_text = revision["text"]
+                    post_report = await asyncio.to_thread(
+                        checker.check_chapter,
+                        candidate_text,
+                        chapter_outline,
+                        run_deep=True,
+                    )
+                    post_pct = post_report.get("pct", 0)
+                    if post_report.get("passed") or post_pct > pct:
+                        pre_edit_pct = pct
+                        revised_text = candidate_text
+                        scene_edits = revision.get("edits", [])
+                        report = post_report
+                        pct = post_pct
+                        level = report.get("level", "partial")
+                        missing = report.get("missing", [])
+                        critical_missing = report.get("critical_missing", [])
+                        revision_result = "applied"
+                        log.info(
+                            "Outline scene revision Ch%s: %s%% -> %s%% (%s scenes)",
+                            chapter_num, pre_edit_pct, pct, len(scene_edits),
+                        )
+                    else:
+                        revision_result = "rejected_no_improvement"
+                else:
+                    revision_result = revision.get("reason", "revision_rejected")
+            except Exception as pe:
+                revision_result = "revision_error"
+                log.warning(f"Outline scene revision failed: {pe}")
+
+        passed = report.get("passed", True)
         missing_labels = [
             f"{m.get('label', '')}: {str(m.get('needle', ''))[:40]}" for m in missing]
-        # 落盘合规报告（state.outline_compliance）
+        # 只保存局部修订并复检后的最终合规结果。
         try:
             state = self.memory.get_novel_state(novel_id)
             state.setdefault("outline_compliance", {})[str(chapter_num)] = {
-                "pct": pct, "level": level, "passed": passed,
-                "missing": missing_labels, "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "pct": pct,
+                "level": level,
+                "passed": passed,
+                "missing": missing_labels,
+                "revision_result": revision_result,
+                "scene_edits": scene_edits,
+                "pre_edit_pct": pre_edit_pct,
+                "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
             self.memory.save_novel_state(novel_id, state)
         except Exception as e:
             log.warning(f"outline compliance report save failed: {e}")
-        patched_text = ""
-        message = ""
+
         if level == "ok":
             message = f"📋 大纲合规 ✓ {pct}%"
+        elif revision_result == "applied":
+            message = f"✍️ 场景级修订后大纲合规 {pct}%，仍缺失 {len(missing)} 项"
         elif level == "partial":
             message = f"⚠️ 大纲合规 {pct}%，缺失 {len(missing)} 项"
         else:
-            message = f"❌ 大纲合规 {pct}%，缺失 {len(missing)} 项"
-            if not batch_mode:
-                yield {"type": "status", "message": "✍️ 正在补写缺失的大纲核心事件…"}
-                try:
-                    patch = await asyncio.to_thread(
-                        checker.patch_missing, full_text, missing)
-                    if patch and len(patch) >= 30:
-                        patched_text = patch
-                        message = f"✍️ 已自动补写缺失核心事件（{len(missing)} 项）"
-                        log.info(
-                            f"Outline compliance patch added for Ch{chapter_num}: {len(patch)} chars")
-                    else:
-                        message = f"❌ 大纲合规 {pct}%，自动补写未成功，建议手动重写本章"
-                except Exception as pe:
-                    log.warning(f"Outline compliance patch failed: {pe}")
-                    message = f"❌ 大纲合规 {pct}%，自动补写失败，建议手动重写本章"
+            message = f"❌ 大纲合规 {pct}%，场景级修订未通过复检"
         yield {"type": "outline_compliance",
                "chapter": chapter_num, "pct": pct, "passed": passed,
                "level": level, "checked": report.get("results", []),
-               "missing": missing_labels, "patched_text": patched_text,
+               "missing": missing_labels, "patched_text": "",
+               "critical_missing": critical_missing,
+               "revised_text": revised_text, "scene_edits": scene_edits,
+               "pre_edit_pct": pre_edit_pct, "revision_result": revision_result,
                "message": message}
 
     async def _setting_annotation_step(self, novel_id: str, chapter_num: int,
@@ -2162,16 +2245,19 @@ class GenerationMixin:
                 except Exception as re:
                     log.warning(f"Engine retry failed: {re}, keeping original")
 
-            # ── v3.10: 大纲合规校验（核心事件/节拍落地；fail 自动补写）──
+            # 大纲合规校验：缺失节拍只做场景级局部修订。
+            _outline_compliance_report = None
             try:
                 async for _cev in self._outline_compliance_step(
                     novel_id, chapter_num, chapter_outline, plan, full_text, batch_mode,
                 ):
-                    if _cev.get("type") == "outline_compliance" and _cev.get("patched_text"):
-                        full_text = full_text.rstrip() + "\n\n" + _cev["patched_text"]
-                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
-                        self.memory.invalidate("state", novel_id)
+                    if _cev.get("type") == "outline_compliance":
+                        _outline_compliance_report = _cev
+                        if _cev.get("revised_text"):
+                            full_text = _cev["revised_text"]
+                            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
+                            self.memory.invalidate("state", novel_id)
                     yield _cev
             except Exception as _ce:
                 log.warning(f"Outline compliance step skipped: {_ce}")
@@ -2450,6 +2536,7 @@ class GenerationMixin:
                 formatted,
                 _requirement_report,
                 _final_quality_record,
+                _outline_compliance_report,
             )
             if _completion["status"] == "needs_revision":
                 yield {
