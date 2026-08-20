@@ -37,6 +37,7 @@ from .beat_decomposer import BeatDecomposer, Beat
 from .atomic_writer import AtomicWriter
 from .beat_assembler import BeatAssembler
 from .coherence_validator import validate_and_repair_outline
+from .chapter_contract import migrate_plan_chapter_contracts
 
 log = logging.getLogger(__name__)
 
@@ -235,6 +236,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         # v2.2: 附加需求拆解元数据
         if inspiration.strip() and requirements:
             self._sync_requirements_contract(plan["title"], plan, requirements)
+        migrate_plan_chapter_contracts(plan)
         
         # 保存规划
         novel_dir = self.memory.get_novel_dir(plan["title"])
@@ -350,6 +352,8 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                     "core_theme": requirements.get("core_theme", ""),
                     "subtask_count": subtask_count,
                     "p0_count": sum(1 for t in subtasks if t.get("priority") == "P0"),
+                    "schema_version": requirements.get("schema_version", 2),
+                    "kind_counts": requirements.get("kind_counts", {}),
                     "offline_mode": requirements.get("offline_mode", False),
                     "target_audience": requirements.get("target_audience", ""),
                     # 子任务列表（前端展示用）
@@ -359,6 +363,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                         "category": t.get("category", ""),
                         "sub_category": t.get("sub_category", ""),
                         "priority": t.get("priority", ""),
+                        "kind": t.get("kind", "book_invariant"),
                         "description": t.get("description", t.get("generation_hint", ""))[:200],
                         "must_include": t.get("must_include", [])[:3],
                         "must_avoid": t.get("must_avoid", [])[:3],
@@ -429,7 +434,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                     
                     # 保存到 RequirementsStore (用 title 做 key, SQLite 持久化)
                     self._sync_requirements_contract(plan["title"], plan, requirements)
-                
+                migrate_plan_chapter_contracts(plan)
                 atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
                 
                 # 人物宝典在线程池中执行（包含文件IO）
@@ -475,7 +480,8 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 
                 if requirements:
                     self._sync_requirements_contract(plan["title"], plan, requirements)
-                    atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
+                migrate_plan_chapter_contracts(plan)
+                atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
                 log.info(f"Novel created (streamed): {plan['title']} ({total_chapters} chapters)"
                         f" — requirements: {self._req_store.get(plan['title']).get('total_count', 0)} subtasks")
 
@@ -587,6 +593,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
             plan["_meta"] = {}
         plan["_meta"]["regenerated_at"] = __import__("datetime").datetime.now().isoformat()
         plan["_meta"]["regeneration_feedback"] = feedback
+        migrate_plan_chapter_contracts(plan)
         
         novel_dir = self.memory.get_novel_dir(novel_id)
         atomic_write_json(os.path.join(novel_dir, "plan.json"), plan)
@@ -621,6 +628,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 plan = safe_read_json(plan_path)
                 if not isinstance(plan, dict):
                     plan = {}
+                migrate_plan_chapter_contracts(plan)
                 plan["state"] = self.memory.get_novel_state(try_id)
                 return plan
         
@@ -634,6 +642,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                         plan_data = safe_read_json(plan_file)
                         if isinstance(plan_data, dict) and plan_data.get("title", "") == novel_id:
                             log.info(f"get_novel: matched by title '{novel_id}' → dir '{d}'")
+                            migrate_plan_chapter_contracts(plan_data)
                             plan_data["state"] = self.memory.get_novel_state(d)
                             return plan_data
         
@@ -681,6 +690,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         requirements, _ = self._load_requirements_contract(novel_id, existing or plan_data)
         if requirements:
             self._sync_requirements_contract(novel_id, plan_data, requirements)
+        migrate_plan_chapter_contracts(plan_data)
         atomic_write_json(plan_path, plan_data)
         self.memory._invalidate(novel_id, "plan")  # 失效 plan 缓存（避免 build_writer_context 读到旧大纲）
         
@@ -966,6 +976,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                 requirements, _ = self._load_requirements_contract(novel_id, plan)
                 if requirements:
                     self._sync_requirements_contract(novel_id, new_plan, requirements)
+                migrate_plan_chapter_contracts(new_plan)
                 atomic_write_json(os.path.join(novel_dir, "plan.json"), new_plan)
                 self.memory._invalidate(novel_id, "plan")  # 失效缓存：章节生成立即使用新大纲
 

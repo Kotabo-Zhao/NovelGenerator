@@ -435,6 +435,11 @@ class GenerationMixin:
                 return False
             # 写回 plan.json（持久化，后续生成/重生成直接复用）
             chapter_outline["scene_beats"] = norm
+            from ..chapter_contract import normalize_chapter_contract
+
+            normalized_chapter = normalize_chapter_contract(chapter_outline)
+            chapter_outline.clear()
+            chapter_outline.update(normalized_chapter)
             if not chapter_outline.get("conflict_intensity"):
                 chapter_outline["conflict_intensity"] = 3
             try:
@@ -474,6 +479,9 @@ class GenerationMixin:
         与 build_writer_context 的 L5 完整大纲互补：本精简版保证 scene_beats 在
         allocate_context 高优先级预算内必定保留，正文生成不会退化成只看一句话 summary。
         """
+        from ..chapter_contract import normalize_chapter_contract
+
+        chapter_outline = normalize_chapter_contract(chapter_outline)
         text = (
             "标题：{title}\n核心事件：{summary}\n结尾钩子：{hook}\n角色：{characters}".format(
                 title=chapter_outline.get("title", ""),
@@ -485,6 +493,18 @@ class GenerationMixin:
         beats = self._render_scene_beats(chapter_outline)
         if beats:
             text += "\n场景节拍：\n" + beats
+        contract_fields = (
+            ("章前状态", "before_state"),
+            ("必须发生", "must_happen"),
+            ("章后状态", "after_state"),
+            ("新增信息", "new_information"),
+            ("未闭环", "open_loop"),
+            ("禁止重复", "forbidden_repeats"),
+        )
+        for label, key in contract_fields:
+            values = chapter_outline.get(key) or []
+            if values:
+                text += f"\n{label}：" + "；".join(map(str, values[:8]))
         return text
 
     def _decompose_chapter_beats(self, chapter_outline: dict, chapter_num: int,
@@ -572,22 +592,47 @@ class GenerationMixin:
 
             lines = [
                 "## USER REQUIREMENT CONTRACT",
-                "Satisfy every active item in this chapter. Do not mention this contract in the prose.",
+                "Use this as silent writing guidance. Never mention the contract or its IDs in the prose.",
             ]
-            for item in active[:20]:
-                lines.append(
-                    f"- [{item.get('id', '')}][{item.get('priority', 'P1')}] "
-                    f"{item.get('title', '')} (scope={item.get('scope', 'global')})"
-                )
-                for label, value in (
-                    ("description", item.get("description")),
-                    ("must_include", ", ".join(map(str, item.get("must_include") or []))),
-                    ("must_avoid", ", ".join(map(str, item.get("must_avoid") or []))),
-                    ("generation_hint", item.get("generation_hint")),
-                    ("quality_criteria", "; ".join(map(str, item.get("quality_criteria") or []))),
-                ):
-                    if value:
-                        lines.append(f"  {label}: {str(value)[:700]}")
+            groups = (
+                (
+                    "HARD CHAPTER COMMITMENTS",
+                    [item for item in active if item.get("kind") in {"chapter_event", "milestone"}],
+                    "These events belong to this chapter or milestone window and must be delivered.",
+                ),
+                (
+                    "BOOK INVARIANTS",
+                    [item for item in active if item.get("kind") == "book_invariant"],
+                    "Preserve these facts and prohibitions; do not force every positive fact into this chapter.",
+                ),
+                (
+                    "SOFT PREFERENCES",
+                    [item for item in active if item.get("kind") == "preference"],
+                    "Follow when natural; these are quality preferences, not checklist events.",
+                ),
+            )
+            emitted = 0
+            for heading, items, guidance in groups:
+                if not items:
+                    continue
+                lines.extend((f"### {heading}", guidance))
+                for item in items:
+                    if emitted >= 14:
+                        break
+                    emitted += 1
+                    lines.append(
+                        f"- [{item.get('id', '')}][{item.get('priority', 'P1')}] "
+                        f"{item.get('title', '')}"
+                    )
+                    for label, value in (
+                        ("description", item.get("description")),
+                        ("must_include", ", ".join(map(str, (item.get("must_include") or [])[:5]))),
+                        ("must_avoid", ", ".join(map(str, (item.get("must_avoid") or [])[:5]))),
+                        ("generation_hint", item.get("generation_hint")),
+                        ("quality_criteria", "; ".join(map(str, (item.get("quality_criteria") or [])[:4]))),
+                    ):
+                        if value:
+                            lines.append(f"  {label}: {str(value)[:360]}")
             return "\n".join(lines)
         except Exception as exc:
             log.warning("Requirements contract build failed (non-fatal): %s", exc)
