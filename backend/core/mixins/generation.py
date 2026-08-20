@@ -572,22 +572,47 @@ class GenerationMixin:
 
             lines = [
                 "## USER REQUIREMENT CONTRACT",
-                "Satisfy every active item in this chapter. Do not mention this contract in the prose.",
+                "Use this as silent writing guidance. Never mention the contract or its IDs in the prose.",
             ]
-            for item in active[:20]:
-                lines.append(
-                    f"- [{item.get('id', '')}][{item.get('priority', 'P1')}] "
-                    f"{item.get('title', '')} (scope={item.get('scope', 'global')})"
-                )
-                for label, value in (
-                    ("description", item.get("description")),
-                    ("must_include", ", ".join(map(str, item.get("must_include") or []))),
-                    ("must_avoid", ", ".join(map(str, item.get("must_avoid") or []))),
-                    ("generation_hint", item.get("generation_hint")),
-                    ("quality_criteria", "; ".join(map(str, item.get("quality_criteria") or []))),
-                ):
-                    if value:
-                        lines.append(f"  {label}: {str(value)[:700]}")
+            groups = (
+                (
+                    "HARD CHAPTER COMMITMENTS",
+                    [item for item in active if item.get("kind") in {"chapter_event", "milestone"}],
+                    "These events belong to this chapter or milestone window and must be delivered.",
+                ),
+                (
+                    "BOOK INVARIANTS",
+                    [item for item in active if item.get("kind") == "book_invariant"],
+                    "Preserve these facts and prohibitions; do not force every positive fact into this chapter.",
+                ),
+                (
+                    "SOFT PREFERENCES",
+                    [item for item in active if item.get("kind") == "preference"],
+                    "Follow when natural; these are quality preferences, not checklist events.",
+                ),
+            )
+            emitted = 0
+            for heading, items, guidance in groups:
+                if not items:
+                    continue
+                lines.extend((f"### {heading}", guidance))
+                for item in items:
+                    if emitted >= 14:
+                        break
+                    emitted += 1
+                    lines.append(
+                        f"- [{item.get('id', '')}][{item.get('priority', 'P1')}] "
+                        f"{item.get('title', '')}"
+                    )
+                    for label, value in (
+                        ("description", item.get("description")),
+                        ("must_include", ", ".join(map(str, (item.get("must_include") or [])[:5]))),
+                        ("must_avoid", ", ".join(map(str, (item.get("must_avoid") or [])[:5]))),
+                        ("generation_hint", item.get("generation_hint")),
+                        ("quality_criteria", "; ".join(map(str, (item.get("quality_criteria") or [])[:4]))),
+                    ):
+                        if value:
+                            lines.append(f"  {label}: {str(value)[:360]}")
             return "\n".join(lines)
         except Exception as exc:
             log.warning("Requirements contract build failed (non-fatal): %s", exc)
