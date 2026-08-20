@@ -261,7 +261,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 }
 [data-theme="dark"] .bottom-nav{background:rgba(20,16,40,.65)}
 [data-theme="light"] .bottom-nav{background:rgba(255,255,255,.6)}
-.bottom-nav .bn-item{flex:1;text-align:center;color:var(--text2);font-size:10px;cursor:pointer;padding:4px;transition:color .15s}
+.bottom-nav .bn-item{flex:1;min-height:52px;text-align:center;color:var(--text2);font-size:10px;cursor:pointer;padding:4px;border:0;background:transparent;font-family:var(--font-ui);transition:color .15s}
 .bottom-nav .bn-item.active{color:var(--accent)}
 .bottom-nav .bn-icon{font-size:20px;display:block;margin-bottom:1px}
 
@@ -745,7 +745,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .book-wall{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
   .book-cover{height:118px}
   .book-tile:hover{transform:none}
-  .tile-action{opacity:1;width:26px;height:26px;font-size:12px}
+  .tile-action{opacity:1;font-size:12px}
   .stat-strip{grid-template-columns:repeat(2,1fr);gap:10px}
   .form-row{grid-template-columns:1fr;gap:10px}
   .style-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px}
@@ -753,8 +753,10 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   .wb-title{display:none}
   .skeleton-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
   .skeleton-cover{height:118px}
-  .btn{padding:8px 14px;font-size:13px;min-height:38px}
-  .btn-xs,.btn-sm{min-height:34px;padding:6px 10px}
+  .btn{padding:8px 14px;font-size:13px;min-height:44px}
+  .btn-xs,.btn-sm{min-width:44px;min-height:44px;padding:6px 10px}
+  .wb-tab,.ws-ch,.batch-fold summary{min-height:44px}
+  input,select{min-height:44px}
   input,select,textarea{font-size:16px!important}
   .req-item .req-title{max-width:60vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .toast-box{width:88vw;max-width:340px}
@@ -837,6 +839,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 
 /* 书卡 tile-action 布局（4 图标） */
 .book-tile .tile-action{width:26px;height:26px;font-size:12px}
+@media(max-width:768px){
+  .book-tile .tile-action{width:44px;height:44px;min-width:44px;min-height:44px}
+  .voice-btn{width:44px;height:44px}
+  .icon-btn{width:44px;height:44px}
+}
 
 /* 世界圣经 */
 .bible-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
@@ -941,7 +948,7 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
         <button class="topnav-item" :class="{on:currentView==='settings'}" @click="currentView='settings'"><span class="ni">⚙️</span><span class="nl">设置</span></button>
       </nav>
       <div class="topbar-right">
-        <button class="icon-btn" @click="currentView='settings'" :title="'设置'" :class="{on:currentView==='settings'}">⚙️</button>
+        <button class="icon-btn" @click="currentView='settings'" aria-label="打开设置" title="设置" :class="{on:currentView==='settings'}">⚙️</button>
       </div>
     </div>
   </header>
@@ -958,9 +965,9 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
         </div>
         <div class="flex gap-6">
           <button class="btn btn-secondary btn-sm pc-only" @click="openIdeas">💡 灵感</button>
-          <button class="icon-btn mobile-only" @click="openIdeas" title="灵感箱">💡</button>
+          <button class="icon-btn mobile-only" @click="openIdeas" aria-label="打开灵感箱" title="灵感箱">💡</button>
           <button class="btn btn-secondary btn-sm pc-only" @click="openSearch">🔍 搜索</button>
-          <button class="icon-btn mobile-only" @click="openSearch" title="搜索">🔍</button>
+          <button class="icon-btn mobile-only" @click="openSearch" aria-label="搜索作品" title="搜索">🔍</button>
           <button class="btn btn-primary" @click="openCreate">✨ 开始新作</button>
         </div>
       </div>
@@ -992,11 +999,11 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
 
       <!-- 书架卡片墙 -->
       <div v-else class="book-wall">
-        <div v-for="n in novels" :key="n.id" class="book-tile glass" style="position:relative" @click="openNovel(n)" @touchstart="onTileTouchStart(n,$event)" @touchend="onTileTouchEnd" @touchmove="onTileTouchMove" @contextmenu.prevent="openNovelActions(n)">
-          <button class="tile-action" @click.stop="deleteNovel(n)" title="删除此书">✕</button>
-          <button class="tile-action" style="right:42px" @click.stop="openOutlineFor(n)" title="编辑大纲">📐</button>
-          <button class="tile-action pc-only" style="right:74px" @click.stop="activeNovel=n;openStats()" title="创作统计">📊</button>
-          <button class="tile-action pc-only" style="right:106px" @click.stop="activeNovel=n;openBible()" title="世界圣经">📖</button>
+        <div v-for="n in novels" :key="n.id" class="book-tile glass" style="position:relative" role="button" tabindex="0" :aria-label="'打开作品《'+n.title+'》'" @click="openNovel(n)" @keydown.enter="openNovel(n)" @keydown.space.prevent="openNovel(n)" @touchstart="onTileTouchStart(n,$event)" @touchend="onTileTouchEnd" @touchmove="onTileTouchMove" @contextmenu.prevent="openNovelActions(n)">
+          <button class="tile-action" @click.stop="deleteNovel(n)" :aria-label="'删除作品《'+n.title+'》'" title="删除此书">✕</button>
+          <button class="tile-action" style="right:62px" @click.stop="openOutlineFor(n)" :aria-label="'编辑《'+n.title+'》的大纲'" title="编辑大纲">📐</button>
+          <button class="tile-action pc-only" style="right:104px" @click.stop="activeNovel=n;openStats()" :aria-label="'查看《'+n.title+'》的创作统计'" title="创作统计">📊</button>
+          <button class="tile-action pc-only" style="right:156px" @click.stop="activeNovel=n;openBible()" :aria-label="'查看《'+n.title+'》的世界圣经'" title="世界圣经">📖</button>
           <div class="book-cover" :style="{background:coverGradient(n.id)}">
             <span class="cover-title">{{ n.title.slice(0,8) }}</span>
             <svg class="cover-ring" width="56" height="56" viewBox="0 0 56 56" aria-label="完成进度">
@@ -1257,14 +1264,14 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
           <button class="wb-tab" :class="{on:writing.activeTab==='interactive'}" @click="openInteractive"><span class="wt-ic">🎭</span><span class="wt-lb">互动</span></button>
           <span class="wb-title">{{ activeNovel.title }}</span>
           <div class="wb-actions">
-            <button class="btn btn-ghost btn-xs pc-only" @click="openSearch" title="全文检索">🔍</button>
-            <button class="btn btn-ghost btn-xs pc-only" @click="openBible" title="世界圣经">📖</button>
-            <button class="btn btn-ghost btn-xs pc-only" @click="openStats" title="创作统计">📊</button>
-            <button class="btn btn-ghost btn-xs pc-only" @click="openScanPanel" title="设定扫描">🔬</button>
-            <button class="btn btn-ghost btn-xs pc-only" @click="openVersions(writing.chapter)" title="版本历史">🕘</button>
+            <button class="btn btn-ghost btn-xs pc-only" @click="openSearch" aria-label="全文检索" title="全文检索">🔍</button>
+            <button class="btn btn-ghost btn-xs pc-only" @click="openBible" aria-label="世界圣经" title="世界圣经">📖</button>
+            <button class="btn btn-ghost btn-xs pc-only" @click="openStats" aria-label="创作统计" title="创作统计">📊</button>
+            <button class="btn btn-ghost btn-xs pc-only" @click="openScanPanel" aria-label="设定扫描" title="设定扫描">🔬</button>
+            <button class="btn btn-ghost btn-xs pc-only" @click="openVersions(writing.chapter)" aria-label="版本历史" title="版本历史">🕘</button>
             <button class="btn btn-ghost btn-xs" @click="openOutline" style="font-size:12px">📋 大纲</button>
             <!-- 安卓折叠「⋯」 -->
-            <button class="btn btn-ghost btn-xs mobile-only" @click="toggleWriteMore" title="更多工具">⋯</button>
+            <button class="btn btn-ghost btn-xs mobile-only" @click="toggleWriteMore" aria-label="更多工具" title="更多工具">⋯</button>
           </div>
           <!-- 安卓「⋯」下拉菜单 -->
           <div v-if="writeMoreOpen" class="write-more-menu glass" @click.stop>
@@ -1619,8 +1626,8 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
                           <template v-else>🎙 {{ interactive.voices[blk.speaker].voice.replace('zh-CN-','').replace('Neural','') }}</template>
                         </span>
                         <span class="inter-actions">
-                          <button class="voice-btn" @click="speakLine(blk, i)" :title="interactive.speakingLine===i?'停止':'播放语音'">{{ interactive.speakingLine===i?'⏹':'🔊' }}</button>
-                          <button class="voice-btn" @click="openVoicePicker(blk.speaker)" title="更换音色">🎙</button>
+                          <button class="voice-btn" @click="speakLine(blk, i)" :aria-label="interactive.speakingLine===i?'停止播放':'播放这句台词'" :title="interactive.speakingLine===i?'停止':'播放语音'">{{ interactive.speakingLine===i?'⏹':'🔊' }}</button>
+                          <button class="voice-btn" @click="openVoicePicker(blk.speaker)" aria-label="更换角色音色" title="更换音色">🎙</button>
                         </span>
                       </div>
                     </div>
@@ -2201,12 +2208,12 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
   </div>
 
   <!-- ═══ 移动端底部导航 ═══ -->
-  <nav class="bottom-nav">
-    <div class="bn-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="bn-icon">📚</span>书架</div>
-    <div class="bn-item" :class="{active:currentView==='create'}" @click="openCreate"><span class="bn-icon">✨</span>开卷</div>
-    <div class="bn-item" :class="{active:currentView==='write'}" @click="openWrite" v-if="activeNovel"><span class="bn-icon">✍️</span>落笔</div>
-    <div class="bn-item" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="bn-icon">📦</span>付梓</div>
-    <div class="bn-item" :class="{active:currentView==='settings'}" @click="currentView='settings'"><span class="bn-icon">⚙️</span>设置</div>
+  <nav class="bottom-nav" aria-label="主导航">
+    <button type="button" class="bn-item" aria-label="书架" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><span class="bn-icon">📚</span>书架</button>
+    <button type="button" class="bn-item" aria-label="普通创作" :class="{active:currentView==='write'&&writing.activeTab==='write'}" @click="openWrite" v-if="activeNovel"><span class="bn-icon">✍️</span>创作</button>
+    <button type="button" class="bn-item" aria-label="互动剧场" :class="{active:currentView==='write'&&writing.activeTab==='interactive'}" @click="openInteractiveTheater" v-if="activeNovel"><span class="bn-icon">🎭</span>互动</button>
+    <button type="button" class="bn-item" aria-label="导出作品" :class="{active:currentView==='export'}" @click="currentView='export'"><span class="bn-icon">📦</span>付梓</button>
+    <button type="button" class="bn-item" aria-label="我的设置" :class="{active:currentView==='settings'}" @click="currentView='settings'"><span class="bn-icon">⚙️</span>我的</button>
   </nav>
 </div>
 <script>
@@ -2869,6 +2876,12 @@ const app = createApp({
     }
     
     function openWrite() { if(isBusy.value) return; if(activeNovel.value) { loadRequirements(activeNovel.value.id); currentView.value='write'; writing.activeTab='write'; _saveSession(); } }
+    function openInteractiveTheater() {
+      if(isBusy.value || !activeNovel.value) return;
+      currentView.value='write';
+      openInteractive();
+      _saveSession();
+    }
     function openOutlineFor(novel) {
       // 书架 → 编辑大纲：选中该书并加载最新 plan 进入大纲预览
       if(isBusy.value) return;
@@ -4893,7 +4906,7 @@ const app = createApp({
       form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,shelfLoadFailed,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,ringPct,pctNum,
-      openCreate,openWrite,openOutline,openOutlineFor,doCreate,openNovel,startWriting,
+      openCreate,openWrite,openInteractiveTheater,openOutline,openOutlineFor,doCreate,openNovel,startWriting,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,speakChapter,stopSpeaking,speaking,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
