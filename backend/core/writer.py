@@ -1,4 +1,4 @@
-"""NovelGenerator — Writer: 章节生成（两遍式 + Humanizer后处理 + 截断检测 + API重试）"""
+"""NovelGenerator — Writer: 单遍章节生成、流式续写与截断恢复。"""
 import asyncio
 import logging
 import re
@@ -6,7 +6,6 @@ import time
 from typing import AsyncGenerator
 from openai import OpenAI
 from .styles import get_style, build_style_prompt, build_custom_style
-from .humanizer import humanize_text, build_humanizer_prompt
 from .resilient_client import ResilientLLMClient, RetryConfig
 from .generation_limits import max_generation_tokens
 
@@ -62,73 +61,34 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。
 - 检查"本章计划做的事"是否已在清单中完成过 → 是则必须换新方向
 
 ### 段落结构
-- 3-5句合并为一个自然段（80-150字），不要一句一段像电报
-- 人物动作和对话用「」包裹，叙述和对话交替形成自然节奏
+- 段落按语义单元组织：一个动作、一次观察或一轮交流完成后再换段；段长随场景轻重自然变化
+- 引号只包住人物实际说出口的话。动作、神态和叙述留在引号外
+- 对话轮次、短句和长段都由场景需要决定，避免整章呈现同一种段长
 
-### 防废话
-- 环境描写仅服务于冲突（密室、陷阱、战场），非冲突场景不写环境
-- 内心独白用动作替代。一整段的心理活动 → 删
-- 对话要推进剧情，闲聊删。连续6轮对话用动作打断
-- **对话占比约束（v2.3.5 / v2.4.4 弹性）**：本章对话占比 ≤ 35%（对话字数/总字数），连续对话不超过 4 轮就必须用动作/环境打断；每段对话必须推进剧情（揭示信息/升级冲突/改变关系），否则删
-  - 🚩 文体豁免：对话流/剧本感/现代都市言情可放宽至 55%，但每段对话仍须推进剧情
-- **每条信息只交代一次**。读者不傻，不需要从两个角度解释同一件事
-- **每段写完后问：这段删掉，读者对剧情的理解会减少吗？** 如果不会，删。这段推进了核心事件吗？如果没推进，删
-- **不要写角色在路上的过程、吃饭、睡觉、发呆、看风景**。除非这些行为本身推动了剧情
-  - 🚩 文体豁免：种田/日常/世情/氛围流按流派法则执行（生活细节、吃饭、景物
-    是这些文体的核心内容），动作推进类爽文严格执行本条
+### 取舍与推进
+- 每个场景至少带来一种变化：行动结果、新信息、关系变化、风险升级或角色选择
+- 环境、日常与心理可以写，但必须承担人物塑造、气氛、信息或冲突功能；不要为填充字数而展开
+- 同一条信息只交代一次。角色可以误解或回避，但叙述者不要换一种说法重复解释
+- 对话允许寒暄、停顿和答非所问，只要它在塑造关系或制造潜台词；不要把每句台词都写成剧情说明
 
 ### 叙事人称（最高优先级）
 - 如果写作指令指定了人称，必须严格遵守。第一人称「我」和第三人称「他/她」互不混用
 - 用第一人称时，禁止出现「【主角名】心里想」「【主角名】说道」——始终用「我」
 - 用第三人称时，禁止用「我」叙述，始终用角色名字或「他」「她」
 
-### 防AI味
-- 🔴 硬禁（AI 特征词，任何文体禁用）: 浑身一震/嘴角勾起/微微上扬/眼底闪过/眸光/眸色/眸子/莫名地/淡淡地道/开口道/缓缓开口
-- 🔴 硬禁句式: 「不是A而是B」「真正的/本质上/关键在于」「与此同时/值得一提的是」「随着……的发展」「仿佛早已注定」
-- 🟡 软限（情感词，每千字≤3次，言情/感情流高潮可适当放宽）: 心跳/呼吸/瞳孔/胸口/脊背/冷汗/太阳穴
-  —— "心跳漏了一拍"在感情戏是有效的，但每段都要心跳就是AI腔
-- 句长有变化，别每句都15字上下
-- 少用「似乎/仿佛/或许/大概」
-
-### 活人感（v2.3.7 · 防 AI 味规则 — 真人不会面面俱到）
-> 🚩 本规则按文体弹性执行：悬疑氛围流（环境渲染）、文学/文艺流（心理与意象）、
-> 种田日常流（生活白描）按各自流派法则优先；动作爽文严格执行本规则。
-
-**1. 选择性聚焦（真人只写值得写的）**
-- 每章只写 2-4 个值得展开的场景，其余过程直接跳过：「三天后」「次日清晨」「接下来的半个月乏善可陈」是合法的场景切换
-- 赶路/吃饭/起床/换衣/寒暄/睡觉——除非推动剧情，一律一句话带过或不写
-- 写完每段自问：这段删掉，读者对剧情的理解会减少吗？不会就删
-
-**2. 描写有预算，不做装饰**
-- 动作/表情/环境描写只允许出现在「传递新信息」时：揭示性格、情绪突变、剧情关键转折、营造与剧情绑定的氛围
-- 普通对话前禁止堆表情动作；能用对话本身表达的信息，不用动作补充
-- 环境描写只服务于冲突和情绪，禁止"描写风景展览"
-
-**3. 对话零标签（AI 腔的头号特征）**
-- 禁止「说道/笑道/答道/问道/喝道/沉声道/冷冷道/平静道」等对话标签
-- 禁止情绪标签：「叹了口气说」「冷冷地说」「温柔地说」「咬牙切齿地说」
-- 用对话内容本身区分说话人；需要停顿/动作时，用一句干净的短动作单独成段（「她没接话，把碗里的饭拨来拨去。」）
-
-**4. 情绪留白（真人写行为，AI 写情绪）**
-- 禁止直接情绪陈述：「他感到愤怒」「她心中涌起」「他心里一沉」「只觉得」
-- 用行为表达：「他把茶杯重重顿在桌上」「她起身就走，没回头」
-- 读者能自己品出来的情绪，一个字都不写
-
-**5. 不对称节奏（真人写作有轻重）**
-- 重要场景放慢写细（对话、动作、细节），过渡场景快进
-- 每章 70% 篇幅给核心冲突，30% 给其他；禁止全章匀速推进
-- 对话之间允许留白：沉默、停顿、答非所问都是表达
-
-**6. 填充副词是毒药**
-- 禁止滥用：缓缓/轻轻/微微/静静/默默/淡淡/悄悄/慢慢
-- 一个动作一个词，删掉副词句子仍然成立，就删掉副词
+### 语言自然度
+- 优先使用与人物处境绑定的动作、物件和选择，不用抽象判断替读者总结情绪
+- 套语本身不是禁词；问题在于脱离场景和密集重复。若一个表情、身体反应或转折词刚出现过，下一次换成更具体的行为证据
+- 重要场景可以放慢，过渡可以跳切。让句长、段长和信息密度随情绪变化，不做整齐的配额
+- 对话标签只在辨认说话人或改变语气时使用；能从台词和上下文判断时省略
+- 允许留白、沉默、误解和未说完的话。不要在段尾追加“这意味着”“他终于明白”式总结
 
 ### 人物关系铺垫（v2.4.3 · 按设定弹性执行）
 - **默认原则**：与未铺垫过的角色初遇，写陌生感——试探、戒备、信息交换
 - **信任要用事件换**：共患难/救命/利益绑定之后才可亲近
 - **称呼渐变**：全名/敬称 → 外号 → 直呼其名，与关系进展同步
 - **反派的"知道"要有来源**：被出卖/被调查/特殊能力/前世记忆，不可凭空
-- **关系梯度**：常规每章推进一级关系（陌生→认识→合作→信任）
+- **关系梯度**：关系变化必须由具体事件换来；没有足够事件时允许原地停留或倒退，不要求每章升级
 - **🚩 例外（设定驱动，不适用时跳过本条规则）**：
   - 重生/穿越继承记忆：主角认识对方但对方不认识主角——可写"熟悉感"，但对方需有陌生/戒备反应
   - 魂穿继承原主关系网：原主的亲人/朋友天然熟络，无需重铺
@@ -138,9 +98,9 @@ WRITER_SYSTEM = """你是一位专业的网络小说作家。
 - **判断标准**：写"自来熟"前问一句——这个设定/前文给主角熟络的理由了吗？给了就写，没给就铺垫
 
 ### 快餐模式（仅快节奏/快餐模式生效）
-- 前300字必须有冲突。零铺垫、零环境、零心理
-- 一章内完成「被欺负→反击→打脸」闭环
-- 章末必须是能截图传播的金句
+- 尽早让冲突或异常进入画面，铺垫只保留理解当前选择所必需的信息
+- 本章形成一个清晰的局面变化，但不强行套用固定的受辱、反击或打脸顺序
+- 结尾停在具体的新后果、新问题或不可撤回的选择上，不为制造金句而总结主题
 
 ### 跨世界设定忠实度 — 无限流/快穿/同人最高优先级
 
@@ -251,42 +211,20 @@ LITERARY_SYSTEM = """你是一位严肃文学作家。你拥有完全的创作�
 
 ### 语言要求
 11. **精确**: 每个词都要精确。不堆砌近义词。一个准确的动词胜过三个形容词。
-12. **克制**: 感叹号几乎不用。省略号只在必要时用。破折号不超过每800字一个。
-13. **具象**: 抽象的概念通过具体的物象来表达。「自由」可以是一扇没锁的窗。「孤独」可以是桌上两副碗筷只用了一副。
+12. **克制**: 标点服务于声音和停顿，不连续堆叠感叹号、省略号或破折号。
+13. **具象**: 抽象概念尽量通过与人物处境有关的物象、动作和选择呈现，不套用固定意象。
 14. **声韵**: 中文有自己的声音。注意句子的平仄和韵脚。一段好文字读出来是有节奏的。
 
-## 段落格式硬规则
+## 段落组织
 
-一段 = 3-5 句组成的语义单元，不是一句话。禁止每句话都单独用空行隔开。对话场景的连续对话在同一段内。场景切换时空两行。
+段落按语义单元组织。动作完成、观察焦点转移、说话者变化或场景切换时自然分段；不要为了整齐把每句话单独成段，也不要把不同焦点硬塞进同一段。
 
 ## 输出格式
 
 直接输出正文，不需要标题。正文字数控制在 {target_words} 字左右。"""
 
-
-
-STYLE_POLISH_SYSTEM = """你是一位专业的文字编辑，专精于将文字打磨成特定作家的风格。
-
-## 目标风格
-
-{style_guide}
-
-## 打磨要求
-
-你需要将以下草稿进行风格打磨。注意:
-1. **不必重写全文**——保留原稿的核心情节和对话内容
-2. **修正文笔**——将不匹配的句式替换为目标风格的句式
-3. **注入风格标志**——适当加入目标风格的标志性写法（但不能生硬）
-4. **去掉违和感**——移除与目标风格冲突的用词和表述
-5. **保持字数**——打磨后的字数应与原稿相近（±10%）
-
-## 输出格式
-
-直接输出打磨后的正文，不需要标题和说明。每段之间空一行。"""
-
-
 class Writer:
-    """章节写手 — 两遍生成: 初稿 + 风格打磨"""
+    """章节写手：只流式生成一个正文候选，修订由上层最终提交器统一处理。"""
 
     def __init__(self, client: OpenAI, model: str):
         self.client = client
@@ -435,7 +373,7 @@ class Writer:
         chapter_outline: dict = None,
         skip_ending: bool = False,  # v2.12: 质量门重试时跳过Phase 2(避免重复生成结尾)
     ) -> AsyncGenerator[str, None]:
-        """流式生成章节正文 (v2.12: 两阶段 — 正文 + 独立结尾)
+        """流式生成一个章节候选，必要时只从截断点续写。
         
         Args:
             writing_mode: 'webnovel' (网文) or 'literary' (文学)
@@ -500,7 +438,7 @@ class Writer:
             system_prompt = system_prompt + "\n\n" + outline_instruction
             log.info(f"Outline injected into system prompt ({len(outline_instruction)} chars)")
 
-        log.info(f"Writing chapter: {genre}/{style}/{writing_mode}, pass 1/2 (draft)")
+        log.info(f"Writing chapter candidate: {genre}/{style}/{writing_mode}")
         
         # v2.11: 提取桥接指令，放在 user prompt 最前面（LLM 对 user 消息开头最敏感）
         bridge_section = ""
@@ -601,128 +539,8 @@ class Writer:
             except Exception as e:
                 log.warning(f"Continuation failed: {e}, keeping truncated draft")
 
-        final_text = draft  # default: use draft as-is
-        
-        # v2.53: Phase 2 已移除。主写手(WRITER_SYSTEM 第26-28行)已负责章末钩子。
-        # 之前 Phase 2 在主写手的钩子后又追加一段结尾，造成「固定内容」和双层结尾。
-        # 现在完全依赖主写手在上下文中自然收尾。
-        
-        # ── 第二遍: 风格打磨（长文跳过——3000字以上初稿质量已够，省一轮API调用）──
-        polish_skipped = len(draft) < 500 or style_config.get("is_custom") or len(draft) > 2000
-        if polish_skipped:
-            if len(draft) > 2000:
-                log.info(f"Skipping polish pass (draft {len(draft)} chars, long enough)")
-            else:
-                log.info("Skipping polish pass (too short or custom style)")
-        else:
-            try:
-                log.info(f"Pass 2/2: style polish")
-                polish_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
-                
-                polish_stream = await self._create_stream_chunks(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": polish_prompt},
-                        {"role": "user", "content": f"草稿如下：\n\n{draft}"},
-                    ],
-                    temperature=0.6,
-                    max_tokens=safe_max_tokens,
-                    stream=True,
-                )
-                
-                polished = ""
-                for chunk_text in polish_stream:
-                    polished += chunk_text
-                
-                if polished and len(polished) > len(draft) * 0.5:
-                    final_text = polished
-                    log.info(f"Polish done: {len(polished)} chars")
-                else:
-                    log.warning(f"Polish result too short ({len(polished)} chars), using draft")
-            except Exception as e:
-                log.warning(f"Polish pass failed: {e}, using draft")
-
-        # ── Humanizer 检测（长文跳过——减少API调用）──
-        try:
-            h_result = humanize_text(final_text)
-            log.info(f"Humanizer score: {h_result['score']}/100 ({h_result['total_issues']} issues)")
-            
-            # 初稿 ≥2000字 且 评分 ≥70 → 跳过 Humanizer 重写（v2.3.5: 50→70 提高润色覆盖）
-            if len(final_text) >= 2000 and h_result["score"] >= 70:
-                log.info(f"Skipping Humanizer pass (score OK: {h_result['score']})")
-            elif h_result["score"] < 70 and h_result["total_issues"] > 3:
-                log.info(f"Pass 3/3: Humanizer rewrite (score={h_result['score']})")
-                h_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
-                h_prompt += "\n\n" + build_humanizer_prompt(h_result["detected"])
-                
-                h_stream = await self._create_stream_chunks(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": h_prompt},
-                        {"role": "user", "content": f"需要Humanizer润色的文本：\n\n{final_text}"},
-                    ],
-                    temperature=0.5,
-                    max_tokens=safe_max_tokens,
-                    stream=True,
-                )
-                
-                humanized = ""
-                for chunk_text in h_stream:
-                    humanized += chunk_text
-                
-                if len(humanized) > len(final_text) * 0.6:
-                    final_text = humanized
-                    log.info(f"Humanizer done: {len(humanized)} chars")
-        except Exception as e:
-            log.warning(f"Humanizer pass failed: {e}, using current text")
-
-        # ── 截断检测 (最多重试2次，从断点续写而不是重写) ──
-        try:
-            retry_multiplier = 2
-            for retry_round in range(2):
-                is_trunc, reason = _check_truncation(final_text, target_words)
-                if not is_trunc:
-                    break  # 不截断，直接通过
-                
-                log.warning(f"Truncation detected (round {retry_round+1}): {reason}. "
-                           f"Continuing from breakpoint with {retry_multiplier}x max_tokens...")
-                retry_max = max_generation_tokens(
-                    int(target_words),
-                    multiplier=3 * retry_multiplier,
-                    hard_cap=MAX_CHAPTER_TOKENS,
-                )
-                # v2.49: 从断点续写，不重写
-                continue_msgs = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                    {"role": "assistant", "content": final_text},
-                    {"role": "user", "content": f"以上是你的草稿，但内容不完整（{reason}）。请从断点处直接继续写，不要重复已有内容。严格保持相同风格、视角和人称。新增的字数只需要补足剩余部分即可。"},
-                ]
-                retry_text = ""
-                retry_stream = await self._create_stream_chunks(
-                    model=self.model,
-                    messages=continue_msgs,
-                    temperature=0.8,
-                    max_tokens=retry_max,
-                    stream=True,
-                )
-                for chunk_text in retry_stream:
-                    retry_text += chunk_text
-                
-                if retry_text:
-                    cleaned = _dedup_continuation(final_text, retry_text)
-                    candidate = final_text + cleaned
-                    is_trunc2, _ = _check_truncation(candidate, target_words)
-                    if not is_trunc2 or len(candidate) > len(final_text):
-                        final_text = candidate
-                        log.info(f"Continuation OK (round {retry_round+1}): +{len(cleaned)} → {len(final_text)} chars")
-                        break
-                
-                retry_multiplier *= 2  # 下次翻倍
-            else:
-                log.warning(f"All retries failed, using best available ({len(final_text)} chars)")
-        except Exception as e:
-            log.warning(f"Truncation check/retry failed: {e}, using current text")
+        # 正文已经逐块交给唯一的上层章节提交器。不要在流结束后执行不可见的
+        # 整章润色或 Humanizer 重写；最终候选的局部修订、门禁和提交由上层统一完成。
 
 
 def _dedup_continuation(existing: str, continuation: str) -> str:
@@ -747,7 +565,7 @@ def _dedup_continuation(existing: str, continuation: str) -> str:
 
 
 def _trim_to_target(text: str, target_words: int) -> str:
-    """v2.7.6: 超短篇超长兜底——Humanizer/一致性重写可能把 800 字目标扩写到
+    """v2.7.6: 超短篇超长兜底——上层修订可能把 800 字目标扩写到
     1800+，保存前按目标字数规则裁剪（保留完整句子）。仅小目标(<1500字)生效，
     长篇不动。"""
     try:
