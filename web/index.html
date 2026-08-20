@@ -1351,6 +1351,21 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
                 <div class="co-title">{{ currentOutline.title }}</div>
                 <div class="co-summary">{{ currentOutline.summary }}</div>
                 <div class="co-meta"><span>🎭 {{ currentOutline.emotion_curve }}</span><span>👤 {{ (currentOutline.characters||[]).join('、') }}</span></div>
+                <details style="margin-top:10px;border-top:1px solid var(--border-light);padding-top:8px">
+                  <summary style="cursor:pointer;font-size:12px;color:var(--accent);font-weight:650">
+                    章节执行契约
+                    <span style="float:right;color:var(--text3);font-weight:400">{{ currentOutline.contract_status==='ready' ? '可生成' : '生成时补全' }}</span>
+                  </summary>
+                  <div style="font-size:12px;color:var(--text2);line-height:1.55;padding-top:7px">
+                    <div v-if="currentOutline.before_state?.length"><b>章前状态：</b>{{ currentOutline.before_state.join('；') }}</div>
+                    <div v-if="currentOutline.must_happen?.length"><b>必须发生：</b>{{ currentOutline.must_happen.join('；') }}</div>
+                    <div v-if="currentOutline.after_state?.length"><b>章后状态：</b>{{ currentOutline.after_state.join('；') }}</div>
+                    <div v-if="currentOutline.new_information?.length"><b>新增信息：</b>{{ currentOutline.new_information.join('；') }}</div>
+                    <div v-if="currentOutline.open_loop?.length"><b>未闭环：</b>{{ currentOutline.open_loop.join('；') }}</div>
+                    <div v-if="currentOutline.forbidden_repeats?.length" style="color:var(--orange)"><b>禁止重复：</b>{{ currentOutline.forbidden_repeats.join('；') }}</div>
+                    <div v-if="currentOutline.requirement_ids?.length"><b>关联需求：</b>{{ currentOutline.requirement_ids.join('、') }}</div>
+                  </div>
+                </details>
               </div>
 
               <!-- 生成按钮 + 进度 -->

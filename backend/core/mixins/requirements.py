@@ -34,12 +34,14 @@ class RequirementsMixin:
 
     def _sync_requirements_contract(self, novel_id: str, plan: dict, requirements: dict | None = None):
         from ..requirements_contract import assign_requirements_to_outline
+        from ..chapter_contract import migrate_plan_chapter_contracts
 
         if requirements is None:
             requirements, _ = self._load_requirements_contract(novel_id, plan)
         if not requirements:
             return {}
         normalized = assign_requirements_to_outline(requirements, plan)
+        migrate_plan_chapter_contracts(plan)
         normalized = self._persist_requirements_contract(novel_id, normalized, plan)
         meta = plan.setdefault("_meta", {}).setdefault("requirements", {})
         meta.update({

@@ -73,6 +73,15 @@ async def get_requirements(novel_id: str):
     response["chapter_contract"] = [
         {
             "chapter_num": chapter.get("chapter_num", chapter.get("number")),
+            "chapter_contract_version": chapter.get("chapter_contract_version", 0),
+            "contract_status": chapter.get("contract_status", "needs_expansion"),
+            "before_state": chapter.get("before_state", []),
+            "must_happen": chapter.get("must_happen", []),
+            "scene_beats": chapter.get("scene_beats", []),
+            "after_state": chapter.get("after_state", []),
+            "new_information": chapter.get("new_information", []),
+            "open_loop": chapter.get("open_loop", []),
+            "forbidden_repeats": chapter.get("forbidden_repeats", []),
             "requirement_ids": chapter.get("requirement_ids", []),
         }
         for volume in ((plan.get("outline") or {}).get("volumes") or [])

@@ -435,6 +435,11 @@ class GenerationMixin:
                 return False
             # 写回 plan.json（持久化，后续生成/重生成直接复用）
             chapter_outline["scene_beats"] = norm
+            from ..chapter_contract import normalize_chapter_contract
+
+            normalized_chapter = normalize_chapter_contract(chapter_outline)
+            chapter_outline.clear()
+            chapter_outline.update(normalized_chapter)
             if not chapter_outline.get("conflict_intensity"):
                 chapter_outline["conflict_intensity"] = 3
             try:
@@ -474,6 +479,9 @@ class GenerationMixin:
         与 build_writer_context 的 L5 完整大纲互补：本精简版保证 scene_beats 在
         allocate_context 高优先级预算内必定保留，正文生成不会退化成只看一句话 summary。
         """
+        from ..chapter_contract import normalize_chapter_contract
+
+        chapter_outline = normalize_chapter_contract(chapter_outline)
         text = (
             "标题：{title}\n核心事件：{summary}\n结尾钩子：{hook}\n角色：{characters}".format(
                 title=chapter_outline.get("title", ""),
@@ -485,6 +493,18 @@ class GenerationMixin:
         beats = self._render_scene_beats(chapter_outline)
         if beats:
             text += "\n场景节拍：\n" + beats
+        contract_fields = (
+            ("章前状态", "before_state"),
+            ("必须发生", "must_happen"),
+            ("章后状态", "after_state"),
+            ("新增信息", "new_information"),
+            ("未闭环", "open_loop"),
+            ("禁止重复", "forbidden_repeats"),
+        )
+        for label, key in contract_fields:
+            values = chapter_outline.get(key) or []
+            if values:
+                text += f"\n{label}：" + "；".join(map(str, values[:8]))
         return text
 
     def _decompose_chapter_beats(self, chapter_outline: dict, chapter_num: int,
