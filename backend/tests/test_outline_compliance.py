@@ -92,9 +92,11 @@ def test_check_chapter_llm_hit():
     assert next(x for x in r["results"] if x["id"] == "beat1")["by"] == "rule"
 
 
-def test_check_chapter_llm_missing_then_patch():
+def test_check_chapter_llm_missing_then_scene_revision():
     llm = _FakeLLM([
         '{"results": [{"id": "summary", "present": false, "evidence": ""},'
+        '{"id": "beat1", "present": false, "evidence": ""},'
+        '{"id": "beat2", "present": false, "evidence": ""},'
         '{"id": "conflict", "present": false, "evidence": ""}]}',
         "主角终于踏入宗门，参加入门考核，却在最后一关遭遇暗算，师姐出手相助。",
     ])
@@ -105,8 +107,10 @@ def test_check_chapter_llm_missing_then_patch():
     assert r["level"] == "fail"
     assert not r["passed"]
     assert any(m["id"] == "summary" for m in r["missing"])
-    patch = c.patch_missing(text, r["missing"])
-    assert patch and "入门考核" in patch
+    revision = c.revise_missing_scenes(text, r["critical_missing"], _outline())
+    assert revision["applied"] is True
+    assert "入门考核" in revision["text"]
+    assert revision["edits"][0]["operation"] == "replace_scene"
     assert len(llm.calls) == 2
 
 

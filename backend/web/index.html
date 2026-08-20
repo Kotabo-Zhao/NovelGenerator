@@ -3505,13 +3505,13 @@ const app = createApp({
             chapterProgressLabel.value = evt.message||'质量优化中…';
           }
           else if(evt.type==='outline_compliance'){
+            if(evt.revised_text) writing.content=evt.revised_text;
             outlineCompliance.value = {
               chapter: evt.chapter, pct: evt.pct, level: evt.level,
               message: evt.message||'', missing: evt.missing||[],
-              patched: !!evt.patched_text,
+              revised: !!evt.revised_text, sceneEdits: evt.scene_edits||[],
             };
             chapterProgressLabel.value = evt.message||'大纲合规校验完成';
-            if (evt.patched_text) writing.content += '\n\n' + evt.patched_text;
           }
           else if(evt.type==='outline_compliance_annotations'){
             writing.annotations = evt.annotations||[];
@@ -4701,12 +4701,12 @@ const app = createApp({
             showToast('正文已保留为待修订草稿，不会计入完成进度', '需要修订', '⚠️');
           }
           else if(evt.type==='outline_compliance'){
+            if(evt.revised_text) writing.content=evt.revised_text;
             outlineCompliance.value = {
               chapter: evt.chapter, pct: evt.pct, level: evt.level,
               message: evt.message||'', missing: evt.missing||[],
-              patched: !!evt.patched_text,
+              revised: !!evt.revised_text, sceneEdits: evt.scene_edits||[],
             };
-            if (evt.patched_text) writing.content += '\n\n' + evt.patched_text;
           }
           else if(evt.type==='outline_compliance_annotations'){
             writing.annotations = evt.annotations||[];

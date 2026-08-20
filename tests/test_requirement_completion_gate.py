@@ -1,7 +1,11 @@
 import hashlib
 from pathlib import Path
 
-from backend.core.mixins.generation import GenerationMixin, _hard_requirement_failures
+from backend.core.mixins.generation import (
+    GenerationMixin,
+    _hard_outline_failures,
+    _hard_requirement_failures,
+)
 
 
 class _Memory:
@@ -73,6 +77,24 @@ def test_only_failed_hard_gate_requirements_block_completion():
     assert _hard_requirement_failures({"results": [{"status": "needs_review", "hard_gate": True}]}) == []
 
 
+def test_only_missing_critical_outline_items_block_completion():
+    report = {
+        "passed": False,
+        "critical_missing": [
+            {"id": "beat2", "label": "节拍2：拆开密信"},
+        ],
+        "missing": [
+            {"id": "char_guard", "label": "角色出场：保安"},
+        ],
+    }
+
+    assert [item["id"] for item in _hard_outline_failures(report)] == ["beat2"]
+    assert _hard_outline_failures({"passed": False, "critical_missing": []}) == []
+    assert _hard_outline_failures({"ok": False, "error": "checker unavailable"}) == [
+        {"id": "validation_unavailable", "label": "大纲合规校验未完成"}
+    ]
+
+
 def test_finalizer_preserves_failed_candidate_as_revision_draft():
     probe = _Probe()
     text = "林岚看完信，却没有拆开封蜡。"
@@ -117,6 +139,29 @@ def test_finalizer_is_the_single_completed_chapter_committer():
     assert probe.memory.state["completed_chapters"] == [1, 2]
     assert probe.memory.state["chapter_statuses"]["2"]["status"] == "completed"
     assert ("novel-1", 2) in probe.memory.deleted_drafts
+
+
+def test_finalizer_holds_candidate_when_critical_scene_beat_is_still_missing():
+    probe = _Probe()
+    probe.memory.state["completed_chapters"] = [1]
+
+    result = probe._finalize_chapter_candidate(
+        "novel-1",
+        2,
+        "林岚看见密信，却没有拆开。",
+        "# 第2章\n\n林岚看见密信，却没有拆开。",
+        {"hard_failure_count": 0, "results": []},
+        {"score": 80},
+        {
+            "passed": False,
+            "critical_missing": [{"id": "beat2", "label": "节拍2：拆开密信"}],
+        },
+    )
+
+    assert result["status"] == "needs_revision"
+    assert "大纲核心事件未落地" in result["reason"]
+    assert result["requirement_ids"] == ["outline:beat2"]
+    assert 2 not in probe.memory.state["completed_chapters"]
 
 
 def test_post_generation_validation_error_keeps_the_candidate_for_revision():
