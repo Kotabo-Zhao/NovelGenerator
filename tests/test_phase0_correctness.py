@@ -59,10 +59,10 @@ def test_paragraph_normalizer_only_collapses_excess_blank_lines():
 
 def test_atomic_path_rebuilds_document_after_target_trim():
     source = inspect.getsource(GenerationMixin.atomic_generate_chapter_stream)
-    trim_at = source.index("full_text = _trim_to_target")
-    save_at = source.index("self.memory.write_chapter_draft", trim_at)
+    prepare_at = source.index("full_text = _prepare_chapter_text_for_validation")
+    save_at = source.index("self.memory.write_chapter_draft", prepare_at)
 
-    assert "formatted =" in source[trim_at:save_at]
+    assert "formatted =" in source[prepare_at:save_at]
 
 
 def test_generation_paths_mark_completion_only_after_final_quality_report():

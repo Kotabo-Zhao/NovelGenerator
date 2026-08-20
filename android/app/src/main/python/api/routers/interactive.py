@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 from core.interactive.interact_store import InteractStore
-from core.interactive.story_director import StoryDirector
+from core.interactive.story_director import StoryDirector, enqueue_background
 from core.interactive.dialogue_engine import DialogueEngine
 from core.interactive import voice_director
 from core.interactive.action_engine import _state_snapshot  # v3.8: /act 事件携带状态快照（此前缺失导致 NameError）

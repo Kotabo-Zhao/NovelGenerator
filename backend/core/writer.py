@@ -638,11 +638,17 @@ def _ensure_complete_ending(text: str) -> str:
     text = text.rstrip()
     
     # 完整结尾标记：句号、问号、感叹号、省略号、右引号、右书名号
-    COMPLETE_MARKERS = set("。？！？!…~"")」』】〖〗》〉＞")
+    COMPLETE_MARKERS = set("。？！？!…~\"”’") | set("」』】〖〗》〉＞")
     
-    # 如果已经以完整标记结尾，不需要处理
+    # 如果已经以完整标记结尾，不需要处理；但右引号/括号内可能仍是
+    # 没有句末标点的半句（例如“把纸给我”），交给下面的质量门会误报，
+    # 因此保留原文以外的闭合符号时，后续统一补一个句号。
     last_char = text[-1]
     if last_char in COMPLETE_MARKERS:
+        if last_char in {'"', "'", "”", "’", "」", "』", "】", "》", "〉", "＞"}:
+            inner = text.rstrip('"\'”’」』】》〉＞')
+            if inner and inner[-1] not in "。？！？!…~":
+                return text + "。"
         return text
     
     # 从末尾反向搜索，找到最后一个完整句子边界
@@ -670,14 +676,21 @@ def _ensure_complete_ending(text: str) -> str:
         cut_point = search_start + last_complete + 1
         trimmed = text[:cut_point].rstrip()
         
-        # 如果裁掉的部分 > 20 个字符，说明确实有半截句子
+        # 明确的截断符（破折号/省略号）即使只剩几个字符也表示半句；
+        # 不能用长度阈值把它放过去，否则下一层质量门只能报错并丢失候选。
         removed = len(text) - len(trimmed)
-        if removed > 10:
+        explicit_truncation = text.endswith(("——", "—", "...", "…"))
+        if removed > 10 or explicit_truncation:
             log.info(f"Ensured complete ending: trimmed {removed} chars of incomplete sentence")
             return trimmed
     
     # 兜底：如果实在找不到完整标记，保持原文（至少有内容）
     return text
+
+
+def _prepare_chapter_text_for_validation(text: str, target_words: int) -> str:
+    """裁剪短目标正文并清除末尾截断，保证质量门拿到最终候选。"""
+    return _ensure_complete_ending(_trim_to_target(text, target_words))
 
 
 def _add_closing_hook(text: str) -> str:

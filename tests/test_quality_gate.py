@@ -7,6 +7,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from core.quality_gate import ChapterQualityError, validate_chapter_text
+from core.writer import _ensure_complete_ending, _prepare_chapter_text_for_validation
 
 
 class QualityGateTests(unittest.TestCase):
@@ -17,6 +18,18 @@ class QualityGateTests(unittest.TestCase):
     def test_sentence_ending_with_closing_quote_passes(self):
         result = validate_chapter_text("body" * 200 + '?"', target_words=1000)
         self.assertGreater(result["chars"], result["minimum_chars"])
+
+    def test_short_trailing_dash_is_trimmed_before_quality_gate(self):
+        text = "正文" * 200 + "最后一句完整。未完——"
+        prepared = _ensure_complete_ending(text)
+        self.assertTrue(prepared.endswith("。"))
+        validate_chapter_text(prepared, target_words=1000)
+
+    def test_dialogue_without_inner_punctuation_gets_closed(self):
+        text = "正文" * 200 + "“把纸给我”"
+        prepared = _prepare_chapter_text_for_validation(text, 1000)
+        self.assertTrue(prepared.endswith("”。"))
+        validate_chapter_text(prepared, target_words=1000)
 
     def test_balanced_chinese_dialogue_passes(self):
         result = validate_chapter_text(

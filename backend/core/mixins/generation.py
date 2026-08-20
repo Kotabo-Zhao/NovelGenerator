@@ -1184,8 +1184,10 @@ class GenerationMixin:
             # ── Phase 4: 保存 ──
             from ..quality_gate import validate_chapter_text
             # v2.7.6: 超短篇超长兜底（装配/一致性可能扩写）
-            from ..writer import _trim_to_target
-            full_text = _trim_to_target(full_text, chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS))
+            from ..writer import _prepare_chapter_text_for_validation
+            full_text = _prepare_chapter_text_for_validation(
+                full_text, chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS)
+            )
             formatted = f"# 第{chapter_num}章 {chapter_outline.get('title', f'第{chapter_num}章')}\n\n{full_text}"
             validate_chapter_text(
                 full_text,
@@ -1285,8 +1287,8 @@ class GenerationMixin:
                 log.warning(f"Setting annotation step skipped: {_se}")
 
             from ..quality_gate import validate_chapter_text
-            from ..writer import _trim_to_target
-            full_text = _trim_to_target(
+            from ..writer import _prepare_chapter_text_for_validation
+            full_text = _prepare_chapter_text_for_validation(
                 full_text,
                 chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
             )
@@ -2493,9 +2495,9 @@ class GenerationMixin:
 
             # Freeze the exact candidate before any final report is calculated.
             # No text mutation is allowed after this point.
-            from ..writer import _trim_to_target
+            from ..writer import _prepare_chapter_text_for_validation
             from ..quality_gate import validate_chapter_text
-            full_text = _trim_to_target(full_text, target_words)
+            full_text = _prepare_chapter_text_for_validation(full_text, target_words)
             formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
             validate_chapter_text(full_text, target_words=target_words)
             self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
