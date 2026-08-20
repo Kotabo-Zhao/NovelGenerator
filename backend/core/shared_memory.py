@@ -1680,72 +1680,26 @@ def _normalize_context_paragraphs(text: str) -> str:
 
 
 def normalize_chapter_paragraphs(text: str) -> str:
-    """安全网：把每句一行的碎片文本合并成正常段落。
-    
-    两步：
-    1. 去除标题后的所有单句间空行 → 形成连续文本
-    2. 按 ~80-120 字重新切分段落
+    """Clean whitespace without rewriting the author's semantic paragraphs.
+
+    Earlier versions concatenated the whole chapter and cut it every ~100
+    characters.  That could split a dialogue pair, erase a scene break, and
+    give every book the same paragraph fingerprint.  Formatting cleanup is
+    intentionally conservative: normalize line endings, trim line tails, and
+    collapse only repeated blank lines.
     """
-    import re
-    lines = text.split('\n')
-    result = []
-    
-    # Step 1: 收集所有内容行，去除空行（保留标题行后的结构）
-    content_lines = []
-    has_title = False
-    for line in lines:
-        stripped = line.strip()
-        # 保留标题行
-        if stripped.startswith('#'):
-            if content_lines:
-                # 处理之前积累的内容
-                result.append(_rechunk_text(content_lines))
-                content_lines = []
-            result.append(line)
-            has_title = True
-            continue
-        # 保留分隔线
-        if stripped.startswith('---') or stripped.startswith('===') or stripped.startswith('***'):
-            if content_lines:
-                result.append(_rechunk_text(content_lines))
-                content_lines = []
-            result.append(line)
-            continue
-        # 跳过空行
-        if not stripped:
-            continue
-        content_lines.append(stripped)
-    
-    # 处理剩余内容
-    if content_lines:
-        result.append(_rechunk_text(content_lines))
-    
-    return '\n\n'.join([r for r in result if r])
-
-
-def _rechunk_text(lines: list) -> str:
-    """将句子列表重新切分为段落（~80-120字/段）"""
-    if not lines:
+    if not text:
         return ""
-    
-    # 先合并所有句子为连续文本
-    full_text = ''.join(lines)
-    
-    # 如果总文本短，直接返回
-    if len(full_text) <= 120:
-        return full_text
-    
-    # 按 ~100 字切分，但尽量在句号处断开
-    paragraphs = []
-    i = 0
-    while i < len(full_text):
-        end = min(i + 100, len(full_text))
-        # 在目标范围内找最后一个句号作为断点
-        if end < len(full_text):
-            last_period = full_text.rfind('。', i, end)
-            if last_period > i + 30:  # 至少30字
-                end = last_period + 1
-        paragraphs.append(full_text[i:end])
-        i = end
-    
-    return '\n\n'.join(paragraphs)
+
+    normalized = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    result: list[str] = []
+    for raw_line in normalized.split("\n"):
+        line = raw_line.rstrip()
+        if line.strip():
+            result.append(line)
+        elif result and result[-1] != "":
+            result.append("")
+
+    while result and result[-1] == "":
+        result.pop()
+    return "\n".join(result)

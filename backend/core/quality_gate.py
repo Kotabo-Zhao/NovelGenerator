@@ -9,6 +9,43 @@ class ChapterQualityError(ValueError):
     pass
 
 
+_DELIMITER_PAIRS = {
+    "「": "」",
+    "『": "』",
+    "“": "”",
+    "（": "）",
+    "【": "】",
+    "〔": "〕",
+    "《": "》",
+    "〈": "〉",
+    "[": "]",
+    "{": "}",
+}
+_DELIMITER_CLOSERS = {closer: opener for opener, closer in _DELIMITER_PAIRS.items()}
+
+
+def _validate_balanced_delimiters(text: str) -> None:
+    stack: list[tuple[str, int]] = []
+    for index, char in enumerate(text):
+        if char in _DELIMITER_PAIRS:
+            stack.append((char, index))
+            continue
+        if char not in _DELIMITER_CLOSERS:
+            continue
+        expected_opener = _DELIMITER_CLOSERS[char]
+        if not stack or stack[-1][0] != expected_opener:
+            raise ChapterQualityError(
+                f"chapter contains an unbalanced delimiter: unexpected {char} at {index}"
+            )
+        stack.pop()
+
+    if stack:
+        opener, index = stack[-1]
+        raise ChapterQualityError(
+            f"chapter contains an unbalanced delimiter: unclosed {opener} at {index}"
+        )
+
+
 def validate_chapter_text(text: str, *, target_words: int = 1500) -> dict:
     if not isinstance(text, str):
         raise ChapterQualityError("chapter text must be a string")
@@ -26,6 +63,7 @@ def validate_chapter_text(text: str, *, target_words: int = 1500) -> dict:
     )
     if any(marker.lower() in normalized.lower() for marker in forbidden):
         raise ChapterQualityError("chapter contains an instruction leak")
+    _validate_balanced_delimiters(normalized)
     # v2.7.6: 硬底 120→50——字数放开后小目标（超短篇100-300字）不得被卡死；
     # 正常目标(≥1000字)时 0.25×目标 ≥250，公式对长篇行为完全不变。
     minimum = max(50, min(600, int(max(1, target_words) * 0.25)))
@@ -42,4 +80,8 @@ def validate_chapter_text(text: str, *, target_words: int = 1500) -> dict:
         content_end = content_end[:-1]
     if not content_end or content_end[-1] not in sentence_endings:
         raise ChapterQualityError("chapter does not end with punctuation")
-    return {"chars": len(normalized), "minimum_chars": minimum}
+    return {
+        "chars": len(normalized),
+        "minimum_chars": minimum,
+        "delimiters_balanced": True,
+    }

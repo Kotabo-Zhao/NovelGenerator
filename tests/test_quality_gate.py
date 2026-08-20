@@ -18,6 +18,20 @@ class QualityGateTests(unittest.TestCase):
         result = validate_chapter_text("body" * 200 + '?"', target_words=1000)
         self.assertGreater(result["chars"], result["minimum_chars"])
 
+    def test_balanced_chinese_dialogue_passes(self):
+        result = validate_chapter_text(
+            "正文" * 200 + "「你终于来了？」", target_words=1000
+        )
+        self.assertTrue(result["delimiters_balanced"])
+
+    def test_unclosed_chinese_dialogue_is_rejected_even_after_ellipsis(self):
+        with self.assertRaisesRegex(ChapterQualityError, "unbalanced delimiter"):
+            validate_chapter_text("正文" * 200 + "「等等……", target_words=1000)
+
+    def test_mismatched_chinese_delimiters_are_rejected(self):
+        with self.assertRaisesRegex(ChapterQualityError, "unbalanced delimiter"):
+            validate_chapter_text("正文" * 200 + "【系统提示）结束。", target_words=1000)
+
     def test_marker_and_instruction_are_rejected(self):
         with self.assertRaises(ChapterQualityError):
             validate_chapter_text("正文" * 200 + "<!-- GENERATION_IN_PROGRESS -->")
