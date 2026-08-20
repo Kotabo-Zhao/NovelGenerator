@@ -321,7 +321,7 @@ async def generate_chapter(req: GenerateChapterRequest, request: Request):
     _require_legacy_owner(request, req.novel_id)
     async def event_stream():
         async for data in _sse_with_heartbeat(
-            engine.generate_chapter_stream(
+            engine.unified_generate_chapter_stream(
                 req.novel_id, req.chapter_num, req.writing_mode,
                 feedback=req.feedback,
             )
@@ -344,9 +344,10 @@ async def generate_chapter_atomic(req: GenerateChapterRequest, request: Request)
     _require_legacy_owner(request, req.novel_id)
     async def event_stream():
         async for data in _sse_with_heartbeat(
-            engine.atomic_generate_chapter_stream(
+            engine.unified_generate_chapter_stream(
                 req.novel_id, req.chapter_num, req.writing_mode,
                 feedback=req.feedback,
+                force_strategy="atomic",
             )
         ):
             yield data
@@ -408,7 +409,7 @@ async def generate_batch(novel_id: str, req: BatchGenerationRequest, request: Re
                 yield {"type": "progress", "chapter": ch_num, "total": end, "start": start}
                 chapter_error = None
                 try:
-                    async for event in engine.generate_chapter_stream(
+                    async for event in engine.unified_generate_chapter_stream(
                         novel_id, ch_num, writing_mode, batch_mode=True  # v2.6: 批量模式（9次LLM→1-3次）
                     ):
                         yield event
@@ -1017,4 +1018,3 @@ async def scan_consistency(novel_id: str, request: Request):
     except Exception as e:
         log.warning(f"Consistency scan failed: {e}")
         raise HTTPException(status_code=500, detail=f"扫描失败: {e}")
-

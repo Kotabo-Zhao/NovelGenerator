@@ -192,6 +192,25 @@ def _save_final_quality_report(memory, novel_id: str, chapter_num: int, report: 
     return record
 
 
+def choose_draft_strategy(chapter_outline: dict | None, *, batch_mode: bool = False) -> str:
+    """Choose an internal draft strategy from contract readiness.
+
+    This is intentionally not a user-facing writing mode.  Batch generation favors
+    the lower-call standard path; a fully specified single chapter can use atomic
+    beat drafting without exposing implementation terminology in the product UI.
+    """
+    if batch_mode:
+        return "standard"
+    chapter = chapter_outline or {}
+    beats = chapter.get("scene_beats") or []
+    concrete = 0
+    for beat in beats:
+        action = beat.get("key_action") if isinstance(beat, dict) else beat
+        if str(action or "").strip():
+            concrete += 1
+    return "atomic" if chapter.get("contract_status") == "ready" and concrete >= 3 else "standard"
+
+
 
 
 # ===== _extract_key_ending (从 engine.py 迁移) =====
@@ -312,6 +331,41 @@ def _get_style_guide(style: str, genre: str) -> str:
 
 
 class GenerationMixin:
+    async def unified_generate_chapter_stream(
+        self,
+        novel_id: str,
+        chapter_num: int,
+        writing_mode: str = "webnovel",
+        feedback: str | None = None,
+        batch_mode: bool = False,
+        force_strategy: str = "",
+    ) -> AsyncGenerator[dict, None]:
+        """Single public chapter stream with an internal drafting strategy."""
+        plan = self.get_novel(novel_id) or {}
+        chapter_outline = self._find_chapter_outline(plan, chapter_num) or {}
+        strategy = force_strategy if force_strategy in {"standard", "atomic"} else choose_draft_strategy(
+            chapter_outline, batch_mode=batch_mode
+        )
+        yield {
+            "type": "draft_strategy",
+            "strategy": strategy,
+            "message": "正在按章节契约组织草稿…",
+        }
+        if strategy == "atomic":
+            async for event in self.atomic_generate_chapter_stream(
+                novel_id, chapter_num, writing_mode, feedback=feedback
+            ):
+                yield event
+            return
+        async for event in self.generate_chapter_stream(
+            novel_id,
+            chapter_num,
+            writing_mode,
+            feedback=feedback,
+            batch_mode=batch_mode,
+        ):
+            yield event
+
     def _find_chapter_outline(self, plan: dict, chapter_num: int) -> Optional[dict]:
         """在大纲中查找指定章节（兼容字符串/整数章节号，防御脏数据）"""
         volumes = plan.get("outline", {}).get("volumes", [])
