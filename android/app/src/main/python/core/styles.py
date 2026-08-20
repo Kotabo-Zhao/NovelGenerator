@@ -1141,6 +1141,43 @@ STYLE_DISPLAY_NAMES = {
 }
 _DISPLAY_TO_STYLE = {display: key for key, display in STYLE_DISPLAY_NAMES.items()}
 
+# 新建作品只展示 8 个面向读者的叙事原型。旧预设和旧名称继续由 get_style
+# 解析，保证历史作品可读、可续写，但不再把 41 个内部细分项堆给新用户。
+PUBLIC_STYLE_PROTOTYPES = {
+    "紧凑推进": {
+        "style_key": "快节奏打脸",
+        "description": "冲突尽早入场，场景持续产生结果，过渡简洁。",
+    },
+    "克制现实": {
+        "style_key": "都市生活",
+        "description": "贴近生活质感，情绪不过度解释，重视选择与代价。",
+    },
+    "轻松对话": {
+        "style_key": "轻松搞笑",
+        "description": "口语自然、角色有幽默差异，笑点来自人物关系。",
+    },
+    "悬疑冷感": {
+        "style_key": "悬疑推理",
+        "description": "信息分层披露，氛围冷静，线索与误导保持公平。",
+    },
+    "热血升级": {
+        "style_key": "热血爽文",
+        "description": "目标清晰、行动有代价，成长与反馈持续兑现。",
+    },
+    "细腻情感": {
+        "style_key": "虐恋深情",
+        "description": "用细节和潜台词推进关系，情绪变化有充分铺垫。",
+    },
+    "宏大群像": {
+        "style_key": "乔治·马丁",
+        "description": "多人物目标交织，立场各自成立，事件影响逐层扩散。",
+    },
+    "日常治愈": {
+        "style_key": "温馨治愈",
+        "description": "从日常动作与微小变化中积累温度，节奏舒展。",
+    },
+}
+
 
 def _public_style_config(style_key: str) -> dict:
     config = dict(STYLES[style_key])
@@ -1151,6 +1188,13 @@ def _public_style_config(style_key: str) -> dict:
 
 def get_style(name: str) -> dict:
     """获取风格配置"""
+    prototype = PUBLIC_STYLE_PROTOTYPES.get(name)
+    if prototype:
+        config = _public_style_config(prototype["style_key"])
+        config["name"] = name
+        config["description"] = prototype["description"]
+        config["narrative_prototype"] = name
+        return config
     style_key = _DISPLAY_TO_STYLE.get(name, name)
     if style_key not in STYLES:
         style_key = "热血爽文"
@@ -1159,7 +1203,12 @@ def get_style(name: str) -> dict:
 
 def has_style(name: str) -> bool:
     """Return whether a style name/legacy alias is explicitly configured."""
-    return name in STYLES or name in _DISPLAY_TO_STYLE or name in STYLE_DISPLAY_NAMES
+    return (
+        name in PUBLIC_STYLE_PROTOTYPES
+        or name in STYLES
+        or name in _DISPLAY_TO_STYLE
+        or name in STYLE_DISPLAY_NAMES
+    )
 
 
 def get_all_style_names() -> list:
@@ -1172,15 +1221,5 @@ def get_all_style_names() -> list:
 
 
 def get_style_categories() -> dict:
-    """返回分组后的风格列表"""
-    return {
-        "男频·经典流派": ["热血爽文", "轻松搞笑", "黑暗深沉", "文艺哲思", "温馨治愈", "快节奏打脸"],
-        "男频·成长流派": ["团队成长", "升级逆袭", "史诗悬疑", "克制哲思", "江湖群像", "轻松脑洞", "设定悬疑", "系统升级", "反转悬疑", "科幻日常"],
-        "男频·特殊流派": ["系统流爽文", "悬疑烧脑", "游戏电竞"],
-        "女频·经典流派": ["甜宠言情", "古风言情", "女强爽文", "虐恋深情", "校园青春", "悬疑爱情", "宅斗宫斗"],
-        "女频·情感流派": ["轻甜日常", "群像情感", "冷峻群像", "悬疑情感", "都市情感"],
-        "跨频·流派": ["悬疑推理", "科幻末世", "历史权谋", "都市生活"],
-        "武侠经典": ["古典武侠", "留白武侠"],
-        "国际·叙事取向": ["都市孤独", "多视角史诗", "日常惊悚"],
-        "自定义": ["自定义参数化风格"],
-    }
+    """返回新建作品公开使用的精简叙事原型。"""
+    return {"推荐叙事取向": list(PUBLIC_STYLE_PROTOTYPES)}
