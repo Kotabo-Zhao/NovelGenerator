@@ -239,7 +239,12 @@ Page({
       });
       if (job.status === "succeeded") {
         wx.removeStorageSync("activeJobId");
+        // 成功路径必须清理幂等键：job_store 对已有 key 直接返回 succeeded 旧任务，
+        // 不清理则再点"生成本章"静默无效，章节永远无法重新生成。
+        wx.removeStorageSync(`generation-key:${this.data.novelId}:${this.data.chapter}`);
         await this.loadChapter(job.result && job.result.chapter_num || this.data.chapter);
+        // 刷新作品元数据（完成章节数/进度），onShow 因 !novel 条件不满足不会重载。
+        try { await this.loadNovel(); } catch (e) { /* 进度刷新失败不阻断正文展示 */ }
         this.setData({ error: "" });
         return;
       }

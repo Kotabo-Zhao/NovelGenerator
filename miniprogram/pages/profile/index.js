@@ -88,8 +88,10 @@ Page({
         this.setData({ deleting: true, authError: "" });
         try {
           await api.delete("/api/auth/account");
-          await api.logout();
-          this.setData({ loggedIn: false, consentRequired: false });
+          // 注销后 token 已被服务端吊销，再调 logout 必 401；
+          // 直接清本地会话态即可，避免 UI 报错 + loggedIn 残留。
+          api.clearSession();
+          this.setData({ loggedIn: false, consentRequired: false, authError: "" });
           wx.showToast({ title: "账号已注销", icon: "success" });
         } catch (error) {
           this.setData({ authError: error.message || "注销失败，请先取消进行中的任务" });

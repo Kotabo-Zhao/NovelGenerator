@@ -290,7 +290,16 @@ class OutlineInteractive:
                             volume_index=i, volume_num=vn,
                         )
                         if new_vol:
-                            volumes[i] = new_vol
+                            # v2.8.5 fix: volume 模式 LLM 只返回章节数组（_safe_llm_call
+                            # 已还原 {"data","chapters"} 包装）。此前 volumes[i] = new_vol
+                            # 会把整卷替换成数组/包装字典，导致卷的 number/title/act/theme
+                            # 永久丢失并持久化。现在只更新章节，保留卷元数据。
+                            if isinstance(new_vol, list):
+                                volumes[i]["chapters"] = new_vol
+                            elif isinstance(new_vol, dict) and "chapters" in new_vol:
+                                volumes[i]["chapters"] = new_vol["chapters"]
+                            else:
+                                volumes[i] = new_vol
                             result["effect"] = f"第{vn}卷已更新"
                         break
             plan["outline"]["total_chapters"] = sum(
@@ -537,6 +546,18 @@ class OutlineInteractive:
                     result["total_chapters"] = sum(
                         len(v.get("chapters", [])) for v in result.get("volumes", []) if isinstance(v, dict)
                     )
+                elif isinstance(result, dict) and (
+                    isinstance(result.get("data"), list) or isinstance(result.get("chapters"), list)
+                ):
+                    # planner._parse_json 把顶层 JSON 数组包装成 {"data":[...],"chapters":[...]}
+                    # （planner.py:1410-1427）；volume 模式需要真正的列表。还原包装。
+                    wrapped = result.get("data")
+                    if not isinstance(wrapped, list):
+                        wrapped = result.get("chapters")
+                    for ch in wrapped:
+                        if isinstance(ch, dict):
+                            ch["number"] = int(ch.get("number", 1))
+                    return wrapped
                 elif isinstance(result, list):
                     for ch in result:
                         if isinstance(ch, dict):

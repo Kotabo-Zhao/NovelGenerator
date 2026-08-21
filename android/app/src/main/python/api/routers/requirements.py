@@ -1,4 +1,5 @@
 """NovelGenerator — 需求拆解与监督 API Router"""
+import asyncio
 import json
 import os
 from typing import Optional
@@ -22,11 +23,11 @@ async def preview_decompose(req: dict, _owner_id: str = Depends(require_owner)):
     if not inspiration.strip():
         raise HTTPException(status_code=400, detail="请输入灵感或需求")
 
-    # 直接拆解，不关联任何小说
-    result = engine.requirement_decomposer.decompose(inspiration)
+    # v2.8.5: decompose 内含同步 LLM，放线程池避免阻塞事件循环
+    result = await asyncio.to_thread(engine.requirement_decomposer.decompose, inspiration)
 
     # 同时返回阶段上下文
-    phase_context = engine.requirement_decomposer.decompose_to_context(result)
+    phase_context = await asyncio.to_thread(engine.requirement_decomposer.decompose_to_context, result)
 
     return {
         "requirements": result,
@@ -45,7 +46,8 @@ async def decompose_requirements(novel_id: str, req: dict):
     inspiration = req.get("inspiration", "")
     if not inspiration.strip():
         raise HTTPException(status_code=400, detail="请输入灵感或需求")
-    result = engine.decompose_requirements(novel_id, inspiration)
+    # v2.8.5: 同步 LLM 放线程池
+    result = await asyncio.to_thread(engine.decompose_requirements, novel_id, inspiration)
     return {"requirements": result}
 
 
@@ -55,7 +57,8 @@ async def update_requirements(novel_id: str, req: dict):
     inspiration = req.get("inspiration", "")
     if not inspiration.strip():
         raise HTTPException(status_code=400, detail="请输入追加的需求")
-    result = engine.update_requirements(novel_id, inspiration)
+    # v2.8.5: 同步 LLM 放线程池
+    result = await asyncio.to_thread(engine.update_requirements, novel_id, inspiration)
     return {"requirements": result}
 
 
@@ -107,7 +110,8 @@ async def get_requirement_compliance(novel_id: str, chapter_num: Optional[int] =
 @router.post("/api/novels/{novel_id}/requirements/supervise")
 async def supervise_requirements(novel_id: str):
     """监督当前方案是否满足需求"""
-    result = engine.supervise_requirements(novel_id)
+    # v2.8.5: 同步 LLM 放线程池
+    result = await asyncio.to_thread(engine.supervise_requirements, novel_id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result

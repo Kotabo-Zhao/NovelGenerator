@@ -117,7 +117,9 @@ class UsageQuotaStore:
 
     @staticmethod
     def _day() -> str:
-        return time.strftime("%Y-%m-%d", time.gmtime())
+        # v2.8.5: 用本地时区计日——此前 time.gmtime()（UTC）导致 UTC+8 用户
+        # 本地 0-8 点的消耗被记到"前一天"配额，凌晨高峰期会提前触发限流。
+        return time.strftime("%Y-%m-%d", time.localtime())
 
     def reserve(
         self,

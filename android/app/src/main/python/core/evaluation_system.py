@@ -167,7 +167,7 @@ def _bleu_single(candidate: str, references: list, n: int) -> float:
 
 # ── L4: 连贯性 ──
 
-def coherence_score(text: str, embed_fn=None) -> dict:
+def coherence_score(text: str, embed_fn=None, protagonist: str = "") -> dict:
     """评估文本内部连贯性
     
     计算相邻句子的语义相似度。
@@ -184,7 +184,11 @@ def coherence_score(text: str, embed_fn=None) -> dict:
     sims = []
     lexical_sims = []
     drops = 0
-    continuity_markers = re.compile(r'^(他|她|它|沈砚|随后|于是|这时|此刻|然而|但是|可|因此|等到|第二天)')
+    # v2.8.5: 主角名可注入——此前硬编码「沈砚」，其他主角名承接句只能拿 0.32
+    # 保底，被误判"跳跃过大"。未传时保留旧行为（含沈砚，兼容既有测试）。
+    _protag = protagonist.strip() or ""
+    _markers = '|'.join(filter(None, [_protag, '他', '她', '它']))
+    continuity_markers = re.compile(r'^(' + _markers + '|随后|于是|这时|此刻|然而|但是|可|因此|等到|第二天)')
     for i in range(len(sentences) - 1):
         if embed_fn:
             sim = _cosine_sim(embed_fn(sentences[i]), embed_fn(sentences[i+1]))
@@ -682,11 +686,19 @@ def evaluate_chapter(text: str, texts_for_diversity: list = None, embed_fn=None,
     if not effective_genre and isinstance(chapter_outline, dict):
         effective_genre = str(chapter_outline.get("genre") or "")
 
+    # v2.8.5: 从大纲/角色信息提取主角名，注入连贯性评估的承接标记
+    _protag_name = ""
+    if isinstance(chapter_outline, dict):
+        _chars = chapter_outline.get("characters") or []
+        if isinstance(_chars, list) and _chars:
+            _first = str(_chars[0]) if not isinstance(_chars[0], dict) else str(_chars[0].get("name") or "")
+            _protag_name = _first
+
     report = {
         "distinct_1": round(distinct_n(text, 1), 4),
         "distinct_2": round(distinct_n(text, 2), 4),
         "distinct_3": round(distinct_n(text, 3), 4),
-        "coherence": coherence_score(text, embed_fn),
+        "coherence": coherence_score(text, embed_fn, protagonist=_protag_name),
         "hook": hook_strength(text),
         "dopamine": dopamine_density(text, genre=effective_genre),
         "ai_slop": ai_slop_score(text),

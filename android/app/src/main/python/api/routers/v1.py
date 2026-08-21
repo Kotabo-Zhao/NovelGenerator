@@ -267,6 +267,8 @@ async def list_owned_novels(owner_id: str = Depends(require_consented_owner)):
                 "genre": plan.get("genre", ""),
                 "style": plan.get("style", ""),
                 "state": state,
+                # 与 legacy engine.list_novels() 保持一致：小程序书架用它算完成进度
+                "disk_chapters": len((state or {}).get("completed_chapters", [])),
             }
         )
     return {"novels": result}

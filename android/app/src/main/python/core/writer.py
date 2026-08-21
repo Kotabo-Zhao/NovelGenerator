@@ -382,7 +382,12 @@ class Writer:
         """
         chapter_outline = chapter_outline or {}
         # 解析风格
-        if style in ("自定义风格",) or style.startswith("自定义"):
+        # v2.8.5: 参数化风格优先识别——此前 startswith("自定义") 把"自定义参数化风格"
+        # 也拦截走 build_custom_style，丢弃全部 7 个参数，STYLES 里的参数化条目永不被命中。
+        from .styles import STYLES
+        if style in STYLES and STYLES[style].get("is_parameterized"):
+            style_config = STYLES[style]
+        elif style in ("自定义风格",) or style.startswith("自定义"):
             style_config = build_custom_style(style)
         else:
             style_config = get_style(style)

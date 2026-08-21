@@ -27,7 +27,9 @@ SYNC_PAIRS = [
 ]
 
 # 同步 .py 文件（跳过缓存与平台特有文件）
-SKIP_NAMES = {"__pycache__", "server_runner.py", "__init__.py"}
+# 注意：__init__.py 不再跳过——backend 侧若在包初始化里导出符号（__all__/from ... import），
+# 变更必须传播到 android，否则 APK 行为落后。android 平台特有文件仅 server_runner.py。
+SKIP_NAMES = {"__pycache__", "server_runner.py"}
 
 
 def walk_py(src: Path) -> dict:

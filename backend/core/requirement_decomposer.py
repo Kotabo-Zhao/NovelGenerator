@@ -667,11 +667,15 @@ class RequirementDecomposer:
                 "sub_category": "user_addition",
                 "title": "追加创作要求",
                 "description": new_inspiration,
-                "must_include": [new_inspiration] if kind in {"milestone", "chapter_event"} else [],
+                # v2.8.5: 此前把整句输入塞进 must_include 且 priority 硬编码 P0——
+                # requirements_contract 按逐字子串匹配，整句几乎必然缺失，
+                # 章节被 hard_gate 永久拦截。改为空 must_include（软性要求走
+                # quality_criteria/generation_hint），priority 降为 P1 避免误伤。
+                "must_include": [],
                 "must_avoid": [],
                 "generation_hint": new_inspiration,
                 "quality_criteria": [f"创作结果体现：{new_inspiration}"],
-                "priority": "P0",
+                "priority": "P1",
                 "scope": scope,
                 "chapter_numbers": chapter_numbers,
                 "status": "pending",

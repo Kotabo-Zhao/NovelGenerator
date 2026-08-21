@@ -95,7 +95,9 @@ async def opening_alternatives(novel_id: str, req: dict, request: Request):
     _require_legacy_owner(request, novel_id)
     chapter_num = req.get("chapter_num", 1)
     count = req.get("count", 3)
-    result = await engine.generate_opening_alternatives(novel_id, chapter_num, count)
+    # v2.8.5: 内含同步 LLM，放线程池避免阻塞事件循环（同文件其他端点已遵循此模式）
+    import asyncio
+    result = await asyncio.to_thread(engine.generate_opening_alternatives, novel_id, chapter_num, count)
     return {"alternatives": result}
 
 

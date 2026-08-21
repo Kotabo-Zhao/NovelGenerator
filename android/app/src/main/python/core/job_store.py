@@ -507,6 +507,30 @@ class GenerationJobStore:
                 progress=progress,
             )
 
+    def touch(self, job_id: str) -> Dict[str, Any]:
+        """Refresh updated_at without changing state — worker heartbeat.
+
+        Long chapter generations emit no progress events for minutes at a
+        time; without a heartbeat ``requeue_stale`` would re-queue an alive
+        job past the stale threshold, causing duplicate LLM work and double
+        billing.  Workers should call this at least every
+        ``JOB_RECOVERY_STALE_SECONDS / 3`` seconds.
+        """
+        normalized_id = self._require_text(job_id, "job_id", max_length=100)
+        with self._lock, self._session() as connection:
+            row = self._fetch_one(connection, normalized_id)
+            if row is None:
+                raise KeyError(f"generation job not found: {normalized_id}")
+            now = time.time()
+            connection.execute(
+                "UPDATE generation_jobs SET updated_at = ? WHERE job_id = ?",
+                (now, normalized_id),
+            )
+            updated = self._fetch_one(connection, normalized_id)
+            if updated is None:
+                raise RuntimeError("touched generation job could not be loaded")
+            return self._row_to_dict(updated)
+
     def complete(self, job_id: str, *, result: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
         result_json = self._serialize(dict(result or {}), "result")
         return self._transition(

@@ -142,13 +142,43 @@ async def get_quality_dashboard(novel_id: str, request: Request):
             if content:
                 word_counts[str(ch)] = len(content)
 
-    # 4. 伏笔统计
+    # 4. 伏笔统计（含逐条账本——前端"伏笔账本"面板数据源）
     foreshadow_ledger = plan.get("foreshadow_ledger", {})
     total_hooks = len(foreshadow_ledger)
     resolved_hooks = sum(1 for fs in foreshadow_ledger.values() if fs.get("actual_payoff_chapter"))
+    foreshadow_list = []
+    try:
+        _hooks = engine.memory.read("foreshadowing", novel_id)
+        if not isinstance(_hooks, list) or not _hooks:
+            # fallback: 部分小说只把伏笔写在 plan.json 的 foreshadow_ledger
+            _hooks = [
+                {"description": str(fs.get("description", ""))[:120],
+                 "plant_chapter": fs.get("plant_chapter"),
+                 "actual_payoff_chapter": fs.get("actual_payoff_chapter")}
+                for fs in foreshadow_ledger.values()
+                if isinstance(fs, dict) and fs.get("description")
+            ]
+        if isinstance(_hooks, list):
+            foreshadow_list = [
+                {
+                    "description": str(h.get("description", ""))[:120],
+                    "plant_chapter": h.get("plant_chapter"),
+                    "reveal_chapter": h.get("reveal_chapter"),
+                    "actual_payoff_chapter": h.get("actual_payoff_chapter"),
+                }
+                for h in _hooks[:20]
+                if isinstance(h, dict) and h.get("description")
+            ]
+    except Exception:
+        pass  # 伏笔文件缺失/损坏时账本为空，不阻断质量面板
 
-    # 5. 摘要数量（长篇连续性）
-    summary_count = len(state.get("summaries", {}))
+    # 5. 摘要数量（长篇连续性）——摘要写入 global_state.json（generation.py
+    #    chapter_summarizer 均写 global_state），从 state.json 读恒为 0。
+    try:
+        _gs = engine.memory.read("global_state", novel_id, skip_cache=True)
+        summary_count = len((_gs or {}).get("chapters_summary", {}))
+    except Exception:
+        summary_count = 0
 
     return {
         "novel_id": novel_id,
@@ -169,6 +199,7 @@ async def get_quality_dashboard(novel_id: str, request: Request):
                 "total": total_hooks,
                 "resolved": resolved_hooks,
                 "rate": int(resolved_hooks / max(total_hooks, 1) * 100),
+                "list": foreshadow_list,
             },
             "continuity": {
                 "auto_summaries": summary_count,
@@ -523,10 +554,36 @@ async def export_novel(novel_id: str, request: Request, fmt: str = "txt"):
 
 @router.post("/api/novels/export/batch")
 async def batch_export(req: BatchExportRequest, request: Request):
-    raise HTTPException(
-        status_code=410,
-        detail="批量导出已迁移到认证接口 /v1/novels/{novel_id}/exports",
-    )
+    """批量导出多本小说（legacy 兼容面：web 前端 internal 模式使用）。
+
+    v1 的 /v1/novels/{novel_id}/exports 走认证 job 队列（小程序）；
+    本接口保留同步批量导出供 web（无登录态）使用，避免 web 端 410 后功能失效。
+    """
+    novel_ids = req.novel_ids
+    fmt = req.fmt
+
+    if not novel_ids:
+        # 导出全部
+        owner_id = getattr(request.state, "owner_id", None)
+        if owner_id:
+            novel_ids = [item["novel_id"] for item in ownership_store.list_for_owner(owner_id)]
+        else:
+            novel_ids = [n.get("id") for n in engine.list_novels() if n.get("id")]
+
+    for novel_id in novel_ids:
+        _require_legacy_owner(request, novel_id)
+
+    results = []
+    for nid in novel_ids:
+        content, err = await asyncio.to_thread(engine.export_novel, nid, fmt)
+        results.append({
+            "novel_id": nid,
+            "success": err is None,
+            "error": err or None,
+            "content": content if err is None else None,
+        })
+
+    return {"results": results}
 
 
 @router.get("/api/novels/{novel_id}/character-bible")
@@ -694,8 +751,13 @@ async def surgical_edit(novel_id: str, chapter_num: int, req: SurgicalEditReques
 
     def _write_ch(fnum, content):
         fp = os.path.join(chapters_dir, f"chapter_{fnum:04d}.md")
-        # 版本快照（写入前保存旧版）
-        _snapshot_chapter(fnum, content)
+        # 版本快照（写入前保存旧版）——必须先读磁盘旧内容再快照，
+        # 否则快照的是"即将写入的新内容"，回滚到 v1 等于没回滚。
+        previous = None
+        if os.path.exists(fp):
+            with open(fp, "r", encoding="utf-8") as f:
+                previous = f.read()
+        _snapshot_chapter(fnum, previous)
         with open(fp, "w", encoding="utf-8") as f:
             f.write(content)
 
@@ -831,7 +893,7 @@ async def surgical_edit(novel_id: str, chapter_num: int, req: SurgicalEditReques
             f"请从断点处自然续写，保持相同的叙事视角、风格和节奏，"
             f"直到本章达到约 {target_words} 字。不要重复已写内容，不要解释，直接输出续写文本。"
         )
-        result = _ai_call(prompt, temperature=0.8, max_tokens=2500)
+        result = await asyncio.to_thread(_ai_call, prompt, 0.8, 2500)
         new_content = content.rstrip() + "\n\n" + result.strip()
     elif op == "expand":
         prompt = (
@@ -839,7 +901,7 @@ async def surgical_edit(novel_id: str, chapter_num: int, req: SurgicalEditReques
             f"请扩写这段：补充感官细节、动作层次、心理活动与环境描写，"
             f"不改变情节走向和人物关系，长度约为原文 2 倍。直接输出扩写后的文本。"
         )
-        result = _ai_call(prompt, temperature=0.7, max_tokens=2000)
+        result = await asyncio.to_thread(_ai_call, prompt, 0.7, 2000)
         new_content = content[:sel_start] + result.strip() + content[sel_end:]
     elif op == "condense":
         prompt = (
@@ -847,7 +909,7 @@ async def surgical_edit(novel_id: str, chapter_num: int, req: SurgicalEditReques
             f"请压缩这段至原文 40-60% 长度，保留所有关键信息、人物动作和情绪节点，"
             f"语言更精炼。直接输出压缩后的文本。"
         )
-        result = _ai_call(prompt, temperature=0.5, max_tokens=1500)
+        result = await asyncio.to_thread(_ai_call, prompt, 0.5, 1500)
         new_content = content[:sel_start] + result.strip() + content[sel_end:]
     elif op == "rewrite":
         if not instruction:
@@ -857,7 +919,7 @@ async def surgical_edit(novel_id: str, chapter_num: int, req: SurgicalEditReques
             f"请按以下意见重写这段，保持叙事视角与风格一致：\n{instruction}\n"
             f"直接输出重写后的文本，不要解释。"
         )
-        result = _ai_call(prompt, temperature=0.8, max_tokens=2000)
+        result = await asyncio.to_thread(_ai_call, prompt, 0.8, 2000)
         new_content = content[:sel_start] + result.strip() + content[sel_end:]
     else:
         raise HTTPException(status_code=400, detail=f"不支持的操作: {op}")
@@ -1017,7 +1079,8 @@ async def scan_consistency(novel_id: str, request: Request):
     try:
         from core.settings_scanner import SettingsScanner
         scanner = SettingsScanner(engine.client, engine.model)
-        result = scanner.scan(novel_id, engine.get_novel(novel_id) or {})
+        # v2.8.5: scan 内含同步 LLM（10-30s），放线程池避免阻塞事件循环
+        result = await asyncio.to_thread(scanner.scan, novel_id, engine.get_novel(novel_id) or {})
         return result
     except ImportError:
         raise HTTPException(status_code=501, detail="settings_scanner 模块不可用")

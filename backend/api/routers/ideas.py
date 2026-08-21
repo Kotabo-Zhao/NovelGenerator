@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 router = APIRouter()
 
 from ..deps import log
-from ..auth import is_internal_version
+from ..auth import is_internal_version, require_owner
 from config import NOVELS_DIR
 from core.atomic_io import atomic_write_json
 
@@ -40,11 +40,13 @@ def _save_ideas(d: dict) -> None:
 def _check_owner(request: Request) -> None:
     owner_id = getattr(request.state, "owner_id", None)
     if not owner_id and not is_internal_version():
+        # 该端点不在 /api/novels* 前缀下，legacy 中间件不会注入 owner_id；
+        # 但路由已用 require_owner Depends 兜底鉴权，这里仅作防御。
         raise HTTPException(status_code=401, detail="需要登录")
 
 
 @router.get("/api/ideas")
-async def list_ideas(request: Request, tag: str = ""):
+async def list_ideas(request: Request, tag: str = "", _owner: str = Depends(require_owner)):
     """灵感列表（可按 tag 过滤）。"""
     _check_owner(request)
     d = _load_ideas()
@@ -56,7 +58,7 @@ async def list_ideas(request: Request, tag: str = ""):
 
 
 @router.post("/api/ideas")
-async def add_idea(req: dict, request: Request):
+async def add_idea(req: dict, request: Request, _owner: str = Depends(require_owner)):
     """新增灵感 {text, tags?}。"""
     _check_owner(request)
     text = str((req or {}).get("text", "")).strip()
@@ -77,7 +79,7 @@ async def add_idea(req: dict, request: Request):
 
 
 @router.delete("/api/ideas/{idea_id}")
-async def delete_idea(idea_id: str, request: Request):
+async def delete_idea(idea_id: str, request: Request, _owner: str = Depends(require_owner)):
     _check_owner(request)
     d = _load_ideas()
     d["ideas"] = [i for i in d.get("ideas", []) if i.get("id") != idea_id]
@@ -86,7 +88,7 @@ async def delete_idea(idea_id: str, request: Request):
 
 
 @router.get("/api/ideas/materials")
-async def list_materials(request: Request, cat: str = ""):
+async def list_materials(request: Request, cat: str = "", _owner: str = Depends(require_owner)):
     _check_owner(request)
     d = _load_ideas()
     mats = d.get("materials", [])
@@ -96,7 +98,7 @@ async def list_materials(request: Request, cat: str = ""):
 
 
 @router.post("/api/ideas/materials")
-async def add_material(req: dict, request: Request):
+async def add_material(req: dict, request: Request, _owner: str = Depends(require_owner)):
     """新增素材 {category, title, content, tags?}。"""
     _check_owner(request)
     category = str((req or {}).get("category", "桥段")).strip() or "桥段"

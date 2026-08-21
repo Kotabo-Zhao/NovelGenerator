@@ -225,6 +225,10 @@ def _scope_chapters(scope: str, chapter_numbers: list[int], total: int) -> list[
         start = max(1, total // 3)
         end = max(start, (total * 2) // 3)
         return list(range(start, end + 1))
+    if scope == "global":
+        # v2.8.5: global scope 的 milestone（如"每5章一个反转"）此前返回 [] 永不激活，
+        # 被静默排除在章节指令之外。global 意味着贯穿全书。
+        return list(range(1, total + 1))
     return []
 
 

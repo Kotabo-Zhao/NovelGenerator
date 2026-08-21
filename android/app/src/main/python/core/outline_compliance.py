@@ -1,4 +1,4 @@
-﻿"""NovelGenerator — Outline Compliance Checker: 大纲合规校验
+"""NovelGenerator — Outline Compliance Checker: 大纲合规校验
 
 职责: 校验章节正文是否真正落地了本章大纲的核心内容（核心事件 / 节拍 / 出场角色 / 冲突），
      而不是只靠 prompt 软约束。分两级:
@@ -371,8 +371,13 @@ class OutlineComplianceChecker:
             r = merged.get(it["id"])
             if r is None:
                 if run_deep:
-                    # LLM 精判不可用：不误报，视为通过（无法确认，保守乐观）
-                    r = {"present": True, "evidence": "（LLM 精判不可用，未确认）", "by": "unknown"}
+                    # v2.8.5: LLM 精判不可用时，critical 项保守视为缺失（避免
+                    # "故障时静默通过"——此前一律 present=True 使 pct 虚高）；
+                    # 非 critical 项保持乐观（无法确认不误报）。
+                    if it.get("critical"):
+                        r = {"present": False, "evidence": "（LLM 精判不可用，critical 项保守计缺失）", "by": "unknown"}
+                    else:
+                        r = {"present": True, "evidence": "（LLM 精判不可用，未确认）", "by": "unknown"}
                 else:
                     r = {"present": True, "evidence": "（批量模式跳过 LLM 精判）", "by": "skipped"}
             row = dict(it)

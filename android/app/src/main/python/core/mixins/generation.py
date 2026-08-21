@@ -1987,7 +1987,10 @@ class GenerationMixin:
                 except Exception as e:
                     log.warning(f"AI Humanizer skipped: {e}")
             else:
-                log.info(f"AI Humanizer skipped: quality score={quality_report['score']}≥50, text already human-like")
+                # v2.8.5 fix: 超短篇 + 质量门异常时 quality_report 可能为 None，
+                # 直接取下标会 TypeError 导致整章生成崩溃。
+                _score = (quality_report or {}).get("score", 0)
+                log.info(f"AI Humanizer skipped: quality score={_score}≥50, text already human-like")
 
             # ── v2.11: 确保结尾是完整句子 ──
             from ..writer import _ensure_complete_ending
@@ -2290,7 +2293,10 @@ class GenerationMixin:
 
                 def _ctx_update():
                     new_state = self.context_updater.update(novel_id, chapter_num, full_text, current_state)
-                    atomic_write_json(state_path, new_state)
+                    # v2.8.5: 走 memory.write（per-path 锁 + 缓存失效）而非 atomic_write_json
+                    # 直写——此前直写绕过 SharedMemoryManager 的锁，与 chapter_summarizer /
+                    # character_state 的写入并发时互相覆盖，角色状态/摘要/时间线随机丢失。
+                    self.memory.write("global_state", novel_id, new_state)
                     log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
 
                 if batch_mode:

@@ -255,13 +255,18 @@ class BeatAssembler:
         """
         issues = []
         
-        for name, snap in char_snapshots.items():
+        # v2.8.5: 此前该分支只有 pass，恒返回空列表（假通过）。
+        # 现在：快照标记"上一章已出场"且本章未提及的角色记 low 级提示
+        # （连续多章消失可能是情节断链，交由人工/深度检查判断）。
+        for name, snap in (char_snapshots or {}).items():
             # 检查角色是否在文本中出现（如果快照说应该出现）
             # 这是轻量检查，深度检查留给 LogicSupervisor
-            if snap.get("last_chapter_appeared", 0) > 0:
+            if snap.get("last_chapter_appeared", 0) > 0 and name:
                 if name not in text:
-                    # 不一定每次出场，所以只是 low
-                    pass
+                    issues.append({
+                        "issue": f"角色「{name}」上一章已出场，本章未出现（如为刻意安排可忽略）",
+                        "severity": "low",
+                    })
         
         return issues
     

@@ -974,6 +974,7 @@ AI的声音平静得像在播报天气。
     },
     "自定义参数化风格": {
         "name": "自定义参数化风格", "author": "参数化自定义", "gender": "any", "is_custom": True,
+        "is_parameterized": True,  # v2.8.5: writer 据此优先走参数化配置，不被"自定义"前缀拦截
         "prose": "通过参数化配置生成的风格。具体文笔特征由用户选择的参数决定。",
         "tone": "由参数决定",
         "pacing": "由参数决定",
@@ -1079,7 +1080,18 @@ def build_parameterized_style(params: dict) -> dict:
     prose_parts.append(get_param("narrative_person", params.get("narrative_person", "third_limited")))
     tone_val = params.get("tone", "hot_blood")
     prose_parts.append(get_param("tone", tone_val))
-    
+
+    # v2.8.5: description_density / emotion_tendency 此前从未被读取，
+    # 用户选择不生效。并入 prose 描述让 writer 实际遵循。
+    density_val = params.get("description_density", "moderate")
+    density_prompt = get_param("description_density", density_val)
+    if density_prompt:
+        prose_parts.append(density_prompt)
+    emotion_val = params.get("emotion_tendency", "neutral")
+    emotion_prompt = get_param("emotion_tendency", emotion_val)
+    if emotion_prompt:
+        prose_parts.append(emotion_prompt)
+
     # 额外关键词
     keyword = params.get("keyword", "")
     if keyword:

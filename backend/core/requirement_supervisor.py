@@ -141,14 +141,35 @@ class RequirementSupervisor:
             result["failed_count"] = sum(1 for r in results if not r.get("passed"))
             result["pending_count"] = sum(1 for t in subtasks if t.get("status") == "pending")
 
-            all_p0_passed = all(
-                r.get("passed") for r in results
-                for t in subtasks
-                if t["id"] == r.get("subtask_id") and t.get("priority") == "P0"
-            )
-            result["overall_status"] = "passed" if all(r.get("passed") for r in results) else (
-                "failed" if not all_p0_passed else "partial"
-            )
+            # v2.8.5: 此前 LLM 返回空 results 时 all([])==True 判 fully passed，
+            # 且漏报的 P0 子任务不参与判定 → 监督闭环可静默假通过。
+            # 修复：空结果视为"监督未完成"（offline 语义），而非 passed；
+            # 未被 LLM 评估的 P0 子任务按 failed 计入判定，防止漏报放行。
+            evaluated_p0 = [
+                t for t in subtasks
+                if t.get("priority") == "P0" and any(
+                    t["id"] == r.get("subtask_id") for r in results
+                )
+            ]
+            unreported_p0 = [
+                t for t in subtasks
+                if t.get("priority") == "P0" and not any(
+                    t["id"] == r.get("subtask_id") for r in results
+                )
+            ]
+            if not results:
+                result["overall_status"] = "partial"
+                result["note"] = "监督模型未返回评估结果，视为未完成（非通过）"
+            else:
+                all_p0_passed = (
+                    all(r.get("passed") for r in results
+                        for t in evaluated_p0
+                        if t["id"] == r.get("subtask_id"))
+                    and not unreported_p0
+                )
+                result["overall_status"] = "passed" if all(r.get("passed") for r in results) else (
+                    "failed" if not all_p0_passed else "partial"
+                )
 
             log.info(f"Supervision done: {result['passed_count']}/{len(results)} passed, score={result.get('overall_score', 0)}")
             return result

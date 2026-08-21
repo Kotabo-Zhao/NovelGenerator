@@ -1115,7 +1115,7 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
         <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
         <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
       </div>
-      <button v-else class="btn btn-primary btn-lg w-full" @click="doCreate" v-if="!planReady">✨ 生成大纲</button>
+      <button v-else class="btn btn-primary btn-lg w-full" @click="doCreate" v-if="!planReady" :disabled="outlineLoading">{{ outlineLoading ? '⏳ 正在加载大纲…' : '✨ 生成大纲' }}</button>
 
       <!-- 需求分析结果 -->
       <div v-if="requirementSnapshot && requirementSnapshot.subtasks?.length" class="glass panel" style="margin-top:12px;border-color:rgba(201,167,255,.4)">
@@ -1622,8 +1622,8 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
                     <option v-for="vc in interactive.voiceCandidates" :key="vc.name" :value="vc.name" :selected="(interactive.voices[interactive.voicePicker]||{}).voice===vc.name">{{ vc.name.replace('zh-CN-','').replace('zh-HK-','').replace('zh-TW-','').replace('Neural','') }}{{ vc.style ? '· '+vc.style : '' }}{{ vc.available ? '' : '（受限）' }}</option>
                   </select>
                   <button class="btn btn-xs" @click="previewVoice">🔈 试听</button>
-                  <label class="text-xs muted">语速 <input type="range" min="-50" max="100" v-model.number="interactive.voiceRate" style="width:80px;vertical-align:middle"></label>
-                  <label class="text-xs muted">音调 <input type="range" min="-50" max="50" v-model.number="interactive.voicePitch" style="width:80px;vertical-align:middle"></label>
+                  <label class="text-xs muted">语速 <input type="range" min="-50" max="100" v-model.number="interactive.voiceRateNum" style="width:80px;vertical-align:middle"></label>
+                  <label class="text-xs muted">音调 <input type="range" min="-50" max="50" v-model.number="interactive.voicePitchNum" style="width:80px;vertical-align:middle"></label>
                   <button class="btn btn-xs btn-primary" @click="saveVoiceOverride">保存</button>
                   <button class="btn btn-xs btn-ghost" @click="resetVoiceOverride">恢复默认</button>
                 </div>
@@ -1643,6 +1643,13 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
                 <button class="btn btn-sm btn-ghost" @click="interactive.forceChat=true;interactive.pendingNode=true" style="border:1px dashed rgba(201,167,255,.5);color:var(--accent)">💬 我要说话</button>
               </div>
               <div v-if="interactive.pendingNode && !interactive.inChat && interactive.pendingReason" style="display:flex;align-items:center;gap:8px;background:rgba(201,167,255,.08);border:1px solid rgba(201,167,255,.3);border-radius:8px;padding:7px 14px;margin-top:10px;font-size:13px;color:var(--accent)"><span>📌</span><span>{{ interactive.pendingReason }}</span></div>
+              <!-- v2.8.5: 对话议程展示（此前 agenda 数据已存储但从未渲染，属半成品） -->
+              <div v-if="interactive.agenda && (interactive.agenda.goal || (interactive.agenda.hooks||[]).length || (interactive.agenda.boundaries||[]).length)" style="margin-top:10px;background:rgba(158,203,255,.06);border:1px solid rgba(158,203,255,.25);border-radius:8px;padding:8px 14px;font-size:12.5px;line-height:1.7">
+                <div style="color:var(--text2);font-weight:650;margin-bottom:2px">🎯 对话议程</div>
+                <div v-if="interactive.agenda.goal" style="color:var(--text)"><b>目标：</b>{{ interactive.agenda.goal }}</div>
+                <div v-if="(interactive.agenda.hooks||[]).length" style="color:var(--text2)"><b>要点：</b>{{ interactive.agenda.hooks.join('；') }}</div>
+                <div v-if="(interactive.agenda.boundaries||[]).length" style="color:var(--text3)"><b>边界：</b>{{ interactive.agenda.boundaries.join('；') }}</div>
+              </div>
               <div v-if="interactive.pendingNode && !interactive.inChat && interactive.suggestions.length" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
                 <button v-for="(s, si) in interactive.suggestions" :key="si" class="btn btn-sm" :disabled="interactive.busy" @click="sendInteractiveChat(s)" style="border:1px solid rgba(201,167,255,.5);color:var(--accent);background:rgba(201,167,255,.06)">💬 {{ s }}</button>
               </div>
@@ -1688,7 +1695,7 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
       <div class="view-head">
         <div>
           <h2 class="view-title">付梓 · 导出</h2>
-          <p class="view-sub">{{ novels.length }} 部作品 · 单本或批量导出 TXT/PDF</p>
+          <p class="view-sub">{{ novels.length }} 部作品 · 单本或批量导出 TXT/EPUB</p>
         </div>
       </div>
       <div class="glass panel">
@@ -1701,7 +1708,7 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
             </div>
             <div class="ei-actions">
               <button class="btn btn-ghost btn-xs" @click="doSingleExport(n,'txt')" :disabled="loading.export===n.id+'txt'">{{ loading.export===n.id+'txt' ? '…' : 'TXT' }}</button>
-              <button class="btn btn-ghost btn-xs" @click="doSingleExport(n,'pdf')" :disabled="loading.export===n.id+'pdf'">{{ loading.export===n.id+'pdf' ? '…' : 'PDF' }}</button>
+              <button class="btn btn-ghost btn-xs" @click="doSingleExport(n,'epub')" :disabled="loading.export===n.id+'epub'">{{ loading.export===n.id+'epub' ? '…' : 'EPUB' }}</button>
             </div>
           </div>
         </div>
@@ -2283,6 +2290,9 @@ const app = createApp({
     const writeMoreOpen = ref(false);           // 安卓「⋯」折叠菜单
     const novels = ref([]); const activeNovel = ref(null);
     const planResult = ref(null); const error = ref(''); const preview = ref(null);
+    // v2.8.5: 写作页右栏"本章质量/伏笔账本"数据源（此前变量未定义导致面板永不显示）
+    const lastQualityReport = ref(null);
+    const activeNovelForeshadows = ref([]);
     const toast = reactive({ visible:false, title:'', message:'', icon:'⚠️' });
     const abortCtrl = ref(null);
     const styleCategories = ref({}); const exportSelected = reactive({});
@@ -2291,6 +2301,7 @@ const app = createApp({
     const requirements = reactive({subtasks:[]}); const reqInspiration = ref(''); const showReqInput = ref(false);
     const supervisionReport = ref(null);
     const outlineChangePlan = ref([]); const outlineExecutionSummary = ref(null);
+    const outlineLoading = ref(false);  // v2.8.5: 编辑大纲加载态——planReady 前不显示创建表单
     const theme = ref(localStorage.getItem('theme') || 'dark');
     const uiStyle = ref(localStorage.getItem('uiStyle') || 'macOS');
     const health = ref(null);  // v2.7: 设置页服务状态
@@ -2485,14 +2496,23 @@ const app = createApp({
     }
 
     async function deleteNovel(novel) {
-      if (!confirm(`永久删除「${novel.title}」？\n\n这将删除所有章节和大纲，不可恢复！`)) return;
-      try {
-        const r = await fetch(API+'/api/novels/'+encodeURIComponent(novel.id), { method:'DELETE' });
-        if (!r.ok) throw new Error(await r.text());
-        showToast('已删除', novel.title, '🗑️');
-        if (activeNovel.value?.id === novel.id) activeNovel.value = null;
-        await loadShelf();
-      } catch(e) { showToast('删除失败: ' + e.message, '', '⚠️'); }
+      // v2.8.5: 原生 confirm 在 Android WebView 行为不一致且可能被拦截，
+      // 迁移到统一弹窗（modal kind!=='input' 即确认形态）。
+      openModal({
+        title: '🗑️ 删除作品',
+        kind: 'confirm',
+        label: `永久删除「${novel.title}」？\n\n这将删除所有章节和大纲，不可恢复！`,
+        confirmText: '永久删除',
+        onConfirm: async () => {
+          try {
+            const r = await fetch(API+'/api/novels/'+encodeURIComponent(novel.id), { method:'DELETE' });
+            if (!r.ok) throw new Error(await r.text());
+            showToast('已删除', novel.title, '🗑️');
+            if (activeNovel.value?.id === novel.id) activeNovel.value = null;
+            await loadShelf();
+          } catch(e) { showToast('删除失败: ' + e.message, '', '⚠️'); }
+        }
+      });
     }
 
     const batchStart = ref(1); const batchEnd = ref(1);
@@ -2565,6 +2585,9 @@ const app = createApp({
 
     onMounted(async () => {
       applyAppearance();
+      // v2.8.5: 绑定正文选中事件——此前 onTextSelection 定义了但从未挂载，
+      // 续写/扩写/精简/重写工具条永远不出现（selBar.visible 恒 false）。
+      document.addEventListener('selectionchange', () => { onTextSelection(); });
       refreshHealth(); // v2.7: 预取服务状态（fire-and-forget）
       loadStyles(); loadStyleSeeds(); // fire-and-forget
       // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
@@ -2840,9 +2863,13 @@ const app = createApp({
       _saveSession();
       decomposeSummary.value = null;
       outlineFeedback.value = '';
+      // v2.8.5: 进入加载态——此前 plan 异步加载完成前渲染的是创建表单，
+      // 用户误点"生成大纲"会因 inspiration 为空报错。
+      outlineLoading.value = true; planResult.value = null;
       fetch(API+'/api/novels/'+encodeURIComponent(novel.id))
         .then(r=>r.json()).then(d=>{ if(seq===_navSeq) planResult.value=d.novel; })
-        .catch(()=>{});
+        .catch(()=>{})
+        .finally(()=>{ if(seq===_navSeq) outlineLoading.value = false; });
        currentView.value='create';
        loadRequirements(novel.id);
     }
@@ -2853,10 +2880,13 @@ const app = createApp({
       _saveSession();
       decomposeSummary.value = null;
       outlineFeedback.value = '';
+      // v2.8.5: 进入加载态，避免 plan 加载完成前显示创建表单
+      outlineLoading.value = true; planResult.value = null;
       // 从服务端重新加载plan（保留最新版本）
       fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id))
         .then(r=>r.json()).then(d=>{ if(seq===_navSeq) planResult.value=d.novel; })
-        .catch(()=>{});
+        .catch(()=>{})
+        .finally(()=>{ if(seq===_navSeq) outlineLoading.value = false; });
        currentView.value='create';
        loadRequirements(activeNovel.value.id);
     }
@@ -2900,6 +2930,11 @@ const app = createApp({
       if (!q) { searchResults.value=[]; return; }
       searchLoading.value=true;
       try {
+        // v2.8.5: 未打开任何书时"本书搜索"会请求 /api/novels//search → 404。
+        // 自动降级为跨书搜索（有书时），无书时给出明确提示。
+        if (!activeNovel.value && searchScope.value==='novel') {
+          searchScope.value = 'all';
+        }
         if (searchScope.value==='all' && novels.value.length) {
           // 跨书搜索：循环每本书
           const all = [];
@@ -2911,10 +2946,13 @@ const app = createApp({
             } catch(e) {}
           }
           searchResults.value = all.slice(0, 50);
-        } else {
-          const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value?.id||'')+'/search?q='+encodeURIComponent(q)+'&limit=50');
+        } else if (activeNovel.value) {
+          const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/search?q='+encodeURIComponent(q)+'&limit=50');
           const d = await r.json();
           searchResults.value = d.results || [];
+        } else {
+          searchResults.value = [];
+          reportError('书架还没有作品，请先创建或打开一本小说');
         }
       } catch(e) { searchResults.value=[]; reportError('搜索失败: '+e.message); }
       finally { searchLoading.value=false; }
@@ -3373,6 +3411,36 @@ const app = createApp({
           .then(d=>{ if(seq===_navSeq && activeNovel.value?.id===targetId && d&&d.content){ writing.content=d.content;writing.done=true; } })
           .catch(()=>{});
       }
+      loadQualityDashboard(targetId, seq);
+    }
+    // v2.8.5: 写作页右栏质量面板/伏笔账本数据源（此前无定义，面板永不显示）
+    async function loadQualityDashboard(novelId, seq) {
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(novelId)+'/quality-dashboard');
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        const d = await r.json();
+        const q = d.quality || {};
+        const completeness = q.completeness?.score ?? 0;
+        const aiScore = q.ai_score?.score ?? 0;
+        const fs = q.foreshadowing || {};
+        // 5 维雷达数据（与模板标签：结构/钩子/连贯/词汇/爽点 对应）
+        const breakdown = [
+          {metric:'结构', score: completeness},
+          {metric:'钩子', score: Math.min(100, fs.rate ?? 0)},
+          {metric:'连贯', score: Math.min(100, (q.continuity?.auto_summaries ?? 0) * 20 + (q.continuity?.bridges ?? 0) * 10)},
+          {metric:'词汇', score: aiScore || 0},
+          {metric:'爽点', score: completeness},
+        ];
+        const overall = Math.round(breakdown.reduce((s,b)=>s+b.score,0) / breakdown.length);
+        if (seq === _navSeq && activeNovel.value?.id === novelId) {
+          lastQualityReport.value = { overall_score: overall, score_breakdown: breakdown };
+          activeNovelForeshadows.value = Array.isArray(fs.list) ? fs.list : [];
+        }
+      } catch(e) {
+        if (seq === _navSeq && activeNovel.value?.id === novelId) {
+          lastQualityReport.value = null; activeNovelForeshadows.value = [];
+        }
+      }
     }
     function startWriting(title) { 
       const n = novels.value.find(x => x.id === title || x.title === title); 
@@ -3581,6 +3649,10 @@ const app = createApp({
       voicePicker: null,      // 正在调音色的角色名
       voiceCandidates: [],    // 可选音色列表
       voiceRate: '+0%', voicePitch: '+0Hz',
+      // v2.8.5: 语速/音调滑块用数值绑定，提交时拼回 '+N%'/'+NHz' 字符串。
+      // 此前 v-model.number 直接绑定字符串初始值 '+0%'，parseFloat 后保存为纯数字，
+      // 后端 TTSRequest.rate 期望 '+0%' 格式，edge-tts 收到数字会拒绝/忽略 → 调节无效。
+      voiceRateNum: 0, voicePitchNum: 0,
       // v3.3: Agenda 对话轨道（前端可见性）
       agenda: null,           // 当前对话议程 {goal, hooks, boundaries}
       driftNote: '',          // 话题跑偏提示（drift_check 事件）
@@ -3764,7 +3836,9 @@ const app = createApp({
       try{
         const r = await fetch(API+'/api/tts', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ text: sample, voice, rate: interactive.voiceRate, pitch: interactive.voicePitch }),
+          body: JSON.stringify({ text: sample, voice,
+            rate: '+'+(interactive.voiceRateNum||0)+'%',
+            pitch: '+'+(interactive.voicePitchNum||0)+'Hz' }),
         });
         if(!r.ok) throw new Error('TTS '+r.status);
         const blob = await r.blob();
@@ -3781,6 +3855,9 @@ const app = createApp({
       const v = (interactive.voices && interactive.voices[charName]) || {};
       interactive.voiceRate = v.rate || '+0%';
       interactive.voicePitch = v.pitch || '+0Hz';
+      // 解析 '+12%' → 12，'0Hz' → 0，供滑块数值绑定
+      interactive.voiceRateNum = parseInt(String(interactive.voiceRate).replace('%',''), 10) || 0;
+      interactive.voicePitchNum = parseInt(String(interactive.voicePitch).replace('Hz',''), 10) || 0;
       loadVoiceCandidates();
     }
     async function saveVoiceOverride(){
@@ -3792,10 +3869,14 @@ const app = createApp({
       try{
         const r = await fetch(API+'/api/novels/'+id+'/interactive/voices/'+encodeURIComponent(charName), {
           method:'PUT', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ voice, rate: interactive.voiceRate, pitch: interactive.voicePitch }),
+          body: JSON.stringify({ voice,
+            rate: '+'+(interactive.voiceRateNum||0)+'%',
+            pitch: '+'+(interactive.voicePitchNum||0)+'Hz' }),
         });
         if(r.ok){
           if(!interactive.voices) interactive.voices = {};
+          interactive.voiceRate = '+'+(interactive.voiceRateNum||0)+'%';
+          interactive.voicePitch = '+'+(interactive.voicePitchNum||0)+'Hz';
           interactive.voices[charName] = { voice, rate: interactive.voiceRate, pitch: interactive.voicePitch, source:'player' };
           showToast('已为该角色设置音色','音色已保存','🎙️');
         }
@@ -4723,7 +4804,7 @@ const app = createApp({
       try {
         const r=await fetch(API+'/api/novels/'+encodeURIComponent(novel.id)+'/export?fmt='+fmt);
         if(!r.ok) throw new Error((await r.json().catch(()=>({detail:'无章节'}))).detail);
-        if(fmt==='pdf'){ downloadBlob(await r.blob(), novel.id+'.pdf', false, 'application/pdf'); }
+        if(fmt==='epub'){ downloadBlob(await r.blob(), novel.id+'.epub', false, 'application/epub+zip'); }
         else downloadBlob(await r.text(), novel.id+'.txt');
       } catch(e){ error.value=e.message; }
       loading.export=false;
@@ -4771,7 +4852,12 @@ const app = createApp({
       if(isBusy.value) return;
       if(!planResult.value) return; loading.saving=true; editSaved.value=false; error.value=''; renumberChapters();
       try {
-        const r=await fetch(API+'/api/novels/'+encodeURIComponent(planResult.value.title),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(planResult.value)});
+        // 用 activeNovel.id（目录名）而非 title 作为路径参数：
+        // 用户改名后 title 会变，用 title 会 404 导致编辑丢失；
+        // 且 PUT 会把 GET 响应里内嵌的 state 一并写回，先剔除。
+        const novelId = activeNovel.value?.id || planResult.value.title;
+        const body = {...planResult.value}; delete body.state;
+        const r=await fetch(API+'/api/novels/'+encodeURIComponent(novelId),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         if(!r.ok) throw new Error((await r.json().catch(()=>({detail:'失败'}))).detail);
         editSaved.value=true; await loadShelf(); setTimeout(()=>editSaved.value=false,3000);
       } catch(e){ error.value=e.message; }
@@ -4858,6 +4944,7 @@ const app = createApp({
     });
 
     return { currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,toast,
+      lastQualityReport,activeNovelForeshadows,
       form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,shelfLoadFailed,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,ringPct,pctNum,
@@ -4870,7 +4957,7 @@ const app = createApp({
       health,refreshHealth,applyAppearance,
       llmApiKey,llmModel,llmSaving,llmKeySaved,llmModelSaved,saveLLMConfig,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStatus,batchStreaming,exportProgress,writingModeLiterary,theme,uiStyle,
-      doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
+      doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,outlineLoading,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,requirementSnapshot,requirementKindOrder,
       requirementsForKind,requirementKindLabel,requirementKindHelp,requirementScopeText,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,

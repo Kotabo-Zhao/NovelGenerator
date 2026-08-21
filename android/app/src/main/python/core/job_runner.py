@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Optional
 
 from .job_store import GenerationJobStore, JobStatus
@@ -17,6 +18,9 @@ class ChapterJobRunner:
     """Run one chapter stream while persisting lifecycle state and cancellation."""
 
     PUBLIC_FAILURE_MESSAGE = "生成章节失败，请稍后重试"
+    # 长章节生成可能数分钟不产出 progress 事件；心跳间隔应远小于
+    # JOB_RECOVERY_STALE_SECONDS（默认 900s），避免 requeue_stale 把存活任务回队。
+    HEARTBEAT_INTERVAL_SECONDS = 30.0
 
     def __init__(
         self,
@@ -131,7 +135,8 @@ class ChapterJobRunner:
                     error_message=self.PUBLIC_FAILURE_MESSAGE,
                 )
         finally:
-            self._persist_usage(current.get("owner_id", ""), job_id, usage_events)
+            # current 可能在异常分支被重新赋值；防御性取值避免掩盖原始异常
+            self._persist_usage((current or {}).get("owner_id", ""), job_id, usage_events)
 
     def _persist_usage(self, owner_id: str, job_id: str, events: list[dict]) -> None:
         if self.usage_store is None or not events or not owner_id:
@@ -161,6 +166,8 @@ class ChapterJobRunner:
         feedback: Optional[str],
     ) -> None:
         saw_done = False
+        saw_needs_revision = False
+        last_heartbeat = time.monotonic()
         async for event in self.engine.generate_chapter_stream(
             novel_id,
             chapter_num,
@@ -187,6 +194,11 @@ class ChapterJobRunner:
                     error_message=self.PUBLIC_FAILURE_MESSAGE,
                 )
                 return
+            if event_type == "needs_revision":
+                # v2.8.5: 引擎在"可重试的修订失败"时 yield needs_revision 后 return，
+                # 不再 yield done。此前被误判为 INCOMPLETE_RESULT 任务失败，
+                # 错误码语义丢失。落 FAILED 但带显式 NEEDS_REVISION 码。
+                saw_needs_revision = True
 
             progress = self._progress(event)
             if progress is not None:
@@ -195,11 +207,28 @@ class ChapterJobRunner:
                     progress=progress,
                     phase=str(event.get("phase") or event_type or "running")[:100],
                 )
+                last_heartbeat = time.monotonic()
+            elif time.monotonic() - last_heartbeat >= self.HEARTBEAT_INTERVAL_SECONDS:
+                # 引擎长静默期（无 progress 事件）也要刷新 updated_at，
+                # 否则 requeue_stale 会把存活任务回队造成重复生成/双份计费。
+                try:
+                    self.job_store.touch(job_id)
+                except (KeyError, ValueError):
+                    log.exception("Heartbeat failed for job %s", job_id)
+                    return
+                last_heartbeat = time.monotonic()
             if event_type == "done":
                 saw_done = True
 
         if self.job_store.is_cancel_requested(job_id):
             self.job_store.mark_cancelled(job_id)
+            return
+        if saw_needs_revision and not saw_done:
+            self.job_store.fail(
+                job_id,
+                error_code="NEEDS_REVISION",
+                error_message="本章未通过质量校验，草稿已保留，请修改后重新生成",
+            )
             return
         if not saw_done:
             self.job_store.fail(

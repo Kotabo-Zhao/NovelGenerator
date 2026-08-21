@@ -162,6 +162,7 @@ async function request(path, options = {}) {
 module.exports = {
   login,
   logout,
+  clearSession,
   ensureSession,
   get(path, options = {}) {
     return request(path, { ...options, method: "GET" });

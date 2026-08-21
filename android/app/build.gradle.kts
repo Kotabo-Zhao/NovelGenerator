@@ -93,6 +93,9 @@ chaquopy {
             install("pydantic==1.10.26")
             install("httpx==0.27.2")
             install("edge-tts==6.1.12")
+            // v2.8.5: APK 内 EPUB 导出依赖 ebooklib（backend requirements.txt 已有，
+            // gradle pip 缺它导致 Android 端 EPUB 导出必然失败）
+            install("ebooklib==0.18")
         }
     }
 }

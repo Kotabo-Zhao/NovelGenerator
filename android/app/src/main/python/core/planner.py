@@ -918,7 +918,17 @@ class Planner:
         # Phase 3b: 全局章节骨架 — 一次性规划全部章节概要，保证故事连续
         yield {"type": "progress", "phase": "outline", "pct": 62, "label": "规划全书章节骨架…"}
         
-        total_chapters = sum(v.get("ch_count", ch_per_vol) for v in volumes_meta[:vol_count])
+        # v2.8.5: LLM 脏输出防御——volumes_meta 可能含垃圾元素/字符串数字，
+        # 直接 sum(v.get("ch_count", ...)) 会抛 AttributeError/TypeError 使创建流程 500。
+        def _safe_ch_count(v):
+            if not isinstance(v, dict):
+                return ch_per_vol
+            try:
+                return int(v.get("ch_count", ch_per_vol) or ch_per_vol)
+            except (TypeError, ValueError):
+                return ch_per_vol
+
+        total_chapters = sum(_safe_ch_count(v) for v in volumes_meta[:vol_count])
         
         skeleton_prompt = f"""你是小说大纲规划师。请为这{vol_count}卷{total_chapters}章的小说规划全局章节骨架。
 
@@ -1031,12 +1041,19 @@ class Planner:
         BATCH_SIZE = 2  # v3.8: 4→2，保证每批 LLM 输出完整不截断
 
         for idx, vol_meta in enumerate(volumes_meta[:vol_count]):
+            # v2.8.5: 脏卷防御——vol_meta 非 dict 时用默认值，避免 .get 抛错
+            if not isinstance(vol_meta, dict):
+                vol_meta = {}
             vol_num = vol_meta.get("vol", idx + 1)
             vol_title = vol_meta.get("title", f"第{vol_num}卷")
             vol_act = vol_meta.get("act", "")
             vol_theme = vol_meta.get("theme", "")
             vol_function = vol_meta.get("act_function", "")
-            n_ch = min(ch_per_vol, vol_meta.get("ch_count", ch_per_vol))
+            try:
+                _vol_ch = int(vol_meta.get("ch_count", ch_per_vol) or ch_per_vol)
+            except (TypeError, ValueError):
+                _vol_ch = ch_per_vol
+            n_ch = min(ch_per_vol, _vol_ch)
             remaining = total_chapters_target - chapter_counter
             n_ch = min(n_ch, remaining) if remaining > 0 else n_ch
 

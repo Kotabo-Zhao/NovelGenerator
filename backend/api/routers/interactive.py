@@ -768,7 +768,10 @@ async def interactive_export(novel_id: str):
             done = False
             while not done:
                 try:
-                    evt = progress_queue.get(timeout=30)
+                    # v2.8.5: queue.Queue().get(timeout=30) 是同步阻塞调用，
+                    # 在 async SSE 生成器里会占住事件循环最多 30s（多用户导出=全站停顿）。
+                    # 放线程池执行等待，事件循环保持空闲。
+                    evt = await asyncio.to_thread(progress_queue.get, timeout=30)
                 except queue.Empty:
                     yield f"data: {json.dumps({'type': 'ping'}, ensure_ascii=False)}\n\n"
                     continue

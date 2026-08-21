@@ -22,7 +22,9 @@ async def analyze_trends(req: dict = None, _owner_id: str = Depends(require_owne
     try:
         from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
 
-        analyzer = TrendAnalyzer(None, "")
+        # v2.8.5: 传入真实 LLM client——此前恒传 None，deep_analyze 的
+        # LLM 深度分析分支全部跳过，趋势分析退化为纯离线规则。
+        analyzer = TrendAnalyzer(getattr(engine, "client", None), getattr(engine, "model", ""))
         # v3.8: 网络抓取 + 分析含同步调用，放线程池避免阻塞事件循环
         import asyncio
         novels, patterns = await asyncio.to_thread(
@@ -59,7 +61,8 @@ async def generate_bizarre(req: dict, _owner_id: str = Depends(require_owner)):
     try:
         from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
 
-        gen = BizarreNovelGenerator(None, "")
+        # v2.8.5: 传入真实 LLM client，启用 LLM 增强的逆天生成分支
+        gen = BizarreNovelGenerator(getattr(engine, "client", None), getattr(engine, "model", ""))
         result = await gen.full_pipeline(count, style, theme, genre)
 
         return {
