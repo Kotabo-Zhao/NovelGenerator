@@ -615,6 +615,11 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
   background:rgba(20,16,42,.5);border:1px solid var(--border-light);
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   position:relative;  /* v2.0.1: 「⋯」下拉菜单定位锚点 */
+  /* v2.8.4 fix: backdrop-filter 使 .wb-tabs 自成层叠上下文（z-index auto=0），
+     「⋯」菜单 z-index:300 被困其中；而 .wb-side/.wb-main/.wb-rail 同为 0 级且
+     位于 DOM 更后，会盖住菜单导致选项点不到。给 .wb-tabs 一个正 z-index，
+     让整个上下文（含菜单）浮于正文/侧栏之上；60 以下避免盖过顶栏。 */
+  z-index:50;
 }
 .wb-tab{
   display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:11px;border:none;background:transparent;
