@@ -37,8 +37,9 @@
 
 **android / tools**
 - build.sh / build_and_install.bat SDK 路径自动探测 + local.properties（此前写死
-  不存在路径，构建必失败）；gradle 补 ebooklib（APK 内 EPUB 导出可用）；
-  sync_android_core 不再跳过 `__init__.py`。
+  不存在路径，构建必失败）；sync_android_core 不再跳过 `__init__.py`。
+- 说明：APK 内 EPUB 导出依赖 ebooklib → lxml（C 扩展），Chaquopy 无 Android
+  预编译 wheel，无法安装；EPUB 导出在 web/后端可用，Android 端保留降级提示。
 
 ### Verification
 

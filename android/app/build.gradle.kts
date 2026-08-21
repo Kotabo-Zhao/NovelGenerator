@@ -93,9 +93,10 @@ chaquopy {
             install("pydantic==1.10.26")
             install("httpx==0.27.2")
             install("edge-tts==6.1.12")
-            // v2.8.5: APK 内 EPUB 导出依赖 ebooklib（backend requirements.txt 已有，
-            // gradle pip 缺它导致 Android 端 EPUB 导出必然失败）
-            install("ebooklib==0.18")
+            // 说明：APK 内 EPUB 导出依赖 ebooklib，而 ebooklib 又依赖 lxml（C 扩展）。
+            // Chaquopy 在 Android 上没有 lxml 的预编译 wheel，装不上；backend（x86_64
+            // 服务器）可用。Android 端 EPUB 导出保持降级提示（export.py 已处理
+            // ImportError → "EPUB 导出需要 ebooklib"），功能在 web/后端可用。
         }
     }
 }
