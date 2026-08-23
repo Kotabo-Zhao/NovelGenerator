@@ -18,6 +18,12 @@ import shutil
 import filecmp
 from pathlib import Path
 
+# Windows 默认 GBK 无法输出状态符号；同步检查不应因终端编码失败。
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, OSError):
+    pass
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # 需要同步的目录对: (源, 目标, 说明)

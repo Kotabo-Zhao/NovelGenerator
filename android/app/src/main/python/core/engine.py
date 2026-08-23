@@ -8,8 +8,6 @@ import hashlib
 import logging
 import asyncio
 from typing import AsyncGenerator, Optional, AsyncIterator
-from openai import OpenAI
-
 # Allow importing from parent dir (works both as package and standalone)
 try:
     from backend import config
@@ -38,6 +36,17 @@ from .atomic_writer import AtomicWriter
 from .beat_assembler import BeatAssembler
 from .coherence_validator import validate_and_repair_outline
 from .chapter_contract import migrate_plan_chapter_contracts
+from .llm_providers import (
+    build_client,
+    get_provider,
+    is_configured_key,
+    list_providers,
+    mask_api_key,
+    resolve_config,
+    validate_api_key,
+    validate_base_url,
+    validate_model,
+)
 
 log = logging.getLogger(__name__)
 
@@ -67,12 +76,38 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
 
     def __init__(self):
         # v3.5.23: 空 key 时用占位 key 宽容初始化（CI/测试无 .env 环境可建引擎，
-        # 真实 LLM 调用才会 401——测试只验证流程不真调用）
-        self.client = OpenAI(
-            api_key=config.DEEPSEEK_API_KEY or "sk-placeholder-for-tests",
-            base_url=config.DEEPSEEK_BASE_URL,
-        )
-        self.model = config.DEEPSEEK_MODEL
+        # 真实 LLM 调用才会 401——测试只验证流程不真调用）。
+        # 优先恢复本地运行时配置，环境变量仍是第一启动入口。
+        persisted = self._load_persisted_llm_config()
+        try:
+            initial = resolve_config(
+                persisted.get("provider", config.LLM_PROVIDER),
+                api_key=persisted.get("api_key"),
+                base_url=persisted.get("base_url"),
+                model=persisted.get("model"),
+                current_api_key=config.LLM_API_KEY,
+            ) if persisted else resolve_config(
+                config.LLM_PROVIDER,
+                api_key=config.LLM_API_KEY,
+                base_url=config.LLM_BASE_URL,
+                model=config.LLM_MODEL,
+            )
+        except ValueError as exc:
+            # 配置文件可能来自旧版本或供应商刚下线的模型；不能阻断服务启动，
+            # 回落到 DeepSeek 的安全默认值，并把具体问题留在日志中。
+            log.warning("LLM 配置无效，回退到默认供应商: %s", exc)
+            initial = {
+                "provider": "deepseek",
+                "api_key": config.LLM_API_KEY,
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-flash",
+            }
+        self.provider = initial["provider"]
+        self.api_key = initial["api_key"]
+        self.base_url = initial["base_url"]
+        self.model = initial["model"]
+        self._sync_config_aliases(initial)
+        self.client = build_client(self.api_key, self.base_url, self.provider)
         self.planner = Planner(self.client, self.model)
         self.writer = Writer(self.client, self.model)
         self.fd_designer = ForeshadowingDesigner(self.client, self.model)
@@ -142,6 +177,96 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
 
     # ── 运行时 LLM 配置（设置页：API Key + 模型切换） ──
 
+    @staticmethod
+    def _load_persisted_llm_config() -> dict:
+        """读取本地配置；任何损坏内容都按空配置处理，不暴露文件细节。"""
+        try:
+            with open(config.LLM_CONFIG_FILE, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    @staticmethod
+    def _sync_config_aliases(resolved: dict[str, str]) -> None:
+        """同步新旧配置名，避免历史模块读取到过期的供应商信息。"""
+        config.LLM_PROVIDER = resolved["provider"]
+        config.LLM_API_KEY = resolved["api_key"]
+        config.LLM_BASE_URL = resolved["base_url"]
+        config.LLM_MODEL = resolved["model"]
+        config.DEEPSEEK_API_KEY = resolved["api_key"]
+        config.DEEPSEEK_BASE_URL = resolved["base_url"]
+        config.DEEPSEEK_MODEL = resolved["model"]
+        os.environ["LLM_PROVIDER"] = resolved["provider"]
+        os.environ["LLM_API_KEY"] = resolved["api_key"]
+        os.environ["LLM_BASE_URL"] = resolved["base_url"]
+        os.environ["LLM_MODEL"] = resolved["model"]
+        # 旧脚本仍可能读取这些环境变量。
+        os.environ["DEEPSEEK_API_KEY"] = resolved["api_key"]
+        os.environ["DEEPSEEK_BASE_URL"] = resolved["base_url"]
+        os.environ["DEEPSEEK_MODEL"] = resolved["model"]
+
+    def _bind_client(self, client) -> None:
+        """更换供应商时同步所有子组件及其韧性客户端。"""
+        for comp in self._sub_components():
+            if comp is None:
+                continue
+            if hasattr(comp, "client"):
+                comp.client = client
+            resilient = getattr(comp, "_resilient", None)
+            if resilient is not None and hasattr(resilient, "client"):
+                resilient.client = client
+            nested = getattr(comp, "decomposer", None)
+            if nested is not None and hasattr(nested, "client"):
+                nested.client = client
+                nested_resilient = getattr(nested, "_resilient", None)
+                if nested_resilient is not None and hasattr(nested_resilient, "client"):
+                    nested_resilient.client = client
+        if getattr(self, "_resilient", None) is not None:
+            self._resilient.client = client
+
+    def set_provider_config(
+        self,
+        provider: str | None = None,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+    ) -> dict:
+        """应用一份供应商配置，并让整条生成管线立即使用新客户端。"""
+        target_provider = (provider or self.provider).strip().lower()
+        # 切换供应商时不复用另一家服务的 Key，避免界面显示“已配置”但请求
+        # 实际必然 401；同一供应商仅切换模型/Base URL 时才保留现有 Key。
+        reusable_key = self.api_key if target_provider == self.provider else ""
+        resolved = resolve_config(
+            target_provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            current_api_key=reusable_key,
+        )
+        client = build_client(resolved["api_key"], resolved["base_url"], resolved["provider"])
+        self.provider = resolved["provider"]
+        self.api_key = resolved["api_key"]
+        self.base_url = resolved["base_url"]
+        self.model = resolved["model"]
+        self._sync_config_aliases(resolved)
+        self.client = client
+        self._bind_client(client)
+        self._sync_model_to_components(self.model)
+        log.info("LLM provider switched to %s (%s)", self.provider, self.model)
+        return resolved
+
+    def _sync_model_to_components(self, model: str) -> None:
+        for comp in self._sub_components():
+            if comp is not None and hasattr(comp, "model"):
+                try:
+                    comp.model = model
+                except Exception:
+                    pass
+        if getattr(self, "_resilient", None) is not None:
+            self._resilient.model = model
+
     def _sub_components(self):
         """返回所有持有 self.model 副本的子组件，便于统一热切换模型。"""
         names = [
@@ -154,51 +279,65 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         return [getattr(self, n, None) for n in names]
 
     def set_api_key(self, api_key: str) -> bool:
-        """运行时更新 OpenAI client 凭据（所有生成器共享同一 client，一次生效）。"""
+        """旧版 DeepSeek API Key 更新入口；新供应商请使用 set_provider_config。"""
         api_key = (api_key or "").strip()
         if not api_key.startswith("sk-"):
             return False
-        self.client.api_key = api_key
-        config.DEEPSEEK_API_KEY = api_key
-        os.environ["DEEPSEEK_API_KEY"] = api_key
-        if getattr(self, "_resilient", None) is not None and hasattr(self._resilient, "client"):
-            try:
-                self._resilient.client.api_key = api_key
-            except Exception:
-                pass
-        log.info("LLM API key updated at runtime")
-        return True
+        try:
+            self.set_provider_config(api_key=api_key)
+            return True
+        except ValueError:
+            return False
 
     def set_model(self, model: str) -> bool:
-        """运行时切换模型（deepseek-chat / deepseek-v4-flash），同步所有子组件。"""
+        """旧版模型切换入口，保留两种历史 DeepSeek ID 的兼容行为。"""
         model = (model or "").strip()
         if model not in ("deepseek-chat", "deepseek-v4-flash"):
             return False
-        self.model = model
-        config.DEEPSEEK_MODEL = model
-        os.environ["DEEPSEEK_MODEL"] = model
-        for comp in self._sub_components():
-            if comp is not None and hasattr(comp, "model"):
-                try:
-                    comp.model = model
-                except Exception:
-                    pass
-        if getattr(self, "_resilient", None) is not None:
-            try:
-                self._resilient.model = model
-            except Exception:
-                pass
-        log.info("LLM model switched to %s at runtime", model)
-        return True
+        try:
+            self.set_provider_config(model=model)
+            return True
+        except ValueError:
+            return False
 
     def llm_config(self) -> dict:
         """当前生效的 LLM 配置摘要（不泄露 key 本身）。"""
-        key = (config.DEEPSEEK_API_KEY or "").strip()
+        preset = get_provider(self.provider)
         return {
-            "api_key_configured": bool(key) and not key.lower().startswith(("your_", "sk-placeholder")),
+            "provider": self.provider,
+            "provider_name": preset.name,
+            "api_key_configured": is_configured_key(self.api_key),
+            "api_key_hint": mask_api_key(self.api_key),
+            "base_url": self.base_url,
             "model": self.model,
+            # allowed_models 是旧版前端/API 的兼容字段；models 是新目录字段。
             "allowed_models": ["deepseek-chat", "deepseek-v4-flash"],
+            "models": list(preset.models),
+            "custom_model": preset.custom_model,
+            "key_placeholder": preset.key_placeholder,
         }
+
+    def provider_catalog(self) -> list[dict]:
+        return list_providers()
+
+    def test_connection(self) -> dict:
+        """用极小请求验证当前配置，不返回模型原文，避免把提示内容写入日志/UI。"""
+        if not is_configured_key(self.api_key):
+            raise ValueError("请先配置 API Key")
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "只回复：连接成功"},
+                {"role": "user", "content": "连接测试"},
+            ],
+            temperature=0,
+            max_tokens=8,
+            timeout=20,
+        )
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            raise RuntimeError("模型服务没有返回有效结果")
+        return {"provider": self.provider, "model": self.model, "status": "ok"}
 
     # ── Phase 1: 规划 ──
 

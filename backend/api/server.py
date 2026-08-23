@@ -26,7 +26,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 
-from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR
+from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, LLM_CONFIG_FILE
 from core.path_security import validate_novel_id, RESERVED_NOVEL_IDS
 
 # 共享依赖：engine 单例 + log（见 deps.py）
@@ -359,7 +359,8 @@ async def serve_manifest():
 
 # ── Health ──
 
-_LLM_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(NOVELS_DIR)), "llm_config.json")
+# 保留模块级别旧名字，避免本地脚本和旧测试导入时报错。
+_LLM_CONFIG_FILE = LLM_CONFIG_FILE
 
 
 def _load_llm_config_file() -> dict:
@@ -371,11 +372,20 @@ def _load_llm_config_file() -> dict:
 
 
 def _save_llm_config_file(cfg: dict) -> None:
+    """原子保存本地运行时配置，避免进程中断留下半份 JSON。"""
+    tmp_path = f"{_LLM_CONFIG_FILE}.tmp"
     try:
-        with open(_LLM_CONFIG_FILE, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, _LLM_CONFIG_FILE)
     except Exception:
-        pass
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
 
 
 @app.get("/api/health")
@@ -389,16 +399,18 @@ async def health():
             and os.path.isdir(os.path.join(NOVELS_DIR, name))
             and os.path.exists(os.path.join(NOVELS_DIR, name, "plan.json"))
         )
-    from config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL
-    _key = (DEEPSEEK_API_KEY or "").strip()
+    current = engine.llm_config()
     return {
         "status": "ok",
         "service": "NovelGenerator",
         "storage_exists": novels_exist,
         "novel_count": novel_count,
-        "llm_configured": bool(_key) and not _key.lower().startswith(("your_", "sk-placeholder")),
-        "model": DEEPSEEK_MODEL,
+        "llm_configured": current["api_key_configured"],
+        "provider": current["provider"],
+        "provider_name": current["provider_name"],
+        "model": current["model"],
         "allowed_models": ["deepseek-chat", "deepseek-v4-flash"],
+        "models": current["models"],
     }
 
 
@@ -410,32 +422,87 @@ async def get_llm_config():
     return engine.llm_config()
 
 
+@app.get("/api/config/llm/providers")
+async def get_llm_providers():
+    """返回前端的一键配置目录，不包含任何用户密钥。"""
+    return {"providers": engine.provider_catalog()}
+
+
 @app.post("/api/config/llm")
 async def set_llm_config(req: dict):
-    """运行时更新 API Key 和/或模型；持久化到 llm_config.json（重启后自动恢复）。
+    """运行时更新供应商、Base URL、API Key 和模型；持久化到本地文件。
 
     仅允许本机回环来源调用（Android 内嵌版恒为 127.0.0.1，公网部署不会暴露）。
+    旧版只提交 api_key/model 的请求仍按 DeepSeek 兼容路径处理。
     """
+    if not isinstance(req, dict):
+        raise HTTPException(status_code=400, detail="配置格式无效")
+    provider = (req.get("provider") or "").strip().lower()
     api_key = (req.get("api_key") or "").strip()
+    base_url = (req.get("base_url") or "").strip()
     model = (req.get("model") or "").strip()
-    if not api_key and not model:
+    has_new_fields = any((provider, base_url))
+    if not api_key and not model and not has_new_fields:
         raise HTTPException(status_code=400, detail="需要提供 api_key 或 model 至少一项")
-    applied = []
-    if api_key:
-        if not engine.set_api_key(api_key):
-            raise HTTPException(status_code=400, detail="API Key 格式无效（应以 sk- 开头）")
-        applied.append("api_key")
-    if model:
-        if not engine.set_model(model):
-            raise HTTPException(status_code=400, detail="不支持的模型（可选: deepseek-chat / deepseek-v4-flash）")
-        applied.append("model")
+
+    applied: list[str] = []
+    try:
+        # 兼容旧版设置页：没有 provider/base_url 时保留原有严格的 DeepSeek
+        # 模型与 sk- Key 校验；新设置页走统一供应商合同。
+        if not has_new_fields and not provider:
+            if api_key and not engine.set_api_key(api_key):
+                raise HTTPException(status_code=400, detail="API Key 格式无效（旧版 DeepSeek Key 应以 sk- 开头）")
+            if model and not engine.set_model(model):
+                raise HTTPException(status_code=400, detail="不支持的模型（可选: deepseek-chat / deepseek-v4-flash）")
+            if api_key:
+                applied.append("api_key")
+            if model:
+                applied.append("model")
+        else:
+            before = engine.llm_config()
+            engine.set_provider_config(
+                provider or before["provider"],
+                api_key=api_key or None,
+                base_url=base_url or None,
+                model=model or None,
+            )
+            if provider and provider != before["provider"]:
+                applied.append("provider")
+            if api_key:
+                applied.append("api_key")
+            if base_url:
+                applied.append("base_url")
+            if model:
+                applied.append("model")
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     cfg = _load_llm_config_file()
-    if "api_key" in applied:
-        cfg["api_key"] = api_key
-    if "model" in applied:
-        cfg["model"] = model
+    current = engine.llm_config()
+    cfg.update({
+        "provider": current["provider"],
+        "base_url": current["base_url"],
+        "model": current["model"],
+    })
+    # 仅在已经配置过或本次提交了 Key 时写入，避免把空占位值误当成凭据。
+    if current["api_key_configured"] or api_key:
+        cfg["api_key"] = engine.api_key
     _save_llm_config_file(cfg)
-    return {"status": "ok", "applied": applied, "config": engine.llm_config()}
+    return {"status": "ok", "applied": applied or ["config"], "config": current}
+
+
+@app.post("/api/config/llm/test")
+async def test_llm_config():
+    """使用当前配置发起极小请求，供设置页的“保存并测试”使用。"""
+    try:
+        result = await asyncio.to_thread(engine.test_connection)
+        return {"status": "ok", "result": result}
+    except Exception as exc:
+        # 只返回可操作的通用文案，供应商响应可能包含请求头/内部 URL。
+        log.warning("LLM connection test failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="模型连接失败，请检查 API Key、模型和网络") from exc
 
 
 # ── 业务路由挂载（2026-07-31 按域拆分）──

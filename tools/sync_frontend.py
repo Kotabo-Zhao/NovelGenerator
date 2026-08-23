@@ -12,6 +12,13 @@ import shutil
 import hashlib
 from pathlib import Path
 
+# Windows PowerShell 默认 GBK 无法输出 ✅ 等状态符号；同步脚本本身应在
+# 不同终端编码下都能完成，文件内容不受影响。
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, OSError):
+    pass
+
 ROOT = Path(__file__).parent.parent.resolve()
 SOURCE = ROOT / "web"
 TARGETS = [

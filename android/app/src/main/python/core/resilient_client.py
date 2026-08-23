@@ -48,11 +48,11 @@ _PLACEHOLDER_KEY_MARKERS = (
 def llm_error_message(error: Exception, action: str = "内容生成") -> str:
     """Return a stable user-facing error without leaking provider details."""
     if isinstance(error, LLMConfigurationError):
-        return f"{action}不可用：请配置 DEEPSEEK_API_KEY 并重启服务器"
+        return f"{action}不可用：请在设置中配置 AI API Key（或配置 DEEPSEEK_API_KEY）并重启服务器"
 
     status = getattr(error, "status_code", None)
     if status in (401, 403):
-        return f"{action}鉴权失败：请检查 DEEPSEEK_API_KEY 并重启服务器"
+        return f"{action}鉴权失败：请检查设置中的 API Key（或 DEEPSEEK_API_KEY）并重启服务器"
     if status == 429:
         return f"{action}请求过于频繁，请稍后重试"
     if isinstance(error, (APITimeoutError, APIConnectionError)):
@@ -127,7 +127,7 @@ class ResilientLLMClient:
             return
         normalized = api_key.strip().lower()
         if not normalized or any(marker in normalized for marker in _PLACEHOLDER_KEY_MARKERS):
-            raise LLMConfigurationError("DEEPSEEK_API_KEY is not configured")
+            raise LLMConfigurationError("LLM API Key is not configured; legacy name: DEEPSEEK_API_KEY")
     
     def create(self, messages: list, temperature: float = 0.8, 
                max_tokens: int = 4096, **kwargs) -> Any:

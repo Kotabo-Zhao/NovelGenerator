@@ -371,10 +371,12 @@ class OutlineComplianceChecker:
             r = merged.get(it["id"])
             if r is None:
                 if run_deep:
-                    # v2.8.5: LLM 精判不可用时，critical 项保守视为缺失（避免
-                    # "故障时静默通过"——此前一律 present=True 使 pct 虚高）；
-                    # 非 critical 项保持乐观（无法确认不误报）。
-                    if it.get("critical"):
+                    # 未配置 LLM 时是规则-only 检查，不应把未执行的语义校验
+                    # 当作失败；但已配置 LLM 且调用故障时，critical 项必须保守
+                    # 计缺失，避免故障时静默通过。
+                    if self._resilient is None:
+                        r = {"present": True, "evidence": "（未配置 LLM，仅完成规则检查）", "by": "unknown"}
+                    elif it.get("critical"):
                         r = {"present": False, "evidence": "（LLM 精判不可用，critical 项保守计缺失）", "by": "unknown"}
                     else:
                         r = {"present": True, "evidence": "（LLM 精判不可用，未确认）", "by": "unknown"}

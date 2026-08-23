@@ -12,8 +12,8 @@ android {
         applicationId = "com.novelgen.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 65
-        versionName = "2.8.5"
+        versionCode = 66
+        versionName = "2.8.6"
 
         ndk {
             abiFilters += listOf("arm64-v8a")

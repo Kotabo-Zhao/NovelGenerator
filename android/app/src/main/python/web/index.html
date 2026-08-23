@@ -800,6 +800,15 @@ label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bot
 .llm-config-title{font-size:12px;font-weight:700;color:var(--text2);letter-spacing:1px;margin-bottom:10px}
 .llm-config-hint{font-size:12px;color:var(--green);margin-top:8px}
 .llm-config input{min-height:38px;font-size:14px}
+.llm-config select{min-height:38px;font-size:14px;width:100%}
+.llm-provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:14px}
+.llm-provider{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:11px 12px;text-align:left;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card);color:var(--text2);cursor:pointer;transition:all .18s var(--ease)}
+.llm-provider:hover{border-color:var(--accent);transform:translateY(-1px)}
+.llm-provider.on{border-color:rgba(201,167,255,.55);background:linear-gradient(135deg,rgba(201,167,255,.18),rgba(158,203,255,.08));color:var(--text);box-shadow:0 0 14px rgba(201,167,255,.12)}
+.llm-provider-name{font-size:13px;font-weight:700}.llm-provider-desc{font-size:10px;line-height:1.35;color:var(--text3)}
+.llm-field{display:block;font-size:11px;color:var(--text2);font-weight:650;margin-top:10px}.llm-field input,.llm-field select{margin-top:5px}
+.llm-base-url{font-family:var(--font-mono);font-size:12px!important;color:var(--text3)}
+.llm-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
 .settings-opt .so-label{display:flex;flex-direction:column;align-items:flex-start;line-height:1.3}
 .settings-opt .so-sub{font-size:10px;color:var(--text3);font-weight:400;margin-top:2px;letter-spacing:.3px}
 .settings-opt.on .so-sub{color:var(--text2)}
@@ -1770,7 +1779,7 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
             <div class="health-dot" :style="{background: health?.llm_configured ? 'var(--green)' : 'var(--gold)'}"></div>
             <div class="health-info">
               <div class="health-label">AI 模型</div>
-              <div class="health-value">{{ health?.model || '—' }}<span v-if="health && !health.llm_configured" style="color:var(--gold);font-size:11px;margin-left:6px">未配置 Key</span></div>
+              <div class="health-value">{{ health?.provider_name || health?.provider || '—' }} · {{ health?.model || '—' }}<span v-if="health && !health.llm_configured" style="color:var(--gold);font-size:11px;margin-left:6px">未配置 Key</span></div>
             </div>
           </div>
           <div class="health-card">
@@ -1782,30 +1791,39 @@ mark.anno-outline{background:rgba(255,212,121,.2);border-bottom:2px solid rgba(2
           </div>
         </div>
         <div class="health-note" v-if="health && !health.llm_configured">
-          ⚠️ 未检测到 AI 服务 Key。请在下方配置 DeepSeek API Key。
+          ⚠️ 还没有配置 AI 服务。选择一个供应商并填写对应 API Key 即可开始创作。
         </div>
 
-        <!-- API Key 配置 -->
+        <!-- 多供应商 LLM 配置 -->
         <div class="llm-config">
-          <div class="llm-config-title">🔑 API Key</div>
-          <div class="flex gap-8" style="align-items:center">
-            <input v-model="llmApiKey" type="password" placeholder="sk-..." style="flex:1;min-width:0" autocomplete="off" />
-            <button class="btn btn-primary btn-sm" @click="saveLLMConfig('key')" :disabled="loading.health || !String(llmApiKey||'').trim()">{{ llmSaving ? '保存中…' : '保存 Key' }}</button>
-          </div>
-          <div class="llm-config-hint" v-if="llmKeySaved">✅ Key 已保存，立即生效</div>
-          <div class="llm-config-title" style="margin-top:16px">🧠 模型</div>
-          <div class="settings-options">
-            <button class="settings-opt" :class="{on:llmModel==='deepseek-chat'}" @click="llmModel='deepseek-chat'">
-              <span class="so-icon">⚡</span><span class="so-label">deepseek-chat<span class="so-sub">通用 · 快速</span></span>
-            </button>
-            <button class="settings-opt" :class="{on:llmModel==='deepseek-v4-flash'}" @click="llmModel='deepseek-v4-flash'">
-              <span class="so-icon">✨</span><span class="so-label">deepseek-v4-flash<span class="so-sub">旗舰 · 更强文笔</span></span>
+          <div class="llm-config-title">🧠 选择模型服务</div>
+          <div class="llm-provider-grid" v-if="llmProviders.length">
+            <button v-for="p in llmProviders" :key="p.id" type="button" class="llm-provider" :class="{on:llmProvider===p.id}" @click="selectLLMProvider(p.id)">
+              <span class="llm-provider-name">{{ p.name }}</span>
+              <span class="llm-provider-desc">{{ p.description }}</span>
             </button>
           </div>
-          <div class="flex gap-8" style="justify-content:flex-end;margin-top:10px">
-            <button class="btn btn-secondary btn-sm" @click="saveLLMConfig('model')" :disabled="loading.health || llmModel===health?.model">{{ llmSaving ? '保存中…' : '切换模型' }}</button>
+          <label class="llm-field">API Key
+            <input v-model="llmApiKey" type="password" :placeholder="llmProviderMeta?.key_placeholder || '请输入 API Key'" autocomplete="off" />
+          </label>
+          <label class="llm-field">模型
+            <select v-if="!llmCustomModelMode && llmProviderMeta?.models?.length" v-model="llmModel" @change="onLLMModelSelect">
+              <option v-for="m in llmProviderMeta.models" :key="m" :value="m">{{ m }}</option>
+              <option value="__custom__">自定义模型 ID…</option>
+            </select>
+            <input v-else v-model="llmCustomModel" type="text" placeholder="例如：provider/model-name" autocomplete="off" />
+          </label>
+          <label class="llm-field">Base URL
+            <input v-model="llmBaseUrl" class="llm-base-url" type="url" :readonly="llmProvider!=='custom'" placeholder="https://api.example.com/v1" autocomplete="off" />
+          </label>
+          <div class="llm-config-hint" v-if="llmProvider==='dots'">Dots 已自动使用 <code>api-key</code> 请求头和 <code>/v1</code> 接口路径。</div>
+          <div class="llm-config-hint" v-if="llmKeySaved">✅ 配置已保存，立即生效{{ health?.api_key_hint ? '（'+health.api_key_hint+'）' : '' }}</div>
+          <div class="llm-actions">
+            <button class="btn btn-secondary btn-sm" type="button" @click="saveLLMConfig(false)" :disabled="loading.health || llmSaving">{{ llmSaving && !llmTesting ? '保存中…' : '保存配置' }}</button>
+            <button class="btn btn-primary btn-sm" type="button" @click="saveLLMConfig(true)" :disabled="loading.health || llmSaving">{{ llmTesting ? '测试中…' : '保存并测试' }}</button>
           </div>
-          <div class="llm-config-hint" v-if="llmModelSaved">✅ 模型已切换为 {{ llmModel }}，立即生效</div>
+          <div class="llm-config-hint" v-if="llmTested">✅ 已连通 {{ llmProviderMeta?.name || llmProvider }} / {{ llmEffectiveModel }}</div>
+          <div class="llm-config-hint" style="color:var(--text3)">Key 只发送到本地后端并保存在本机运行时配置中，不会回显明文。</div>
         </div>
       </div>
 
@@ -2305,12 +2323,20 @@ const app = createApp({
     const theme = ref(localStorage.getItem('theme') || 'dark');
     const uiStyle = ref(localStorage.getItem('uiStyle') || 'macOS');
     const health = ref(null);  // v2.7: 设置页服务状态
-    // v2.7: 设置页 LLM 配置（API Key + 模型切换）
+    // v2.7+: 设置页 LLM 配置（供应商预设 + OpenAI-compatible + Dots）
+    const llmProviders = ref([]);
+    const llmProvider = ref('deepseek');
+    const llmProviderMeta = computed(() => llmProviders.value.find(p => p.id === llmProvider.value) || null);
     const llmApiKey = ref('');
+    const llmBaseUrl = ref('https://api.deepseek.com');
     const llmModel = ref('deepseek-v4-flash');
+    const llmCustomModel = ref('');
+    const llmCustomModelMode = ref(false);
     const llmSaving = ref(false);
+    const llmTesting = ref(false);
     const llmKeySaved = ref(false);
-    const llmModelSaved = ref(false);
+    const llmTested = ref(false);
+    const llmEffectiveModel = computed(() => llmCustomModelMode.value ? String(llmCustomModel.value || '').trim() : llmModel.value);
     const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
     const decomposeSummary = ref(null);  // v2.2: 需求拆解摘要
     const requirementKindOrder = ['book_invariant','milestone','chapter_event','planning_only','preference'];
@@ -2588,7 +2614,7 @@ const app = createApp({
       // v2.8.5: 绑定正文选中事件——此前 onTextSelection 定义了但从未挂载，
       // 续写/扩写/精简/重写工具条永远不出现（selBar.visible 恒 false）。
       document.addEventListener('selectionchange', () => { onTextSelection(); });
-      refreshHealth(); // v2.7: 预取服务状态（fire-and-forget）
+      refreshHealth(); loadLLMProviders(); // v2.7+: 预取服务状态与供应商目录
       loadStyles(); loadStyleSeeds(); // fire-and-forget
       // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
       setTimeout(() => { if (loading.shelf) { loading.shelf = false; console.warn('Shelf loading: forced close after 12s'); } }, 12000);
@@ -2695,26 +2721,71 @@ const app = createApp({
     }
     function toggleTheme() { theme.value = theme.value === 'dark' ? 'light' : 'dark'; applyAppearance(); }
     function toggleUIStyle() { uiStyle.value = uiStyle.value === 'macOS' ? 'iOS' : 'macOS'; applyAppearance(); }
-    // v2.7: 设置页服务状态检测
+    // v2.7+: 设置页服务状态与多供应商配置
     async function refreshHealth() {
       if (loading.health) return;
       loading.health = true;
       try {
         const r = await fetch(API + '/api/health', { signal: AbortSignal.timeout(8000) });
         health.value = await r.json();
-        if (health.value && health.value.model) llmModel.value = health.value.model;
-      } catch(e) { health.value = { status:'offline', llm_configured:false, storage_exists:false, novel_count:0, model:'—' }; }
+        if (health.value && health.value.model && !llmCustomModelMode.value) llmModel.value = health.value.model;
+        if (health.value && health.value.provider) llmProvider.value = health.value.provider;
+      } catch(e) { health.value = { status:'offline', llm_configured:false, storage_exists:false, novel_count:0, model:'—', provider:'deepseek' }; }
       finally { loading.health = false; }
     }
-    // v2.7: 保存 LLM 配置（key 或 model）
-    async function saveLLMConfig(kind) {
-      if (loading.health) return;
-      llmSaving.value = true;
-      llmKeySaved.value = false; llmModelSaved.value = false;
+    async function loadLLMProviders() {
       try {
-        const body = {};
-        if (kind === 'key') body.api_key = String(llmApiKey.value).trim();
-        else body.model = llmModel.value;
+        const [providersResp, configResp] = await Promise.all([
+          fetch(API + '/api/config/llm/providers', { signal: AbortSignal.timeout(8000) }),
+          fetch(API + '/api/config/llm', { signal: AbortSignal.timeout(8000) }),
+        ]);
+        if (!providersResp.ok || !configResp.ok) throw new Error('配置目录暂不可用');
+        const providersData = await providersResp.json();
+        const configData = await configResp.json();
+        llmProviders.value = Array.isArray(providersData.providers) ? providersData.providers : [];
+        if (configData.provider) llmProvider.value = configData.provider;
+        if (configData.base_url) llmBaseUrl.value = configData.base_url;
+        if (configData.model) llmModel.value = configData.model;
+        const meta = llmProviders.value.find(p => p.id === llmProvider.value);
+        if (meta && (!meta.models?.length || !meta.models.includes(llmModel.value))) {
+          llmCustomModelMode.value = true;
+          llmCustomModel.value = llmModel.value || '';
+        }
+      } catch(e) { console.warn('LLM provider catalog unavailable:', e.message || e); }
+    }
+    function selectLLMProvider(providerId) {
+      const meta = llmProviders.value.find(p => p.id === providerId);
+      if (!meta) return;
+      llmProvider.value = providerId;
+      llmBaseUrl.value = meta.base_url || '';
+      llmCustomModelMode.value = !meta.models?.length;
+      llmCustomModel.value = '';
+      llmModel.value = meta.default_model || '';
+      llmKeySaved.value = false;
+      llmTested.value = false;
+    }
+    function onLLMModelSelect() {
+      if (llmModel.value === '__custom__') {
+        llmCustomModelMode.value = true;
+        llmCustomModel.value = '';
+      }
+      llmTested.value = false;
+    }
+    async function saveLLMConfig(testAfterSave = false) {
+      if (loading.health || llmSaving.value) return;
+      llmSaving.value = true;
+      llmTesting.value = false;
+      llmKeySaved.value = false; llmTested.value = false;
+      try {
+        const selectedModel = String(llmEffectiveModel.value || '').trim();
+        if (!selectedModel) throw new Error('请先选择或填写模型 ID');
+        const body = {
+          provider: llmProvider.value,
+          base_url: String(llmBaseUrl.value || '').trim(),
+          model: selectedModel,
+        };
+        const key = String(llmApiKey.value || '').trim();
+        if (key) body.api_key = key;
         const r = await fetch(API + '/api/config/llm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2723,13 +2794,21 @@ const app = createApp({
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
-        if (kind === 'key') { llmKeySaved.value = true; llmApiKey.value = ''; }
-        else llmModelSaved.value = true;
-        refreshHealth();
-        showToast(d.applied?.join('、') + ' 已生效', '配置已保存', '✅');
+        llmKeySaved.value = true;
+        llmApiKey.value = '';
+        if (d.config?.model) llmModel.value = d.config.model;
+        if (testAfterSave) {
+          llmTesting.value = true;
+          const tr = await fetch(API + '/api/config/llm/test', { method:'POST', signal: AbortSignal.timeout(30000) });
+          const td = await tr.json();
+          if (!tr.ok) throw new Error(td.detail || ('HTTP ' + tr.status));
+          llmTested.value = true;
+        }
+        await refreshHealth();
+        showToast(testAfterSave ? '连接测试通过' : '配置已生效', '模型服务', '✅');
       } catch(e) {
         reportError(e.message || '保存失败', '配置失败');
-      } finally { llmSaving.value = false; }
+      } finally { llmSaving.value = false; llmTesting.value = false; }
     }
 
     // 刷新恢复：保存当前小说和视图到 sessionStorage
@@ -4953,9 +5032,10 @@ const app = createApp({
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,toggleUIStyle,
-      // v2.7: 设置页（服务状态 + 外观应用）
+      // v2.7+: 设置页（服务状态 + 多供应商模型服务 + 外观应用）
       health,refreshHealth,applyAppearance,
-      llmApiKey,llmModel,llmSaving,llmKeySaved,llmModelSaved,saveLLMConfig,
+      llmProviders,llmProvider,llmProviderMeta,llmApiKey,llmBaseUrl,llmModel,llmCustomModel,llmCustomModelMode,
+      llmSaving,llmTesting,llmKeySaved,llmTested,llmEffectiveModel,loadLLMProviders,selectLLMProvider,onLLMModelSelect,saveLLMConfig,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStatus,batchStreaming,exportProgress,writingModeLiterary,theme,uiStyle,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,outlineLoading,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,requirementSnapshot,requirementKindOrder,

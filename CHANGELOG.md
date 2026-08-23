@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.8.6-internal — 2026-08-23
+
+### Added
+
+- 新增统一 LLM 提供商目录，支持 DeepSeek、Dots、OpenAI、通义千问、Kimi、智谱、豆包、SiliconFlow 与自定义 OpenAI 兼容服务。
+- 设置页支持一键选择提供商、自动填充 Base URL/模型，并提供保存配置与连接测试闭环。
+- Dots 使用 `api-key` 鉴权头适配，API Key 仅运行时配置，不嵌入 APK 或提交到版本库。
+
+### Verification
+
+- 隔离浏览器实测 Dots 配置流程：保存接口 HTTP 200、连接测试接口 HTTP 200、页面显示“连接测试通过”。
+
 ## 2.8.5-internal — 2026-08-21
 
 ### Fixed（各子模块功能完善批次）

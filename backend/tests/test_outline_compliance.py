@@ -114,14 +114,16 @@ def test_check_chapter_llm_missing_then_scene_revision():
     assert len(llm.calls) == 2
 
 
-def test_check_chapter_llm_down_no_false_positive():
+def test_check_chapter_llm_down_conservative_for_critical():
     llm = _FakeLLM([RuntimeError("llm down")])
     c = OutlineComplianceChecker(None, "x")
     c._resilient = llm
     text = "主角踏入山门。师姐相助。反派现身。"
     r = c.check_chapter(text, _outline(), run_deep=True)
     unknown = [x for x in r["results"] if x["by"] == "unknown"]
-    assert unknown and all(x["present"] for x in unknown)
+    assert unknown
+    assert any(x["critical"] and x["present"] is False for x in unknown)
+    assert all(x["present"] for x in unknown if not x["critical"])
     assert next(x for x in r["results"] if x["id"] == "char_师姐")["present"] is True
 
 

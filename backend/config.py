@@ -5,9 +5,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # LLM
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+#
+# LLM_* 是新的统一配置；DEEPSEEK_* 保留为兼容旧版 .env、脚本和第三方
+# 集成。未设置 LLM_* 时自动回退到旧变量，因此升级不需要立即重写 .env。
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek").strip().lower() or "deepseek"
+LLM_API_KEY = os.getenv("LLM_API_KEY", os.getenv("DEEPSEEK_API_KEY", ""))
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"))
+LLM_MODEL = os.getenv("LLM_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"))
+
+# 兼容旧代码：业务模块仍可读取 DEEPSEEK_*，运行时切换供应商时由 Engine
+# 同步这些别名，避免一次性修改几十个历史调用点。
+DEEPSEEK_API_KEY = LLM_API_KEY
+DEEPSEEK_BASE_URL = LLM_BASE_URL
+DEEPSEEK_MODEL = LLM_MODEL
 
 # Storage — 环境变量允许覆盖；相对路径固定相对于项目根目录，
 # 不能随着 uvicorn 的启动目录漂移到 backend/novels。
@@ -24,6 +34,7 @@ def _resolve_project_path(value: str) -> str:
 
 
 NOVELS_DIR = _resolve_project_path(os.getenv("NOVELS_DIR", _DEFAULT_NOVELS))
+LLM_CONFIG_FILE = os.path.join(os.path.dirname(NOVELS_DIR), "llm_config.json")
 
 # Server
 HOST = os.getenv("HOST", "0.0.0.0")

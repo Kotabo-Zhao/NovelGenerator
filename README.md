@@ -102,7 +102,7 @@
 ### 1. 环境要求
 
 - Python ≥ 3.10
-- DeepSeek API Key（[免费获取](https://platform.deepseek.com)）
+- 任一兼容模型的 API Key（DeepSeek、OpenAI、Dots、通义千问、Kimi、智谱、豆包等）
 
 ### 2. 安装
 
@@ -118,13 +118,32 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-编辑 `.env`：
+编辑 `.env`（也可以启动后在“设置 → 模型服务”里一键配置）：
 ```env
-DEEPSEEK_API_KEY=sk-your-key-here
-DEEPSEEK_MODEL=deepseek-chat
+LLM_PROVIDER=deepseek
+LLM_API_KEY=sk-your-key-here
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-v4-flash
 HOST=0.0.0.0
 PORT=8000
 ```
+
+### 模型服务一键配置
+
+设置页提供常用供应商预设，并自动带入 Base URL、模型 ID 与认证方式：
+
+| 供应商 | 默认模型 | 备注 |
+|:---|:---|:---|
+| DeepSeek | `deepseek-v4-flash` | 中文长篇创作默认推荐 |
+| 小红书 Dots | `dots3-note-prev` | OpenAI Chat Completions；使用 `api-key` 请求头 |
+| OpenAI | `gpt-5.2` | 官方 GPT 接口 |
+| 通义千问 | `qwen-plus` | 阿里云百炼兼容接口 |
+| Kimi / Moonshot | `kimi-k2.5` | 长上下文中文创作 |
+| 智谱 GLM | `glm-4.5` | 中文结构化输出 |
+| 豆包 / 火山方舟 | `doubao-seed-2-0-pro-260215` | 也支持控制台生成的 `ep-...` 接入点 |
+| 自定义兼容接口 | 用户填写 | 支持本地代理与企业网关 |
+
+服务端只返回 Key 是否配置及末四位提示，不会把明文 Key 返回前端；运行时配置写入本地 `llm_config.json`，该文件已加入忽略规则。
 
 ### 4. 启动
 
@@ -228,8 +247,8 @@ python -m uvicorn api.server:app --host 0.0.0.0 --port 8000
 └─────────────────────┬────────────────────────────────┘
                       │
 ┌─────────────────────▼────────────────────────────────┐
-│                 DeepSeek API                          │
-│          (deepseek-chat / deepseek-v4-flash)          │
+│          OpenAI-compatible LLM Providers              │
+│  DeepSeek / Dots / OpenAI / Qwen / Kimi / GLM / 豆包 │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -387,7 +406,7 @@ NovelGenerator/
 | 前端 | Vue 3.5.13 (CDN-free) | 单文件 SPA, ~115KB, 自托管 |
 | PWA | Service Worker v4 + Manifest | 离线缓存 · 添加到主屏幕 |
 | 后端 | Python FastAPI | ~55 端点 · SSE 流式响应 |
-| LLM | DeepSeek Chat API | deepseek-chat / deepseek-v4-flash |
+| LLM | OpenAI Chat Completions 兼容层 | 多供应商预设 + 自定义接口 |
 | 存储 | 文件系统 | JSON 元数据 + Markdown 正文 + 原子写入 |
 | 部署 | Render / 本地 | render.yaml 一键部署 |
 
