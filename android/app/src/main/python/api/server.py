@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, LLM_CONFIG_FILE
 from core.path_security import validate_novel_id, RESERVED_NOVEL_IDS
@@ -33,7 +34,7 @@ from core.path_security import validate_novel_id, RESERVED_NOVEL_IDS
 from .deps import engine, log, ownership_store
 from .auth import owner_id_from_authorization, is_internal_version
 from core.auth import AuthError
-from .routers import auth, novels, v1, outline, quality, requirements, styles, trends, characters, feedback, tts, interactive, bible, ideas
+from .routers import auth, novels, v1, outline, quality, requirements, styles, trends, characters, feedback, tts, bible, ideas, roleplay, system
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
@@ -305,12 +306,16 @@ _python_root = os.path.dirname(_api_dir)
 _pc_root = os.path.dirname(_python_root)
 _web_dir_2 = os.path.join(_python_root, "web")
 _web_dir_3 = os.path.join(_pc_root, "web")
-if os.path.isdir(_web_dir_2):
-    WEB_DIR = _web_dir_2
-elif os.path.isdir(_web_dir_3):
+if os.path.isdir(_web_dir_3):
     WEB_DIR = _web_dir_3
+elif os.path.isdir(_web_dir_2):
+    WEB_DIR = _web_dir_2
 else:
     WEB_DIR = os.getenv("WEB_DIR", _web_dir_2)
+
+_assets_dir = os.path.join(WEB_DIR, "assets")
+if os.path.isdir(_assets_dir):
+    app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
 
 # ── Frontend Route (仅/，子路径走 StaticFiles) ──
@@ -326,6 +331,14 @@ async def serve_frontend():
                 headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
             )
     return HTMLResponse("<h1>NovelGenerator</h1><p>Frontend not found</p>", status_code=404)
+
+
+@app.get("/roleplay.html", response_class=HTMLResponse)
+async def serve_roleplay():
+    path = os.path.join(WEB_DIR, "roleplay.html")
+    if os.path.isfile(path):
+        return FileResponse(path, media_type="text/html", headers={"Cache-Control": "no-cache"})
+    return HTMLResponse("<h1>角色扮演页面不存在</h1>", status_code=404)
 
 
 # ── Static JS/CSS assets (自托管，不依赖外部CDN) ──
@@ -507,7 +520,7 @@ async def test_llm_config():
 
 # ── 业务路由挂载（2026-07-31 按域拆分）──
 
-for _router in (auth, v1, novels, outline, quality, requirements, styles, trends, characters, feedback, tts, interactive, bible, ideas):
+for _router in (auth, v1, novels, outline, quality, requirements, styles, trends, characters, feedback, tts, bible, ideas, roleplay, system):
     app.include_router(_router.router)
 
 

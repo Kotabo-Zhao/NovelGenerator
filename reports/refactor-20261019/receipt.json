@@ -1,0 +1,39 @@
+{
+  "source_backup": "../_novelgenerator_backups/20261019-221333/source-before.zip",
+  "before_web_bytes_excluding_vendor": 430504,
+  "after_web_bytes_excluding_vendor": 351443,
+  "retired_interactive_source_bytes": 378806,
+  "backend_tests": 142,
+  "frontend_regressions": 20,
+  "deps": {
+    "fastapi": "0.147.0",
+    "uvicorn": "0.54.0",
+    "openai": "3.35.1",
+    "pydantic": "2.14.1",
+    "fpdf2": "2.8.9",
+    "ebooklib": "0.20",
+    "pytest": "9.1.1",
+    "playwright": "1.64.0",
+    "ruff": "0.17.1"
+  },
+  "sources": {
+    "web\\index.html": "42a5fa88226e174400e8a1ba242d2f266445eef84bf4cf0ba6ff9d71fe237f1a",
+    "web\\manifest.json": "12884550b25bf528f67161a9afae127804f6ed1e0736f2ff0f2572dc46fa0697",
+    "web\\roleplay.html": "5d6314b0da9779de48d1ffcbd9aae2738b5655cd673a76f594ec31d7b43076e8",
+    "web\\sw.js": "d27f9d07d09e02cca17382c4c4644db710a68e20cef0e93849eb320c9fa1db5e",
+    "web\\vue.global.prod.js": "60ef9454b7175a314e29f194dae46b20c629962198db2e3c3a6123578eb867b3",
+    "web\\assets\\icon.svg": "4553a5f934a539eb06c053f191cc7f918a1c57a73d7ce5af3fd504cf8e02b165",
+    "web\\assets\\roleplay-forms.css": "1d00468f5eb917b8f6282aef2cab1cb556acf3402d4c87877a05a365ee10ffe2",
+    "web\\assets\\roleplay.css": "f794f7b649393be01db918c3dbb607765bf8e4aacb6cbc7caf7e25542de366de",
+    "web\\assets\\roleplay.js": "64b7cca9b585702ceb7196d65058af22fdf7f81e617a7bed755df4a18e03526b",
+    "web\\assets\\runtime.js": "a74f63417950e7e34a1d5aac09bf79f92066cddf89fcd31d26ff082931e42f22",
+    "web\\assets\\theme.css": "dd04829713d1ad6c099f0f22e74b0aed7adec3dda0b07b02f7deb4c6651e6e23",
+    "web\\assets\\tools.css": "ea848a4d73db6fd45a784f5e2209e43b412db42cb728ed2679ba2bbf9f289fa1",
+    "web\\assets\\workshop.css": "5ce6a41d59197d2fc86095ff1a8839fcf6e0027336d593f42b4321c2c36e656a",
+    "web\\assets\\workshop.js": "0485b6d83e97fa0bdfa46218dabb56e0fd1a08498996ae41c75bdd154fec9a34"
+  },
+  "browser_acceptance_checks": 15,
+  "pwa_offline_shell": true,
+  "local_url": "http://127.0.0.1:8787/",
+  "real_model_generation": "NOT_RUN"
+}

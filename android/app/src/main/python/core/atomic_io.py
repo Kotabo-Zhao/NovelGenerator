@@ -9,8 +9,21 @@ import json
 import os
 import uuid
 import logging
+import shutil
+import time
 
 log = logging.getLogger(__name__)
+
+
+def _replace_file(source: str, destination: str):
+    for attempt in range(5):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(.04 * (attempt + 1))
 
 
 def atomic_write_json(path: str, data, indent: int = 2):
@@ -22,7 +35,9 @@ def atomic_write_json(path: str, data, indent: int = 2):
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=indent)
-        os.replace(tmp_path, path)
+            f.flush()
+            os.fsync(f.fileno())
+        _replace_file(tmp_path, path)
     except Exception:
         try:
             if os.path.exists(tmp_path):
@@ -51,12 +66,13 @@ def safe_read_json(path: str, default=None):
         import time as _time
         backup = f"{path}.corrupted.{int(_time.time())}"
         try:
-            # 原子移走损坏文件：既保留原文，又避免下次读取重复触发。
-            os.replace(path, backup)
-            log.warning(f"Corrupted file moved aside: {backup}")
-        except OSError as be:
-            log.error(f"Failed to move corrupted file {path}: {be}")
-        log.error(f"Failed to read {path}: {e}. Returning default without overwriting.")
+            if not os.path.exists(backup):
+                shutil.copy2(path, backup)
+            log.warning(f"Corrupted file backed up: {backup}")
+        except Exception:
+            pass
+        log.error(f"Failed to read {path}: {e}. Restoring to default.")
+        # A read must not replace a damaged original with an empty default.
         return default
 
 
@@ -69,7 +85,9 @@ def atomic_write_text(path: str, content: str):
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
-        os.replace(tmp_path, path)
+            f.flush()
+            os.fsync(f.fileno())
+        _replace_file(tmp_path, path)
     except Exception:
         try:
             if os.path.exists(tmp_path):

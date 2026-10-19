@@ -238,7 +238,7 @@ class Writer:
         messages = kwargs.pop("messages", [])
         temperature = kwargs.pop("temperature", 0.8)
         max_tokens = kwargs.pop("max_tokens", 4096)
-        
+
         if is_stream:
             # 流式调用返回 response 对象（供 write_stream 迭代）
             call_kwargs = dict(
@@ -374,7 +374,7 @@ class Writer:
         skip_ending: bool = False,  # v2.12: 质量门重试时跳过Phase 2(避免重复生成结尾)
     ) -> AsyncGenerator[str, None]:
         """流式生成一个章节候选，必要时只从截断点续写。
-        
+
         Args:
             writing_mode: 'webnovel' (网文) or 'literary' (文学)
             normal_pacing: False=快节奏默认, True=正常节奏
@@ -391,7 +391,7 @@ class Writer:
             style_config = build_custom_style(style)
         else:
             style_config = get_style(style)
-        
+
         style_prompt = build_style_prompt(style_config)
 
         # v2.25: 所有节奏和质量要求已合并到 WRITER_SYSTEM，不再单独注入
@@ -434,7 +434,7 @@ class Writer:
                 # 没有下一个 section，取到末尾
                 outline_instruction = context[instr_start:].strip()
                 context = context[:instr_start]
-        
+
         if outline_instruction:
             # AUDIT P0-1: 剥离 ═══ 标记行，防止指令标记本身进入 system prompt
             outline_instruction = "\n".join(
@@ -444,13 +444,13 @@ class Writer:
             log.info(f"Outline injected into system prompt ({len(outline_instruction)} chars)")
 
         log.info(f"Writing chapter candidate: {genre}/{style}/{writing_mode}")
-        
+
         # v2.11: 提取桥接指令，放在 user prompt 最前面（LLM 对 user 消息开头最敏感）
         bridge_section = ""
         main_context = context
         bridge_marker = "## 🔗 第"
         opening_marker = "- 🎬 开场场景:"
-        
+
         if bridge_marker in context:
             # 桥接区独立提取
             bridge_start = context.find(bridge_marker)
@@ -459,7 +459,7 @@ class Writer:
             if next_section > bridge_start:
                 bridge_section = context[bridge_start:next_section].strip() + "\n\n"
                 main_context = context[:bridge_start] + context[next_section:]
-        
+
         # 开场场景也提取到最前面
         if opening_marker in main_context:
             os_idx = main_context.find(opening_marker)
@@ -469,10 +469,10 @@ class Writer:
                 if "开场场景" in opening_line:
                     bridge_section = opening_line + "\n\n" + bridge_section
                     main_context = main_context[:os_idx] + main_context[os_end+1:]
-        
+
         # 构建 user prompt：桥接指令在最前面
         user_prompt = bridge_section + f"请根据以下上下文和本章大纲，开始写正文：\n\n{main_context}"
-        
+
         draft = ""
         finish_reason = "unknown"
         # max_tokens 根据目标字数估算，但所有初稿/续写/补全路径共享配置硬上限。
@@ -482,13 +482,13 @@ class Writer:
         safe_max_tokens = max_generation_tokens(
             int(target_words), multiplier=_mult, hard_cap=MAX_CHAPTER_TOKENS
         )
-        
+
         # v2.14: 使用韧性客户端的流式调用，支持断线重连
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        
+
         async for chunk in self._resilient.create_stream(
             messages=messages,
             temperature=0.85,
@@ -496,13 +496,13 @@ class Writer:
         ):
             draft += chunk
             yield chunk  # 流式输出初稿
-        
+
         # 流式调用完成后推断 finish_reason
         if len(draft) < target_words * 0.8:
             finish_reason = "length"
         else:
             finish_reason = "stop"
-        
+
         log.info(f"Draft done: {len(draft)} chars, finish_reason={finish_reason}")
 
         # ── finish_reason 检测: API 因 token 不足截断 → 续写而不是重写 ──
@@ -523,7 +523,7 @@ class Writer:
                     {"role": "assistant", "content": draft},
                     {"role": "user", "content": "以上是你的初稿，但字数不足。请从上面的断点处继续写，不要重复已写内容。新增部分应该无缝衔接上文，保持同样的风格和视角。"},
                 ]
-                retry_stream = await self._create_stream_chunks(
+                retry_stream = self._resilient.create_stream(
                     model=self.model,
                     messages=continue_msgs,
                     temperature=0.8,
@@ -531,9 +531,9 @@ class Writer:
                     stream=True,
                 )
                 continuation = ""
-                for chunk_text in retry_stream:
-                    continuation += chunk_text
-                    yield chunk_text
+                async for text in retry_stream:
+                    continuation += text
+                    yield text
                 if continuation:
                     # 去重：检查续写开头是否与草稿结尾重叠
                     cleaned = _dedup_continuation(draft, continuation)
@@ -544,8 +544,124 @@ class Writer:
             except Exception as e:
                 log.warning(f"Continuation failed: {e}, keeping truncated draft")
 
-        # 正文已经逐块交给唯一的上层章节提交器。不要在流结束后执行不可见的
-        # 整章润色或 Humanizer 重写；最终候选的局部修订、门禁和提交由上层统一完成。
+        final_text = draft  # default: use draft as-is
+
+        # v2.53: Phase 2 已移除。主写手(WRITER_SYSTEM 第26-28行)已负责章末钩子。
+        # 之前 Phase 2 在主写手的钩子后又追加一段结尾，造成「固定内容」和双层结尾。
+        # 现在完全依赖主写手在上下文中自然收尾。
+
+        # ── 第二遍: 风格打磨（长文跳过——3000字以上初稿质量已够，省一轮API调用）──
+        polish_skipped = len(draft) < 500 or style_config.get("is_custom") or len(draft) > 2000
+        if polish_skipped:
+            if len(draft) > 2000:
+                log.info(f"Skipping polish pass (draft {len(draft)} chars, long enough)")
+            else:
+                log.info("Skipping polish pass (too short or custom style)")
+        else:
+            try:
+                log.info(f"Pass 2/2: style polish")
+                polish_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
+
+                polish_stream = self._resilient.create_stream(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": polish_prompt},
+                        {"role": "user", "content": f"草稿如下：\n\n{draft}"},
+                    ],
+                    temperature=0.6,
+                    max_tokens=safe_max_tokens,
+                    stream=True,
+                )
+
+                polished = ""
+                async for text in polish_stream:
+                    polished += text
+
+                if polished and len(polished) > len(draft) * 0.5:
+                    final_text = polished
+                    log.info(f"Polish done: {len(polished)} chars")
+                else:
+                    log.warning(f"Polish result too short ({len(polished)} chars), using draft")
+            except Exception as e:
+                log.warning(f"Polish pass failed: {e}, using draft")
+
+        # ── Humanizer 检测（长文跳过——减少API调用）──
+        try:
+            h_result = humanize_text(final_text)
+            log.info(f"Humanizer score: {h_result['score']}/100 ({h_result['total_issues']} issues)")
+
+            # 初稿 ≥2000字 且 评分 ≥70 → 跳过 Humanizer 重写（v2.3.5: 50→70 提高润色覆盖）
+            if len(final_text) >= 2000 and h_result["score"] >= 70:
+                log.info(f"Skipping Humanizer pass (score OK: {h_result['score']})")
+            elif h_result["score"] < 70 and h_result["total_issues"] > 3:
+                log.info(f"Pass 3/3: Humanizer rewrite (score={h_result['score']})")
+                h_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
+                h_prompt += "\n\n" + build_humanizer_prompt(h_result["detected"])
+
+                h_stream = self._resilient.create_stream(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": h_prompt},
+                        {"role": "user", "content": f"需要Humanizer润色的文本：\n\n{final_text}"},
+                    ],
+                    temperature=0.5,
+                    max_tokens=safe_max_tokens,
+                    stream=True,
+                )
+
+                humanized = ""
+                async for text in h_stream:
+                    humanized += text
+
+                if len(humanized) > len(final_text) * 0.6:
+                    final_text = humanized
+                    log.info(f"Humanizer done: {len(humanized)} chars")
+        except Exception as e:
+            log.warning(f"Humanizer pass failed: {e}, using current text")
+
+        # ── 截断检测 (最多重试2次，从断点续写而不是重写) ──
+        try:
+            retry_multiplier = 2
+            for retry_round in range(2):
+                is_trunc, reason = _check_truncation(final_text, target_words)
+                if not is_trunc:
+                    break  # 不截断，直接通过
+
+                log.warning(f"Truncation detected (round {retry_round+1}): {reason}. "
+                           f"Continuing from breakpoint with {retry_multiplier}x max_tokens...")
+                retry_max = min(int(target_words * 3 * retry_multiplier), 24000)
+                # v2.49: 从断点续写，不重写
+                continue_msgs = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                    {"role": "assistant", "content": final_text},
+                    {"role": "user", "content": f"以上是你的草稿，但内容不完整（{reason}）。请从断点处直接继续写，不要重复已有内容。严格保持相同风格、视角和人称。新增的字数只需要补足剩余部分即可。"},
+                ]
+                retry_text = ""
+                retry_stream = self._resilient.create_stream(
+                    model=self.model,
+                    messages=continue_msgs,
+                    temperature=0.8,
+                    max_tokens=retry_max,
+                    stream=True,
+                )
+                async for text in retry_stream:
+                    retry_text += text
+
+                if retry_text:
+                    cleaned = _dedup_continuation(final_text, retry_text)
+                    candidate = final_text + cleaned
+                    is_trunc2, _ = _check_truncation(candidate, target_words)
+                    if not is_trunc2 or len(candidate) > len(final_text):
+                        final_text = candidate
+                        log.info(f"Continuation OK (round {retry_round+1}): +{len(cleaned)} → {len(final_text)} chars")
+                        break
+
+                retry_multiplier *= 2  # 下次翻倍
+            else:
+                log.warning(f"All retries failed, using best available ({len(final_text)} chars)")
+        except Exception as e:
+            log.warning(f"Truncation check/retry failed: {e}, using current text")
 
 
 def _dedup_continuation(existing: str, continuation: str) -> str:
@@ -555,14 +671,14 @@ def _dedup_continuation(existing: str, continuation: str) -> str:
     # 取前文最后 50 个字符作为重叠检测窗口
     overlap_window = min(50, len(existing))
     tail = existing[-overlap_window:]
-    
+
     # 在续写内容中向前搜索重叠
     best_cut = 0
     for cut_len in range(min(overlap_window, len(continuation)), 3, -1):
         if tail[-cut_len:] == continuation[:cut_len]:
             best_cut = cut_len
             break
-    
+
     if best_cut > 0:
         log.info(f"Dedup: removed {best_cut} overlapping chars")
         return continuation[best_cut:]
@@ -593,19 +709,19 @@ def _trim_to_target(text: str, target_words: int) -> str:
 
 def _check_truncation(text: str, target_words: int) -> tuple:
     """检测生成内容是否被截断
-    
+
     Returns:
         (is_truncated: bool, reason: str)
     """
     if not text or len(text) < 100:
         return True, "文本过短"
-    
+
     # 1. 结尾完整性: 句子不能断在半截
     last_char = text.rstrip()[-1] if text.rstrip() else ""
     valid_endings = set("。！？…\"')」》")
     if last_char not in valid_endings:
         return True, f"结尾不完整 (最后字符: {last_char})"
-    
+
     # 2. 长度比率: 低于50%目标字数视为截断
     char_count = len(text)
     # v2.7.6: 下限 500→40——字数放开后小目标（如超短篇300字）不得被判截断；
@@ -613,7 +729,7 @@ def _check_truncation(text: str, target_words: int) -> tuple:
     min_acceptable = max(40, int(target_words * 0.5))  # 不低于目标50%，下限40字
     if char_count < min_acceptable:
         return True, f"长度不足 ({char_count}字 vs 目标{target_words}字, 最低要求{min_acceptable}字)"
-    
+
     # 3. 钩子检查: 结尾应该有悬念/期待感
     # AUDIT P1-3: 移除「然后/但是/这时/然而」等高频非钩子词，避免假阳性。
     # 此检查仅作提示，真正的钩子强弱判断见 Writer.assess_and_enhance_hook（LLM 评估）。
@@ -621,7 +737,7 @@ def _check_truncation(text: str, target_words: int) -> tuple:
     has_hook = any(kw in last_100 for kw in ["突然", "忽然", "那一刻", "奇怪", "竟然", "没想到", "却见", "就在这时", "……", "？", "?"])
     if not has_hook and target_words > 2000:
         log.info("No hook detected at end (minor)")
-    
+
     return False, ""
 
 
@@ -633,18 +749,18 @@ def _is_truncated(text: str, expected_max: int) -> bool:
 
 def _ensure_complete_ending(text: str) -> str:
     """确保章节结尾是一个完整的句子/段落。
-    
+
     当 API 在 max_tokens 处截断时，最后一句可能只写了一半。
     此函数找到最后一个完整的句子边界并裁切到那里。
     """
     if not text or len(text) < 100:
         return text
-    
+
     text = text.rstrip()
-    
+
     # 完整结尾标记：句号、问号、感叹号、省略号、右引号、右书名号
     COMPLETE_MARKERS = set("。？！？!…~\"”’") | set("」』】〖〗》〉＞")
-    
+
     # 如果已经以完整标记结尾，不需要处理；但右引号/括号内可能仍是
     # 没有句末标点的半句（例如“把纸给我”），交给下面的质量门会误报，
     # 因此保留原文以外的闭合符号时，后续统一补一个句号。
@@ -655,19 +771,19 @@ def _ensure_complete_ending(text: str) -> str:
             if inner and inner[-1] not in "。？！？!…~":
                 return text + "。"
         return text
-    
+
     # 从末尾反向搜索，找到最后一个完整句子边界
     # 搜索范围：末尾 300 字符内
     search_start = max(0, len(text) - 300)
     tail = text[search_start:]
-    
+
     # 找最后一个完整句子结束标记
     last_complete = -1
     for marker in "。？！？!…":
         pos = tail.rfind(marker)
         if pos > last_complete:
             last_complete = pos
-    
+
     if last_complete == -1:
         # 如果整个尾部都没找到完整句子标记，但文本够长，
         # 说明可能在叙述中间被截断，尝试找最后一个引号对话结束处
@@ -675,12 +791,12 @@ def _ensure_complete_ending(text: str) -> str:
             pos = tail.rfind(marker)
             if pos > last_complete:
                 last_complete = pos
-    
+
     if last_complete >= 0:
         # 裁切到完整句子位置 + 1（保留标点）
         cut_point = search_start + last_complete + 1
         trimmed = text[:cut_point].rstrip()
-        
+
         # 明确的截断符（破折号/省略号）即使只剩几个字符也表示半句；
         # 不能用长度阈值把它放过去，否则下一层质量门只能报错并丢失候选。
         removed = len(text) - len(trimmed)
@@ -688,7 +804,7 @@ def _ensure_complete_ending(text: str) -> str:
         if removed > 10 or explicit_truncation:
             log.info(f"Ensured complete ending: trimmed {removed} chars of incomplete sentence")
             return trimmed
-    
+
     # 兜底：如果实在找不到完整标记，保持原文（至少有内容）
     return text
 

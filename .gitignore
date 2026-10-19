@@ -5,8 +5,10 @@ __pycache__/
 *.db-wal
 *.db-shm
 .env
-llm_config.json
-*.llm_config.json
+.venv/
+_roleplay/
+_settings/
+.pytest_cache/
 novels/*
 !novels/.gitkeep
 android/app/build/
@@ -28,3 +30,4 @@ android/*.apk
 android/signing.properties
 android/keys/
 backend/data/
+reports/**/failure*

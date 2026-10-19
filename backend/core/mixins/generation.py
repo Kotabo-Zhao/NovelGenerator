@@ -14,10 +14,7 @@ import os
 import re
 import time
 # Allow importing from parent dir (works both as package and standalone)
-try:
-    from backend import config
-except ImportError:
-    import config
+import config
 from typing import AsyncGenerator, Optional, AsyncIterator
 from ..atomic_io import atomic_write_json, safe_read_json
 from ..beat_decomposer import BeatDecomposer, Beat
@@ -236,33 +233,33 @@ def _hard_outline_failures(report: dict | None) -> list[dict]:
 # ===== _extract_key_ending (从 engine.py 迁移) =====
 def _extract_key_ending(text: str, window: int = 600) -> dict | None:
     """提取原文关键结尾信息，用于 Humanizer 后恢复保护。
-    
+
     返回 {sentences, ngrams, has_hook} 或 None。
     """
     import re
     if len(text) < 100:
         return None
-    
+
     # 按句子边界切分
     raw = re.split(r'(?<=[。！？……])', text[-window:])
     sentences = [s.strip() for s in raw if s.strip() and len(s.strip()) > 2]
-    
+
     if len(sentences) < 2:
         return None
-    
+
     # 最后 2-3 句为关键结尾
     key = sentences[-3:] if len(sentences) >= 3 else sentences[-2:]
     ending_text = ''.join(key)
-    
+
     # 3-gram 特征集
     chars = ending_text.replace(' ', '').replace('\n', '')
     ngrams = {chars[i:i+3] for i in range(len(chars) - 2)} if len(chars) >= 3 else set()
-    
+
     # 勾子检测
     hook_markers = ['突然', '忽然', '猛地', '即将', '等待', '然而', '可是',
                     '但', '只见', '……', '—', '未完', '待续', '下一章']
     has_hook = any(m in ending_text for m in hook_markers)
-    
+
     return {
         "text": ending_text,
         "ngrams": ngrams,
@@ -275,15 +272,15 @@ def _extract_key_ending(text: str, window: int = 600) -> dict | None:
 # ===== _protect_ending_semantic (从 engine.py 迁移) =====
 def _protect_ending_semantic(original: str, rewritten: str, ending_info: dict) -> str:
     """v2.13: 语义结尾保护 — 三重检测决定是否恢复原文结尾。
-    
+
     1. n-gram 重叠率 < 40% → 结尾已被大改
     2. 原文结尾长度 > 改写结尾 1.5x → 被截断
     3. 原文有勾子改写版没有 → 悬念被抹掉
-    
+
     满足任一条件即恢复原文结尾。
     """
     import re
-    
+
     # 提取改写版结尾
     raw = re.split(r'(?<=[。！？……])', rewritten[-600:])
     r_sentences = [s.strip() for s in raw if s.strip() and len(s.strip()) > 2]
@@ -295,9 +292,9 @@ def _protect_ending_semantic(original: str, rewritten: str, ending_info: dict) -
             log.info(f"Humanizer: ending protected (rewrite too short, {len(ending_info['text'])} chars kept)")
             return protected
         return rewritten
-    
+
     r_ending_text = ''.join(r_sentences[-3:] if len(r_sentences) >= 3 else r_sentences[-2:])
-    
+
     # 指标1: n-gram 重叠
     if ending_info["ngrams"]:
         r_chars = r_ending_text.replace(' ', '').replace('\n', '')
@@ -308,32 +305,32 @@ def _protect_ending_semantic(original: str, rewritten: str, ending_info: dict) -
             overlap = 1.0
     else:
         overlap = 1.0
-    
+
     # 指标2: 长度剧烈缩短
     length_shrink = len(ending_info["text"]) > len(r_ending_text) * 1.5
-    
+
     # 指标3: 勾子丢失
     hook_markers = ['突然', '忽然', '猛地', '即将', '等待', '然而', '可是',
                     '但', '只见', '……', '—', '未完', '待续', '下一章']
     r_has_hook = any(m in r_ending_text for m in hook_markers)
     hook_lost = ending_info["has_hook"] and not r_has_hook
-    
+
     needs_protection = overlap < 0.4 or length_shrink or hook_lost
-    
+
     if needs_protection:
         # 用原文结尾替换改写版结尾
         ending_len = len(ending_info["text"])
         cutoff = max(0, len(rewritten) - len(r_ending_text))
         protected = rewritten[:cutoff] + ending_info["text"]
-        
+
         reasons = []
         if overlap < 0.4: reasons.append(f"overlap={overlap:.0%}")
         if length_shrink: reasons.append("length_shrink")
         if hook_lost: reasons.append("hook_lost")
-        
+
         log.info(f"Humanizer: ending semantically protected ({', '.join(reasons)})")
         return protected
-    
+
     return rewritten
 
 
@@ -934,14 +931,14 @@ class GenerationMixin:
         feedback: str = None,
     ) -> AsyncGenerator[dict, None]:
         """原子化生成章节：逐beat独立LLM调用 → 装配 → 评估
-        
+
         与 generate_chapter_stream 的区别：
         - 传统: 1次LLM调用 → 整章2000字（趋同）
         - 原子化: 5-7次独立LLM调用 → 每beat 200-400字 → 装配（多样性爆炸）
         """
         novel_dir = self.memory.get_novel_dir(novel_id)
         lock_file = os.path.join(novel_dir, f".generating_{chapter_num:04d}.lock")
-        
+
         # 并发锁（与generate_chapter_stream共享）—— PID 存活判定，不再按 300s 误删活跃锁
         if os.path.exists(lock_file):
             if not _gen_lock_is_stale(lock_file):
@@ -951,9 +948,9 @@ class GenerationMixin:
                 os.remove(lock_file)
             except OSError:
                 pass
-        
+
         _write_gen_lock(lock_file)
-        
+
         try:
             # v2.7.5: 生成前懒补窗口内缺失摘要（历史/原子章节欠账）
             try:
@@ -967,7 +964,7 @@ class GenerationMixin:
             if not plan:
                 yield {"type": "error", "message": f"❌ 小说 '{novel_id}' 不存在。请从书架选择有效的小说。"}
                 return
-            
+
             chapter_outline = self._find_chapter_outline(plan, chapter_num)
             if not chapter_outline:
                 chapter_outline = {
@@ -976,7 +973,7 @@ class GenerationMixin:
                     "characters": ["主角"], "hook": "留下悬念",
                     "target_words": config.DEFAULT_CHAPTER_WORDS,
                 }
-            
+
             # ── v2.8: 大纲细化——旧大纲只有一句话 summary 时，先扩成 scene_beats 事件契约 ──
             if self._chapter_needs_outline_expansion(chapter_outline):
                 yield {"type": "status", "message": f"细化第{chapter_num}章大纲（生成事件节拍）..."}
@@ -985,7 +982,7 @@ class GenerationMixin:
                 chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
             else:
                 chapter_context = None
-            
+
             # ── v2.9 Phase 0: 生成章节蓝图 ──
             yield {"type": "status", "message": "生成章节蓝图..."}
 
@@ -996,7 +993,7 @@ class GenerationMixin:
             # 构建完整写作上下文（常规Writer用的五层上下文）
             if chapter_context is None:
                 chapter_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
-            
+
             # v2.4.7: 注入用户需求（章节正文此前完全丢失需求传导）
             try:
                 _req_ctx = self.build_requirements_instruction(novel_id, chapter_num, plan)
@@ -1055,7 +1052,7 @@ class GenerationMixin:
             )
             if _context_trimmed:
                 log.info("Context budget trimmed sections: %s", _context_trimmed)
-            
+
             # 用LLM生成300字叙事蓝图
             blueprint = ""
             try:
@@ -1075,7 +1072,7 @@ class GenerationMixin:
                     outline_instr = "\n".join(
                         ln for ln in outline_instr.splitlines() if "═══" not in ln
                     ).strip()
-                
+
                 blueprint_prompt = f"""根据以下写作指令和大纲，写出本章的叙事蓝图。蓝图是一段200-300字的连贯叙事概要，严格遵循写作指令中的核心事件和章末钩子。
 
 {outline_instr}
@@ -1084,7 +1081,7 @@ class GenerationMixin:
 {chapter_context[:1500]}
 
 只输出蓝图正文，不要标题。"""
-                
+
                 bp_resp = await asyncio.to_thread(self.client.chat.completions.create,
                     model=self.model,
                     messages=[
@@ -1100,14 +1097,14 @@ class GenerationMixin:
             except Exception as e:
                 log.warning(f"Blueprint generation failed, using summary: {e}")
                 blueprint = chapter_outline.get("summary", "继续推进主线剧情")
-            
+
             yield {"type": "blueprint", "text": blueprint[:100] + "..."}
-            
+
             # ── Phase 1: 拆解为 beat ──
             yield {"type": "status", "message": f"拆解第{chapter_num}章为节拍..."}
-            
+
             is_first = (chapter_num == 1)
-            
+
             is_climax = bool(chapter_outline.get("is_climax") or chapter_outline.get("climax"))
             chars = chapter_outline.get("characters", []) or []
             char_context = str(chapter_outline.get("character_context") or "")[:1200]
@@ -1118,14 +1115,14 @@ class GenerationMixin:
                 is_climax_chapter=is_climax,
                 available_characters=chars,
             )
-            
+
             yield {"type": "beats_decomposed", "count": len(beats),
                    "functions": [b.function for b in beats]}
-            
+
             # ── Phase 2: 逐 beat 独立生成 ──
             # (genre/style 已在 Phase 0 定义)
             style_guide = _get_style_guide(style, genre)
-            
+
             beats_text = []
             async for beat_result in self.atomic_writer.write_beats_stream(
                 beats, char_context, style_guide, chapter_num,
@@ -1147,20 +1144,20 @@ class GenerationMixin:
                 # 装配/规范化后由 done 事件触发前端拉取保存版替换，二者不冲突
                 if beat_result.get("text"):
                     yield {"type": "text", "content": beat_result["text"] + "\n\n"}
-            
+
             # ── Phase 3: 装配章节 ──
             yield {"type": "status", "message": "装配节拍..."}
-            
+
             assembly = await asyncio.to_thread(
                 self.beat_assembler.assemble,
                 beats_text,
                 chapter_outline.get("title", f"第{chapter_num}章"),
                 chapter_num,
             )
-            
+
             full_text = assembly["raw_text"]
             formatted = assembly["full_text"]
-            
+
             # AUDIT P0-1: 指令泄漏检测（原子路径）
             full_text, _leak_count = self._strip_instruction_leaks(full_text)
             if _leak_count:
@@ -1180,7 +1177,7 @@ class GenerationMixin:
                     log.info(f"Atomic paragraph normalize: ≤10char lines reduced {before_lines}→{after_lines}")
             except Exception as e:
                 log.warning(f"Atomic paragraph normalize skipped: {e}")
-            
+
             # ── Phase 4: 保存 ──
             from ..quality_gate import validate_chapter_text
             # v2.7.6: 超短篇超长兜底（装配/一致性可能扩写）
@@ -1194,7 +1191,7 @@ class GenerationMixin:
                 target_words=chapter_outline.get("target_words", config.DEFAULT_CHAPTER_WORDS),
             )
             self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
-            
+
             # v2.40: 第一章生成后自动检测叙事人称
             if chapter_num == 1:
                 self._save_narrative_pov(novel_id, full_text)
@@ -1215,7 +1212,7 @@ class GenerationMixin:
             if is_trunc:
                 log.warning(f"Atomic chapter {chapter_num} may be incomplete: {reason}")
                 yield {"type": "warning", "message": f"⚠️ 原子模式生成的本章可能不完整（{reason}），建议使用常规模式重新生成此章"}
-            
+
             # ── v2.10: 提取章节桥接数据（v2.15: 使用韧性客户端）──
             try:
                 bridge = await asyncio.to_thread(
@@ -1228,12 +1225,12 @@ class GenerationMixin:
                     log.info(f"ChapterBridge (atomic) saved for chapter {chapter_num}")
             except Exception as e:
                 log.warning(f"ChapterBridge extraction failed in atomic (non-fatal): {e}")
-            
+
             # ── Phase 5: 质量评估 ──
             yield {"type": "status", "message": "质量评估..."}
-            
+
             evaluation = assembly["quality_report"]
-            
+
             yield {
                 "type": "evaluation",
                 "overall_score": evaluation.get("overall_score", 0),
@@ -1246,7 +1243,7 @@ class GenerationMixin:
                 "duplicates_removed": assembly["duplicates_removed"],
                 "transitions_added": len(assembly["transitions"]),
             }
-            
+
             # ── done 事件（正文已逐 beat 流式输出过，这里不再重复 yield full_text，
             #    避免前端 writing.content 收到「逐beat文本 + 全文」两遍重复）──
             # 大纲合规校验：缺失节拍只做场景级局部修订。
@@ -1377,8 +1374,8 @@ class GenerationMixin:
 
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num,
                    "atomic": True, "beat_count": len(beats)}
-            
-            
+
+
         except Exception as e:
             log.exception(f"Atomic chapter generation failed: {e}")
             _preserved = self._preserve_generation_failure(
@@ -1601,7 +1598,7 @@ class GenerationMixin:
         feedback: str = None, batch_mode: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """流式生成章节 — 前端可实时显示打字效果
-        
+
         Args:
             feedback: 用户修改意见（用于重生成，不改大纲结构）
             batch_mode: v2.6 批量模式 — 速度优先：
@@ -1626,10 +1623,10 @@ class GenerationMixin:
                 os.remove(lock_file)
             except OSError:
                 pass
-        
+
         # 写入锁文件（含 PID）
         _write_gen_lock(lock_file)
-        
+
         try:
             # v2.7.5: 生成前懒补窗口内缺失摘要（历史/原子章节欠账），
             # 让 L2c 事件清单使用真实发生内容而非大纲计划
@@ -1944,7 +1941,7 @@ class GenerationMixin:
                 elif 40 <= qr["score"] < 60 and qr["issues"]:
                     log.info(f"Quality gate MILD (score={qr['score']}): {len(qr['issues'])} minor issues, accepting as-is")
                     yield {"type": "quality_minor", "score": qr["score"], "issues": qr["issues"]}
-                    
+
             except Exception as e:
                 log.warning(f"Quality gate skipped: {e}")
 
@@ -1961,7 +1958,7 @@ class GenerationMixin:
                     from ..ai_detector import AIDetector, HumanRewriter, humanize_pipeline
                     detector = AIDetector(self.client, self.model)
                     rewriter = HumanRewriter(self.client, self.model)
-                    
+
                     chapter_summary = chapter_outline.get("summary", "") or chapter_outline.get("title", "")
                     _ending_saved = _extract_key_ending(full_text)
                     result = await asyncio.to_thread(
@@ -1980,7 +1977,7 @@ class GenerationMixin:
                         else:
                             full_text = rewritten
                         log.info(f"AI Humanizer: score {ai_report['ai_score_before']}→{ai_report.get('ai_score_after','?')}, rewritten")
-                        yield {"type": "ai_report", 
+                        yield {"type": "ai_report",
                                "score_before": ai_report["ai_score_before"],
                                "score_after": ai_report.get("ai_score_after", ai_report["ai_score_before"]),
                                "rewritten": True}
@@ -2130,7 +2127,7 @@ class GenerationMixin:
                         prev_chapters_ctx[_pc] = _pc_text
             _gs_path = os.path.join(novel_dir, "global_state.json")
             gs_ctx = safe_read_json(_gs_path, {}) if os.path.exists(_gs_path) else {}
-            
+
             yield {"type": "status", "message": "📝 草稿已暂存，正在执行最终校验…"}
 
             # ── v2.3.5: 一致性校验（L1 规则 + L2 LLM 语义，P0 自动重写）──
@@ -2195,7 +2192,7 @@ class GenerationMixin:
                 log.warning(f"Chapter {chapter_num} incomplete after Writer retries: {reason}. "
                            f"Engine fallback: continuing from breakpoint...")
                 yield {"type": "warning", "message": f"⏳ 本章内容不完整（{reason}），正在自动补全内容..."}
-                
+
                 # v2.49: Engine-level retry — 从断点续写，不重写
                 try:
                     retry_context = self.memory.build_writer_context(novel_id, chapter_num, chapter_outline)
@@ -2233,7 +2230,7 @@ class GenerationMixin:
                     ):
                         retry_text += text
                         yield {"type": "text", "content": text}
-                    
+
                     if retry_text:
                         # v2.49: 智能去重拼接
                         cleaned = _dedup_continuation(full_text, retry_text)
@@ -2324,12 +2321,12 @@ class GenerationMixin:
                         ch_content = self.get_chapter(novel_id, ch)
                         if ch_content:
                             prev_chapters[ch] = ch_content
-                
+
                 # 获取全局状态
                 novel_dir_gs = self.memory.get_novel_dir(novel_id)
                 gs_path = os.path.join(novel_dir_gs, "global_state.json")
                 global_state = safe_read_json(gs_path, {}) if os.path.exists(gs_path) else {}
-                
+
                 # 执行校验（v2.3.5: 统一 ConsistencyValidator，L2 每章深检，含亲属关系检测）
                 # v2.6: 批量模式跳过 — 前面 v2.3.5 校验已跑 L1 规则，避免重复校验白烧 LLM
                 if batch_mode:
@@ -2346,29 +2343,29 @@ class GenerationMixin:
                         run_deep=True,  # 每章 L2 语义校验（v2.3.5: 原每3章→每章）
                     )
                 _post_consistency_validation = validation
-                
+
                 violations = validation.get("violations", [])
                 p0_count = 0
                 if violations:
                     p0_count = sum(1 for v in violations if v.get("severity") == "P0")
                     score = validation.get("score", 100)
-                    
+
                     log.warning(f"ConsistencyValidator(atomic): {len(violations)} violations "
                                f"(P0:{p0_count}) score={score}")
-                    
+
                     yield {"type": "consistency_check",
                            "violations": violations,
                            "score": score}
-                    
+
                     # P0违规 ≥1 → 自动修复
                     if p0_count >= 1:
                         fix_prompt = self.consistency_validator.build_fix_prompt(violations)
                         log.info(f"Auto-fix triggered: {p0_count} P0 violations")
-                        
+
                         # 构造修复上下文
                         fix_context = f"{context}\n\n{fix_prompt}"
                         fixed_text = ""
-                        
+
                         async for fix_chunk in self.writer.write_stream(
                             context=fix_context,
                             genre=genre,
@@ -2380,7 +2377,7 @@ class GenerationMixin:
                             skip_ending=True,  # v2.12: 修复重试不重复生成结尾
                         ):
                             fixed_text += fix_chunk
-                        
+
                         if fixed_text and len(fixed_text) > len(full_text) * 0.5:
                             full_text = fixed_text
                             # 重新保存
@@ -2407,152 +2404,37 @@ class GenerationMixin:
                 }
                 log.warning(f"Consistency auto-validation skipped: {e}")
 
-            # 自动修复后重新校验一次，最终报告必须反映修复后的正文，而不是旧正文的分数。
-            if _post_consistency_auto_fixed:
-                try:
-                    # P0 修复可能引入新的时间线/因果问题；最多再补一轮，避免无限重写。
-                    best_recheck_text = None
-                    best_recheck_validation = None
-                    best_recheck_rank = None
-                    for repair_round in range(2):
-                        _post_consistency_validation = await asyncio.to_thread(
-                            self.consistency_validator.validate_chapter,
-                            chapter_text=full_text,
-                            chapter_num=chapter_num,
-                            plan=plan,
-                            prev_chapters=prev_chapters,
-                            global_state=global_state,
-                            chapter_outline=chapter_outline,
-                            run_deep=not batch_mode,
-                        )
-                        recheck_violations = _post_consistency_validation.get("violations", [])
-                        recheck_rank = _consistency_candidate_rank(
-                            _post_consistency_validation
-                        )
-                        if best_recheck_rank is None or recheck_rank < best_recheck_rank:
-                            best_recheck_rank = recheck_rank
-                            best_recheck_text = full_text
-                            best_recheck_validation = _post_consistency_validation
-                        yield {
-                            "type": "consistency_recheck",
-                            "round": repair_round + 1,
-                            "score": _post_consistency_validation.get("score", 100),
-                            "violations": recheck_violations,
-                        }
-                        remaining_p0 = [
-                            item for item in recheck_violations
-                            if item.get("severity") == "P0"
-                        ]
-                        if not remaining_p0 or repair_round >= 1:
-                            break
+            # ── 自动校准（每10章）──
+            try:
+                from ..autocalibrator import should_calibrate, calibrate
+                if should_calibrate(chapter_num):
+                    plan = self.get_novel(novel_id)
+                    sg_data = safe_read_json(sg_path) or {}
+                    report = calibrate(chapter_num, plan, sg_data,
+                                       completed_chapters=completed)
 
-                        fix_prompt = self.consistency_validator.build_fix_prompt(
-                            recheck_violations
-                        )
-                        repair_context = (
-                            f"{context}\n\n"
-                            "## 当前草稿（只修复下列逻辑问题，保留已成立的情节）\n"
-                            f"{full_text}\n\n{fix_prompt}"
-                        )
-                        repaired_text = ""
-                        async for repair_chunk in self.writer.write_stream(
-                            context=repair_context,
-                            genre=genre,
-                            style=style,
-                            target_words=target_words,
-                            writing_mode=writing_mode,
-                            normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False),
-                            fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
-                            chapter_outline=chapter_outline,
-                            skip_ending=True,
-                        ):
-                            repaired_text += repair_chunk
-                        if not repaired_text or len(repaired_text) <= len(full_text) * 0.5:
-                            log.warning("Consistency repair round %s produced no usable draft", repair_round + 2)
-                            break
-                        full_text = repaired_text
-                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
-                        yield {
-                            "type": "consistency_fixed",
-                            "round": repair_round + 2,
-                            "applied": True,
-                            "violations_fixed": len(remaining_p0),
-                        }
+                    # 将校准报告注入 storygraph
+                    if not report.is_healthy():
+                        calib_ctx = report.to_context_block()
+                        if calib_ctx and sg_data:
+                            sg_data["_last_calibration"] = {
+                                "chapter": chapter_num,
+                                "report": report.to_context_block(),
+                                "score": report.score,
+                            }
+                            atomic_write_json(sg_path, sg_data)
+                            self.memory.invalidate("storygraph", novel_id)
 
-                    # 修复模型可能在后续轮次引入更严重的问题，最终只保留最佳候选。
-                    if best_recheck_text is not None and full_text != best_recheck_text:
-                        full_text = best_recheck_text
-                        _post_consistency_validation = best_recheck_validation
-                        formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-                        self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
-                        log.info(
-                            "Consistency repair selected best candidate: rank=%s",
-                            best_recheck_rank,
-                        )
-                except Exception as recheck_error:
-                    _post_consistency_validation = {
-                        "score": 0,
-                        "violations": [],
-                        "warnings": [],
-                        "error": str(recheck_error),
-                    }
-                    log.warning(f"Consistency recheck skipped: {recheck_error}")
-
-            # Freeze the exact candidate before any final report is calculated.
-            # No text mutation is allowed after this point.
-            from ..writer import _prepare_chapter_text_for_validation
-            from ..quality_gate import validate_chapter_text
-            full_text = _prepare_chapter_text_for_validation(full_text, target_words)
-            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
-            validate_chapter_text(full_text, target_words=target_words)
-            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
-
-            # ── 最终质量报告：必须位于所有改写/一致性修复之后 ──
-            _final_quality = await asyncio.to_thread(
-                PacingChecker(self.client, self.model).quick_quality_check,
-                full_text,
-                fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
-            )
-            _narrative_quality = await asyncio.to_thread(
-                        evaluate_chapter, full_text, None, None, chapter_outline, genre
-            )
-            _final_quality = _merge_quality_with_narrative(
-                _final_quality, _narrative_quality
-            )
-            _final_quality = _merge_quality_with_consistency(
-                _final_quality, _post_consistency_validation
-            )
-            _requirement_report = self._evaluate_chapter_requirements(
-                novel_id, chapter_num, full_text, plan
-            )
-            yield {"type": "requirement_compliance", "chapter": chapter_num, **_requirement_report}
-            _final_quality_record = _save_final_quality_report(
-                self.memory,
-                novel_id,
-                chapter_num,
-                {**_final_quality, "text": full_text},
-                stage="final",
-            )
-            yield {"type": "final_quality", **_final_quality_record}
-
-            # Both drafting strategies share this hard gate and final committer.
-            _completion = self._finalize_chapter_candidate(
-                novel_id,
-                chapter_num,
-                full_text,
-                formatted,
-                _requirement_report,
-                _final_quality_record,
-                _outline_compliance_report,
-            )
-            if _completion["status"] == "needs_revision":
-                yield {
-                    "type": "needs_revision",
-                    "message": _completion["reason"],
-                    **_completion,
-                }
-                return
+                        if not report.is_healthy():
+                            log.warning(f"Calibration issues found: "
+                                       f"{len(report.plot_drift_items)} drifts, "
+                                       f"{len(report.overdue_foreshadows)} overdue "
+                                       f"foreshadows, score={report.score}")
+                            yield {"type": "calibration", "report": report.to_context_block(),
+                                   "score": report.score}
+                    log.info(f"AutoCalibration done at chapter {chapter_num}: score={report.score}")
+            except Exception as e:
+                log.warning(f"AutoCalibration skipped: {e}")
 
             # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
             try:
@@ -2585,7 +2467,7 @@ class GenerationMixin:
                     yield {"type": "compression", "chapters_summarized": len(compress_result)}
             except Exception as e:
                 log.warning(f"Auto-compression skipped: {e}")
-            
+
             yield {"type": "status", "message": "✅ 章节正文与质量报告已同步保存"}
             yield {"type": "text", "content": "\n\n"}
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num}

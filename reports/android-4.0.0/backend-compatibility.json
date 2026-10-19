@@ -1,0 +1,22 @@
+{
+  "scope": "Windows host, Android Python sources, pinned Android SDKs; no Android device",
+  "python": "3.13.7",
+  "dependencies": {
+    "fastapi": "0.125.0",
+    "pydantic": "1.10.26",
+    "openai": "1.39.0",
+    "httpx": "0.27.2"
+  },
+  "checks": [
+    "server_runner starts without an API key and reports readiness after bind",
+    "embedded frontend, assets and health API are served from Android source",
+    "Pydantic 1 provider configuration and real SDK HTTP probe work against local fixture",
+    "OpenAI 1.39 streams Chinese and emoji as plain text and saves the exact reply",
+    "legacy interactive mode is absent",
+    "Android PDF and EPUB are deferred; TXT remains enabled",
+    "repeated service start reuses the running server"
+  ],
+  "passed": 7,
+  "real_provider": "NOT_RUN",
+  "android_device": "NOT_RUN"
+}

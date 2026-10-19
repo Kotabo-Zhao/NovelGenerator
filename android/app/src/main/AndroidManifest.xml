@@ -29,6 +29,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             android:theme="@style/Theme.NovelGenerator" />
@@ -41,7 +42,10 @@
         <service
             android:name=".ServerService"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local Python server for novel editing and active streaming conversations" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

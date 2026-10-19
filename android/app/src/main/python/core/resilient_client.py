@@ -23,10 +23,12 @@ v2.14: 统一 LLM 韧性网关
 """
 import time
 import asyncio
+import threading
 import logging
 from typing import AsyncIterator, Optional, Any
 from dataclasses import dataclass, field
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
+from .llm_text import extract_text
 
 from .usage_context import report_response_usage
 
@@ -182,32 +184,28 @@ class ResilientLLMClient:
                 
             except RateLimitError as e:
                 _metrics.rate_limit_hits += 1
-                if attempt < self.config.max_retries:
-                    wait = self._get_retry_after(e, attempt)
-                    log.warning(f"LLM限流(429), 等待{wait:.1f}s后重试: {e}")
-                    last_error = e
-                    _metrics.retry_count += 1
-                    time.sleep(wait)
-                else:
+                if attempt >= self.config.max_retries:
                     _metrics.failed_calls += 1
                     raise
+                wait = self._get_retry_after(e, attempt)
+                log.warning(f"LLM限流(429), 等待{wait:.1f}s后重试: {e}")
+                last_error = e
+                _metrics.retry_count += 1
+                time.sleep(wait)
                 
             except (APITimeoutError, APIConnectionError) as e:
-                if attempt < self.config.max_retries:
-                    wait = self._calc_backoff(attempt)
-                    log.warning(f"LLM网络错误, 等待{wait:.1f}s后重试: {type(e).__name__}")
-                    last_error = e
-                    _metrics.retry_count += 1
-                    time.sleep(wait)
-                else:
+                if attempt >= self.config.max_retries:
                     _metrics.failed_calls += 1
                     raise
+                wait = self._calc_backoff(attempt)
+                log.warning(f"LLM网络错误, 等待{wait:.1f}s后重试: {type(e).__name__}")
+                last_error = e
+                _metrics.retry_count += 1
+                time.sleep(wait)
                 
             except APIError as e:
-                # 4xx（除限流/超时类）通常是凭据或参数问题，重试不会自行恢复。
-                status = getattr(e, "status_code", None)
-                retryable = status is None or status >= 500 or status in (408, 409)
-                if retryable and attempt < self.config.max_retries:
+                # 其他 API 错误（500等）
+                if attempt < self.config.max_retries and getattr(e, 'status_code', 500) >= 500:
                     wait = self._calc_backoff(attempt)
                     log.warning(f"LLM API错误({e.status_code}), 等待{wait:.1f}s后重试: {e}")
                     last_error = e
@@ -243,28 +241,27 @@ class ResilientLLMClient:
     
     async def create_stream(self, messages: list, temperature: float = 0.8,
                            max_tokens: int = 4096, **kwargs) -> AsyncIterator[str]:
-        """流式调用 — 带断线重连
-        
-        Yields:
-            str: 文本 chunk
+        """Iterate the synchronous SDK off the event loop, with bounded retries.
+
+        Retry only before visible output. Replaying a partially delivered request
+        can duplicate dialogue and charge for a different continuation.
         """
         _metrics.total_calls += 1
         start = time.monotonic()
+        original_messages = list(messages)
+        delivered = False
+        sentinel = object()
 
-        try:
-            self._ensure_configured()
-        except LLMConfigurationError:
-            _metrics.failed_calls += 1
-            raise
-        
-        last_error = None
-        full_text_collected = ""  # 已收集的内容，用于断线重连
-        
+        def read_next(iterator):
+            return next(iterator, sentinel)
+
         for attempt in range(self.config.max_retries + 1):
+            response = None
+            stopped = threading.Event()
             try:
                 call_kwargs = dict(
                     model=self.model,
-                    messages=messages,
+                    messages=original_messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=True,
@@ -273,87 +270,55 @@ class ResilientLLMClient:
                 if "v4" in self.model:
                     call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
                 call_kwargs.update(kwargs)
-                
-                # 线程池隔离调用
-                def _sync_stream():
-                    return self.client.chat.completions.create(**call_kwargs)
-                
-                response = await asyncio.to_thread(_sync_stream)
-                
-                def _collect_stream_chunks():
-                    collected = []
-                    try:
-                        for chunk in response:
-                            report_response_usage(chunk, model=self.model)
-                            if not chunk.choices:
-                                continue
-                            delta = chunk.choices[0].delta
-                            if delta and delta.content:
-                                collected.append(delta.content)
-                    except Exception as exc:
-                        # Preserve text received before a broken connection so
-                        # the resume prompt and the client output both retain it.
-                        setattr(exc, "_partial_chunks", tuple(collected))
-                        raise
-                    return collected
-
-                chunks = await asyncio.to_thread(_collect_stream_chunks)
-                chunk_count = 0
-                for text in chunks:
-                    full_text_collected += text
-                    chunk_count += 1
-                    yield text
-                
-                # 流式完成
+                def open_response():
+                    opened = self.client.chat.completions.create(**call_kwargs)
+                    # Cancellation can happen before the HTTP headers arrive.
+                    if stopped.is_set():
+                        if callable(getattr(opened, "close", None)):
+                            opened.close()
+                        return None
+                    return opened
+                response = await asyncio.to_thread(open_response)
+                iterator = iter(response)
+                while True:
+                    chunk = await asyncio.to_thread(read_next, iterator)
+                    if chunk is sentinel:
+                        break
+                    text = extract_text(chunk)
+                    if text:
+                        delivered = True
+                        yield text
+                if not delivered:
+                    raise ValueError("模型没有返回可显示的正文，请检查模型设置后重试")
                 elapsed = (time.monotonic() - start) * 1000
                 _metrics.successful_calls += 1
                 _metrics.total_latency_ms += elapsed
-                
-                if attempt > 0:
-                    log.info(f"LLM流式成功(重试{attempt}次, {len(full_text_collected)}字)")
                 return
-                
-            except (APITimeoutError, APIConnectionError) as e:
-                for text in getattr(e, "_partial_chunks", ()):
-                    full_text_collected += text
-                    yield text
-                if attempt < self.config.max_retries:
-                    wait = self._calc_backoff(attempt)
-                    log.warning(f"LLM流式断线(已收{len(full_text_collected)}字), "
-                               f"等待{wait:.1f}s后重连: {type(e).__name__}")
-                    last_error = e
-                    _metrics.retry_count += 1
-                    
-                    # 断线重连策略：在 messages 中追加已收集内容
-                    # 让模型从断点继续
-                    messages = self._build_resume_messages(
-                        messages, full_text_collected
-                    )
-                    await asyncio.sleep(wait)
-                else:
-                    log.error(f"LLM流式全部重连失败(已收{len(full_text_collected)}字): {e}")
+            except (APITimeoutError, APIConnectionError, APIError) as exc:
+                limited = isinstance(exc, RateLimitError)
+                if limited:
+                    _metrics.rate_limit_hits += 1
+                status = getattr(exc, "status_code", None)
+                retryable = limited or isinstance(exc, (APITimeoutError, APIConnectionError)) or (status and status >= 500)
+                if delivered or not retryable or attempt >= self.config.max_retries:
                     _metrics.failed_calls += 1
                     raise
-                    
-            except RateLimitError as e:
-                _metrics.rate_limit_hits += 1
-                if attempt < self.config.max_retries:
-                    wait = self._get_retry_after(e, attempt)
-                    log.warning(f"LLM流式限流, 等待{wait:.1f}s: {e}")
-                    last_error = e
-                    _metrics.retry_count += 1
-                    await asyncio.sleep(wait)
-                else:
-                    _metrics.failed_calls += 1
-                    raise
-                    
-            except Exception as e:
-                log.error(f"LLM流式异常: {type(e).__name__}: {e}")
+                _metrics.retry_count += 1
+                wait = self._get_retry_after(exc, attempt) if limited else self._calc_backoff(attempt)
+                log.warning("LLM stream retry %d (%s)", attempt + 1, type(exc).__name__)
+                await asyncio.sleep(wait)
+            except (asyncio.CancelledError, GeneratorExit):
+                raise
+            except Exception:
                 _metrics.failed_calls += 1
                 raise
-        
-        _metrics.failed_calls += 1
-        raise last_error
+            finally:
+                stopped.set()
+                if response is not None and callable(getattr(response, "close", None)):
+                    try:
+                        await asyncio.to_thread(response.close)
+                    except Exception:
+                        log.debug("Stream close failed", exc_info=True)
     
     def _calc_backoff(self, attempt: int) -> float:
         """计算指数退避延迟"""

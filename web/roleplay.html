@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#17151a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>角色扮演 · 墨局</title>
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+<link rel="stylesheet" href="/assets/theme.css?v=20261019">
+<link rel="stylesheet" href="/assets/roleplay-forms.css?v=20261019">
+<link rel="stylesheet" href="/assets/roleplay.css?v=20261019">
+<script src="/assets/runtime.js?v=20261019"></script>
+</head>
+<body>
+
+<div id="boot-error"></div>
+
+<div id="app" v-cloak>
+
+  <header class="rp-topbar">
+    <a class="rp-back" href="/" title="返回我的书架"><span class="brand-symbol"><icon name="feather"></icon></span><span>墨局<small>STORY WORKSHOP</small></span></a>
+    <div class="rp-title">角色扮演</div>
+    <div class="rp-top-actions">
+      <select v-if="characters.length" class="rp-char-select" :value="currentId" title="切换当前角色" @change="onTopSelect">
+        <option v-for="c in characters" :key="'top-' + c.id" :value="c.id">{{ c.name }}</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" type="button" title="编辑当前角色"
+              :disabled="!currentCharacter || streaming" @click="openEdit(currentCharacter)">
+        <icon name="edit"></icon><span class="rp-btn-label">编辑角色</span>
+      </button>
+      <button class="btn btn-ghost btn-sm delete-character-button" type="button" title="删除当前角色"
+              :disabled="!currentCharacter || deleting || streaming" @click="deleteCharacter">
+        <icon name="close"></icon><span class="rp-btn-label">删除</span>
+      </button>
+      <button class="btn btn-ghost btn-sm" type="button" title="角色扮演设置" @click="openSettings">
+        <icon name="settings"></icon><span class="rp-btn-label">对话设置</span>
+      </button>
+      <button class="btn btn-ghost btn-sm" title="模型连接" @click="connectionOpen=true"><icon name="compass"></icon><span class="rp-btn-label">连接模型</span></button>
+      <button class="btn btn-ghost btn-sm" :title="theme==='dark'?'切换浅色主题':'切换深色主题'" @click="toggleTheme"><icon :name="theme==='dark'?'sun':'moon'"></icon></button>
+    </div>
+  </header>
+
+  <input ref="importInputEl" class="rp-hidden-input" type="file"
+         accept=".png,.json,application/json,image/png" @change="onImportFile">
+  <input ref="avatarInputEl" class="rp-hidden-input" type="file"
+         accept="image/png,image/jpeg,image/webp" @change="onAvatarFile">
+
+  <div class="rp-rail-wrap">
+    <div class="rp-rail" aria-label="角色列表">
+      <button v-if="charactersLoading" class="rp-chip" type="button" disabled>加载中…</button>
+      <button v-for="c in characters" :key="'rail-' + c.id" type="button"
+              class="rp-chip" :class="{ active: c.id === currentId }" @click="onCharacterClick(c.id)">
+        <span class="rp-avatar">
+          <img v-if="c.avatar_url && !avatarFailed[c.id]" :src="c.avatar_url" alt="" @error="onAvatarError(c.id)">
+          <span v-else>{{ charInitial(c) }}</span>
+        </span>
+        <span class="rp-chip-name">{{ c.name }}</span>
+      </button>
+      <button class="rp-chip rp-chip-add" type="button" @click="openCreate">＋ 新建</button>
+    </div>
+    <div class="rp-mobile-actions">
+      <button class="btn btn-secondary btn-xs" type="button" :disabled="importLoading" @click="pickImport">
+        {{ importLoading ? '⏳ 导入中…' : '📥 导入角色卡' }}
+      </button>
+      <button v-if="novelId" class="btn btn-secondary btn-xs" type="button" :disabled="fromNovelLoading" @click="fromNovel">
+        {{ fromNovelLoading ? '⏳ 生成中…' : '📖 从本书生成' }}
+      </button>
+    </div>
+  </div>
+
+  <div class="rp-body">
+
+    <aside class="rp-sidebar" aria-label="角色侧栏"><div class="rp-side-brand"><span class="eyebrow">CHARACTER LIBRARY</span><h2>故事里的相逢</h2><p>选择一个角色，走进另一个世界。</p></div>
+      <div class="rp-side-actions">
+        <button class="btn btn-primary btn-sm" type="button" @click="openCreate">＋ 新建角色</button>
+        <button class="btn btn-secondary btn-sm" type="button" :disabled="importLoading" @click="pickImport">
+          {{ importLoading ? '⏳ 导入中…' : '📥 导入角色卡' }}
+        </button>
+        <button v-if="novelId" class="btn btn-secondary btn-sm" type="button" :disabled="fromNovelLoading" @click="fromNovel">
+          {{ fromNovelLoading ? '⏳ 从本书生成中…' : '📖 从本书生成' }}
+        </button>
+      </div>
+      <div class="rp-search"><icon name="search"></icon><input v-model="characterQuery" aria-label="搜索角色" placeholder="搜索角色或标签…"/></div><div class="rp-side-label"><span>我的角色</span><span>{{ characters.length }}</span></div>
+      <div class="rp-side-list">
+        <div v-if="charactersLoading" class="rp-loading"><span class="rp-spinner"></span>加载角色…</div>
+        <template v-else>
+          <div v-for="c in filteredCharacters" :key="'side-' + c.id" class="rp-side-card"
+               :class="{ active: c.id === currentId }" role="button" tabindex="0"
+               @click="onCharacterClick(c.id)" @keydown.enter.prevent="onCharacterClick(c.id)">
+            <span class="rp-avatar">
+              <img v-if="c.avatar_url && !avatarFailed[c.id]" :src="c.avatar_url" alt="" @error="onAvatarError(c.id)">
+              <span v-else>{{ charInitial(c) }}</span>
+            </span>
+            <span class="rp-side-meta">
+              <span class="rp-side-name">{{ c.name }}</span>
+              <span class="rp-side-sub">{{ sourceLabel(c.source) }}<template v-if="c.tags && c.tags.length"> · {{ c.tags.slice(0, 2).join(' / ') }}</template></span>
+            </span>
+          </div>
+          <div v-if="!characters.length" class="rp-side-empty">暂无角色</div>
+        </template>
+      </div>
+      <div class="rp-side-footer"><icon name="spark"></icon>每个角色都有自己的故事。<br>你的下一句话，会让故事走向哪里？</div>
+    </aside>
+
+    <main class="rp-main">
+
+      <div v-if="currentCharacter" class="rp-chat-head">
+        <div class="rp-chat-who">
+          <span class="rp-avatar rp-avatar-md">
+            <img v-if="currentCharacter.avatar_url && !avatarFailed[currentCharacter.id]"
+                 :src="currentCharacter.avatar_url" alt="" @error="onAvatarError(currentCharacter.id)">
+            <span v-else>{{ charInitial(currentCharacter) }}</span>
+          </span>
+          <span class="rp-chat-who-text">
+            <span class="rp-chat-name">{{ currentCharacter.name }}</span>
+            <span class="rp-chat-sub">{{ sourceLabel(currentCharacter.source) }}<template v-if="currentCharacter.tags && currentCharacter.tags.length"> · {{ currentCharacter.tags.join(' / ') }}</template></span>
+          </span>
+        </div>
+        <div class="rp-toolbar">
+          <button class="btn btn-ghost btn-xs" type="button"
+                  :disabled="streaming || chatLoading || !messages.length" @click="regenerate"><icon name="refresh" size="13"></icon>重新生成</button>
+          <button class="btn btn-ghost btn-xs" type="button"
+                  :disabled="streaming || chatLoading || clearing || !messages.length" @click="clearChat()">开启新对话</button>
+          <select class="rp-greeting-select" :value="''" :disabled="streaming || chatLoading || clearing"
+                  title="使用开场白重新开始" @change="onGreetingSelect">
+            <option value="">切换开场白</option>
+            <option v-for="g in greetingOptions" :key="'g-' + g.index" :value="g.index">{{ g.label }}</option>
+          </select>
+          <button class="btn btn-ghost btn-xs scroll-bottom-button" type="button" @click="scrollToBottom" title="滚动到最新消息">最新消息</button>
+          <button class="btn btn-ghost btn-xs" :disabled="!messages.length || streaming" @click="exportChat"><icon name="download" size="13"></icon>导出</button>
+          <button class="btn btn-ghost btn-xs" :disabled="streaming" @click="restoreChat">恢复上次对话</button>
+        </div>
+      </div>
+
+      <div ref="chatEl" class="rp-chat" @scroll="onChatScroll">
+        <div class="rp-chat-inner">
+
+          <div v-if="charactersLoading" class="rp-loading"><span class="rp-spinner"></span>正在加载角色列表…</div>
+
+          <div v-else-if="charactersError" class="rp-state">
+            <div class="rp-state-icon">⚠️</div>
+            <h3>无法加载角色</h3>
+            <p>{{ charactersError }}</p>
+            <div class="rp-state-actions">
+              <button class="btn btn-primary" type="button" @click="reloadCharacters">重试</button>
+            </div>
+            <p class="rp-hint">请确认后端已启动，且 /api/roleplay 路由可用。</p>
+          </div>
+
+          <div v-else-if="!characters.length" class="rp-state rp-nochar">
+            <div class="rp-state-icon">🎭</div>
+            <h3>还没有角色</h3>
+            <p>导入 SillyTavern 角色卡（PNG 内嵌卡或 JSON V2/V3）、从当前小说生成，或手动创建一个角色，即可开始角色扮演。</p>
+            <div class="rp-state-actions">
+              <button class="btn btn-primary" type="button" :disabled="importLoading" @click="pickImport">
+                {{ importLoading ? '⏳ 导入中…' : '📥 导入角色卡' }}
+              </button>
+              <button v-if="novelId" class="btn btn-secondary" type="button" :disabled="fromNovelLoading" @click="fromNovel">
+                {{ fromNovelLoading ? '⏳ 生成中…' : '📖 从本书生成' }}
+              </button>
+              <button class="btn btn-ghost" type="button" @click="openCreate">＋ 新建角色</button>
+            </div>
+            <p class="rp-hint">提示：后端首次启动会自动内置示例角色「苏晚」；若列表为空，可点击上方按钮导入或新建。</p>
+          </div>
+
+          <div v-else-if="!currentCharacter" class="rp-state">
+            <div class="rp-state-icon">👈</div>
+            <h3>选择一个角色</h3>
+            <p>从角色列表中选择一个角色开始对话。</p>
+          </div>
+
+          <div v-else-if="chatLoading" class="rp-loading">
+            <span class="rp-spinner"></span>正在载入与「{{ currentCharacter.name }}」的对话…
+          </div>
+
+          <div v-else-if="chatError" class="rp-state">
+            <div class="rp-state-icon">⚠️</div>
+            <h3>对话加载失败</h3>
+            <p>{{ chatError }}</p>
+            <div class="rp-state-actions">
+              <button class="btn btn-primary" type="button" @click="retryChat">重试</button>
+            </div>
+          </div>
+
+          <template v-else>
+            <div v-if="!messages.length" class="rp-state">
+              <div class="rp-state-icon">💬</div>
+              <h3>与「{{ currentCharacter.name }}」的对话</h3>
+              <p>暂无消息。点击下方按钮，让角色用开场白向你打招呼。</p>
+              <div class="rp-state-actions">
+                <button class="btn btn-primary" type="button" @click="startChat">💬 开始对话</button>
+              </div>
+            </div>
+
+            <div v-else class="rp-messages"><div class="rp-scene-heading">{{ currentCharacter.name }} · {{ messages.length }} 条消息</div><button v-if="messages.length > visibleCount" class="btn btn-ghost rp-history-button" @click="showEarlier">查看更早的消息（{{ messages.length-visibleCount }}）</button>
+              <div v-for="(m, i) in visibleMessages" :key="m.id || 'm-' + i" class="rp-msg" :class="m.role === 'user' ? 'user' : 'assistant'">
+
+                <span class="rp-avatar" v-if="m.role === 'assistant'">
+                  <img v-if="currentCharacter.avatar_url && !avatarFailed[currentCharacter.id]"
+                       :src="currentCharacter.avatar_url" alt="" @error="onAvatarError(currentCharacter.id)">
+                  <span v-else>{{ charInitial(currentCharacter) }}</span>
+                </span>
+                <span class="rp-avatar" v-else>{{ userInitial }}</span>
+
+                <div class="rp-msg-body">
+                  <div class="rp-msg-name"><strong>{{ m.role === 'assistant' ? charDisplayName : userDisplayName }}</strong><time>{{ formatTime(m.ts) }}</time><span v-if="m.edited_at">已编辑</span></div>
+                  <div class="rp-bubble"><div class="rp-message-text" v-html="renderMessage(m.content)"></div><span v-if="m.streaming && !m.content" class="rp-typing" aria-label="正在回复"><i></i><i></i><i></i></span><span class="rp-cursor" v-if="m.streaming && m.content"></span></div>
+                  <div class="rp-msg-actions"><button @click="copyMessage(m)" title="复制消息"><icon name="copy" size="12"></icon>复制</button><button :disabled="streaming" @click="editMessage(m)" title="编辑消息"><icon name="edit" size="12"></icon>编辑</button><span v-if="m.partial" class="rp-partial">已停止 · 内容已保存</span></div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+        </div>
+      </div>
+
+      <div class="rp-composer">
+        <div class="rp-composer-inner">
+          <textarea v-model="draft" rows="1" :placeholder="composerPlaceholder"
+                    :disabled="!currentCharacter || chatLoading"
+                    @keydown="onComposerKeydown" @input="resizeComposer" maxlength="8000" aria-label="输入消息"></textarea>
+          <button v-if="streaming" class="btn rp-stop" type="button" @click="stopStream"><icon name="stop" size="16"></icon>停止</button>
+          <button v-else class="btn btn-primary rp-send" type="button" :disabled="!canSend" @click="sendMessage"><icon name="send" size="17"></icon><span class="rp-btn-label">发送</span></button>
+        </div>
+        <div class="rp-composer-hint">Enter 发送 · Shift+Enter 换行<span v-if="streaming"> · 内容会自动保存</span></div>
+      </div>
+
+    </main>
+    <aside v-if="currentCharacter" class="rp-character-panel" aria-label="角色资料"><div class="rp-character-portrait"><img v-if="currentCharacter.avatar_url && !avatarFailed[currentCharacter.id]" :src="currentCharacter.avatar_url" alt="角色头像"/><span v-else>{{ charInitial(currentCharacter) }}</span></div><span class="eyebrow">CHARACTER PROFILE</span><h2>{{ currentCharacter.name }}</h2><div class="rp-character-tags"><span v-for="tag in currentCharacter.tags" :key="tag">{{ tag }}</span></div><div class="rp-character-section"><h3>此刻的场景</h3><p>{{ currentCharacter.scenario || '故事正等待你的第一句话。' }}</p></div><div v-if="currentCharacter.personality" class="rp-character-section"><h3>关于这个角色</h3><p>{{ currentCharacter.personality }}</p></div><div class="rp-character-tools"><button class="btn btn-secondary btn-sm" @click="openEdit(currentCharacter)" :disabled="streaming">编辑角色</button><button class="btn btn-ghost btn-sm" @click="exportCharacter">导出角色卡</button></div></aside>
+  </div>
+
+  <connection-dialog :open="connectionOpen" @close="connectionOpen=false"></connection-dialog>
+  <div v-if="editingMessage" class="rp-modal-overlay" @click.self="editingMessage=null"><section class="rp-modal" role="dialog" aria-modal="true" aria-labelledby="edit-message-title"><header class="rp-modal-head"><h3 class="rp-modal-title" id="edit-message-title">编辑消息</h3><button class="rp-modal-close" @click="editingMessage=null" aria-label="关闭">×</button></header><div class="rp-modal-body"><textarea class="rp-edit-message" v-model="editedContent" aria-label="消息正文" maxlength="50000"></textarea><p class="rp-field-hint">修改会用于后续对话。原记录保留在历史快照中。</p></div><footer class="rp-modal-foot"><button class="btn btn-secondary" @click="editingMessage=null">取消</button><button class="btn btn-primary" @click="saveEditedMessage" :disabled="editSaving || !editedContent.trim()">{{ editSaving ? '保存中…' : '保存修改' }}</button></footer></section></div>
+
+  <div v-if="charModalOpen" class="rp-modal-overlay" @click.self="closeCharModal">
+    <div class="rp-modal rp-modal-wide" role="dialog" aria-modal="true" aria-labelledby="rp-char-modal-title">
+      <div class="rp-modal-head">
+        <div class="rp-modal-title" id="rp-char-modal-title">✏️ {{ charModalTitle }}</div>
+        <button class="rp-modal-close" type="button" aria-label="关闭" @click="closeCharModal">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div v-if="charFormError" class="rp-form-error">{{ charFormError }}</div>
+
+        <div class="rp-avatar-edit">
+          <span class="rp-avatar">
+            <img v-if="modalAvatarSrc" :src="modalAvatarSrc" alt="">
+            <span v-else>{{ modalInitial }}</span>
+          </span>
+          <span class="rp-avatar-edit-info">
+            <span class="rp-avatar-edit-title">角色头像</span>
+            <span class="rp-field-hint">支持 PNG / JPG / WebP，建议使用正方形图片。</span>
+            <span class="rp-avatar-edit-btns">
+              <button class="btn btn-secondary btn-xs" type="button" @click="pickAvatar">选择图片</button>
+              <button v-if="avatarPreview" class="btn btn-ghost btn-xs" type="button" @click="clearAvatarPick">清除所选</button>
+            </span>
+          </span>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-name">角色名称 <span class="rp-req">*</span></label>
+          <input id="rp-f-name" v-model="charForm.name" type="text" maxlength="80" placeholder="例如：苏晚">
+        </div>
+
+        <div class="rp-form-row">
+          <div class="rp-form-group">
+            <label for="rp-f-creator">作者</label>
+            <input id="rp-f-creator" v-model="charForm.creator" type="text" maxlength="120" placeholder="可选">
+          </div>
+          <div class="rp-form-group">
+            <label for="rp-f-version">版本</label>
+            <input id="rp-f-version" v-model="charForm.character_version" type="text" maxlength="40" placeholder="可选">
+          </div>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-desc">描述</label>
+          <textarea id="rp-f-desc" v-model="charForm.description" rows="3"
+                    placeholder="角色的外貌、身份、背景、说话方式…"></textarea>
+          <p class="rp-field-hint" v-pre>会作为角色定义加入提示词，可使用 {{char}} / {{user}} 宏。</p>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-personality">性格</label>
+          <textarea id="rp-f-personality" v-model="charForm.personality" rows="2"
+                    placeholder="例如：温柔、克制、偶尔毒舌"></textarea>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-scenario">场景</label>
+          <textarea id="rp-f-scenario" v-model="charForm.scenario" rows="2"
+                    placeholder="故事发生的背景与情境"></textarea>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-first">开场白</label>
+          <textarea id="rp-f-first" v-model="charForm.first_mes" rows="3"
+                    placeholder="角色对你说出的第一句话"></textarea>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-example">对话示例</label>
+          <textarea id="rp-f-example" v-model="charForm.mes_example" rows="4"
+                    placeholder="示例对话，帮助模型模仿角色语气"></textarea>
+          <p class="rp-field-hint" v-pre>建议使用 &lt;START&gt; 分隔多段示例。</p>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-system">系统提示词</label>
+          <textarea id="rp-f-system" v-model="charForm.system_prompt" rows="2"
+                    placeholder="留空则使用内置 沉浸式角色扮演提示词"></textarea>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-post">历史后置指令</label>
+          <textarea id="rp-f-post" v-model="charForm.post_history_instructions" rows="2"
+                    placeholder="追加在对话历史之后的指令"></textarea>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-greetings">备选开场白</label>
+          <textarea id="rp-f-greetings" v-model="charForm.alternate_greetings" rows="3"
+                    placeholder="每行一条；在聊天工具条中可切换"></textarea>
+          <p class="rp-field-hint">每行一条，空行会被忽略。</p>
+        </div>
+
+        <div class="rp-form-group">
+          <label for="rp-f-tags">标签</label>
+          <input id="rp-f-tags" v-model="charForm.tags" type="text"
+                 placeholder="逗号分隔，例如：奇幻, 温柔, 女主">
+        </div>
+      </div>
+      <div class="rp-modal-foot">
+        <button class="btn btn-ghost" type="button" :disabled="charSaving" @click="closeCharModal">取消</button>
+        <button class="btn btn-primary" type="button" :disabled="charSaving" @click="saveCharacter">
+          {{ charSaving ? '⏳ 保存中…' : '保存角色' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="settingsOpen" class="rp-modal-overlay" @click.self="closeSettings">
+    <div class="rp-modal" role="dialog" aria-modal="true" aria-labelledby="rp-settings-title">
+      <div class="rp-modal-head">
+        <div class="rp-modal-title" id="rp-settings-title">对话偏好</div>
+        <button class="rp-modal-close" type="button" aria-label="关闭" @click="closeSettings">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div v-if="settingsLoading" class="rp-loading"><span class="rp-spinner"></span>读取设置…</div>
+        <template v-else>
+          <div class="rp-form-group">
+            <label for="rp-s-name">你的名字</label>
+            <input id="rp-s-name" v-model="settingsForm.user_name" type="text" maxlength="40" placeholder="例如：旅行者">
+            <p class="rp-field-hint" v-pre>对话中代表「你」，可被 {{user}} 宏引用。</p>
+          </div>
+
+          <div class="rp-form-group">
+            <label for="rp-s-persona">你的角色设定</label>
+            <textarea id="rp-s-persona" v-model="settingsForm.user_persona" rows="3"
+                      placeholder="描述「你」的身份、外貌、性格…"></textarea>
+          </div>
+
+          <div class="rp-form-group">
+            <label for="rp-s-system">全局系统提示词</label>
+            <textarea id="rp-s-system" v-model="settingsForm.system_prompt" rows="3"
+                      placeholder="留空则使用内置 沉浸式角色扮演提示词"></textarea>
+            <p class="rp-field-hint" v-pre>会与角色卡提示词组合；可使用 {{char}} / {{user}} 宏。</p>
+          </div>
+
+          <div class="rp-form-row">
+            <div class="rp-form-group">
+              <label for="rp-s-temp">温度（temperature，0–2）</label>
+              <input id="rp-s-temp" v-model.number="settingsForm.temperature" type="number" min="0" max="2" step="0.05">
+            </div>
+            <div class="rp-form-group">
+              <label for="rp-s-max">最大 token（64–4096）</label>
+              <input id="rp-s-max" v-model.number="settingsForm.max_tokens" type="number" min="64" max="4096" step="1">
+            </div>
+          </div>
+
+          <div class="rp-form-group">
+            <label for="rp-s-ctx">上下文消息条数（context_messages，4–200）</label>
+            <input id="rp-s-ctx" v-model.number="settingsForm.context_messages" type="number" min="4" max="200" step="1">
+            <p class="rp-field-hint">发送时携带的最近消息数量，越大越连贯、越耗 token。</p>
+          </div>
+        </template>
+      </div>
+      <div class="rp-modal-foot">
+        <button class="btn btn-ghost" type="button" :disabled="settingsSaving" @click="closeSettings">取消</button>
+        <button class="btn btn-primary" type="button" :disabled="settingsSaving || settingsLoading" @click="saveSettings">
+          {{ settingsSaving ? '⏳ 保存中…' : '保存设置' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="confirmBox.visible" class="rp-modal-overlay rp-confirm-overlay" @click.self="resolveConfirm(false)">
+    <div class="rp-modal rp-confirm" role="alertdialog" aria-modal="true">
+      <div class="rp-modal-head">
+        <div class="rp-modal-title">{{ confirmBox.title }}</div>
+      </div>
+      <div class="rp-modal-body">
+        <p class="rp-confirm-msg">{{ confirmBox.message }}</p>
+      </div>
+      <div class="rp-modal-foot">
+        <button class="btn btn-ghost" type="button" @click="resolveConfirm(false)">取消</button>
+        <button class="btn btn-danger" type="button" @click="resolveConfirm(true)">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="toast.visible" class="rp-toast" :class="toast.kind" role="status" aria-live="polite"
+       @click="toast.visible = false">
+    <div class="rp-toast-icon">{{ toast.icon }}</div>
+    <div class="rp-toast-content">
+      <div class="rp-toast-title">{{ toast.title }}</div>
+      <div class="rp-toast-msg">{{ toast.message }}</div>
+    </div>
+  </div>
+
+</div>
+
+<script src="/vue.global.prod.js" defer></script>
+<script src="/assets/roleplay.js?v=20261019" defer></script>
+
+</body>
+</html>

@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 66
-        versionName = "2.8.6"
+        versionName = "4.0.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -82,6 +82,9 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.13"
+        // Chaquopy needs a CPython 3.13 on the build machine (target Python version).
+        // Override with CHAQUOPY_BUILD_PYTHON when building on another machine.
+        buildPython(System.getenv("CHAQUOPY_BUILD_PYTHON") ?: "C:/dev/python-3.13/python.exe")
         pip {
             // v3.6.3: 禁用 pip cache 防 safe-delete 拦截
             // v2.5.67: 默认 PyPI 源国内不可达（pydantic==1.10.26 报 from versions: none）→ 切清华镜像
@@ -92,6 +95,7 @@ chaquopy {
             install("openai==1.39.0")
             install("pydantic==1.10.26")
             install("httpx==0.27.2")
+            install("socksio==1.0.0")
             install("edge-tts==6.1.12")
             // 说明：APK 内 EPUB 导出依赖 ebooklib，而 ebooklib 又依赖 lxml（C 扩展）。
             // Chaquopy 在 Android 上没有 lxml 的预编译 wheel，装不上；backend（x86_64

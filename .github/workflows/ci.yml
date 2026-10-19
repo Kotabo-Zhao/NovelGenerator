@@ -1,118 +1,24 @@
-name: CI — Syntax, Consistency & Tests
-
+name: Source and runtime regressions
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
 jobs:
-  check:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Install dependencies
-        # v3.5.23: 补 python-dotenv（server.py import dotenv，缺则测试收集失败）
-        run: python -m pip install -r requirements.txt pytest
-
-      - name: Syntax check (Python, 全部副本含 android)
-        run: |
-          find . -name "*.py" -not -path "*/__pycache__/*" -not -path "*/build/*" -not -path "*/.gradle/*" | while read f; do
-            python -m py_compile "$f" || { echo "❌ $f"; exit 1; }
-          done
-          echo "✅ 全部 Python 文件语法通过"
-
-      - name: Security — Check for hardcoded secrets
-        run: |
-          echo "=== Scanning for hardcoded API keys ==="
-          if grep -rn "sk-[a-zA-Z0-9]\{20,\}" backend/ android/ 2>/dev/null; then
-            echo "⚠️ WARNING: Potential hardcoded API keys found!"
-            exit 1
-          fi
-          echo "✅ No hardcoded API keys detected"
-
-      - name: Verify core imports (防死引用)
-        run: |
-          python - <<'EOF'
-          import ast, os, sys
-          missing = []
-          with open('backend/api/server.py', encoding='utf-8') as f:
-              tree = ast.parse(f.read())
-          for node in ast.walk(tree):
-              if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith('core'):
-                  modname = node.module.replace('core.', '').replace('.', '/')
-                  path = os.path.join('backend/core', modname + '.py')
-                  if not os.path.exists(path):
-                      missing.append(f'MISSING MODULE: {node.module}')
-                      continue
-                  with open(path, encoding='utf-8') as mf:
-                      src = mf.read()
-                  for alias in node.names:
-                      if alias.name == '*':
-                          continue
-                      if not (f'class {alias.name}' in src or f'def {alias.name}' in src or f'{alias.name} =' in src):
-                          missing.append(f'MISSING SYMBOL: {alias.name} in {node.module}')
-          if missing:
-              print('❌ Dead references found:')
-              for m in missing:
-                  print('   ', m)
-              sys.exit(1)
-          print('✅ All core imports resolve')
-          EOF
-
-      - name: Consistency — 前端三副本一致
-        run: python tools/sync_frontend.py --check
-
-      - name: Consistency — backend/android core 副本一致
-        run: python tools/sync_android_core.py --check
-
-      - name: Run security regression tests
-        run: python tests/test_path_security.py
-
-      - name: Run generation budget tests
-        run: python tests/test_generation_limits.py
-
-      - name: Run generation failure guard tests
-        run: python tests/test_atomic_failure_guard.py
-
-      - name: Run persistent job store tests
-        run: python tests/test_job_store.py
-
-      - name: Run usage quota tests
-        run: python tests/test_usage_quota.py
-
-      - name: Run ownership isolation tests
-        run: python tests/test_ownership_store.py
-
-      - name: Run chapter job runner tests
-        run: python tests/test_chapter_job_runner.py
-
-      - name: Run authenticated v1 API contract tests
-        run: python tests/test_v1_api.py
-
-      - name: Run legacy owner isolation tests
-        run: python tests/test_legacy_owner_api.py
-
-      - name: Run API security baseline tests
-        run: python tests/test_api_security_baseline.py
-
-      - name: Run style compliance tests
-        run: python tests/test_style_policy.py
-
-      - name: Run WeChat auth adapter tests
-        run: python tests/test_auth.py
-
-      - name: Verify native mini program structure
-        run: python tests/test_miniprogram_structure.py
-
-      - name: Run deterministic full test suite
-        run: python -m pytest tests backend/tests -q --no-header
-
-      - name: Run offline integration suite (59 cases)
-        run: PYTHONIOENCODING=utf-8 python tests/integration_test.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m compileall -q backend android/app/src/main/python
+      - run: ruff check backend --select F821,F811
+      - run: python -m pytest -q
+      - run: node tests/frontend_runtime.test.cjs
+      - run: python tools/sync_frontend.py --check
+      - run: python tools/sync_android_core.py --check

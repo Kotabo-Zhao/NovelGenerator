@@ -132,10 +132,14 @@ class TestAtomicIO(unittest.TestCase):
         with open(path, 'w') as f: f.write('{invalid')
         data = safe_read_json(path)
         self.assertEqual(data, {})
-        # 损坏文件被原子移走（而非覆写），备份文件带 .corrupted.<ts> 前缀
-        self.assertFalse(os.path.exists(path))
+        # Read recovery preserves the damaged original and a timestamped backup.
+        self.assertTrue(os.path.exists(path))
+        with open(path) as f:
+            self.assertEqual(f.read(), '{invalid')
         backups = [n for n in os.listdir(self.tmpdir) if n.startswith('corrupt.json.corrupted.')]
         self.assertTrue(backups)
+        with open(os.path.join(self.tmpdir, backups[0])) as f:
+            self.assertEqual(f.read(), '{invalid')
 
     def test_20_atomic_write_text(self):
         path = os.path.join(self.tmpdir, 'text.txt')
@@ -386,28 +390,29 @@ class TestPlannerStream(unittest.TestCase):
 class TestEngine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         cls._orig_key = cfg.DEEPSEEK_API_KEY
         cfg.DEEPSEEK_API_KEY = "test-key"
     
     @classmethod
     def tearDownClass(cls):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         cfg.DEEPSEEK_API_KEY = cls._orig_key
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
+        from backend import config as package_cfg
         self._orig_novels = cfg.NOVELS_DIR
+        self._orig_package_novels = package_cfg.NOVELS_DIR
         cfg.NOVELS_DIR = self.tmpdir
+        package_cfg.NOVELS_DIR = self.tmpdir
 
     def tearDown(self):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
+        from backend import config as package_cfg
         cfg.NOVELS_DIR = self._orig_novels
+        package_cfg.NOVELS_DIR = self._orig_package_novels
 
     def test_43_list_empty_novels(self):
         engine = NovelEngine()
@@ -420,8 +425,7 @@ class TestEngine(unittest.TestCase):
 
     def test_45_export_no_chapters(self):
         engine = NovelEngine()
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         novel_dir = os.path.join(cfg.NOVELS_DIR, "test_export")
         os.makedirs(novel_dir)
         atomic_write_json(os.path.join(novel_dir, "plan.json"), {"title": "test"})
@@ -484,8 +488,7 @@ class TestEdgeCases(unittest.TestCase):
         self.assertEqual(r["msg"], 'he said "hello"')
 
     def test_53_zero_max_tokens_params(self):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         self.assertGreater(cfg.DEFAULT_CHAPTER_WORDS, 0)
 
 
@@ -495,15 +498,18 @@ class TestEdgeCases(unittest.TestCase):
 class TestIntegration(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
+        from backend import config as package_cfg
         self._orig_novels = cfg.NOVELS_DIR
+        self._orig_package_novels = package_cfg.NOVELS_DIR
         cfg.NOVELS_DIR = self.tmpdir
+        package_cfg.NOVELS_DIR = self.tmpdir
 
     def tearDown(self):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
+        from backend import config as package_cfg
         cfg.NOVELS_DIR = self._orig_novels
+        package_cfg.NOVELS_DIR = self._orig_package_novels
 
     def test_54_full_create_save_list_flow(self):
         """完整流程：创建 → 保存 → 列表 → 读取"""
