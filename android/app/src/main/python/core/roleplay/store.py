@@ -12,9 +12,9 @@ shelf:
 from __future__ import annotations
 
 import copy
-import math
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from config import NOVELS_DIR
 from ..atomic_io import atomic_write_json, safe_read_json
-from ..llm_text import display_text
+from . import worldinfo
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "user_name": "旅行者",
@@ -31,6 +31,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "temperature": 0.85,
     "max_tokens": 600,
     "context_messages": 40,
+    "authors_note": "",
+    "authors_note_depth": 4,
+    "lorebook_enabled": True,
+    "lorebook_budget": 5,
+    "lorebook_scan_depth": 6,
 }
 
 _CARD_DEFAULTS: Dict[str, Any] = {
@@ -105,27 +110,21 @@ class RoleplayStore:
         self.characters_file = os.path.join(self.root, "characters.json")
         self.settings_file = os.path.join(self.root, "settings.json")
         self.chats_dir = os.path.join(self.root, "chats")
+        self.history_dir = os.path.join(self.root, "history")
         self.avatars_dir = os.path.join(self.root, "avatars")
+        self.worldinfo_dir = os.path.join(self.root, "worldinfo")
         self._lock = threading.RLock()
         self._generating = set()
-        self._mutating = set()
-        self._cards_cache = None
-        self._cards_stamp = None
         os.makedirs(self.chats_dir, exist_ok=True)
+        os.makedirs(self.history_dir, exist_ok=True)
         os.makedirs(self.avatars_dir, exist_ok=True)
+        os.makedirs(self.worldinfo_dir, exist_ok=True)
         self._ensure_builtin()
 
     # ------------------------------------------------------------- characters
 
     def list_characters(self) -> List[Dict[str, Any]]:
         with self._lock:
-            try:
-                stat = os.stat(self.characters_file)
-                stamp = (stat.st_mtime_ns, stat.st_size)
-            except FileNotFoundError:
-                stamp = None
-            if self._cards_cache is not None and stamp == self._cards_stamp:
-                return copy.deepcopy(self._cards_cache)
             raw = safe_read_json(self.characters_file, default=[])
         if isinstance(raw, dict):
             raw = raw.get("characters") or []
@@ -133,10 +132,7 @@ class RoleplayStore:
             raw = []
         cards = [self._with_defaults(item) for item in raw if isinstance(item, dict)]
         cards.sort(key=lambda c: (c.get("updated_at") or 0), reverse=True)
-        with self._lock:
-            self._cards_cache = cards
-            self._cards_stamp = stamp
-        return copy.deepcopy(cards)
+        return cards
 
     def get_character(self, char_id: str) -> Optional[Dict[str, Any]]:
         for card in self.list_characters():
@@ -147,7 +143,6 @@ class RoleplayStore:
     def save_characters(self, cards: List[Dict[str, Any]]) -> None:
         with self._lock:
             atomic_write_json(self.characters_file, [self._with_defaults(c) for c in cards])
-            self._cards_cache = None
 
     def upsert_character(self, card: Dict[str, Any]) -> Dict[str, Any]:
         card = self._with_defaults(card)
@@ -164,13 +159,14 @@ class RoleplayStore:
         return card
 
     def delete_character(self, char_id: str) -> bool:
+        self._validate_character_id(char_id)
         with self._lock:
             cards = self.list_characters()
             kept = [c for c in cards if c.get("id") != char_id]
             if len(kept) == len(cards):
                 return False
             self.save_characters(kept)
-        for path in (self.chat_path(char_id), self.avatar_path(char_id)):
+        for path in (self.chat_path(char_id), self.avatar_path(char_id), self.worldinfo_path(char_id)):
             try:
                 if os.path.exists(path):
                     os.remove(path)
@@ -180,8 +176,33 @@ class RoleplayStore:
 
     # ----------------------------------------------------------------- avatars
 
+    @staticmethod
+    def _validate_character_id(char_id: str) -> str:
+        """Keep user-controlled IDs from escaping roleplay storage directories."""
+        if not isinstance(char_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", char_id):
+            raise ValueError("角色 ID 格式无效")
+        return char_id
+
+    def begin_generation(self, char_id: str) -> bool:
+        char_id = self._validate_character_id(char_id)
+        with self._lock:
+            if char_id in self._generating:
+                return False
+            self._generating.add(char_id)
+            return True
+
+    def end_generation(self, char_id: str) -> None:
+        char_id = self._validate_character_id(char_id)
+        with self._lock:
+            self._generating.discard(char_id)
+
+    def is_generating(self, char_id: str) -> bool:
+        char_id = self._validate_character_id(char_id)
+        with self._lock:
+            return char_id in self._generating
+
     def avatar_path(self, char_id: str) -> str:
-        self.validate_id(char_id)
+        char_id = self._validate_character_id(char_id)
         return os.path.join(self.avatars_dir, f"{char_id}.png")
 
     def has_avatar(self, char_id: str) -> bool:
@@ -189,17 +210,8 @@ class RoleplayStore:
 
     def save_avatar(self, char_id: str, data: bytes) -> None:
         with self._lock:
-            path = self.avatar_path(char_id)
-            temporary = path + "." + uuid.uuid4().hex + ".tmp"
-            try:
-                with open(temporary, "wb") as f:
-                    f.write(data)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(temporary, path)
-            finally:
-                if os.path.exists(temporary):
-                    os.remove(temporary)
+            with open(self.avatar_path(char_id), "wb") as f:
+                f.write(data)
 
     def avatar_media_type(self, char_id: str) -> str:
         try:
@@ -215,33 +227,43 @@ class RoleplayStore:
     # ------------------------------------------------------------------- chats
 
     def chat_path(self, char_id: str) -> str:
-        self.validate_id(char_id)
+        char_id = self._validate_character_id(char_id)
         return os.path.join(self.chats_dir, f"{char_id}.json")
+
+    def archive_chat(self, char_id: str) -> Optional[str]:
+        """Preserve the current transcript before a user clears the chat."""
+        source = self.chat_path(char_id)
+        if not os.path.isfile(source):
+            return None
+        destination_dir = os.path.join(self.history_dir, char_id)
+        os.makedirs(destination_dir, exist_ok=True)
+        destination = os.path.join(
+            destination_dir, f"{time.time_ns()}-{uuid.uuid4().hex[:8]}.json"
+        )
+        shutil.copy2(source, destination)
+        return destination
 
     def chat_messages(self, char_id: str) -> List[Dict[str, Any]]:
         with self._lock:
             raw = safe_read_json(self.chat_path(char_id), default={})
-        messages = raw if isinstance(raw, list) else raw.get("messages", []) if isinstance(raw, dict) else []
-        if not isinstance(messages, list):
-            return []
-        result = []
-        for index, item in enumerate(messages or []):
-            if not isinstance(item, dict) or item.get("role") not in ("user", "assistant"):
-                continue
-            message = dict(item)
-            try:
-                message["content"] = display_text(message.get("content"))
-            except TypeError:
-                message["content"] = "（这条旧消息的格式无法显示）"
-            message.setdefault("id", uuid.uuid5(uuid.NAMESPACE_URL, f"{char_id}/{index}/{message.get('ts', 0)}").hex)
-            result.append(message)
-        return result
+        if isinstance(raw, list):
+            messages = [m for m in raw if isinstance(m, dict)]
+        else:
+            messages = raw.get("messages") if isinstance(raw, dict) else None
+            messages = [m for m in (messages or []) if isinstance(m, dict)]
+        normalized = [self.normalize_message(message) for message in messages]
+        # v1 chats had no stable ids; persist generated ids once so clients can
+        # deduplicate/update reliably across GETs.
+        if any(not str(message.get("id") or "") for message in messages):
+            self.save_chat(char_id, normalized)
+        return normalized
 
     def save_chat(self, char_id: str, messages: List[Dict[str, Any]]) -> None:
         now = time.time()
+        normalized = [self.normalize_message(message) for message in messages]
         payload = {
             "character_id": char_id,
-            "messages": messages,
+            "messages": normalized,
             "updated_at": now,
         }
         with self._lock:
@@ -249,6 +271,77 @@ class RoleplayStore:
             created_at = existing.get("created_at") if isinstance(existing, dict) else None
             payload["created_at"] = created_at or now
             atomic_write_json(self.chat_path(char_id), payload)
+
+    @staticmethod
+    def normalize_message(message: Dict[str, Any]) -> Dict[str, Any]:
+        """Fill v2 message fields (id/kind/speaker/variants) with defaults."""
+        if not isinstance(message, dict):
+            raise ValueError("消息必须是对象")
+        normalized = dict(message)
+        normalized.setdefault("id", uuid.uuid4().hex)
+        normalized.setdefault("ts", time.time())
+        role = str(normalized.get("role") or "user")
+        normalized["role"] = role
+        kind = str(normalized.get("kind") or "dialogue")
+        if kind not in ("dialogue", "action", "narration", "ooc", "roll", "system"):
+            kind = "dialogue"
+        normalized["kind"] = kind
+        normalized.setdefault("speaker", "")
+        content = str(normalized.get("content") or "")
+        variants = normalized.get("variants")
+        if role == "assistant":
+            cleaned = [str(item) for item in variants if str(item).strip()] if isinstance(variants, list) else []
+            if not cleaned and content.strip():
+                cleaned = [content]
+            if cleaned:
+                try:
+                    index = int(normalized.get("variant_index", len(cleaned) - 1))
+                except (TypeError, ValueError):
+                    index = len(cleaned) - 1
+                index = max(0, min(index, len(cleaned) - 1))
+                normalized["variants"] = cleaned
+                normalized["variant_index"] = index
+                normalized["content"] = cleaned[index]
+            else:
+                normalized.pop("variants", None)
+                normalized.pop("variant_index", None)
+        else:
+            normalized.pop("variants", None)
+            normalized.pop("variant_index", None)
+            normalized["content"] = content
+        return normalized
+
+    # --------------------------------------------------------------- worldinfo
+
+    def worldinfo_path(self, char_id: str) -> str:
+        char_id = self._validate_character_id(char_id)
+        return os.path.join(self.worldinfo_dir, f"{char_id}.json")
+
+    def load_worldinfo(self, char_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            raw = safe_read_json(self.worldinfo_path(char_id), default=[])
+        entries = raw.get("entries") if isinstance(raw, dict) else raw
+        if not isinstance(entries, list):
+            return []
+        normalized: List[Dict[str, Any]] = []
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            try:
+                normalized.append(worldinfo.normalize_entry(entry, index))
+            except ValueError:
+                continue
+        return normalized
+
+    def save_worldinfo(self, char_id: str, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized = [worldinfo.normalize_entry(entry, index) for index, entry in enumerate(entries)]
+        with self._lock:
+            atomic_write_json(self.worldinfo_path(char_id), {"entries": normalized})
+        return normalized
+
+    def merge_worldinfo(self, char_id: str, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        merged = worldinfo.merge_entries(self.load_worldinfo(char_id), entries)
+        return self.save_worldinfo(char_id, merged)
 
     # ---------------------------------------------------------------- settings
 
@@ -261,66 +354,21 @@ class RoleplayStore:
         return self._clamp_settings(merged)
 
     def update_settings(self, patch: Dict[str, Any]) -> Dict[str, Any]:
+        current = self.settings()
+        for key in DEFAULT_SETTINGS:
+            if key in patch and patch[key] is not None:
+                current[key] = patch[key]
+        current = self._clamp_settings(current)
         with self._lock:
-            current = self.settings()
-            for key in DEFAULT_SETTINGS:
-                if key in patch and patch[key] is not None:
-                    current[key] = patch[key]
-            current = self._clamp_settings(current)
             atomic_write_json(self.settings_file, current)
         return current
-
-    @staticmethod
-    def validate_id(char_id: str) -> None:
-        if not isinstance(char_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", char_id):
-            raise ValueError("无效的角色 ID")
-
-    def is_generating(self, char_id: str) -> bool:
-        with self._lock:
-            return char_id in self._generating
-
-    def begin_generation(self, char_id: str) -> bool:
-        with self._lock:
-            if char_id in self._generating or char_id in self._mutating:
-                return False
-            self._generating.add(char_id)
-            return True
-
-    def end_generation(self, char_id: str) -> None:
-        with self._lock:
-            self._generating.discard(char_id)
-
-    def begin_mutation(self, char_id: str) -> bool:
-        with self._lock:
-            if char_id in self._generating or char_id in self._mutating:
-                return False
-            self._mutating.add(char_id)
-            return True
-
-    def end_mutation(self, char_id: str) -> None:
-        with self._lock:
-            self._mutating.discard(char_id)
-
-    def archive_chat(self, char_id: str) -> None:
-        """Keep recoverable snapshots before a user clears or edits a transcript."""
-        messages = self.chat_messages(char_id)
-        if not messages:
-            return
-        folder = os.path.join(self.root, "history", char_id)
-        os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, f"{time.time_ns()}.json")
-        atomic_write_json(path, {"messages": messages, "character_id": char_id})
-        snapshots = sorted(os.listdir(folder))
-        for old in snapshots[:-30]:
-            os.remove(os.path.join(folder, old))
 
     # ----------------------------------------------------------------- helpers
 
     def _clamp_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
         clamped = dict(settings)
         try:
-            temperature = float(clamped.get("temperature", 0.85))
-            clamped["temperature"] = max(0.0, min(2.0, temperature)) if math.isfinite(temperature) else 0.85
+            clamped["temperature"] = max(0.0, min(2.0, float(clamped.get("temperature", 0.85))))
         except (TypeError, ValueError):
             clamped["temperature"] = 0.85
         try:
@@ -332,8 +380,21 @@ class RoleplayStore:
         except (TypeError, ValueError):
             clamped["context_messages"] = 40
         clamped["user_name"] = str(clamped.get("user_name") or "旅行者").strip()[:40] or "旅行者"
-        for key in ("user_persona", "system_prompt"):
+        for key in ("user_persona", "system_prompt", "authors_note"):
             clamped[key] = str(clamped.get(key) or "")[:8000]
+        try:
+            clamped["authors_note_depth"] = max(0, min(20, int(clamped.get("authors_note_depth", 4))))
+        except (TypeError, ValueError):
+            clamped["authors_note_depth"] = 4
+        try:
+            clamped["lorebook_budget"] = max(1, min(50, int(clamped.get("lorebook_budget", 5))))
+        except (TypeError, ValueError):
+            clamped["lorebook_budget"] = 5
+        try:
+            clamped["lorebook_scan_depth"] = max(1, min(50, int(clamped.get("lorebook_scan_depth", 6))))
+        except (TypeError, ValueError):
+            clamped["lorebook_scan_depth"] = 6
+        clamped["lorebook_enabled"] = bool(clamped.get("lorebook_enabled", True))
         return clamped
 
     def _with_defaults(self, card: Dict[str, Any]) -> Dict[str, Any]:

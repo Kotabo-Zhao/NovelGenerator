@@ -33,36 +33,15 @@ def test_validate_novel_id_rejects_reserved_words():
             validate_novel_id(reserved)
 
 
-def test_safe_read_json_moves_corrupted_aside(tmp_path):
+def test_safe_read_json_preserves_corrupted_file_and_backups_aside(tmp_path):
     p = tmp_path / "corrupt.json"
     p.write_text("{invalid", encoding="utf-8")
     data = safe_read_json(str(p))
     assert data == {}
-    # 原文件被移走，不再存在；备份以 .corrupted.<ts> 保留
-    assert not p.exists()
+    # 原文件保留，损坏副本以 .corrupted.<ts> 留档供显式修复。
+    assert p.read_text(encoding="utf-8") == "{invalid"
     backups = [n for n in os.listdir(tmp_path) if n.startswith("corrupt.json.corrupted.")]
     assert backups
-
-
-def test_load_state_returns_deepcopy_and_update_state_is_atomic(tmp_path):
-    from core.interactive.interact_store import InteractStore, new_state
-    store = InteractStore(str(tmp_path))
-    nid = "novel_x"
-    st = new_state(nid, "《测试》", "都市", "写实", "主角")
-    store.save_state(nid, st)
-
-    a = store.load_state(nid)
-    b = store.load_state(nid)
-    assert a is not b, "load_state 应返回独立副本，避免共享可变对象被并发篡改"
-    a["state"]["location"] = "被篡改"
-    assert store.load_state(nid)["state"]["location"] != "被篡改"
-
-    # update_state 在锁内 load→mutate→save，fn 返回新 state 即落盘
-    def _add_flag(s):
-        s.setdefault("flags", []).append("test_flag")
-        return s
-    store.update_state(nid, _add_flag)
-    assert "test_flag" in store.load_state(nid).get("flags", [])
 
 
 def test_collection_routes_not_blocked_by_reserved_words(monkeypatch):
@@ -276,10 +255,10 @@ def test_legacy_handlers_have_handler_level_owner_check():
 # ── v3.8 修复回归：内部异常不回传客户端（防信息泄漏）──
 
 def test_client_visible_errors_do_not_leak_internal_details():
-    """回归：update_plan / 批量生成 / interactive actions / trends 创建 / TTS 的
+    """回归：update_plan / 批量生成 / trends 创建 / TTS 的
     客户端错误此前含 str(e)（路径/堆栈细节）。修复后必须用通用文案。"""
     import inspect
-    from api.routers import novels, interactive, trends, tts
+    from api.routers import novels, trends, tts
     from api import deps
 
     # update_plan：500 detail 不再拼接异常
@@ -292,10 +271,6 @@ def test_client_visible_errors_do_not_leak_internal_details():
     assert "[type(e).__name__]" not in src, "SSE 错误不应带异常类型"
     assert "str(e)[:300]" not in src
 
-    # interactive actions 错误
-    src = inspect.getsource(interactive.interactive_actions)
-    assert 'str(e)[:120]' not in src
-
     # trends 创建
     src = inspect.getsource(trends.create_bizarre_novel)
     assert 'detail=str(e)' not in src
@@ -304,82 +279,6 @@ def test_client_visible_errors_do_not_leak_internal_details():
     src = inspect.getsource(tts.tts_emotion_synthesize)
     assert "情感引擎暂不可用" in src
     assert "f\"情感引擎不可用: {e}\"" not in src
-
-
-# ── v3.8 修复回归：main_flow_active per-novel + 裸线程归队 ──
-
-def test_main_flow_active_is_per_novel(monkeypatch):
-    """回归：main_flow_active 此前是进程级全局 bool——用户 A 流式生成时
-    用户 B 的后台任务最多干等 90s。修复后按 novel 隔离。"""
-    from core.interactive import story_director as sd
-
-    # 初始为空 dict
-    assert isinstance(sd.main_flow_active, dict)
-    sd.main_flow_active.clear()
-
-    sd.set_main_flow("小说A", True)
-    assert sd.main_flow_active.get("小说A") is True
-    assert sd.main_flow_active.get("小说B") is None, "小说B 不应被 A 的活跃标志影响"
-
-    sd.set_main_flow("小说A", False)
-    assert "小说A" not in sd.main_flow_active, "清除后不应残留键"
-
-
-def test_enqueue_background_threads_are_gone_from_router(monkeypatch):
-    """回归：interactive.py 的裸 threading.Thread 应归队 enqueue_background。"""
-    import inspect
-    from api.routers import interactive as it
-
-    src = inspect.getsource(it.interactive_end_chat)
-    assert "threading.Thread" not in src, "对话后状态提取不应再裸起线程"
-    assert "enqueue_background" in src
-
-    src2 = inspect.getsource(it.interactive_export)
-    assert "threading.Thread" not in src2, "互动导出不应再裸起线程"
-    assert "enqueue_background" in src2
-
-
-def test_enqueue_background_carries_novel_id():
-    """回归：enqueue_background 入队任务应携带 novel_id（per-novel 让路判定）。"""
-    from core.interactive import story_director as sd
-
-    seen = {}
-    def _probe(novel_id, tag):
-        seen["novel"] = novel_id
-        seen["tag"] = tag
-
-    sd.enqueue_background(_probe, "测试书", "x", critical=False, novel_id="测试书")
-    # 队列内容应为 (fn, args, critical, novel_id) 四元组
-    item = sd._bg_queue.get(timeout=2)
-    try:
-        fn, args, critical, novel = item
-        assert novel == "测试书", f"任务应携带 novel_id，实际 {novel}"
-        assert args[0] == "测试书"
-    finally:
-        sd._bg_queue.task_done()
-
-
-# ── v3.8 修复回归：interactive /act 的 _state_snapshot NameError ──
-
-def test_interactive_act_state_snapshot_is_importable():
-    """回归：interactive.py 引用 _state_snapshot 但此前从未 import → /act 必然 NameError。
-
-    修复后应从 action_engine 正常导入（与 dialogue_engine 同一来源）。
-    """
-    from api.routers.interactive import _state_snapshot
-    from core.interactive.action_engine import _state_snapshot as _expected
-    assert _state_snapshot is _expected, "_state_snapshot 应来自 action_engine，而非本地副本"
-    # 快照形状冒烟：从 state 提取 7 个关键字段
-    snap = _state_snapshot({
-        "state": {"location": "茶楼", "relations": {"老钱": 3}, "flags": ["f1"]},
-        "events": [{"ts": "18:00", "type": "event", "summary": "s"}],
-        "casts": {}, "facts": [{"status": "active"}],
-        "scene_num": 2, "last_action": {"summary": "观察"},
-    })
-    assert snap["scene_num"] == 2
-    assert snap["location"] == "茶楼"
-    assert snap["facts_count"] == 1
-    assert snap["events"][0]["summary"] == "s"
 
 
 # ── v3.8 修复回归：批量生成 SSE 双格式化 ──
@@ -437,63 +336,6 @@ def test_sync_llm_endpoints_use_to_thread():
 
     c_src = inspect.getsource(characters)
     assert "asyncio.to_thread" in inspect.getsource(characters.distill_character_profile)
-
-
-# ── v3.8 修复回归：rollback 同步截断 chat_logs ──
-
-def test_rollback_truncates_chat_logs_to_snapshot_cursor(tmp_path):
-    """回归：rollback 只截 scene_logs 不截 chat_logs 时，恢复旧快照后
-    end-chat 游标（_last_chat_total）回退，下一次会把"未来"对话重新提取为 facts。
-    修复后 chat_logs 应截断到快照游标位置。"""
-    from core.interactive.interact_store import InteractStore, new_state
-
-    store = InteractStore(str(tmp_path))
-    nid = "回退测试"
-    # 初始状态：无对话
-    st = new_state(nid, "《测试》", "都市", "写实", "主角")
-    st["_last_chat_total"] = 0
-    store.save_state(nid, st)
-    # 推进到 scene 1（已处理 2 条对话）→ 拍快照点
-    st1 = store.load_state(nid)
-    st1["scene_num"] = 1
-    st1["_last_chat_total"] = 2
-    store.save_state(nid, st1)
-    store.snapshot(nid)
-    # 追加对话到 scene 2（共 4 条）并推进游标
-    store.append_chat(nid, {"speaker": "A", "content": "c1", "scene_num": 1})
-    store.append_chat(nid, {"speaker": "B", "content": "c2", "scene_num": 1})
-    store.append_chat(nid, {"speaker": "A", "content": "c3", "scene_num": 2})
-    store.append_chat(nid, {"speaker": "B", "content": "c4", "scene_num": 2})
-    st2 = store.load_state(nid)
-    st2["scene_num"] = 2
-    st2["_last_chat_total"] = 4
-    store.save_state(nid, st2)
-    assert store.chat_log_count(nid) == 4
-
-    # 回退到 scene 1 快照 → chat_logs 应截断回 2 条
-    ok = store.rollback(nid)
-    assert ok
-    assert store.chat_log_count(nid) == 2, \
-        f"rollback 后 chat_logs 应为 2 条，实际 {store.chat_log_count(nid)}"
-    restored = store.load_state(nid)
-    assert restored.get("_last_chat_total") == 2
-    # 场景日志同样截断
-    assert store.recent_scenes(nid, 10) == []
-
-
-def test_rollback_without_cursor_keeps_chat_logs(tmp_path):
-    """老存档无 _last_chat_total 游标时，rollback 不应误截 chat_logs（保守行为）。"""
-    from core.interactive.interact_store import InteractStore, new_state
-
-    store = InteractStore(str(tmp_path))
-    nid = "老存档"
-    st = new_state(nid, "《测试》", "都市", "写实", "主角")
-    store.save_state(nid, st)
-    store.snapshot(nid)  # 快照无 _last_chat_total
-    store.append_chat(nid, {"speaker": "A", "content": "c1", "scene_num": 0})
-    store.append_chat(nid, {"speaker": "B", "content": "c2", "scene_num": 0})
-    assert store.rollback(nid)
-    assert store.chat_log_count(nid) == 2, "无游标快照不应截断 chat_logs"
 
 
 # ── v3.8 修复回归：requeue_stale 周期化 ──

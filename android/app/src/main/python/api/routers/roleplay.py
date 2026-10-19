@@ -12,30 +12,29 @@ Endpoints under /api/roleplay:
 from __future__ import annotations
 
 import base64
-import asyncio
-import functools
-import inspect
 import binascii
+import json
 import logging
 import os
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from ..deps import _sse_with_heartbeat, _validate_novel_id, engine
+from ..auth import is_internal_version, require_owner
+from ..deps import _sse_with_heartbeat, _validate_novel_id, engine, ownership_store
 from config import NOVELS_DIR
 from core.atomic_io import safe_read_json
 from core.roleplay import CardError, RoleplayEngine, RoleplayStore, parse_card_bytes
-from core.roleplay import novel_cards
+from core.roleplay import novel_cards, worldinfo
 
 log = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_owner)])
 
 _store = RoleplayStore()
-_engine = RoleplayEngine(engine.client, engine.model, _store)
+_engine = RoleplayEngine(engine, _store)
 
 _TEXT_FIELDS = (
     "name", "description", "personality", "scenario", "first_mes", "mes_example",
@@ -56,12 +55,16 @@ _AVATAR_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"RIFF")
 # --------------------------------------------------------------------- helpers
 
 async def _json_body(request: Request) -> Dict[str, Any]:
-    if int(request.headers.get("content-length") or 0) > 12 * 1024 * 1024:
-        raise HTTPException(413, "文件过大（最大 8MB）")
     try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(400, "请求体必须是 JSON")
+        raw = await request.body()
+    except Exception as exc:
+        raise HTTPException(400, "无法读取请求体") from exc
+    if len(raw) > 12 * 1024 * 1024:
+        raise HTTPException(413, "请求体过大（最大 12MB）")
+    try:
+        body = json.loads(raw)
+    except Exception as exc:
+        raise HTTPException(400, "请求体必须是 JSON") from exc
     if not isinstance(body, dict):
         raise HTTPException(400, "请求体必须是 JSON 对象")
     return body
@@ -73,6 +76,7 @@ def _decode_base64(value: str) -> bytes:
         cleaned = cleaned.split(",", 1)[-1]
     if not cleaned:
         raise HTTPException(400, "缺少文件数据")
+    # Reject before allocating the decoded buffer (8MB payload ≈ 10.7MB base64).
     if len(cleaned) > 12 * 1024 * 1024:
         raise HTTPException(413, "文件过大（最大 8MB）")
     try:
@@ -81,36 +85,25 @@ def _decode_base64(value: str) -> bytes:
         raise HTTPException(400, f"base64 解码失败: {e}") from e
 
 
+def _clamp_card(card: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply the same field limits to imported/AI cards as manual edits."""
+    for field, limit in _TEXT_LIMITS.items():
+        if field in card:
+            card[field] = str(card.get(field) or "")[:limit]
+    for field in _LIST_FIELDS:
+        if field in card:
+            value = card.get(field)
+            if not isinstance(value, list):
+                value = []
+            card[field] = [str(item).strip()[:2000] for item in value if str(item).strip()][:50]
+    return card
+
+
 def _get_char(char_id: str) -> Dict[str, Any]:
-    try:
-        _store.validate_id(char_id)
-    except ValueError:
-        raise HTTPException(400, "无效的角色 ID") from None
     card = _store.get_character(char_id)
     if not card:
         raise HTTPException(404, "角色不存在")
     return card
-
-
-def _ensure_idle(char_id: str):
-    if _store.is_generating(char_id):
-        raise HTTPException(409, "该角色正在回复，请先停止生成")
-
-
-def exclusive_character(function):
-    """Reserve before awaiting request data; no clear/delete versus send race."""
-    @functools.wraps(function)
-    async def guarded(char_id: str, *args, **kwargs):
-        _get_char(char_id)
-        if not _store.begin_mutation(char_id):
-            raise HTTPException(409, "该角色正在处理其他操作，请稍后重试")
-        try:
-            if inspect.iscoroutinefunction(function):
-                return await function(char_id, *args, **kwargs)
-            return await asyncio.to_thread(function, char_id, *args, **kwargs)
-        finally:
-            _store.end_mutation(char_id)
-    return guarded
 
 
 def _public(card: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,7 +111,7 @@ def _public(card: Dict[str, Any]) -> Dict[str, Any]:
     cid = str(out.get("id") or "")
     if cid and _store.has_avatar(cid):
         out["avatar_url"] = (
-            f"/api/roleplay/characters/{cid}/avatar?v={int((out.get('updated_at') or 0) * 1000)}"
+            f"/api/roleplay/characters/{cid}/avatar?v={int(out.get('updated_at') or 0)}"
         )
     else:
         out["avatar_url"] = ""
@@ -149,7 +142,7 @@ def _apply_card_fields(body: Dict[str, Any], base: Optional[Dict[str, Any]] = No
 # -------------------------------------------------------------------- settings
 
 @router.get("/api/roleplay/settings")
-def get_settings():
+async def get_settings():
     return {"ok": True, "settings": _store.settings()}
 
 
@@ -163,12 +156,12 @@ async def update_settings(request: Request):
 # ------------------------------------------------------------------ characters
 
 @router.get("/api/roleplay/characters")
-def list_characters():
+async def list_characters():
     return {"ok": True, "characters": [_public(c) for c in _store.list_characters()]}
 
 
 @router.get("/api/roleplay/characters/{char_id}")
-def get_character(char_id: str):
+async def get_character(char_id: str):
     return {"ok": True, "character": _public(_get_char(char_id))}
 
 
@@ -188,10 +181,8 @@ async def create_character(request: Request):
 
 
 @router.put("/api/roleplay/characters/{char_id}")
-@exclusive_character
 async def update_character(char_id: str, request: Request):
     existing = _get_char(char_id)
-    _ensure_idle(char_id)
     body = await _json_body(request)
     card = _apply_card_fields(body, existing)
     if not str(card.get("name") or "").strip():
@@ -201,10 +192,7 @@ async def update_character(char_id: str, request: Request):
 
 
 @router.delete("/api/roleplay/characters/{char_id}")
-@exclusive_character
 async def delete_character(char_id: str):
-    _get_char(char_id)
-    _ensure_idle(char_id)
     if not _store.delete_character(char_id):
         raise HTTPException(404, "角色不存在")
     return {"ok": True}
@@ -228,16 +216,38 @@ async def import_character(request: Request):
     card["source"] = fmt
     card["created_at"] = now
     card["updated_at"] = now
+    book_entries = worldinfo.entries_from_card(card)
+    card.pop("character_book", None)
+    card = _clamp_card(card)
     _store.upsert_character(card)
+    if book_entries:
+        _store.save_worldinfo(card["id"], book_entries)
     if fmt == "png":
         _store.save_avatar(card["id"], data)
-    log.info("Imported roleplay card: %s (%s)", card["name"], fmt)
-    return {"ok": True, "character": _public(card), "format": fmt}
+    log.info("Imported roleplay card: %s (%s, lorebook=%d)",
+             card["name"], fmt, len(book_entries))
+    return {"ok": True, "character": _public(card), "format": fmt,
+            "worldinfo_imported": len(book_entries)}
 
 
 @router.post("/api/roleplay/characters/from-novel/{novel_id}")
-async def characters_from_novel(novel_id: str):
+async def characters_from_novel(
+    novel_id: str,
+    request: Request,
+    owner_id: str = Depends(require_owner),
+):
+    """把小说角色宝典导出为角色卡。
+
+    body（可选）:
+      {"mode": "ai" | "template", "characters": ["角色名", ...]}
+
+    - ``ai``（推荐）：读取 worldbuilding / character_bible / character_profiles /
+      character_voices，调用当前 LLM 生成完整 SillyTavern 角色卡；失败自动回退模板。
+    - ``template``：仅把 plan.json 字段结构化拼接，不调用 LLM（兼容旧行为）。
+    """
     _validate_novel_id(novel_id)
+    if not is_internal_version() and not ownership_store.owns(novel_id, owner_id):
+        raise HTTPException(404, "小说不存在")
     novel_dir = os.path.join(NOVELS_DIR, novel_id)
     if not os.path.isdir(novel_dir):
         raise HTTPException(404, "小说不存在")
@@ -245,8 +255,26 @@ async def characters_from_novel(novel_id: str):
     if not isinstance(plan, dict) or not plan:
         raise HTTPException(404, "该小说还没有生成设定（plan.json）")
 
-    cards = novel_cards.build_cards_from_plan(plan, novel_id)
-    if not cards:
+    body: Dict[str, Any] = {}
+    raw_body = await request.body()
+    if raw_body.strip():
+        try:
+            parsed_body = json.loads(raw_body)
+        except Exception as exc:
+            raise HTTPException(400, "请求体必须是 JSON") from exc
+        if not isinstance(parsed_body, dict):
+            raise HTTPException(400, "请求体必须是 JSON 对象")
+        body = parsed_body
+    mode = str(body.get("mode") or "template").strip().lower()
+    if mode not in ("ai", "template"):
+        raise HTTPException(400, "mode 只能是 ai 或 template")
+    raw_names = body.get("characters") or body.get("names")
+    names: Optional[list] = None
+    if isinstance(raw_names, list):
+        names = [str(name).strip() for name in raw_names if str(name).strip()]
+
+    all_names = novel_cards.plan_character_names(plan)
+    if not all_names:
         raise HTTPException(404, "该小说的角色宝典里还没有可用角色")
 
     existing = _store.list_characters()
@@ -254,26 +282,66 @@ async def characters_from_novel(novel_id: str):
         str(c.get("name")) for c in existing
         if c.get("source") == "novel" and c.get("novel_id") == novel_id
     }
+    requested = [name for name in all_names if not names or name in set(names)]
+    pending = [name for name in requested if name not in existing_names]
+    skipped = len(requested) - len(pending)
+
+    warnings: List[str] = []
+    cards: List[Dict[str, Any]] = []
+    if pending:
+        if mode == "ai":
+            bible = safe_read_json(os.path.join(novel_dir, "character_bible.json"), default={})
+            profiles = safe_read_json(os.path.join(novel_dir, "character_profiles.json"), default={})
+            voices = safe_read_json(os.path.join(novel_dir, "character_voices.json"), default={})
+            cards, warnings = await novel_cards.generate_cards_with_ai(
+                engine, plan, novel_id,
+                bible=bible if isinstance(bible, dict) else {},
+                profiles=profiles if isinstance(profiles, dict) else {},
+                voices=voices if isinstance(voices, dict) else {},
+                names=pending,
+            )
+            cards = [card for card in cards if str(card.get("name")) in set(pending)]
+        else:
+            cards = [
+                card for card in novel_cards.build_cards_from_plan(plan, novel_id)
+                if str(card.get("name")) in set(pending)
+            ]
+
     created = []
-    skipped = 0
     for card in cards:
-        if str(card.get("name")) in existing_names:
+        name = str(card.get("name") or "")
+        if not name or name in existing_names:
             skipped += 1
             continue
+        card = _clamp_card(card)
         card["id"] = uuid.uuid4().hex
         now = time.time()
         card["created_at"] = now
         card["updated_at"] = now
         _store.upsert_character(card)
         created.append(_public(card))
-        existing_names.add(str(card.get("name")))
-    return {"ok": True, "characters": created, "created": len(created), "skipped": skipped}
+        existing_names.add(name)
+
+    ai_filled = sum(1 for card in created if card.get("ai_filled"))
+    log.info(
+        "Roleplay export from novel %s: mode=%s created=%d skipped=%d ai_filled=%d",
+        novel_id, mode, len(created), skipped, ai_filled,
+    )
+    return {
+        "ok": True,
+        "characters": created,
+        "created": len(created),
+        "skipped": skipped,
+        "mode": mode,
+        "ai_filled": ai_filled,
+        "warnings": warnings,
+    }
 
 
 # --------------------------------------------------------------------- avatars
 
 @router.get("/api/roleplay/characters/{char_id}/avatar")
-def get_avatar(char_id: str):
+async def get_avatar(char_id: str):
     _get_char(char_id)
     path = _store.avatar_path(char_id)
     if not os.path.isfile(path):
@@ -288,10 +356,8 @@ def get_avatar(char_id: str):
 
 
 @router.post("/api/roleplay/characters/{char_id}/avatar")
-@exclusive_character
 async def upload_avatar(char_id: str, request: Request):
     _get_char(char_id)
-    _ensure_idle(char_id)
     body = await _json_body(request)
     data = _decode_base64(str(body.get("data_base64") or ""))
     if not data:
@@ -302,23 +368,22 @@ async def upload_avatar(char_id: str, request: Request):
         raise HTTPException(400, "头像只支持 PNG / JPEG / WebP")
     _store.save_avatar(char_id, data)
     card = _get_char(char_id)
-    card = _store.upsert_character(card)
+    card["updated_at"] = time.time()
+    _store.upsert_character(card)
     return {"ok": True, "avatar_url": _public(card)["avatar_url"]}
 
 
 # ----------------------------------------------------------------------- chats
 
 @router.get("/api/roleplay/characters/{char_id}/chat")
-def get_chat(char_id: str):
+async def get_chat(char_id: str):
     _get_char(char_id)
-    return {"ok": True, "messages": _store.chat_messages(char_id), "generating": _store.is_generating(char_id)}
+    return {"ok": True, "messages": _store.chat_messages(char_id)}
 
 
 @router.post("/api/roleplay/characters/{char_id}/chat/start")
-@exclusive_character
 async def start_chat(char_id: str):
     _get_char(char_id)
-    _ensure_idle(char_id)
     messages = _engine.ensure_chat(char_id)
     return {"ok": True, "messages": messages}
 
@@ -326,36 +391,138 @@ async def start_chat(char_id: str):
 @router.post("/api/roleplay/characters/{char_id}/chat/send")
 async def send_chat(char_id: str, request: Request):
     _get_char(char_id)
-    _ensure_idle(char_id)
     body = await _json_body(request)
-    message = body.get("message")
-    if not isinstance(message, str):
-        raise HTTPException(400, "消息必须是文本")
-    message = message.strip()
+    message = str(body.get("message") or "").strip()
     if not message:
         raise HTTPException(400, "消息不能为空")
     if len(message) > 8000:
         raise HTTPException(400, "消息过长（最多 8000 字）")
     request_id = body.get("request_id")
-    if request_id is not None and (not isinstance(request_id, str) or len(request_id) > 96):
-        raise HTTPException(400, "无效的请求 ID")
-    return _sse_response(_engine.stream_reply(char_id, message=message, request_id=request_id))
+    if request_id is not None and (
+        not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128
+    ):
+        raise HTTPException(400, "request_id 必须是 1-128 字符的字符串")
+    return _sse_response(
+        _engine.stream_reply(char_id, message=message, request_id=request_id)
+    )
 
 
 @router.post("/api/roleplay/characters/{char_id}/chat/regenerate")
 async def regenerate_chat(char_id: str):
     _get_char(char_id)
-    _ensure_idle(char_id)
-    if not any(m["role"] == "user" for m in _store.chat_messages(char_id)):
-        raise HTTPException(400, "请先发送一条消息")
     return _sse_response(_engine.stream_reply(char_id, regenerate=True))
 
 
+@router.post("/api/roleplay/characters/{char_id}/chat/swipe")
+async def swipe_chat(char_id: str, request: Request):
+    """Cycle existing reply variants (JSON) or generate a new one (SSE)."""
+    _get_char(char_id)
+    body: Dict[str, Any] = {}
+    try:
+        raw_body = await request.json()
+        if isinstance(raw_body, dict):
+            body = raw_body
+    except Exception:
+        body = {}
+    direction = str(body.get("direction") or "next").strip().lower()
+    if direction in ("next", "prev"):
+        messages = _engine.swipe_existing(char_id, direction)
+        if messages is None:
+            raise HTTPException(400, "没有可切换的回复版本")
+        return {"ok": True, "messages": messages}
+    if direction != "new":
+        raise HTTPException(400, "direction 只能是 next / prev / new")
+    return _sse_response(_engine.stream_reply(char_id, message="/swipe new"))
+
+
+# ------------------------------------------------------------------- worldinfo
+
+@router.get("/api/roleplay/characters/{char_id}/worldinfo")
+async def list_worldinfo(char_id: str):
+    _get_char(char_id)
+    entries = _store.load_worldinfo(char_id)
+    enabled = sum(1 for entry in entries if entry.get("enabled", True))
+    return {"ok": True, "entries": entries, "total": len(entries), "enabled": enabled}
+
+
+@router.post("/api/roleplay/characters/{char_id}/worldinfo/import")
+async def import_worldinfo(char_id: str, request: Request):
+    _get_char(char_id)
+    body = await _json_body(request)
+    raw_text = str(body.get("json_text") or "")
+    if raw_text:
+        data = raw_text.encode("utf-8")
+    else:
+        data = _decode_base64(str(body.get("data_base64") or ""))
+    if not data:
+        raise HTTPException(400, "世界书文件为空")
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "世界书文件过大（最大 8MB）")
+    try:
+        entries = worldinfo.import_worldinfo_bytes(data, str(body.get("filename") or ""))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    merged = _store.merge_worldinfo(char_id, entries)
+    log.info("Imported worldinfo for %s: %d entries", char_id, len(entries))
+    return {"ok": True, "imported": len(entries), "entries": merged}
+
+
+@router.post("/api/roleplay/characters/{char_id}/worldinfo")
+async def replace_worldinfo(char_id: str, request: Request):
+    _get_char(char_id)
+    body = await _json_body(request)
+    raw_entries = body.get("entries")
+    if not isinstance(raw_entries, list):
+        raise HTTPException(400, "entries 必须是数组")
+    if len(raw_entries) > worldinfo.MAX_ENTRIES:
+        raise HTTPException(400, "世界书条目过多")
+    try:
+        entries = _store.save_worldinfo(char_id, raw_entries)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "entries": entries}
+
+
+@router.patch("/api/roleplay/characters/{char_id}/worldinfo/{entry_id}")
+async def update_worldinfo_entry(char_id: str, entry_id: str, request: Request):
+    _get_char(char_id)
+    body = await _json_body(request)
+    entries = _store.load_worldinfo(char_id)
+    found = None
+    for entry in entries:
+        if str(entry.get("id")) == entry_id:
+            found = entry
+            break
+    if found is None:
+        raise HTTPException(404, "世界书条目不存在")
+    if "enabled" in body:
+        if not isinstance(body["enabled"], bool):
+            raise HTTPException(400, "enabled 必须是布尔值")
+        found["enabled"] = body["enabled"]
+    if "content" in body:
+        found["content"] = str(body["content"] or "")[:worldinfo.MAX_ENTRY_CHARS]
+    if "comment" in body:
+        found["comment"] = str(body["comment"] or "")[:200]
+    if "keys" in body and isinstance(body["keys"], list):
+        found["keys"] = [str(key).strip() for key in body["keys"] if str(key).strip()][:50]
+    entries = _store.save_worldinfo(char_id, entries)
+    return {"ok": True, "entry": found, "entries": entries}
+
+
+@router.delete("/api/roleplay/characters/{char_id}/worldinfo/{entry_id}")
+async def delete_worldinfo_entry(char_id: str, entry_id: str):
+    _get_char(char_id)
+    entries = _store.load_worldinfo(char_id)
+    remaining = [entry for entry in entries if str(entry.get("id")) != entry_id]
+    if len(remaining) == len(entries):
+        raise HTTPException(404, "世界书条目不存在")
+    entries = _store.save_worldinfo(char_id, remaining)
+    return {"ok": True, "entries": entries}
+
+
 @router.post("/api/roleplay/characters/{char_id}/chat/clear")
-@exclusive_character
 async def clear_chat(char_id: str, request: Request):
     _get_char(char_id)
-    _ensure_idle(char_id)
     greeting_index: Optional[int] = None
     try:
         body = await request.json()
@@ -365,47 +532,6 @@ async def clear_chat(char_id: str, request: Request):
         pass
     messages = _engine.reset_chat(char_id, greeting_index)
     return {"ok": True, "messages": messages}
-
-
-@router.patch("/api/roleplay/characters/{char_id}/chat/messages/{message_id}")
-@exclusive_character
-async def edit_message(char_id: str, message_id: str, request: Request):
-    _get_char(char_id)
-    _ensure_idle(char_id)
-    body = await _json_body(request)
-    content = body.get("content")
-    if not isinstance(content, str) or not content.strip() or len(content) > 50000:
-        raise HTTPException(400, "消息内容须为 1–50000 字的文本")
-    messages = _store.chat_messages(char_id)
-    target = next((m for m in messages if m["id"] == message_id), None)
-    if target is None:
-        raise HTTPException(404, "消息不存在")
-    _store.archive_chat(char_id)
-    target.update(content=content.strip(), edited_at=time.time())
-    _store.save_chat(char_id, messages)
-    return {"ok": True, "message": target}
-
-
-@router.post("/api/roleplay/characters/{char_id}/chat/restore")
-@exclusive_character
-def restore_chat(char_id: str):
-    _get_char(char_id)
-    _ensure_idle(char_id)
-    folder = os.path.join(_store.root, "history", char_id)
-    names = sorted(os.listdir(folder)) if os.path.isdir(folder) else []
-    if not names:
-        raise HTTPException(404, "还没有可恢复的历史记录")
-    path = os.path.join(folder, names[-1])
-    snapshot = safe_read_json(path)
-    messages = snapshot.get("messages") if isinstance(snapshot, dict) else None
-    if not isinstance(messages, list):
-        raise HTTPException(400, "历史记录无法读取")
-    # Swap with the snapshot so this action itself is reversible.
-    current = _store.chat_messages(char_id)
-    _store.save_chat(char_id, messages)
-    from core.atomic_io import atomic_write_json
-    atomic_write_json(path, {"messages": current, "character_id": char_id})
-    return {"ok": True, "messages": _store.chat_messages(char_id)}
 
 
 def _sse_response(event_generator) -> StreamingResponse:

@@ -241,7 +241,7 @@ async def tts_emotion_synthesize(req: EmotionTTSRequest, _owner_id: str = Depend
         raise HTTPException(400, "文本不能为空")
     if len(text) > 500:
         raise HTTPException(400, "文本过长（最多 500 字）")
-    from core.interactive.emotion_tts import EmotionTTS, EmotionTTSUnavailable
+    from core.audio.emotion_tts import EmotionTTS, EmotionTTSUnavailable
     try:
         data = await asyncio.to_thread(
             EmotionTTS.get().synthesize, text, req.char_name, req.emotion,
@@ -264,7 +264,7 @@ async def tts_emotion_synthesize(req: EmotionTTSRequest, _owner_id: str = Depend
 @router.get("/api/tts/emotion/status")
 async def tts_emotion_status(_owner_id: str = Depends(require_owner)):
     """情感引擎状态 + 真人音色库（前端用于显示可用性和音色选择）"""
-    from core.interactive.emotion_tts import EmotionTTS
+    from core.audio.emotion_tts import EmotionTTS
     st = EmotionTTS.get().status
     st["real_voices"] = EmotionTTS.get().real_voices()
     return {"ok": True, **st}

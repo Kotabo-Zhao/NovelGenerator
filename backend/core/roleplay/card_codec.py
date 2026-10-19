@@ -51,6 +51,18 @@ def _iter_chunks(data: bytes):
         pos = end + 4  # skip CRC
 
 
+_MAX_TEXT_CHUNK_BYTES = 8 * 1024 * 1024
+
+
+def _decompress_limited(data: bytes, limit: int = _MAX_TEXT_CHUNK_BYTES) -> bytes:
+    """Bounded zlib decompression (guards against PNG text-chunk bombs)."""
+    decompressor = zlib.decompressobj()
+    output = decompressor.decompress(data, limit + 1)
+    if len(output) > limit or decompressor.unconsumed_tail:
+        raise ValueError("PNG 文本块解压后过大")
+    return output
+
+
 def _decode_text_chunk(chunk_type: bytes, payload: bytes) -> tuple[str, str] | None:
     """Decode one textual PNG chunk into (keyword, text); None if unsupported."""
     try:
@@ -63,7 +75,7 @@ def _decode_text_chunk(chunk_type: bytes, payload: bytes) -> tuple[str, str] | N
             if not rest:
                 return None
             compressed = rest[1:]  # first byte = compression method (0)
-            return keyword.decode("latin-1"), zlib.decompress(compressed).decode("utf-8")
+            return keyword.decode("latin-1"), _decompress_limited(compressed).decode("utf-8")
 
         if chunk_type == b"iTXt":
             keyword, _, rest = payload.partition(b"\x00")
@@ -74,7 +86,7 @@ def _decode_text_chunk(chunk_type: bytes, payload: bytes) -> tuple[str, str] | N
             _language, _, rest = rest.partition(b"\x00")
             _translated, _, text = rest.partition(b"\x00")
             if compression_flag:
-                text = zlib.decompress(text)
+                text = _decompress_limited(text)
             return keyword.decode("latin-1"), text.decode("utf-8")
     except (zlib.error, UnicodeDecodeError, ValueError):
         return None
@@ -189,6 +201,13 @@ def normalize_card(raw: Dict[str, Any]) -> Dict[str, Any]:
         "character_version": _text(src, "character_version"),
         "creator_notes": _text(src, "creator_notes"),
         "extensions": src.get("extensions") if isinstance(src.get("extensions"), dict) else {},
+        # V3 character_book (lorebook) is extracted by the API layer, not persisted
+        # on the card itself.
+        "character_book": (
+            src.get("character_book") if isinstance(src.get("character_book"), dict)
+            else raw.get("character_book") if isinstance(raw.get("character_book"), dict)
+            else {}
+        ),
     }
     if not card["first_mes"] and card["alternate_greetings"]:
         card["first_mes"] = card["alternate_greetings"][0]

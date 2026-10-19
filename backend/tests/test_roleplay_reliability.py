@@ -33,7 +33,8 @@ class Stream:
 
 @pytest.fixture
 def engine(tmp_path):
-    return RoleplayEngine(object(), "test", RoleplayStore(str(tmp_path / "rp")))
+    llm_engine = SimpleNamespace(client=object(), model="test")
+    return RoleplayEngine(llm_engine, RoleplayStore(str(tmp_path / "rp")))
 
 
 @pytest.mark.parametrize("value,expected", [
@@ -61,7 +62,11 @@ def test_structured_chunks_are_text_in_stream_and_on_disk(engine):
     engine._resilient = Stream([{"content": [{"type": "text", "text": "你好"}]}, {"choices": []}])
     events = run(collect(engine, message="在吗"))
     assert [e["content"] for e in events if e["type"] == "delta"] == ["你好"]
-    assert events[-1]["message"]["content"] == "你好"
+    message_event = next(
+        event for event in events
+        if event["type"] == "message" and event["message"].get("role") == "assistant"
+    )
+    assert message_event["message"]["content"] == "你好"
     assert engine.store.chat_messages("builtin-suwan")[-1]["content"] == "你好"
 
 
@@ -123,7 +128,11 @@ def test_async_generator_close_persists(engine):
     async def scenario():
         generator = engine.stream_reply("builtin-suwan", message="测试关闭")
         assert (await anext(generator))["type"] == "meta"
-        assert (await anext(generator))["content"] == "第一段"
+        while True:
+            event = await anext(generator)
+            if event["type"] == "delta":
+                assert event["content"] == "第一段"
+                break
         await generator.aclose()
 
     run(scenario())

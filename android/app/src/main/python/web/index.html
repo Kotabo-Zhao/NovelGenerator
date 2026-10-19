@@ -1162,57 +1162,6 @@
                   </svg>
                 </div>
 
-                <div v-if="sgHoveredEvent && hoveredEventDetail" class="sg-event-tooltip">
-                  <div style="font-size:13px;font-weight:700;margin-bottom:6px" :style="{color:plotTimeline.lanes[sgHoveredEvent.lane]?.color}">
-                    {{ plotTimeline.lanes[sgHoveredEvent.lane]?.name }}
-                  </div>
-                  <div class="flex gap-6" style="flex-wrap:wrap;align-items:center">
-                    <button class="btn btn-xs" :class="interactive.statusOpen?'btn-ghost':'btn-primary'" @click="interactive.statusOpen=!interactive.statusOpen" style="min-width:64px">{{ interactive.statusOpen ? '▾ 收起' : '▸ 状态' }}</button>
-                    <button class="btn btn-xs" :class="interactive.autoPlay?'btn-primary':''" @click="interactive.autoPlay=!interactive.autoPlay; cancelAuto()">⏵ 剧情{{ interactive.autoPlay?'自动':'手动' }}</button>
-                    <button class="btn btn-xs btn-ghost" @click="interactive.settingsOpen=!interactive.settingsOpen">⚙ 设置</button>
-                  </div>
-                </div>
-                <div v-if="interactive.settingsOpen" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-light)">
-                  <span class="text-xs muted">朗读</span>
-                  <button class="btn btn-xs" :class="interactive.autoVoice?'btn-primary':''" @click="toggleAutoVoice" :disabled="interactive.busy">🔊 {{ interactive.autoVoice?'自动':'关闭' }}</button>
-                  <template v-if="interactive.emotionAvailable">
-                    <button class="btn btn-xs" :class="interactive.emotionVoice?'btn-primary':''" @click="interactive.emotionVoice=!interactive.emotionVoice" :disabled="interactive.busy">🎭 {{ interactive.emotionVoice?'情感':'普通' }}</button>
-                    <select v-if="interactive.emotionVoice" v-model="interactive.emotion" aria-label="情感语音风格" style="min-height:30px;font-size:12px"><option v-for="em in ['平静','愤怒','悲伤','喜悦','紧张','冷漠']" :key="em" :value="em">{{ em }}</option></select>
-                  </template>
-                  <span style="flex:1"></span>
-                  <button class="btn btn-xs btn-ghost" @click="interactiveRollback" :disabled="interactive.busy" title="回退到上一场景">↩ 回退</button>
-                  <button class="btn btn-xs btn-ghost" @click="interactiveRestart" :disabled="interactive.busy" title="重开">🔄 重开</button>
-                </div>
-                <template v-if="interactive.statusOpen">
-                  <div class="ps-cell" v-if="interactive.state.player_char && interactive.state.player_char.personality_brief">
-                    <span class="ps-label">🧠 性格</span><span class="ps-val" style="white-space:normal;line-height:1.5">{{ interactive.state.player_char.personality_brief }}</span>
-                  </div>
-                  <div class="player-status-grid" style="margin-top:6px">
-                    <div class="ps-cell" :class="{'ps-flash': statusFlash.scene_num}" v-if="interactive.state.state && interactive.state.state.location || statusFlash.scene_num">
-                      <span class="ps-label">📍 地点</span><span class="ps-val">{{ fmtText(interactive.state.state && interactive.state.state.location) || '（未定）' }}</span>
-                    </div>
-                    <div class="ps-cell" :class="{'ps-flash': statusFlash.flags}" v-if="(interactive.state.state && interactive.state.state.flags || []).length || statusFlash.flags">
-                      <span class="ps-label">🏷 进展</span><span class="ps-val"><span v-for="f in (interactive.state.state && interactive.state.state.flags || [])" :key="f" style="margin-right:8px;font-size:12px;background:rgba(201,167,255,.12);border-radius:4px;padding:1px 6px">{{ f }}</span></span>
-                    </div>
-                    <div class="ps-cell" v-if="presentChars.length"><span class="ps-label">👥 在场</span><span class="ps-val"><span v-for="c in presentChars" :key="c" style="margin-right:8px">{{ c }}</span></span></div>
-                  </div>
-                  <div class="ps-cell" style="margin-top:6px;padding:2px 4px" v-if="interactive.state.state && interactive.state.state.objective">
-                    <span class="ps-label">🎯 目标</span><span class="ps-val" style="white-space:normal;line-height:1.5">{{ fmtText(interactive.state.state.objective) }}</span>
-                  </div>
-                  <div class="ps-cell" v-if="interactive.state.last_action && interactive.state.last_action.summary">
-                    <span class="ps-label">🕐 上一步</span><span class="ps-val" style="white-space:normal;line-height:1.5;color:var(--text2)">{{ interactive.state.last_action.summary }}</span>
-                  </div>
-                  <div class="ps-cell ps-relations" :class="{'ps-flash': statusFlash.relations}" v-if="relCount">
-                    <span class="ps-label">💞 关系</span><span class="ps-val ps-rel-wrap">
-                      <span v-for="(rv, rn) in interactive.state.state.relations" :key="rn" class="ps-rel-item" :title="rn + ' 对你的态度'">
-                        <span class="ps-rel-name">{{ rn }}</span>
-                        <span class="ps-rel-heart" :style="{color: typeof rv==='number' && rv>=60 ? '#ff9ecb' : (typeof rv==='number' && rv>=30 ? '#ffd479' : '#888780')}">{{ typeof rv==='number' ? '♥'+rv : '' }}</span>
-                        <span v-if="typeof rv==='string'" class="ps-rel-desc">{{ rv }}</span>
-                      </span>
-                    </span>
-                  </div>
-                </div>
-
                 <div class="sg-resize-handle" @mousedown="startResize('timeline', $event)" title="拖拽调整高度"></div>
               </div>
             </div>
@@ -1284,15 +1233,8 @@
                       </div>
                     </div>
                   </div>
-                </template>
-                <div v-if="interactive.generating" class="inter-generating" style="margin-top:12px"><span class="gen-spinner"></span><span>{{ interactive.generating }}</span></div>
-              </div>
-              <div v-if="interactive.voicePicker" class="voice-picker">
-                <div class="flex justify-between items-center" style="margin-bottom:8px">
-                  <div class="panel-title" style="font-size:13px;margin:0">🎙 更换「{{ interactive.voicePicker }}」的音色</div>
-                  <button class="btn btn-xs btn-ghost" @click="interactive.voicePicker=null">✕</button>
                 </div>
-
+              </div>
                 <div v-if="canvasDragging" class="sg-drag-preview" :style="{left:canvasDragX+'px',top:canvasDragY-30+'px'}">
                   Ch{{ canvasDragCh }} · 紧张度 {{ canvasDragTension }}
                 </div>
@@ -1307,7 +1249,6 @@
                   <div class="menu-divider"></div>
                   <div class="menu-item danger" @click="canvasMenuAction('delete')">🗑️ 删除</div>
                 </div>
-              </div>
             </div>
 
             <div v-if="!sgCalibration && !sgThreads.length && sgSubTab==='overview'" class="text-center" style="padding:40px;color:var(--text3)">

@@ -16,6 +16,8 @@ import re
 from typing import Any, Dict, List
 
 from .card_codec import apply_macros
+from .commands import ACTION_DIRECTIVE
+from .worldinfo import format_world_info
 
 DEFAULT_SYSTEM_PROMPT = (
     "你正在进行沉浸式角色扮演。请始终以角色的身份、语气和视角回应，"
@@ -24,6 +26,8 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 _MAX_EXAMPLE_CHARS = 6000
+_MAX_CONTEXT_CHARS = 24000
+_MAX_SINGLE_MESSAGE_CHARS = 8000
 
 
 def _settings_value(settings: Dict[str, Any], key: str, default):
@@ -31,7 +35,11 @@ def _settings_value(settings: Dict[str, Any], key: str, default):
     return default if value is None else value
 
 
-def build_system_prompt(card: Dict[str, Any], settings: Dict[str, Any]) -> str:
+def build_system_prompt(
+    card: Dict[str, Any],
+    settings: Dict[str, Any],
+    world_entries: List[Dict[str, Any]] = None,
+) -> str:
     char_name = str(card.get("name") or "角色")
     user_name = str(_settings_value(settings, "user_name", "旅行者") or "旅行者")
 
@@ -58,12 +66,17 @@ def build_system_prompt(card: Dict[str, Any], settings: Dict[str, Any]) -> str:
     if persona:
         parts.append(f"[关于 {user_name}]\n" + persona)
 
+    world_text = format_world_info(world_entries or [])
+    if world_text:
+        parts.append(world_text)
+
     post_history = apply_macros(
         str(card.get("post_history_instructions") or ""), char_name, user_name
     ).strip()
     if post_history:
         parts.append("[补充指示]\n" + post_history)
 
+    parts.append(ACTION_DIRECTIVE)
     parts.append("请保持角色扮演，不要脱离角色。")
     return "\n\n".join(part for part in parts if part)
 
@@ -76,7 +89,6 @@ def _example_messages(card: Dict[str, Any], char_name: str, user_name: str) -> L
     raw = raw[:_MAX_EXAMPLE_CHARS]
     messages: List[Dict[str, str]] = []
     for block in re.split(r"<START>", raw, flags=re.IGNORECASE):
-        current = None
         for line in block.splitlines():
             line = line.strip()
             if not line:
@@ -88,14 +100,11 @@ def _example_messages(card: Dict[str, Any], char_name: str, user_name: str) -> L
                     if line.startswith(prefix):
                         content = line[len(prefix):].strip()
                         if content:
-                            current = {"role": role, "content": content}
-                            messages.append(current)
+                            messages.append({"role": role, "content": content})
                         matched = True
                         break
                 if matched:
                     break
-            if not matched and current is not None:
-                current["content"] += "\n" + line
     return messages
 
 
@@ -103,13 +112,19 @@ def build_messages(
     card: Dict[str, Any],
     settings: Dict[str, Any],
     history: List[Dict[str, Any]],
+    world_entries: List[Dict[str, Any]] = None,
+    directive: str = "",
 ) -> List[Dict[str, str]]:
-    """Build the OpenAI-style message list for one generation call."""
+    """Build the OpenAI-style message list for one generation call.
+
+    ``world_entries`` are pre-activated lorebook entries. ``directive`` is an
+    extra system instruction used by commands (/continue, /impersonate, swipe).
+    """
     char_name = str(card.get("name") or "角色")
     user_name = str(_settings_value(settings, "user_name", "旅行者") or "旅行者")
 
     messages: List[Dict[str, str]] = [
-        {"role": "system", "content": build_system_prompt(card, settings)}
+        {"role": "system", "content": build_system_prompt(card, settings, world_entries)}
     ]
     messages.extend(_example_messages(card, char_name, user_name))
 
@@ -118,25 +133,58 @@ def build_messages(
     recent = [
         msg for msg in history
         if isinstance(msg, dict)
-        and msg.get("role") in ("user", "assistant")
+        and msg.get("role") in ("user", "assistant", "system")
         and str(msg.get("content") or "").strip()
     ][-context_messages:]
-    # A card can request 200 very large messages. Keep the newest complete
-    # messages within a character budget instead of overflowing the provider.
-    budget = 48000
-    selected = []
-    for message in reversed(recent):
-        content = str(message["content"])
-        if selected and len(content) > budget:
+
+    # Character/token budget: keep the newest messages that fit, so very long
+    # chats or oversized single messages cannot overflow the provider context.
+    trimmed: List[Dict[str, Any]] = []
+    used_chars = 0
+    for msg in reversed(recent):
+        content = str(msg.get("content") or "")
+        if len(content) > _MAX_SINGLE_MESSAGE_CHARS:
+            content = content[:_MAX_SINGLE_MESSAGE_CHARS]
+        if trimmed and used_chars + len(content) > _MAX_CONTEXT_CHARS:
             break
-        selected.append({"role": message["role"], "content": content[-budget:]})
-        budget -= len(selected[-1]["content"])
-        if budget <= 0:
-            break
-    messages.extend(reversed(selected))
+        trimmed.append({**msg, "content": content})
+        used_chars += len(content)
+    recent = list(reversed(trimmed))
+
+    for msg in recent:
+        role = str(msg.get("role") or "user")
+        kind = str(msg.get("kind") or "dialogue")
+        content = str(msg.get("content") or "")
+        if kind == "action":
+            messages.append({"role": "user", "content": "[动作] " + content})
+        elif kind == "narration":
+            messages.append({"role": "assistant", "content": "【旁白】" + content})
+        elif kind == "ooc":
+            messages.append({"role": "system", "content": "[OOC] " + content})
+        elif kind == "roll":
+            messages.append({"role": "system", "content": "[骰子] " + content})
+        else:
+            messages.append({"role": role, "content": content})
+
+    # Author's note at configurable depth (ST-like), keeping the tail intact.
+    notes = str(_settings_value(settings, "authors_note", "") or "").strip()
+    if notes:
+        try:
+            depth = int(_settings_value(settings, "authors_note_depth", 4) or 4)
+        except (TypeError, ValueError):
+            depth = 4
+        depth = max(0, min(20, depth))
+        insert_at = max(1, len(messages) - depth)
+        messages.insert(insert_at, {
+            "role": "system",
+            "content": "[作者注释]\n" + apply_macros(notes, char_name, user_name)[:4000],
+        })
+
+    if directive:
+        messages.append({"role": "system", "content": directive})
 
     # Some providers reject a trailing assistant message (e.g. after regenerate
     # trimming); the UI guarantees a user message exists, but be defensive.
-    if messages[-1]["role"] == "assistant":
+    if messages and messages[-1].get("role") == "assistant" and not directive:
         messages.append({"role": "user", "content": "（继续）"})
     return messages
