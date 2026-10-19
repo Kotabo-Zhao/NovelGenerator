@@ -13,10 +13,7 @@ import os
 import re
 import time
 # Allow importing from parent dir (works both as package and standalone)
-try:
-    from backend import config
-except ImportError:
-    import config
+import config
 from typing import AsyncGenerator, Optional, AsyncIterator
 from ..atomic_io import atomic_write_json, safe_read_json
 from ..beat_decomposer import BeatDecomposer, Beat
@@ -1633,7 +1630,7 @@ class GenerationMixin:
                                        completed_chapters=completed)
                     
                     # 将校准报告注入 storygraph
-                    if not sg.is_healthy():
+                    if not report.is_healthy():
                         calib_ctx = report.to_context_block()
                         if calib_ctx and sg_data:
                             sg_data["_last_calibration"] = {

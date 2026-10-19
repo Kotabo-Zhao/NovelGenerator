@@ -12,7 +12,7 @@ router = APIRouter()
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
 
 @router.get("/api/xiaohongshu/templates")
-async def list_xhs_templates():
+def list_xhs_templates():
     """列出所有可用的小红书爆款模板"""
     result = []
     for key, tpl in TEMPLATES.items():
@@ -155,7 +155,7 @@ async def create_xhs_novel(req: dict = None):
 
 
 @router.get("/api/xiaohongshu/presets")
-async def list_xhs_presets(template: str = None):
+def list_xhs_presets(template: str = None):
     """列出小红书预设组合。可选按模板筛选"""
     presets = get_presets(template)
     return {"ok": True, "presets": presets, "total": len(presets)}

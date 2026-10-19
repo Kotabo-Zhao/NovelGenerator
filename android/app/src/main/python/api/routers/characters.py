@@ -30,7 +30,7 @@ async def distill_character_profile(novel_id: str, char_name: str):
 
 
 @router.get("/api/novels/{novel_id}/character-profiles")
-async def list_character_profiles(novel_id: str):
+def list_character_profiles(novel_id: str):
     """列出全部已蒸馏角色人设卡"""
     _validate_novel_id(novel_id)
     profiles = engine.get_character_profiles(novel_id)
@@ -48,7 +48,7 @@ async def list_character_profiles(novel_id: str):
 
 
 @router.get("/api/novels/{novel_id}/characters/{char_name}/profile")
-async def get_character_profile(novel_id: str, char_name: str):
+def get_character_profile(novel_id: str, char_name: str):
     """获取单个人设卡"""
     _validate_novel_id(novel_id)
     profile = engine.get_character_profile(novel_id, char_name)

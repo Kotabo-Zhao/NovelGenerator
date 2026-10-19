@@ -15,9 +15,8 @@ from core.styles import build_parameterized_style
 from core.styles import get_style_categories, STYLES
 
 @router.get("/api/styles")
-async def get_styles():
+def get_styles():
     """返回所有可用风格（分组）"""
-    from core.styles import get_style_categories, STYLES
     categories = get_style_categories()
     result = {}
     for cat, names in categories.items():
@@ -37,16 +36,14 @@ async def get_styles():
 
 
 @router.get("/api/styles/params")
-async def get_style_params():
+def get_style_params():
     """返回自定义风格的参数化配置选项"""
-    from core.styles import CUSTOM_STYLE_PARAMS
     return {"params": CUSTOM_STYLE_PARAMS}
 
 
 @router.post("/api/styles/build-custom")
 async def build_custom_style_api(req: dict):
     """从用户选择的参数构建自定义风格"""
-    from core.styles import build_parameterized_style
     style = build_parameterized_style(req)
     return {"style": style}
 
@@ -55,7 +52,7 @@ STYLE_SEEDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(_
 
 
 @router.get("/api/styles/seeds")
-async def list_style_seeds():
+def list_style_seeds():
     """列出所有保存的风格种子"""
     seeds = []
     if os.path.exists(STYLE_SEEDS_DIR):

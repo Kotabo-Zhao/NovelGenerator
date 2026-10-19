@@ -31,7 +31,7 @@ async def submit_feedback(novel_id: str, chapter_num: int, req: dict):
 
 
 @router.get("/api/novels/{novel_id}/feedback")
-async def get_feedback(novel_id: str):
+def get_feedback(novel_id: str):
     """获取反馈汇总（列表 + 统计）"""
     _validate_novel_id(novel_id)
     return engine.get_feedback_summary(novel_id)

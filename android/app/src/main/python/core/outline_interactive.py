@@ -599,7 +599,6 @@ class OutlineInteractive:
         
         解析自然语言指令如"名字改成林玄""身份改为将军之后"并直接应用到角色设定。
         """
-        import re
         chars = copy.deepcopy(plan.get("characters", {}))
         protag = chars.get("protagonist", {})
         applied = []

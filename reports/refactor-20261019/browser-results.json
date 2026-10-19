@@ -1,0 +1,61 @@
+{
+  "checks": [
+    "canonical library loads",
+    "search and progress filters",
+    "existing novel opens in writing workspace",
+    "roleplay greeting renders action formatting",
+    "HTTP SSE and SDK pipeline show clean Chinese dialogue",
+    "reload persistence and regeneration",
+    "message editing and UTF-8 chat export",
+    "stop persists partial text; health stays responsive",
+    "readable provider failure",
+    "SillyTavern import, macros, character selection, and persistent drafts",
+    "new conversation archive and restore",
+    "provider settings apply without restart; key never returned",
+    "roleplay fits 360/390/768/1440/1920px viewports",
+    "theme persistence and responsive library",
+    "no uncaught browser or Vue errors"
+  ],
+  "layout": [
+    {
+      "width": 360,
+      "overflow": 0,
+      "bottom": 800,
+      "sendRight": 336
+    },
+    {
+      "width": 390,
+      "overflow": 0,
+      "bottom": 844,
+      "sendRight": 366
+    },
+    {
+      "width": 768,
+      "overflow": 0,
+      "bottom": 1024,
+      "sendRight": 732
+    },
+    {
+      "width": 1440,
+      "overflow": 0,
+      "bottom": 960,
+      "sendRight": 1130
+    },
+    {
+      "width": 1920,
+      "overflow": 0,
+      "bottom": 1080,
+      "sendRight": 1379
+    }
+  ],
+  "page_errors": [],
+  "screenshots": [
+    "library-desktop.png",
+    "writing-desktop.png",
+    "roleplay-desktop.png",
+    "roleplay-mobile.png",
+    "roleplay-dark.png",
+    "library-mobile.png"
+  ],
+  "health_during_stream_ms": 17.64
+}

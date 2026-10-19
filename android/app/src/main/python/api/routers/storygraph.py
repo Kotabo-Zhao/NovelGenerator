@@ -25,7 +25,7 @@ def _read_novel_file(novel_id: str, filename: str) -> dict:
 
 
 @router.get("/api/novels/{novel_id}/storygraph")
-async def get_storygraph(novel_id: str, chapter: int = 0):
+def get_storygraph(novel_id: str, chapter: int = 0):
     """获取剧情图谱数据（剧情线/伏笔账本/角色快照/因果链）
 
     Query params:
@@ -117,7 +117,7 @@ def _compute_storygraph_stats(data: dict) -> dict:
 
 
 @router.get("/api/novels/{novel_id}/arcs")
-async def get_arcs(novel_id: str):
+def get_arcs(novel_id: str):
     """获取剧情弧规划数据"""
     data = _read_novel_file(novel_id, "arcplans.json")
     arcs = data.get("arcs", [])
@@ -148,14 +148,14 @@ async def get_arcs(novel_id: str):
 
 
 @router.get("/api/novels/{novel_id}/calibration")
-async def get_calibration(novel_id: str):
+def get_calibration(novel_id: str):
     """获取最新的剧情校准报告"""
     data = _read_novel_file(novel_id, "calibration.json")
     return data
 
 
 @router.get("/api/novels/{novel_id}/storygraph/visualization")
-async def get_storygraph_visualization(novel_id: str, chapter: int = 0):
+def get_storygraph_visualization(novel_id: str, chapter: int = 0):
     """获取剧情图谱可视化数据：人物关系图 + 剧情线图
 
     Query params:
@@ -174,7 +174,6 @@ async def get_storygraph_visualization(novel_id: str, chapter: int = 0):
 
 def _write_novel_file(novel_id: str, filename: str, data: dict):
     """安全写入小说目录下的 JSON 文件（原子写入）"""
-    from core.atomic_io import atomic_write_json
     novel_dir = engine.memory.get_novel_dir(novel_id)
     path = os.path.join(novel_dir, filename)
     atomic_write_json(path, data)

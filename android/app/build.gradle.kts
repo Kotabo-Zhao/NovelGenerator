@@ -12,8 +12,8 @@ android {
         applicationId = "com.novelgen.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 56
-        versionName = "2.5.68"
+        versionCode = 58
+        versionName = "4.0.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -44,6 +44,9 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.13"
+        // Chaquopy needs a CPython 3.13 on the build machine (target Python version).
+        // Override with CHAQUOPY_BUILD_PYTHON when building on another machine.
+        buildPython(System.getenv("CHAQUOPY_BUILD_PYTHON") ?: "C:/dev/python-3.13/python.exe")
         pip {
             // v3.6.3: 禁用 pip cache 防 safe-delete 拦截
             // v2.5.67: 默认 PyPI 源国内不可达（pydantic==1.10.26 报 from versions: none）→ 切清华镜像
@@ -54,6 +57,7 @@ chaquopy {
             install("openai==1.39.0")
             install("pydantic==1.10.26")
             install("httpx==0.27.2")
+            install("socksio==1.0.0")
             install("edge-tts==6.1.12")
         }
     }

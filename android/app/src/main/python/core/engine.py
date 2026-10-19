@@ -11,10 +11,7 @@ from typing import AsyncGenerator, Optional, AsyncIterator
 from openai import OpenAI
 
 # Allow importing from parent dir (works both as package and standalone)
-try:
-    from backend import config
-except ImportError:
-    import config
+import config
 
 from .planner import Planner
 from .writer import Writer
@@ -71,6 +68,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
         self.client = OpenAI(
             api_key=config.DEEPSEEK_API_KEY or "sk-placeholder-for-tests",
             base_url=config.DEEPSEEK_BASE_URL,
+            max_retries=0,
         )
         self.model = config.DEEPSEEK_MODEL
         self.planner = Planner(self.client, self.model)
@@ -512,7 +510,7 @@ class NovelEngine(GenerationMixin, ValidationMixin, AnalysisMixin,
                             atomic_write_json(
                                 os.path.join(novel_dir, "character_voices.json"), _voices_v
                             )
-                            self._merge_voices_into_bible(novel_id, _voices_v)
+                            self._merge_voices_into_bible(plan["title"], _voices_v)
                             log.info(f"Character voices generated: {len(_voices_v)} characters")
                             yield {"type": "progress", "phase": "character_voices", "pct": 100,
                                    "label": f"角色声音卡就绪（{len(_voices_v)} 个角色）"}

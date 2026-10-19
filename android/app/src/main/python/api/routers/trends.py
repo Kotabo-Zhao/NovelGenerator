@@ -10,11 +10,9 @@ import traceback
 router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range
-from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
-from core.trend_analyzer import quick_bizarre, BizarreNovelGenerator
 
 @router.post("/api/trends/analyze")
-async def analyze_trends(req: dict = None):
+def analyze_trends(req: dict = None):
     """抓取爆火小说并分析趋势"""
     if not req:
         req = {}
@@ -70,7 +68,7 @@ async def generate_bizarre(req: dict):
 
 
 @router.post("/api/trends/bizarre/quick")
-async def quick_bizarre(req: dict):
+def quick_bizarre(req: dict):
     """快速生成逆天小说设定（时事模式优先从网络抓热点新闻动态生成）"""
     count = min(req.get("count", 3), 5)
     genre = req.get("genre", "")

@@ -50,7 +50,7 @@ async def validate_chapter_consistency(novel_id: str, chapter_num: int, req: dic
 
 
 @router.get("/api/novels/{novel_id}/validate-outline")
-async def validate_outline_consistency(novel_id: str):
+def validate_outline_consistency(novel_id: str):
     """校验大纲逻辑一致性"""
     result = engine.validate_outline_consistency(novel_id)
     return {"result": result}
@@ -74,7 +74,7 @@ async def opening_alternatives(novel_id: str, req: dict):
 
 
 @router.get("/api/novels/{novel_id}/design-twists")
-async def design_twists(novel_id: str):
+def design_twists(novel_id: str):
     """为整部小说规划反转点"""
     result = engine.design_twists(novel_id)
     return {"result": result}
@@ -89,7 +89,7 @@ async def summarize_chapters(novel_id: str, req: dict):
 
 
 @router.get("/api/novels/{novel_id}/token-budget")
-async def get_token_budget(novel_id: str):
+def get_token_budget(novel_id: str):
     """查看当前小说的 token 预算"""
     state = engine.memory.get_novel_state(novel_id)
     total = state.get("total_chapters", 0)

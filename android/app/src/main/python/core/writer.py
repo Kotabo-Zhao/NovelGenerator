@@ -526,7 +526,7 @@ class Writer:
                     {"role": "assistant", "content": draft},
                     {"role": "user", "content": "以上是你的初稿，但字数不足。请从上面的断点处继续写，不要重复已写内容。新增部分应该无缝衔接上文，保持同样的风格和视角。"},
                 ]
-                retry_stream = self._create(
+                retry_stream = self._resilient.create_stream(
                     model=self.model,
                     messages=continue_msgs,
                     temperature=0.8,
@@ -534,11 +534,9 @@ class Writer:
                     stream=True,
                 )
                 continuation = ""
-                for chunk in retry_stream:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        continuation += delta.content
-                        yield delta.content
+                async for text in retry_stream:
+                    continuation += text
+                    yield text
                 if continuation:
                     # 去重：检查续写开头是否与草稿结尾重叠
                     cleaned = _dedup_continuation(draft, continuation)
@@ -567,7 +565,7 @@ class Writer:
                 log.info(f"Pass 2/2: style polish")
                 polish_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
                 
-                polish_stream = self._create(
+                polish_stream = self._resilient.create_stream(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": polish_prompt},
@@ -579,10 +577,8 @@ class Writer:
                 )
                 
                 polished = ""
-                for chunk in polish_stream:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        polished += delta.content
+                async for text in polish_stream:
+                    polished += text
                 
                 if polished and len(polished) > len(draft) * 0.5:
                     final_text = polished
@@ -605,7 +601,7 @@ class Writer:
                 h_prompt = STYLE_POLISH_SYSTEM.format(style_guide=style_prompt)
                 h_prompt += "\n\n" + build_humanizer_prompt(h_result["detected"])
                 
-                h_stream = self._create(
+                h_stream = self._resilient.create_stream(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": h_prompt},
@@ -617,10 +613,8 @@ class Writer:
                 )
                 
                 humanized = ""
-                for chunk in h_stream:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        humanized += delta.content
+                async for text in h_stream:
+                    humanized += text
                 
                 if len(humanized) > len(final_text) * 0.6:
                     final_text = humanized
@@ -647,17 +641,15 @@ class Writer:
                     {"role": "user", "content": f"以上是你的草稿，但内容不完整（{reason}）。请从断点处直接继续写，不要重复已有内容。严格保持相同风格、视角和人称。新增的字数只需要补足剩余部分即可。"},
                 ]
                 retry_text = ""
-                retry_stream = self._create(
+                retry_stream = self._resilient.create_stream(
                     model=self.model,
                     messages=continue_msgs,
                     temperature=0.8,
                     max_tokens=retry_max,
                     stream=True,
                 )
-                for chunk in retry_stream:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        retry_text += delta.content
+                async for text in retry_stream:
+                    retry_text += text
                 
                 if retry_text:
                     cleaned = _dedup_continuation(final_text, retry_text)

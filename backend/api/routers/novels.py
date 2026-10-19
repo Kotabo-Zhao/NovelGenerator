@@ -9,12 +9,13 @@ from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import NOVELS_DIR, DEFAULT_CHAPTER_WORDS
+from config import NOVELS_DIR, DEFAULT_CHAPTER_WORDS, SUPPORTED_EXPORT_FORMATS
 
 router = APIRouter()
 
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range, _sse_with_heartbeat
 from core.humanizer import humanize_text
+from ..jobs import stream_job
 
 
 class CreateNovelRequest(BaseModel):
@@ -36,44 +37,14 @@ class GenerateChapterRequest(BaseModel):
     feedback: Optional[str] = None  # 用户修改意见（重生成场景）
 
 
-from ..deps import engine, log, _validate_novel_id, _validate_chapter_range, _sse_with_heartbeat
-from core.humanizer import humanize_text
-
-def _validate_novel_id(novel_id: str) -> str:
-    """校验小说ID：只允许ASCII字母/数字/中文/下划线/连字符"""
-    import re
-    if not novel_id or not isinstance(novel_id, str):
-        raise HTTPException(400, "❌ 小说ID不能为空")
-    if len(novel_id) > 200:
-        raise HTTPException(400, "❌ 小说ID过长（最多200字符）")
-    if re.search(r'[<>"/\\|?*]', novel_id):
-        raise HTTPException(400, "❌ 小说ID包含非法字符")
-    # 反路径遍历
-    if ".." in novel_id:
-        raise HTTPException(400, "❌ 小说ID包含非法路径序列")
-    return novel_id
-
-
-def _validate_chapter_range(start: int, end: int):
-    """校验章节范围"""
-    if not isinstance(start, int) or not isinstance(end, int):
-        raise HTTPException(400, "❌ 章节号必须为整数")
-    if start < 1 or end < 1:
-        raise HTTPException(400, "❌ 章节号必须大于0")
-    if start > end:
-        raise HTTPException(400, f"❌ 起始章节({start})不能大于结束章节({end})")
-    if end - start > 200:
-        raise HTTPException(400, "❌ 批量生成一次最多200章")
-
-
 @router.get("/api/novels")
-async def list_novels():
+def list_novels():
     """列出所有小说"""
     return {"novels": engine.list_novels()}
 
 
 @router.get("/api/novels/{novel_id}")
-async def get_novel(novel_id: str):
+def get_novel(novel_id: str):
     """获取小说详情"""
     plan = engine.get_novel(novel_id)
     if not plan:
@@ -94,7 +65,7 @@ async def delete_novel(novel_id: str):
 
 
 @router.get("/api/novels/{novel_id}/quality-dashboard")
-async def get_quality_dashboard(novel_id: str):
+def get_quality_dashboard(novel_id: str):
     """v2.16: 小说质量仪表板 — 聚合所有质量维度"""
     plan = engine.get_novel(novel_id)
     if not plan:
@@ -185,7 +156,7 @@ def _generate_quality_recommendations(completeness, ai_score, total_hooks, resol
 
 
 @router.get("/api/novels/{novel_id}/chapters/{chapter_num}")
-async def get_chapter(novel_id: str, chapter_num: int):
+def get_chapter(novel_id: str, chapter_num: int):
     """读取单章正文"""
     content = engine.get_chapter(novel_id, chapter_num)
     if content is None:
@@ -194,7 +165,7 @@ async def get_chapter(novel_id: str, chapter_num: int):
 
 
 @router.get("/api/novels/{novel_id}/chapters/{chapter_num}/exists")
-async def chapter_exists(novel_id: str, chapter_num: int):
+def chapter_exists(novel_id: str, chapter_num: int):
     """检查章节文件是否存在（避免前端切换空白）"""
     exists = engine.memory.chapter_exists(novel_id, chapter_num)
     return {"exists": exists, "chapter_num": chapter_num}
@@ -278,12 +249,14 @@ async def create_novel_stream(req: CreateNovelRequest):
 @router.post("/api/novels/generate")
 async def generate_chapter(req: GenerateChapterRequest):
     """流式生成章节 (SSE + 心跳)"""
+    _validate_novel_id(req.novel_id)
+    _validate_chapter_range(req.chapter_num, req.chapter_num)
     async def event_stream():
         async for data in _sse_with_heartbeat(
-            engine.generate_chapter_stream(
+            stream_job(req.novel_id, engine.generate_chapter_stream(
                 req.novel_id, req.chapter_num, req.writing_mode,
                 feedback=req.feedback,
-            )
+            ))
         ):
             yield data
 
@@ -300,12 +273,14 @@ async def generate_chapter(req: GenerateChapterRequest):
 @router.post("/api/novels/generate/atomic")
 async def generate_chapter_atomic(req: GenerateChapterRequest):
     """原子化生成章节 (逐beat独立LLM → 装配 → 评估)"""
+    _validate_novel_id(req.novel_id)
+    _validate_chapter_range(req.chapter_num, req.chapter_num)
     async def event_stream():
         async for data in _sse_with_heartbeat(
-            engine.atomic_generate_chapter_stream(
+            stream_job(req.novel_id, engine.atomic_generate_chapter_stream(
                 req.novel_id, req.chapter_num, req.writing_mode,
                 feedback=req.feedback,
-            )
+            ))
         ):
             yield data
 
@@ -390,7 +365,7 @@ async def generate_batch(novel_id: str, req: dict):
 
     # v2.6: 批量端点接入 SSE 心跳（5s ping，防止长生成连接被中间层掐断）
     return StreamingResponse(
-        _sse_with_heartbeat(event_stream()),
+        _sse_with_heartbeat(stream_job(novel_id, event_stream())),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
@@ -399,7 +374,7 @@ async def generate_batch(novel_id: str, req: dict):
 def _checkpoint_path(novel_id: str) -> str:
     """获取检查点文件路径"""
     import os
-    novel_dir = os.path.join(config.NOVELS_DIR, novel_id)
+    novel_dir = engine.memory.get_novel_dir(novel_id)
     return os.path.join(novel_dir, ".batch_checkpoint.json")
 
 
@@ -411,8 +386,8 @@ def _save_batch_checkpoint(novel_id: str, next_chapter: int, end_chapter: int):
               "end_chapter": end_chapter, "saved_at": _time.time()}
         path = _checkpoint_path(novel_id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(cp, f, ensure_ascii=False)
+        from core.atomic_io import atomic_write_json
+        atomic_write_json(path, cp)
     except Exception as e:
         log.warning(f"Failed to save checkpoint: {e}")
 
@@ -442,7 +417,7 @@ def _clear_batch_checkpoint(novel_id: str):
 
 
 @router.get("/api/novels/{novel_id}/batch/checkpoint")
-async def get_batch_checkpoint(novel_id: str):
+def get_batch_checkpoint(novel_id: str):
     """检查是否有未完成的批量生成检查点"""
     cp = _read_batch_checkpoint(novel_id)
     if cp:
@@ -453,20 +428,16 @@ async def get_batch_checkpoint(novel_id: str):
 @router.get("/api/novels/{novel_id}/export")
 async def export_novel(novel_id: str, fmt: str = "txt"):
     """导出单本小说 (txt / pdf / epub)"""
-    if fmt == "pdf":
-        return await export_novel_pdf(novel_id)
-    if fmt == "epub":
-        return await export_novel_epub(novel_id)
-
-    content, err = engine.export_novel(novel_id, "txt")
+    if fmt not in SUPPORTED_EXPORT_FORMATS:
+        raise HTTPException(400, "当前版本支持的导出格式为 " + " / ".join(SUPPORTED_EXPORT_FORMATS).upper())
+    content, err = await asyncio.to_thread(engine.export_novel, novel_id, fmt)
     if err:
         raise HTTPException(status_code=404, detail=err)
 
-    safe_name = novel_id.encode("ascii", errors="replace").decode().replace("?", "_") or "novel"
-    return PlainTextResponse(
+    return Response(
         content,
-        media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{urllib.parse.quote(novel_id)}.txt"}
+        media_type={"txt": "text/plain; charset=utf-8", "pdf": "application/pdf", "epub": "application/epub+zip"}[fmt],
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{urllib.parse.quote(novel_id)}.{fmt}"}
     )
 
 
@@ -477,15 +448,21 @@ async def batch_export(req: dict = None):
         req = {}
     novel_ids = req.get("novel_ids", [])
     fmt = req.get("fmt", "txt")
+    if fmt != "txt":
+        raise HTTPException(400, "批量导出使用 TXT 格式；PDF / EPUB 请使用单本导出")
+    if not isinstance(novel_ids, list) or len(novel_ids) > 200:
+        raise HTTPException(400, "一次最多导出 200 部作品")
+    for novel_id in novel_ids:
+        _validate_novel_id(novel_id)
 
     if not novel_ids:
         # 导出全部
-        novels = engine.list_novels()
+        novels = await asyncio.to_thread(engine.list_novels)
         novel_ids = [n["id"] for n in novels]
 
     results = []
     for nid in novel_ids:
-        content, err = engine.export_novel(nid, fmt)
+        content, err = await asyncio.to_thread(engine.export_novel, nid, fmt)
         results.append({
             "novel_id": nid,
             "success": err is None,
@@ -497,7 +474,7 @@ async def batch_export(req: dict = None):
 
 
 @router.get("/api/novels/{novel_id}/character-bible")
-async def get_character_bible(novel_id: str):
+def get_character_bible(novel_id: str):
     """获取人物宝典"""
     bible_path = os.path.join(engine.memory.get_novel_dir(novel_id), "character_bible.json")
     if not os.path.exists(bible_path):
@@ -511,13 +488,13 @@ async def get_character_bible(novel_id: str):
 @router.post("/api/repair-states")
 async def repair_all_states():
     """修复所有小说的 state.json 一致性（以磁盘章节文件为准）"""
-    results = engine.memory.repair_all_states()
+    results = await asyncio.to_thread(engine.memory.repair_all_states)
     return {"repaired": len(results), "details": results}
 
 
 @router.post("/api/novels/{novel_id}/repair-state")
 async def repair_state(novel_id: str):
     """修复指定小说的 state.json"""
-    result = engine.memory.repair_state(novel_id)
+    result = await asyncio.to_thread(engine.memory.repair_state, novel_id)
     return result
 

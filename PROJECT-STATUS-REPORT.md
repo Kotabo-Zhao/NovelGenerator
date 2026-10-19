@@ -1,3 +1,5 @@
+> 历史记录：当前实现与验收请以 [README](README.md) 和 [2026-10-19 重构记录](docs/REFACTOR-20261019.md) 为准。
+
 # NovelGenerator 项目状态报告
 
 > 报告日期：2026-08-05

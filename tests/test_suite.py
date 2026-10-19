@@ -383,27 +383,23 @@ class TestPlannerStream(unittest.TestCase):
 class TestEngine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         cls._orig_key = cfg.DEEPSEEK_API_KEY
         cfg.DEEPSEEK_API_KEY = "test-key"
     
     @classmethod
     def tearDownClass(cls):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         cfg.DEEPSEEK_API_KEY = cls._orig_key
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         self._orig_novels = cfg.NOVELS_DIR
         cfg.NOVELS_DIR = self.tmpdir
 
     def tearDown(self):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         cfg.NOVELS_DIR = self._orig_novels
 
     def test_43_list_empty_novels(self):
@@ -417,8 +413,7 @@ class TestEngine(unittest.TestCase):
 
     def test_45_export_no_chapters(self):
         engine = NovelEngine()
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         novel_dir = os.path.join(cfg.NOVELS_DIR, "test_export")
         os.makedirs(novel_dir)
         atomic_write_json(os.path.join(novel_dir, "plan.json"), {"title": "test"})
@@ -481,8 +476,7 @@ class TestEdgeCases(unittest.TestCase):
         self.assertEqual(r["msg"], 'he said "hello"')
 
     def test_53_zero_max_tokens_params(self):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         self.assertGreater(cfg.DEFAULT_CHAPTER_WORDS, 0)
 
 
@@ -492,14 +486,12 @@ class TestEdgeCases(unittest.TestCase):
 class TestIntegration(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         self._orig_novels = cfg.NOVELS_DIR
         cfg.NOVELS_DIR = self.tmpdir
 
     def tearDown(self):
-        try: from backend import config as cfg
-        except ImportError: import config as cfg
+        import config as cfg
         cfg.NOVELS_DIR = self._orig_novels
 
     def test_54_full_create_save_list_flow(self):

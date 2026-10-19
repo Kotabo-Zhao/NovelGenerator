@@ -1184,8 +1184,12 @@ class SharedMemoryManager:
 
     def create_novel_workspace(self, novel_id: str) -> str:
         """为新小说创建完整工作目录"""
-        novel_dir = os.path.join(self.novels_dir, novel_id)
-        os.makedirs(novel_dir, exist_ok=True)
+        novel_dir = self.get_novel_dir(novel_id)
+        os.makedirs(self.novels_dir, exist_ok=True)
+        try:
+            os.mkdir(novel_dir)
+        except FileExistsError:
+            raise FileExistsError("同名作品已存在，请更换书名后创建；原作品已保留") from None
         os.makedirs(os.path.join(novel_dir, "chapters"), exist_ok=True)
         return novel_dir
 
@@ -1244,7 +1248,7 @@ class SharedMemoryManager:
             rel_path = file_info["file"].format(chapter_num)
         else:
             rel_path = file_info["file"]
-        return os.path.join(self.novels_dir, novel_id, rel_path)
+        return os.path.join(self.get_novel_dir(novel_id), rel_path)
 
     def _write_with_lock(self, path: str, data, max_retries: int = 3) -> bool:
         """乐观锁写入：读取→版本检查→写入→冲突重试
@@ -1382,7 +1386,8 @@ class SharedMemoryManager:
     # ═══════════════════════════════════════════
 
     def get_novel_dir(self, novel_id: str) -> str:
-        return os.path.join(self.novels_dir, novel_id)
+        from .paths import novel_path
+        return novel_path(self.novels_dir, novel_id)
 
     def build_writer_context(self, novel_id: str, chapter_num: int,
                              chapter_outline: dict) -> str:

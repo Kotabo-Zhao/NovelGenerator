@@ -12,6 +12,7 @@ import re
 from fastapi import HTTPException
 
 from core.engine import NovelEngine
+from core.paths import novel_path, InvalidNovelPathError
 from config import NOVELS_DIR
 
 log = logging.getLogger("api")
@@ -24,16 +25,10 @@ os.makedirs(NOVELS_DIR, exist_ok=True)
 
 
 def _validate_novel_id(novel_id: str) -> str:
-    """校验小说ID：只允许ASCII字母/数字/中文/下划线/连字符"""
-    if not novel_id or not isinstance(novel_id, str):
-        raise HTTPException(400, "❌ 小说ID不能为空")
-    if len(novel_id) > 200:
-        raise HTTPException(400, "❌ 小说ID过长（最多200字符）")
-    if re.search(r'[<>"/\\|?*]', novel_id):
-        raise HTTPException(400, "❌ 小说ID包含非法字符")
-    # 反路径遍历
-    if ".." in novel_id:
-        raise HTTPException(400, "❌ 小说ID包含非法路径序列")
+    try:
+        novel_path(NOVELS_DIR, novel_id)
+    except InvalidNovelPathError as exc:
+        raise HTTPException(400, str(exc)) from None
     return novel_id
 
 
@@ -51,57 +46,36 @@ def _validate_chapter_range(start: int, end: int):
 
 # ── SSE 心跳包装（novels/outline/requirements 共用）──
 async def _sse_with_heartbeat(event_generator):
-    """通用心跳包装: 每5s发送ping防止超时断开SSE (v2.14: 无上限，跟随producer生命周期)"""
-    q = asyncio.Queue()
-    cancelled = False
+    """Bounded backpressure, heartbeat, and cancellation of the producer."""
+    q = asyncio.Queue(maxsize=64)
 
     async def producer():
         try:
             async for event in event_generator:
-                # 防御: 确保event是dict
                 if not isinstance(event, dict):
-                    log.error(f"SSE producer got non-dict event: {type(event).__name__}: {str(event)[:200]}")
-                    event = {"type": "warning", "message": f"内部数据格式异常: {type(event).__name__}"}
-                await q.put(("event", event))
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            log.exception("SSE producer crashed")
-            # v2.10: 返回异常类型以便快速定位
-            err_msg = f"生成过程出错 [{type(e).__name__}]: {str(e)[:300]}"
-            log.error(f"SSE crash details:\n{tb}")
-            await q.put(("error", err_msg))
-        await q.put(("done", None))
-
-    async def heartbeater():
-        t = 0
-        while not cancelled:
-            await asyncio.sleep(5)  # v2.14: 5秒间隔(原来8秒)，更积极保活
-            if cancelled:
-                break
-            t += 1
-            await q.put(("ping", {"type":"ping","t":t}))
+                    raise TypeError("SSE producer must yield event dictionaries")
+                await q.put(event)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("SSE producer failed")
+            await q.put({"type": "error", "message": "生成过程出错，请重试或查看服务日志"})
+        await q.put(None)
 
     p_task = asyncio.create_task(producer())
-    h_task = asyncio.create_task(heartbeater())
-
     try:
         while True:
-            kind, data = await q.get()
-            if kind == "done":
-                cancelled = True; h_task.cancel(); break
-            elif kind == "event":
-                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-            elif kind == "ping":
-                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-            elif kind == "error":
-                yield f"data: {json.dumps({'type':'error','message':f'生成过程出错: {data}'}, ensure_ascii=False)}\n\n"
-                cancelled = True; h_task.cancel(); break
+            try:
+                data = await asyncio.wait_for(q.get(), timeout=5)
+            except asyncio.TimeoutError:
+                yield ': heartbeat\n\n'
+                continue
+            if data is None:
+                break
+            yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
     finally:
-        h_task.cancel()
         if not p_task.done():
             p_task.cancel()
-        try:
-            await p_task
-        except asyncio.CancelledError:
-            pass
+        await asyncio.gather(p_task, return_exceptions=True)
+        if hasattr(event_generator, "aclose"):
+            await event_generator.aclose()

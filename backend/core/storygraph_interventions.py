@@ -458,7 +458,6 @@ def get_character_voice_guide(character_name: str, personality: str = "") -> str
 
 def analyze_and_inject(novel_dir: str, chapter_num: int, chapter_outline: dict = None) -> str:
     """一站式：分析剧情图谱 → 生成干预指令 + 活人感注入 → 返回 Writer 上下文块"""
-    import os, json
     from .atomic_io import safe_read_json
     
     context_blocks = []
