@@ -300,7 +300,7 @@ async def health():
     return {
         "status": "ok",
         "service": "NovelGenerator",
-        "app_version": "4.3.0",
+        "app_version": "4.3.1",
         "workspace_id": __import__('hashlib').sha256(os.path.normcase(os.path.abspath(NOVELS_DIR)).encode()).hexdigest()[:12],
         "storage_exists": novels_exist,
         "novel_count": novel_count,

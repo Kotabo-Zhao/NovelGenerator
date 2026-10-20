@@ -28,7 +28,7 @@ def main():
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(url + "/api/health", timeout=1) as response:
             status = json.load(response)
-        if status.get("service") == "NovelGenerator" and status.get('app_version') == '4.3.0' and status.get('workspace_id') == workspace:
+        if status.get("service") == "NovelGenerator" and status.get('app_version') == '4.3.1' and status.get('workspace_id') == workspace:
             print(f"Workshop is already running: {url}")
             if not args.no_browser:
                 webbrowser.open(url)

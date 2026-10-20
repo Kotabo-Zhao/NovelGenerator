@@ -1,0 +1,31 @@
+{
+  "version": "4.3.1",
+  "android_version_code": 73,
+  "changes": [
+    "52c198b card field mapping and selective original-card restoration",
+    "c735b97 always-visible input mode tabs",
+    "f63dbff novel-world action resolution and canon participation"
+  ],
+  "python_tests_passed": 315,
+  "frontend_roundtrip": "PASS",
+  "windows_smoke": "PASS",
+  "windows_source_modules_verified": 110,
+  "android_source_modules_verified": 115,
+  "frontend_files_verified_per_platform": 28,
+  "android_same_signer": true,
+  "user_data_embedded": false,
+  "real_model": "NOT_RUN",
+  "android_device": "NOT_RUN",
+  "packages": [
+    {
+      "name": "NovelGenerator-v4.3.1-windows-x64.zip",
+      "bytes": 36528616,
+      "sha256": "b62cfbb0211fa7da567da3bba836c4823a63d906e2eeaa5a796e85fc5554a220"
+    },
+    {
+      "name": "NovelGenerator-v4.3.1-arm64-debug.apk",
+      "bytes": 23614253,
+      "sha256": "9391d171a77db68e81b82a9c8baaa82710bfbb08c7472ed19a20b1094d7b83e4"
+    }
+  ]
+}

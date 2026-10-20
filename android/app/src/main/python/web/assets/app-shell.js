@@ -17,7 +17,7 @@
     template:`<nav class="app-bottom-nav" :class="{'shell-desktop':desktop}" aria-label="主导航"><a v-for="route in routes" :key="route.id" class="bn-item" :class="{active:active===route.id}" :href="link(route)" :aria-current="active===route.id?'page':null" @click="$emit('navigate',route.id,$event)"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="route.icon"></path></svg><span>{{route.label}}</span></a></nav>`
   };
   window.NovelApp = {
-    version:'4.3.0', routes,
+    version:'4.3.1', routes,
     register(app){NovelUI.guard(app);app.component('app-navigation',component);},
     async request(path,options={}) {
       const headers = {...options.headers};
