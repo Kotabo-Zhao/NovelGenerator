@@ -617,9 +617,12 @@
           </div>
           <div class="rp-field">
             <label for="rp-f-greetings">备选开场白（alternate_greetings）</label>
-            <textarea id="rp-f-greetings" v-model="charForm.alternate_greetings" rows="3"
-                      placeholder="每行一条；可在聊天工具条中切换"></textarea>
-            <p class="rp-hint">每行一条，空行会被忽略。</p>
+            <div v-for="(greeting,index) in charForm.alternate_greetings" :key="index">
+              <textarea v-model="charForm.alternate_greetings[index]" rows="4" :aria-label="'备选开场白 '+(index+1)"></textarea>
+              <button type="button" class="btn btn-ghost btn-xs" @click="charForm.alternate_greetings.splice(index,1)">删除这一条</button>
+            </div>
+            <button id="rp-f-greetings" type="button" class="btn btn-secondary btn-xs" @click="charForm.alternate_greetings.push('')">添加备选开场白</button>
+            <p class="rp-hint">每个文本框是一条开场白，保留原卡中的换行与段落。</p>
           </div>
           <div class="rp-field">
             <label for="rp-f-example">对话示例（mes_example）</label>
@@ -630,6 +633,7 @@
         </template>
 
         <template v-if="charTab === 'advanced'">
+          <div class="rp-field"><label for="rp-f-notes">作者使用说明（creator_notes）</label><textarea id="rp-f-notes" v-model="charForm.creator_notes" rows="4"></textarea><p class="rp-hint">供玩家阅读，不作为角色性格发送给模型。</p></div>
           <div class="rp-field">
             <label for="rp-f-system">角色系统提示词（system_prompt）</label>
             <textarea id="rp-f-system" v-model="charForm.system_prompt" rows="3"
@@ -702,7 +706,20 @@
           <div class="rp-form-grid"><div class="rp-field"><label for="rp-player-pronouns">玩家第三人称代词</label><select id="rp-player-pronouns" class="rp-select" v-model="identityForm.player_pronouns"><option value="auto">依玩家与原卡设定</option><option value="他">他</option><option value="她">她</option><option value="TA">TA</option></select></div><div class="rp-field"><label for="rp-player-pov">叙述玩家时的人称</label><select id="rp-player-pov" class="rp-select" v-model="identityForm.narration_pov"><option value="card">遵循原卡</option><option value="second">第二人称（你）</option><option value="third">第三人称（名字 / 代词）</option></select></div></div>
           <div class="rp-field"><label for="rp-card-mode">AI 的职责</label><select id="rp-card-mode" class="rp-select" v-model="identityForm.role_mode"><option value="auto">按原卡自动识别</option><option value="character">扮演卡面人物</option><option value="narrator">世界主持 / 旁白 / 模拟器</option></select></div>
           <p class="rp-hint">更换身份只影响后续回复；已有消息和作者开场不会自动改写。需要新开场时，保存后使用「清空/重开」，原对话会留存历史快照。</p>
-          <details class="rp-card-features" open><summary>原卡说明与功能</summary><p class="rp-author-notes">{{compatibility.creator_notes||'作者没有提供额外使用说明。'}}</p><p v-if="compatibility.legacy_metadata_missing" class="rp-hint">这是旧版导入的卡，原始字段可能不完整。可重新读取原卡元数据，保留已编辑内容、聊天及世界书启用状态，并在本机留备份。<button class="btn btn-secondary btn-xs" :disabled="identitySaving" @click="syncCardMetadata">补齐旧卡功能数据</button></p><ul><li v-for="feature in compatibility.features" :key="feature.field||feature.name"><strong>{{feature.name}}</strong><span v-if="feature.count!==undefined"> · {{feature.count}} 项</span><span v-if="feature.status!=='active'">：{{feature.detail}}</span><span v-else> · 已接入</span></li></ul><p class="rp-hint">{{compatibility.group_fields}}</p></details>
+          <details class="rp-card-features" open><summary>原卡说明与功能</summary><p class="rp-author-notes">{{compatibility.creator_notes||'作者没有提供额外使用说明。'}}</p><div v-if="compatibility.can_reload_original" class="rp-field">
+            <p class="rp-hint">重新解析商店或 PNG 原卡，核对角色设定与性格。只恢复勾选的字段；应用前自动备份，不改写已有聊天或玩家身份。</p>
+            <button type="button" class="btn btn-secondary btn-xs" :disabled="identitySaving" @click="previewCardMetadata">预览原卡字段差异</button>
+            <div v-if="cardRepair">
+              <p v-if="!cardRepair.fields.length" class="rp-hint">角色字段与原卡一致。</p>
+              <details v-for="field in cardRepair.fields" :key="field.field" class="rp-field">
+                <summary>{{repairFieldLabel(field.field)}} · 有差异</summary>
+                <label><input type="checkbox" v-model="field.selected">恢复此字段为原卡值</label>
+                <label>当前保存内容<textarea readonly rows="4" :value="repairFieldText(field.current)"></textarea></label>
+                <label>重新解析的原卡内容<textarea readonly rows="4" :value="repairFieldText(field.incoming)"></textarea></label>
+              </details>
+              <button type="button" class="btn btn-secondary" :disabled="identitySaving" @click="syncCardMetadata">应用所选字段并补齐元数据</button>
+            </div>
+          </div><ul><li v-for="feature in compatibility.features" :key="feature.field||feature.name"><strong>{{feature.name}}</strong><span v-if="feature.count!==undefined"> · {{feature.count}} 项</span><span v-if="feature.status!=='active'">：{{feature.detail}}</span><span v-else> · 已接入</span></li></ul><p class="rp-hint">{{compatibility.group_fields}}</p></details>
         </template>
         <p v-if="identityError" class="rp-form-error" role="alert">{{identityError}}</p>
       </div>
@@ -864,7 +881,7 @@
 <script src="/assets/marked.umd.js?v=b82b9334406d"></script>
 <script src="/assets/dompurify.min.js?v=cd37898f9782"></script>
 <script src="/assets/card-renderer.js?v=afea6edf546b"></script>
-<script src="/assets/roleplay.js?v=fe942b0f7294"></script>
+<script src="/assets/roleplay.js?v=216fe2f70c41"></script>
 </body>
 
 

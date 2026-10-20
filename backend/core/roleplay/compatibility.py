@@ -36,6 +36,7 @@ def card_features(card, settings=None, world_entries=None):
     if warnings:
         features.append({'name':'正则规则检查', 'status':'warning', 'detail':'；'.join(warnings)})
     return {'mode': role_mode(card, settings or {}), 'features': features,
+            'can_reload_original': bool(card.get('market_source') or card.get('source') == 'png'),
             'legacy_metadata_missing': not card.get('card_data') and card.get('source') in ('marketplace', 'png'),
             'creator_notes': card.get('creator_notes') or '',
             'group_fields': '群聊开场与发言频率仅用于群聊；单人对话不调用，导出保留原值',

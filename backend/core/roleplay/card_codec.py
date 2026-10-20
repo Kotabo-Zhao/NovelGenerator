@@ -180,6 +180,8 @@ def normalize_card(raw: Dict[str, Any]) -> Dict[str, Any]:
     # Public shop exports can wrap the definition rather than a V2 data object.
     if isinstance(raw.get('node'), dict) and 'definition' in raw['node']:
         raw = shop_card_payload(raw['node'])
+    elif 'definition' in raw:
+        raw = shop_card_payload(raw)
     elif isinstance(raw.get('character'), dict):
         raw = raw['character']
 
@@ -234,18 +236,20 @@ def shop_card_payload(node: Dict[str, Any]) -> Dict[str, Any]:
             raise CardError('商店角色定义不是有效 JSON') from exc
     if not isinstance(definition, dict):
         raise CardError('商店角色缺少有效的 definition')
-    if isinstance(definition.get('data'), dict):
-        return copy.deepcopy(definition)
-    data = copy.deepcopy(definition)
-    legacy = 'first_message' in data or 'tavern_personality' in data or 'embedded_lorebook' in data
+    envelope = isinstance(definition.get('data'), dict)
+    data = copy.deepcopy(definition['data'] if envelope else definition)
+    # Chub's legacy API calls its full definition "personality" and its
+    # listing blurb "description". Greeting/lorebook aliases alone do NOT
+    # identify that schema: standard cards also commonly carry these aliases.
+    legacy = not envelope and 'tavern_personality' in data and 'first_mes' not in data
     if legacy:
-        data.update(description=definition.get('personality', ''),
-                    personality=definition.get('tavern_personality', ''),
-                    creator_notes=definition.get('creator_notes', definition.get('description', '')))
+        data.update(description=data.get('personality', ''),
+                    personality=data.get('tavern_personality', ''),
+                    creator_notes=data.get('creator_notes', data.get('description', '')))
     aliases = {'first_mes':'first_message', 'mes_example':'example_dialogs', 'character_book':'embedded_lorebook'}
     for target, alias in aliases.items():
-        if target not in data and alias in definition:
-            data[target] = copy.deepcopy(definition[alias])
+        if target not in data and alias in data:
+            data[target] = copy.deepcopy(data[alias])
     book = data.get('character_book')
     if isinstance(book, str):
         try:
@@ -255,7 +259,9 @@ def shop_card_payload(node: Dict[str, Any]) -> Dict[str, Any]:
     data.setdefault('name', node.get('name', '未命名角色'))
     data.setdefault('tags', node.get('topics') or [])
     data.setdefault('creator', '')
-    return {'spec':'chara_card_v2', 'spec_version':'2.0', 'data':data}
+    result = copy.deepcopy(definition) if envelope else {'spec':'chara_card_v2', 'spec_version':'2.0'}
+    result['data'] = data
+    return result
 
 
 def parse_card_bytes(data: bytes, filename: str = "") -> tuple[Dict[str, Any], str]:

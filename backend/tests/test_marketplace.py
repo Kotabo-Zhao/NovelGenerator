@@ -36,7 +36,7 @@ def test_chub_adapter_preserves_prompt_fields_and_lorebook(monkeypatch):
 def test_shop_standard_card_survives_install_export_and_import(monkeypatch, client, envelope):
     from api.routers import roleplay
     market = Marketplace()
-    data = {'name':'旧城店主', 'description':'角色描述', 'personality':'沉稳', 'first_mes':'欢迎',
+    data = {'name':'旧城店主', 'description':'角色描述', 'personality':'沉稳', 'first_mes':'欢迎', 'first_message':'过期的旧别名',
             'mes_example':'<START>\n{{char}}: 你好', 'assets':[{'type':'icon','uri':'ccdefault:'}],
             'extensions':{'vendor':{'keep':True}}, 'character_book':{'name':'旧城', 'entries':[
                 {'id':0,'keys':['门'],'content':'北门','enabled':True}]}}
@@ -48,6 +48,7 @@ def test_shop_standard_card_survives_install_export_and_import(monkeypatch, clie
     http, store = client
     installed = http.post('/api/roleplay/marketplace/install', json={'source':'chub','reference':'author/card'}).json()['character']
     assert installed['description'] == '角色描述' and installed['first_mes'] == '欢迎'
+    assert installed['personality'] == '沉稳'
     exported = http.get('/api/roleplay/characters/'+installed['id']+'/export').json()
     assert exported['data']['assets'] == data['assets']
     assert exported['data']['extensions'] == data['extensions']
@@ -166,3 +167,64 @@ def test_world_assets_never_pick_a_different_novels_same_named_card(tmp_path,mon
     assert _roleplay_cards('book-a')['同名角色']['description']=='本书人物'
     assert _roleplay_cards('book-b')['同名角色']['description']=='别本小说的秘密'
     assert _roleplay_cards('book-c')['同名角色']['description']=='通用'
+
+@pytest.mark.parametrize('wrapped', [False, True])
+def test_shop_hybrid_aliases_never_swap_description_and_personality(wrapped):
+    from core.roleplay.card_codec import normalize_card
+    data = {'name':'城门守卫','description':'负责北门的老兵','personality':'谨慎友善',
+            'first_message':'请出示通行证', 'embedded_lorebook':json.dumps({'entries':[{'keys':['北门'],'content':'日落关门'}]}),
+            'extensions':{'vendor':{'preserve':True}}}
+    definition = {'spec':'chara_card_v3','spec_version':'3.0','data':data} if wrapped else data
+    card = normalize_card({'node':{'definition':definition}})
+    assert card['description'] == data['description']
+    assert card['personality'] == data['personality']
+    assert card['first_mes'] == data['first_message']
+    assert card['character_book']['entries'][0]['content'] == '日落关门'
+    assert card['extensions'] == data['extensions']
+    if wrapped:
+        assert card['card_spec'] == 'chara_card_v3'
+
+
+def test_shop_legacy_listing_notes_are_distinct_from_character_definition():
+    from core.roleplay.card_codec import normalize_card
+    card = normalize_card({'definition':{'name':'守卫','description':'作者的介绍',
+        'personality':'守卫的背景设定','tavern_personality':'沉着','first_message':'你好'}})
+    assert card['description'] == '守卫的背景设定'
+    assert card['personality'] == '沉着'
+    assert card['creator_notes'] == '作者的介绍'
+
+
+def test_editor_save_preserves_long_imported_fields_and_multiline_greetings(client):
+    http,store=client
+    text='角色设定'*7000
+    greetings=['第一段\n\n第二段','另一条\n动作']
+    store.upsert_character({'id':'long-card','name':'守卫','description':text,'personality':text,
+                            'alternate_greetings':greetings})
+    response=http.put('/api/roleplay/characters/long-card',json={'name':'守卫改名','description':text,
+        'personality':text,'alternate_greetings':greetings})
+    assert response.status_code==200, response.text
+    assert store.get_character('long-card')['description']==text
+    assert store.get_character('long-card')['personality']==text
+    assert store.get_character('long-card')['alternate_greetings']==greetings
+
+
+def test_original_card_repair_is_previewed_selective_and_rejects_stale_edits(client,monkeypatch):
+    from api.routers import roleplay
+    http,store=client
+    store.upsert_character({'id':'repair','name':'守卫','description':'错误的解析','personality':'手动修改的性格',
+        'source':'marketplace','market_source':'chub','market_reference':'author/card'})
+    store.save_chat('repair',[{'role':'user','content':'旧对话'}])
+    async def card(*args):
+        return {'name':'守卫','description':'正确的完整设定','personality':'原卡性格','card_data':{'name':'守卫'}},None
+    monkeypatch.setattr(roleplay._market,'card',card)
+    url='/api/roleplay/characters/repair/sync-metadata'
+    preview=http.get(url).json()
+    assert any(f['field']=='description' and f['incoming']=='正确的完整设定' for f in preview['fields'])
+    assert store.get_character('repair')['description']=='错误的解析'
+    payload={'fields':['description'],'expected':{'description':'错误的解析'},'proposed':{'description':'正确的完整设定'}}
+    response=http.post(url,json=payload)
+    assert response.status_code==200,response.text
+    assert store.get_character('repair')['description']=='正确的完整设定'
+    assert store.get_character('repair')['personality']=='手动修改的性格'
+    assert store.chat_messages('repair')[0]['content']=='旧对话'
+    assert http.post(url,json=payload).status_code==409

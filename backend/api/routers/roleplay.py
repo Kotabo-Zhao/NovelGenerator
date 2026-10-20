@@ -179,9 +179,7 @@ async def update_identity(char_id: str, request: Request):
             'compatibility': card_features(card, _store.effective_settings(char_id), _store.load_worldinfo(char_id))}
 
 
-@router.post('/api/roleplay/characters/{char_id}/sync-metadata', dependencies=[Depends(_character_mutation)])
-async def sync_character_metadata(char_id: str):
-    card = _get_char(char_id)
+async def _original_card(card):
     try:
         if card.get('market_source'):
             incoming, _ = await _market.card(card['market_source'], card['market_reference'])
@@ -192,6 +190,36 @@ async def sync_character_metadata(char_id: str):
             raise HTTPException(400, '没有可重新读取的原始卡片，请导入原卡文件')
     except (MarketError, CardError) as exc:
         raise HTTPException(400, str(exc)) from exc
+    return incoming
+
+
+@router.get('/api/roleplay/characters/{char_id}/sync-metadata')
+async def preview_character_metadata(char_id: str):
+    card = _get_char(char_id)
+    incoming = await _original_card(card)
+    return {'ok': True, 'fields': [
+        {'field': key, 'current': card.get(key, ''), 'incoming': incoming.get(key, '')}
+        for key in _TEXT_FIELDS + _LIST_FIELDS
+        if card.get(key, [] if key in _LIST_FIELDS else '') != incoming.get(key, [] if key in _LIST_FIELDS else '')
+    ]}
+
+
+@router.post('/api/roleplay/characters/{char_id}/sync-metadata', dependencies=[Depends(_character_mutation)])
+async def sync_character_metadata(char_id: str, request: Request):
+    card = _get_char(char_id)
+    body = await _json_body(request) if await request.body() else {}
+    incoming = await _original_card(card)
+    card = _get_char(char_id)  # Recheck edits made while the shop request was in flight.
+    selected = body.get('fields', [])
+    if not isinstance(selected, list) or any(key not in _TEXT_FIELDS + _LIST_FIELDS for key in selected):
+        raise HTTPException(400, '无效的原卡字段选择')
+    expected = body.get('expected', {})
+    proposed = body.get('proposed', {})
+    if not isinstance(expected, dict) or not isinstance(proposed, dict):
+        raise HTTPException(400, '字段预览数据必须是对象')
+    for key in selected:
+        if expected.get(key) != card.get(key, '') or proposed.get(key) != incoming.get(key, ''):
+            raise HTTPException(409, '角色或商店原卡已改变，请重新预览后应用')
     original = {str(e['id']): e for e in worldinfo.entries_from_card(incoming)}
     entries = _store.load_worldinfo(char_id)
     merged = []
@@ -211,6 +239,8 @@ async def sync_character_metadata(char_id: str):
     for key in ('card_data', 'card_spec', 'card_spec_version', 'character_book'):
         if key in incoming:
             card[key] = incoming[key]
+    for key in selected:
+        card[key] = incoming.get(key, [] if key in _LIST_FIELDS else '')
     card['extensions'] = {**(incoming.get('extensions') or {}), **(card.get('extensions') or {})}
     _store.upsert_character(card)
     _store.save_worldinfo(char_id, merged)
@@ -226,7 +256,10 @@ def _apply_card_fields(body: Dict[str, Any], base: Optional[Dict[str, Any]] = No
                 value = ""
             if not isinstance(value, str):
                 raise HTTPException(400, f"{field} 必须是字符串")
-            card[field] = value.strip()[: _TEXT_LIMITS.get(field, 20000)]
+            limit = _TEXT_LIMITS[field] if field in ('name', 'creator', 'character_version') else 500000
+            if len(value.strip()) > limit:
+                raise HTTPException(400, f'{field} 超过长度限制（{limit} 字符）')
+            card[field] = value.strip()
     for field in _LIST_FIELDS:
         if field in body:
             value = body.get(field)
@@ -234,7 +267,9 @@ def _apply_card_fields(body: Dict[str, Any], base: Optional[Dict[str, Any]] = No
                 value = [value]
             if not isinstance(value, list):
                 raise HTTPException(400, f"{field} 必须是字符串数组")
-            card[field] = [str(item).strip() for item in value if str(item).strip()][:50]
+            if len(value) > 1000 or any(not isinstance(item, str) or len(item) > 500000 for item in value):
+                raise HTTPException(400, f'{field} 必须最多 1000 项，每项最多 500000 字符')
+            card[field] = [item.strip() for item in value if item.strip()]
     return card
 
 

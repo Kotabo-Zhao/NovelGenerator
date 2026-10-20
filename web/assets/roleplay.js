@@ -300,6 +300,7 @@
       var pendingIdentityChat = ref(false);
       var identityChoices = ref([]), compatibility = reactive({mode:'character',features:[],creator_notes:'',group_fields:''});
       var identityError = ref('');
+      var cardRepair = ref(null);
 
       /* ───────────── 角色编辑 ───────────── */
       var charModalOpen = ref(false);
@@ -355,7 +356,7 @@
         return {
           id: '', name: '', description: '', personality: '', scenario: '',
           first_mes: '', mes_example: '', system_prompt: '',
-          post_history_instructions: '', alternate_greetings: '',
+          post_history_instructions: '', alternate_greetings: [], creator_notes: '',
           tags: '', creator: '', character_version: ''
         };
       }
@@ -1509,6 +1510,7 @@
       /* ═════════════ 设置读写 ═════════════ */
 
       async function loadIdentity(id) {
+        cardRepair.value = null;
         try {
           var data = await apiChar(id, '/identity');
           if (currentId.value !== id) return;
@@ -1546,16 +1548,34 @@
         finally { identitySaving.value = false; }
       }
 
+      function repairFieldLabel(field) {
+        return ({name:'角色名称',description:'角色设定',personality:'性格',scenario:'场景',first_mes:'开场白',mes_example:'对话示例',creator_notes:'作者说明',system_prompt:'系统提示',post_history_instructions:'历史后置指令',alternate_greetings:'备选开场白',tags:'标签',creator:'作者',character_version:'版本'})[field] || field;
+      }
+      function repairFieldText(value) { return Array.isArray(value) ? JSON.stringify(value, null, 2) : String(value || ''); }
+      async function previewCardMetadata() {
+        if (identitySaving.value || streaming.value) return;
+        var id = currentId.value;
+        identitySaving.value = true; identityError.value = '';
+        try {
+          var data = await apiChar(id, '/sync-metadata', {timeout:45000});
+          if (currentId.value === id) cardRepair.value = {id:id, fields:(data.fields || []).map(function (field) { return Object.assign({selected:false}, field); })};
+        } catch (err) { if (currentId.value === id) identityError.value = err.message; }
+        finally { identitySaving.value = false; }
+      }
       async function syncCardMetadata() {
         if (identitySaving.value || streaming.value) return;
         var id = currentId.value;
         identitySaving.value = true; identityError.value = '';
         try {
-          var data = await apiChar(id, '/sync-metadata', {method:'POST',timeout:45000});
+          if (!cardRepair.value || cardRepair.value.id !== id) return;
+          var chosen = cardRepair.value.fields.filter(function (field) { return field.selected; });
+          var expected = {}, proposed = {};
+          chosen.forEach(function (field) { expected[field.field] = field.current; proposed[field.field] = field.incoming; });
+          var data = await apiChar(id, '/sync-metadata', {method:'POST',timeout:45000,body:{fields:chosen.map(function (field) { return field.field; }),expected:expected,proposed:proposed}});
           if (currentId.value !== id) return;
           Object.assign(compatibility, data.compatibility || {});
-          await loadCharacters(); await loadWorldInfo(true);
-          toastSuccess('原卡功能数据已补齐，旧数据已备份；编辑过的设定和聊天保持不变。');
+          await loadCharacters(); await loadWorldInfo(true); cardRepair.value = null;
+          toastSuccess('已恢复勾选字段并补齐元数据；原数据已备份，未勾选字段、玩家身份和聊天保持不变。');
         } catch (err) { if (currentId.value === id) identityError.value = err.message; }
         finally { identitySaving.value = false; }
       }
@@ -1830,7 +1850,8 @@
         charForm.system_prompt = character.system_prompt || '';
         charForm.post_history_instructions = character.post_history_instructions || '';
         charForm.alternate_greetings = Array.isArray(character.alternate_greetings)
-          ? character.alternate_greetings.join('\n') : '';
+          ? character.alternate_greetings.slice() : [];
+        charForm.creator_notes = character.creator_notes || '';
         charForm.tags = characterTagsArr(character).join(', ');
         charForm.creator = character.creator || '';
         charForm.character_version = character.character_version || '';
@@ -1910,7 +1931,8 @@
           mes_example: charForm.mes_example || '',
           system_prompt: charForm.system_prompt || '',
           post_history_instructions: charForm.post_history_instructions || '',
-          alternate_greetings: splitLines(charForm.alternate_greetings),
+          alternate_greetings: charForm.alternate_greetings.slice(),
+          creator_notes: charForm.creator_notes || '',
           tags: splitTags(charForm.tags),
           creator: charForm.creator || '',
           character_version: charForm.character_version || ''
@@ -2200,7 +2222,7 @@
         identity:identity, identityForm:identityForm, identityOpen:identityOpen,
         identitySaving:identitySaving, identityLoading:identityLoading, identityChoices:identityChoices, pendingIdentityChat:pendingIdentityChat,
         identityError:identityError, compatibility:compatibility, openIdentity:openIdentity,
-        chooseIdentity:chooseIdentity, saveIdentity:saveIdentity, onCardAction:onCardAction, syncCardMetadata:syncCardMetadata,
+        chooseIdentity:chooseIdentity, saveIdentity:saveIdentity, onCardAction:onCardAction, syncCardMetadata:syncCardMetadata, previewCardMetadata:previewCardMetadata, cardRepair:cardRepair, repairFieldLabel:repairFieldLabel, repairFieldText:repairFieldText,
         // 顶栏
         closeMenus: closeMenus,
         closeMenuAction: closeMenuAction,

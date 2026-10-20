@@ -51,4 +51,23 @@ const scene=boot('scene.js','?novel=smoke-book');
 const cards=boot('cards.js');
 const workshop=boot('workshop.js','?view=settings');
 assert.equal(workshop.state.currentView.value,'settings');
-console.log('All four page setups and roleplay timestamp handling passed.');
+async function cardEditorRoundtrip() {
+  const source={id:'fixture',name:'Guard',description:'D'.repeat(25000),personality:'Calm',
+    creator_notes:'Instructions',alternate_greetings:['First paragraph\n\nSecond paragraph','Another\nGreeting']};
+  roleplay.state.openEdit(source);
+  assert.deepEqual(Array.from(roleplay.state.charForm.alternate_greetings),source.alternate_greetings);
+  assert.equal(roleplay.state.charForm.creator_notes,source.creator_notes);
+  let payload;
+  roleplay.context.fetch=async (url,init)=>{
+    if(init && init.method==='PUT') payload=JSON.parse(init.body);
+    return {ok:true,status:200,json:async()=>({character:{id:'fixture'},characters:[]})};
+  };
+  await roleplay.state.saveCharacter();
+  assert.ok(payload,'editing must send a payload');
+  assert.equal(payload.description,source.description);
+  assert.equal(payload.personality,source.personality);
+  assert.equal(payload.creator_notes,source.creator_notes);
+  assert.deepEqual(payload.alternate_greetings,source.alternate_greetings);
+  assert.notEqual(roleplay.state.charForm.alternate_greetings,source.alternate_greetings);
+}
+cardEditorRoundtrip().then(()=>console.log('All four page setups, timestamps and lossless card editor roundtrip passed.')).catch(error=>{console.error(error);process.exitCode=1;});

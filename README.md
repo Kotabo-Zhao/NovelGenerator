@@ -60,6 +60,10 @@ py -3.13 -m venv .venv
 
 ## 角色扮演
 
+源码最新修复：商店旧 Chub 字段与标准 V2/V3 字段分别解析，避免把角色设定覆盖为性格或作者介绍；角色编辑保留长设定与多段备选开场白。已下载卡可在「玩家身份与卡片说明 → 原卡说明与功能 → 预览原卡字段差异」逐项核对，勾选后恢复，应用前自动备份。未勾选的自定义设定、玩家身份和聊天不改写。此项与常驻输入模式切换尚未纳入现有 4.3.0 安装包。
+
+字段对应参考 [SillyTavern 的 Chub 转换实现](https://github.com/SillyTavern/SillyTavern/blob/release/src/endpoints/content-manager.js)：旧 API 的 `personality` 是角色设定，`tavern_personality` 是性格，`description` 是作者说明；标准卡保持 `description` / `personality` 的原始含义。
+
 4.2 明确区分玩家 Persona 与 AI 卡：新对话先选「你扮演谁」，小说人物可作为玩家身份，世界卡可作为主持/旁白。每张卡分别保存玩家名字、设定、代词与叙事人称；已有消息保留原说话者。按 SillyTavern 的字段语义补齐末尾指令、角色深度提示、多行示例、世界书位置和正则处理；富文本状态栏可正常展示。详见 [身份与角色卡兼容说明](docs/ROLEPLAY-CARD-COMPATIBILITY.md)，其中明确列出了外部扩展与脚本执行器的边界。
 
 - 导入 SillyTavern PNG、JSON V2/V3 角色卡，从小说角色宝典生成，或手动创建角色。
