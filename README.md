@@ -1,16 +1,16 @@
-# 墨局 · NovelGenerator 4.1.1
+# 墨局 · NovelGenerator 4.2.0
 
 本地小说创作与沉浸式角色扮演工作台。保留世界观、大纲、章节写作、剧情图谱、质量监督与导出；保留兼容 SillyTavern 角色卡的角色扮演，以及进入原作剧情的小说世界。
 
 ## Windows 启动与升级
 
-已构建 Windows 程序时，双击根目录 **`启动墨局.cmd`** 或 **`启动Windows版.cmd`**，打开 Windows 原生窗口，并沿用当前项目的 `novels/`、`_roleplay/` 和 `llm_config.json`。可执行程序位于 `dist/windows/NovelGenerator/NovelGenerator.exe`。首次克隆仓库请按下文安装源码依赖或构建 Windows 程序。
+已构建 Windows 程序时，双击根目录 **`启动墨局.cmd`** 或 **`启动Windows版.cmd`**，打开 Windows 原生窗口，并沿用当前项目的 `novels/`、`_roleplay/` 和 `llm_config.json`。可执行程序位于 `dist/windows-4.2.0/NovelGenerator/NovelGenerator.exe`。首次克隆仓库请按下文安装源码依赖或构建 Windows 程序。
 
-独立分发：解压 `dist/NovelGenerator-v4.1.1-windows-x64.zip`，运行里面的 `NovelGenerator.exe`，无需安装 Python。独立运行的数据在 `%LOCALAPPDATA%/NovelGenerator`，也可通过 `--data-dir <目录>` 指定。窗口使用系统 WebView2；若窗口环境不可用，会回退到本机浏览器。
+独立分发：解压 `dist/NovelGenerator-v4.2.0-windows-x64.zip`，运行里面的 `NovelGenerator.exe`，无需安装 Python。独立运行的数据在 `%LOCALAPPDATA%/NovelGenerator`，也可通过 `--data-dir <目录>` 指定。窗口使用系统 WebView2；若窗口环境不可用，会回退到本机浏览器。
 
 Windows 4.1.1 修复「开始扮演」进入后白屏：补回消息时间格式化函数，所有页面接入统一异常提示，并提供重新加载、返回书架和模型设置入口。
 
-4.1.1 同时包含：统一前端导航、模型配置入口、角色商店、按小说管理角色卡、真实参与小说剧情的入世模式，以及消息流与保存可靠性修复。安卓版本为 `4.1.1-internal`（versionCode 70），保留无原生顶部标题栏的界面。
+当前版本包含统一前端导航、模型配置入口、角色商店、按小说管理角色卡、真实参与小说剧情的入世模式，以及消息流与保存可靠性修复。安卓版本为 `4.2.0-internal`（versionCode 71），保留无原生顶部标题栏的界面。
 
 仓库提交源码；`dist/` 中的 EXE、ZIP 和 APK 是本地构建产物，不随 Git 提交。README 中的 `dist/` 路径不代表 GitHub 下载链接。
 
@@ -60,6 +60,8 @@ py -3.13 -m venv .venv
 
 ## 角色扮演
 
+4.2 明确区分玩家 Persona 与 AI 卡：新对话先选「你扮演谁」，小说人物可作为玩家身份，世界卡可作为主持/旁白。每张卡分别保存玩家名字、设定、代词与叙事人称；已有消息保留原说话者。按 SillyTavern 的字段语义补齐末尾指令、角色深度提示、多行示例、世界书位置和正则处理；富文本状态栏可正常展示。详见 [身份与角色卡兼容说明](docs/ROLEPLAY-CARD-COMPATIBILITY.md)，其中明确列出了外部扩展与脚本执行器的边界。
+
 - 导入 SillyTavern PNG、JSON V2/V3 角色卡，从小说角色宝典生成，或手动创建角色。
 - 支持角色描述、性格、场景、开场白、备选开场白、示例对话和 `{{char}}` / `{{user}}` 宏。
 - 安全渲染动作斜体、粗体与代码；不执行角色卡或消息里的 HTML。
@@ -77,7 +79,7 @@ py -3.13 -m venv .venv
 
 ## 安卓安装包
 
-`dist/NovelGenerator-v4.1.1-miniprogram-arm64-debug.apk`，Android 8.0+，ARM64，版本号 70，内部 debug 版。同步 Windows 4.1.1 的角色扮演白屏修复和统一异常提示。与此前版本保持包名和 debug 签名，原生顶部标题栏继续移除。模型、角色库、商店和小说世界使用同一套前端。安卓 PDF / EPUB 暂缓，仍保留 TXT 导出。
+`dist/NovelGenerator-v4.2.0-miniprogram-arm64-debug.apk`，Android 8.0+，ARM64，版本号 71，内部 debug 版。同步玩家身份、人称、角色卡字段与富文本状态栏改进，并保留此前的白屏修复。与此前版本保持包名和 debug 签名，原生顶部标题栏继续移除。模型、角色库、商店和小说世界使用同一套前端。安卓 PDF / EPUB 暂缓，仍保留 TXT 导出。
 
 构建及签名验证通过。没有连接安卓真机，实际安装、键盘和后台行为仍需真机验收。Windows 已验证打包后的 EXE 启动与内嵌 API/页面资源；浏览器核对了桌面和手机布局，真实模型长时间体验不属于这些技术检查。
 
@@ -100,7 +102,7 @@ $env:CHAQUOPY_BUILD_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
 .\.venv\Scripts\python.exe tools/build_release.py --target android
 ```
 
-Windows 输出目录为 `dist/windows/NovelGenerator/`，分发时须保留整个目录；Android 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。本地沿用原 debug 签名可覆盖旧内部版；其他电脑自行构建的签名可能不同，请先备份数据。
+Windows 输出目录为 `dist/windows-4.2.0/NovelGenerator/`，分发时须保留整个目录；Android 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。本地沿用原 debug 签名可覆盖旧内部版；其他电脑自行构建的签名可能不同，请先备份数据。
 
 ## 开发验证
 
@@ -115,4 +117,4 @@ node tests/novel_world_runtime.test.cjs
 
 浏览器验收使用已安装的 Edge、本地模型测试服务和临时数据目录。真实模型连通性可在连接设置里单独测试；自动检查不代表真实模型的文学质量、长时间使用或 Android 真机验收。
 
-4.1.1 已通过四个页面的初始化检查、消息流回归、Windows 成品启动及资源核对、Android 构建及 APK 签名校验。白屏修复后的 Windows 原生窗口逐项点击复测与 Android 真机安装尚未完成。
+4.2 已通过四个页面的初始化检查、消息流回归、270 项 Python 测试、真实官方 Amy 卡到模拟生成请求的字段核对、玩家身份与状态栏的桌面/手机尺寸浏览器检查，以及 Windows 成品启动、Android 构建及签名校验。Windows 原生窗口逐项点击复测、Android 真机安装和真实模型人称遵从度尚未完成。

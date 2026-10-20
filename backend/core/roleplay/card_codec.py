@@ -10,8 +10,10 @@ Only stdlib is used so the module also works inside the Android (Chaquopy) app.
 from __future__ import annotations
 
 import base64
+import copy
 import binascii
 import json
+import re
 import struct
 import zlib
 from typing import Any, Dict, List
@@ -201,6 +203,10 @@ def normalize_card(raw: Dict[str, Any]) -> Dict[str, Any]:
         "character_version": _text(src, "character_version"),
         "creator_notes": _text(src, "creator_notes"),
         "extensions": src.get("extensions") if isinstance(src.get("extensions"), dict) else {},
+        # Preserve V3 and vendor fields for lossless editing/export. Never execute them.
+        "card_data": copy.deepcopy(src),
+        "card_spec": spec or 'chara_card_v2',
+        "card_spec_version": str(raw.get('spec_version') or '2.0'),
         # V3 character_book (lorebook) is extracted by the API layer, not persisted
         # on the card itself.
         "character_book": (
@@ -209,8 +215,6 @@ def normalize_card(raw: Dict[str, Any]) -> Dict[str, Any]:
             else {}
         ),
     }
-    if not card["first_mes"] and card["alternate_greetings"]:
-        card["first_mes"] = card["alternate_greetings"][0]
     return card
 
 
@@ -228,19 +232,37 @@ def parse_card_bytes(data: bytes, filename: str = "") -> tuple[Dict[str, Any], s
 
 # ------------------------------------------------------------------- macros
 
-def apply_macros(text: str, char_name: str, user_name: str) -> str:
+def apply_macros(text: str, char_name: str, user_name: str, context=None, original='') -> str:
     """Replace SillyTavern macros used in cards."""
     if not text:
         return ""
-    replacements = (
-        ("{{char}}", char_name),
-        ("{{user}}", user_name),
-        ("<BOT>", char_name),
-        ("<USER>", user_name),
-    )
-    for macro, value in replacements:
-        text = text.replace(macro, value or "")
+    values = {str(k).lower(): str(v or '') for k, v in (context or {}).items()}
+    values.update(char=char_name, bot=char_name, user=user_name, original=original,
+                  newline='\n', space=' ', noop='', trim='')
+    text = re.sub(r'<(?:BOT|USER)>', lambda m: char_name if m[0].upper() == '<BOT>' else user_name,
+                  str(text), flags=re.I)
+    pattern = r'\{\{\s*([^{}]+?)\s*\}\}'
+    for _ in range(4):
+        replaced = re.sub(pattern, lambda m: values.get(m[1].lower(), m[0]), text)
+        if replaced == text:
+            break
+        text = replaced[:500000]
     return text
+
+
+def macro_context(card, settings, history=()):
+    context = {
+        'description': card.get('description'), 'charDescription': card.get('description'),
+        'personality': card.get('personality'), 'charPersonality': card.get('personality'),
+        'scenario': card.get('scenario'), 'charScenario': card.get('scenario'),
+        'persona': settings.get('user_persona'), 'charCreatorNotes': card.get('creator_notes'),
+        'firstMessage': card.get('first_mes'), 'charExamples': card.get('mes_example'),
+        'mesExamples': card.get('mes_example'), 'charVersion': card.get('character_version'),
+        'lastMessageId': str(max(0, len(history) - 1)),
+    }
+    for macro, role in [('lastMessage', None), ('lastUserMessage', 'user'), ('lastCharMessage', 'assistant')]:
+        context[macro] = next((m.get('content', '') for m in reversed(history) if role is None or m.get('role') == role), '')
+    return context
 
 
 def pick_greeting(card: Dict[str, Any], index: int | None = None) -> str:

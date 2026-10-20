@@ -15,6 +15,8 @@ import urllib.request
 
 
 def main():
+    # pywebview derives its base URI from argv[0]; keep it valid after chdir.
+    sys.argv[0] = str(Path(sys.argv[0]).resolve())
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-dir', type=Path)
     parser.add_argument('--smoke-test', type=Path, help='Write a runtime receipt without opening a window')

@@ -1,0 +1,46 @@
+# 玩家身份与角色卡兼容（4.2）
+
+## 谁在扮演谁
+
+普通人物卡：卡面人物由 AI 扮演，玩家是与其交谈、行动的另一人。小说生成卡也遵守这一点；想扮演小说里的某个人，应在「玩家身份与卡片说明」中选择该小说人物，不能把同一人物同时交给玩家和 AI。
+
+世界/主持/模拟器卡：AI 负责环境、事件和其他人物，玩家控制自己的角色。默认遵循原卡的第一、第二或第三人称叙述要求，不再把世界卡强行当作一个开口说话的人物。自动识别不准确时可手动选择 AI 的职责。
+
+`{{user}}` 指玩家，`{{char}}` 指当前卡。玩家身份按卡保存，全球默认名字只供未绑定的卡继承。新对话先确认身份，再使用开场。更换身份不自动改写旧消息或作者写定的开场；需要新开场可使用重开，旧对话自动备份。
+
+## 对照的上游实现
+
+参考 SillyTavern release 的固定提交 [`06bde939fb1e9c4c8d8641d810f0a916b5bce127`](https://github.com/SillyTavern/SillyTavern/tree/06bde939fb1e9c4c8d8641d810f0a916b5bce127)，重点核对 `personas.js`、`script.js`、`world-info.js`、`macros.js` 和 `extensions/regex/engine.js` 的数据语义；没有直接运行下载卡内的脚本。
+
+- [Persona：身份、绑定、人物转为玩家身份](https://docs.sillytavern.app/usage/core-concepts/personas/)
+- [Character Card V2 数据规范](https://github.com/malfoyslastname/character-card-spec-v2/blob/main/spec_v2.md)
+
+真实卡基准使用本机已有的 SillyTavern 官方 Amy 卡：核对人物描述、性格、场景、英文默认开场、德文备选开场、示例对话、作者说明及扩展字段。测试时只在独立临时资料库使用原卡，未改写用户的已下载卡或聊天。作者原文不作为测试固件随仓库再分发。
+
+## 已接入的数据与行为
+
+| 数据 | 运行行为 |
+| --- | --- |
+| 玩家名字/设定/代词/人称 | 按当前卡绑定；明确区分玩家与 AI；小说人物和已有角色可转成玩家 Persona，转换时交换描述里的 char/user 宏 |
+| description、personality、scenario | 进入系统上下文；世界卡保持主持职责 |
+| first_mes、alternate_greetings | 首次使用默认开场，支持按索引选择备选；名字宏使用当前玩家身份，不复制备选为默认而造成重复 |
+| mes_example | 解析示例角色与玩家，包括多行内容及空行 |
+| system_prompt | 原卡优先；`{{original}}` 引用默认系统提示 |
+| post_history_instructions | 注入实际历史末尾，不再仅拼到开头 |
+| extensions.depth_prompt | 按角色和深度注入；深度 0 为历史末尾 |
+| 世界书 | 关键词、常驻、次级关键词逻辑、概率、大小写、完整词、顺序、递归、条目扩展、深度/角色/位置、原卡扫描及预算设置 |
+| 正则数据 | 输入、输出、斜杠指令、世界书位置；分离 source、markdownOnly、promptOnly，支持分组替换、trimStrings、宏替换及深度过滤；每条匹配有超时和整体预算 |
+| Markdown / HTML | 表格、代码块、折叠状态栏、图片及内联样式经 Marked 与 DOMPurify 渲染；`data-message` 按钮仅预填玩家输入，仍需玩家发送 |
+| creator_notes | 展示给玩家，默认不放进提示词 |
+| V2/V3 与供应商元数据 | 保存原始 data、spec、版本、未知扩展及世界书元数据；导出时合并用户编辑，保留作者扩展 |
+| 旧版导入 | 可重新读取原卡补齐元数据，先备份，保留玩家编辑的内容、世界书启用状态和聊天 |
+
+## 兼容边界
+
+角色卡不是 SillyTavern 安装包。群聊开场及 talkativeness 在单人模式下不参与轮次，仍原样保存和导出。需要额外宿主插件、STscript 或 JavaScript 执行器的字段会在卡片功能列表标出，不能把字段保存成功称为插件已经运行。
+
+正则按 ST 的处理阶段和常见替换语义实现，后端使用支持超时的 Python `regex`；不是完整 ECMAScript 执行器，遇到不兼容标志或语法会保留原文并在卡片说明中报告。世界书 token 预算使用混合中英文估算，不是每个模型的精确 tokenizer；存在预算时不会无限注入全部条目。
+
+卡片中的 HTML 使用净化后的富文本，不运行 `<script>`、事件属性、任意 iframe 或外部插件代码。依赖这些执行器的卡不会伪装成“完整运行”。代码中的安全边界不依赖角色卡自己的承诺。
+
+验证包括单元回归、真实 Amy 卡到生成请求的字段核对、独立模拟模型消息流、身份切换/保存/刷新、HTML 脚本隔离和手机尺寸表单。模拟模型验证证明请求链和界面，不代表真实模型永远遵从人称指令。

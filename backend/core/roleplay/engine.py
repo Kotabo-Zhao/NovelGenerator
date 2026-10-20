@@ -20,9 +20,10 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from ..resilient_client import ResilientLLMClient
 from ..llm_text import extract_text
 from . import commands, worldinfo
-from .card_codec import apply_macros, pick_greeting
+from .card_codec import apply_macros, pick_greeting, macro_context
 from .prompt import build_messages
 from .store import RoleplayStore
+from .regex_rules import transform, display_messages
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class RoleplayEngine:
     # ------------------------------------------------------------------ chats
 
     def _greeting_text(self, card: Dict[str, Any], greeting_index: Optional[int] = None) -> str:
-        settings = self.store.settings()
+        settings = self.store.effective_settings(card['id'])
         raw: str
         if greeting_index is None:
             greetings: List[str] = []
@@ -80,13 +81,14 @@ class RoleplayEngine:
             raw = random.choice(greetings) if greetings else pick_greeting(card, None)
         else:
             raw = pick_greeting(card, greeting_index)
-        return apply_macros(raw, str(card.get("name") or "角色"), settings["user_name"])
+        text = apply_macros(raw, str(card.get("name") or "角色"), settings["user_name"], macro_context(card, settings))
+        return transform(text, card, settings, 2)
 
     def ensure_chat(self, char_id: str, greeting_index: Optional[int] = None) -> List[Dict[str, Any]]:
         messages = self.store.chat_messages(char_id)
         if messages:
             return messages
-        return self.reset_chat(char_id, greeting_index)
+        return self.reset_chat(char_id, 0 if greeting_index is None else greeting_index)
 
     def reset_chat(self, char_id: str, greeting_index: Optional[int] = None) -> List[Dict[str, Any]]:
         card = self.store.get_character(char_id)
@@ -158,12 +160,28 @@ class RoleplayEngine:
         entries = self.store.load_worldinfo(char_id)
         if not entries:
             return []
+        card = self.store.get_character(char_id) or {}
+        context = macro_context(card, settings, messages)
+        entries = [{**e, 'content': apply_macros(e.get('content', ''), card.get('name', ''), settings['user_name'], context),
+                    'keys': [apply_macros(k, card.get('name', ''), settings['user_name'], context) for k in e.get('keys', [])],
+                    'secondary_keys': [apply_macros(k, card.get('name', ''), settings['user_name'], context) for k in e.get('secondary_keys', [])]} for e in entries]
+        book = card.get('character_book') or (card.get('card_data') or {}).get('character_book') or {}
+        def number(key, default, maximum):
+            try:
+                return max(0, min(maximum, int(book.get(key, default))))
+            except (TypeError, ValueError):
+                return default
+        for entry in entries:
+            entry['content'] = transform(entry['content'], card, settings, 5)
+            entry['content'] = transform(entry['content'], card, settings, 5, mode='prompt')
         return worldinfo.scan_world_info(
             entries,
             messages,
             input_text,
-            budget=int(settings.get("lorebook_budget", 5) or 5),
-            scan_depth=int(settings.get("lorebook_scan_depth", 6) or 6),
+            budget=worldinfo.MAX_ENTRIES if book else int(settings.get("lorebook_budget", 5) or 5),
+            scan_depth=number('scan_depth', int(settings.get('lorebook_scan_depth', 6)), 200),
+            recursive=bool(book.get('recursive_scanning', False)),
+            token_budget=number('token_budget', 0, 64000),
         )
 
     async def stream_reply(
@@ -195,7 +213,7 @@ class RoleplayEngine:
             yield {"type": "error", "message": "角色不存在或已被删除"}
             return
 
-        settings = self.store.settings()
+        settings = self.store.effective_settings(char_id)
         messages = self.store.chat_messages(char_id)
 
         request_id = request_id.strip()[:128] if isinstance(request_id, str) else ""
@@ -230,6 +248,7 @@ class RoleplayEngine:
             yield {"type": "error", "message": "缺少消息内容"}
             return
         text = str(message or "").strip()
+        text = transform(text, card, settings, 1)
         if not text:
             yield {"type": "error", "message": "消息不能为空"}
             return
@@ -257,7 +276,7 @@ class RoleplayEngine:
         command: commands.Command,
     ) -> AsyncIterator[Dict[str, Any]]:
         name = command.name
-        args = command.args
+        args = transform(command.args, card, settings, 3)
         user_name = str(settings.get("user_name") or "旅行者")
 
         if not commands.is_known_command(name):
@@ -378,7 +397,7 @@ class RoleplayEngine:
                     return
                 target = next((m for m in reversed(updated) if m.get("role") == "assistant"), None)
                 if target:
-                    yield {"type": "message", "message": target}
+                    yield {"type": "message", "message": display_messages([target], card, settings)[0]}
                     yield {"type": "swipe", "index": target.get("variant_index", 0), "total": len(target.get("variants") or [])}
                 yield {"type": "done"}
                 return
@@ -395,6 +414,7 @@ class RoleplayEngine:
             return
 
         if name in ("say", "act", "ooc"):
+            args = transform(args, card, settings, 1)
             if not args:
                 yield {"type": "command_result", "command": name, "level": "error", "text": f"用法：/{name} 内容"}
                 yield {"type": "done"}
@@ -514,6 +534,8 @@ class RoleplayEngine:
             "world": [str(entry.get("comment") or "") for entry in world_entries],
         }
         for event in pre_events or []:
+            if event.get('type') == 'message':
+                event = {**event, 'message': display_messages([event['message']], card, settings)[0]}
             yield event
 
         collected: List[str] = []
@@ -576,7 +598,7 @@ class RoleplayEngine:
 
         message = self._persist_generation(char_id, card, mode, collected)
         if message is not None:
-            yield {"type": "message", "message": message}
+            yield {"type": "message", "message": display_messages([message], card, settings)[0]}
             if mode == "variant":
                 yield {
                     "type": "swipe",
@@ -595,6 +617,7 @@ class RoleplayEngine:
         partial: bool = False,
     ) -> Optional[Dict[str, Any]]:
         text = "".join(collected).strip()
+        text = transform(text, card, self.store.effective_settings(char_id), 2)
         if not text or mode == "impersonate":
             return None
         # Keep the previous assistant message intact if a regenerate/continue

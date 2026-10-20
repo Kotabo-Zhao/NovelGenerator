@@ -136,7 +136,8 @@ def test_example_dialogue_becomes_messages():
     roles = [m["role"] for m in messages[1:]]
     assert roles.count("assistant") >= 2
     assert any(m["content"] == "在的，阿明。" for m in messages)
-    assert messages[-1] == {"role": "user", "content": "你好"}
+    assert messages[-2] == {"role": "user", "content": "你好"}
+    assert messages[-1] == {"role": "system", "content": "[补充指示]\n保持简短。"}
 
 
 def test_history_is_trimmed_to_context_window():

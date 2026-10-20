@@ -16,6 +16,7 @@ import binascii
 import json
 import logging
 import os
+import shutil
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -29,6 +30,10 @@ from config import NOVELS_DIR
 from core.atomic_io import safe_read_json
 from core.roleplay import CardError, RoleplayEngine, RoleplayStore, parse_card_bytes
 from core.roleplay import novel_cards, worldinfo
+from core.roleplay.identity import character_to_persona
+from core.roleplay.identity import role_mode
+from core.roleplay.compatibility import card_features
+from core.roleplay.regex_rules import display_messages
 from core.roleplay.marketplace import Marketplace, MarketError
 
 log = logging.getLogger(__name__)
@@ -91,13 +96,14 @@ def _clamp_card(card: Dict[str, Any]) -> Dict[str, Any]:
     """Apply the same field limits to imported/AI cards as manual edits."""
     for field, limit in _TEXT_LIMITS.items():
         if field in card:
-            card[field] = str(card.get(field) or "")[:limit]
+            # A valid imported card must not silently lose its rules at the manual-editor limit.
+            card[field] = str(card.get(field) or "")[:500000]
     for field in _LIST_FIELDS:
         if field in card:
             value = card.get(field)
             if not isinstance(value, list):
                 value = []
-            card[field] = [str(item).strip()[:2000] for item in value if str(item).strip()][:50]
+            card[field] = [str(item).strip()[:500000] for item in value if str(item).strip()][:1000]
     return card
 
 
@@ -128,6 +134,87 @@ def _public(card: Dict[str, Any]) -> Dict[str, Any]:
     else:
         out["avatar_url"] = ""
     return out
+
+
+def _identity_choices(card):
+    choices = []
+    novel_id = card.get('novel_id') or ''
+    if novel_id:
+        plan = safe_read_json(os.path.join(NOVELS_DIR, novel_id, 'plan.json'), default={})
+        for candidate in novel_cards.build_cards_from_plan(plan, novel_id):
+            if candidate['name'] != card['name']:
+                choices.append({'id': 'novel:' + candidate['name'], 'name': candidate['name'],
+                                **character_to_persona(candidate)})
+    for candidate in _store.list_characters(novel_id=novel_id):
+        if candidate['id'] != card['id'] and candidate['name'] != card['name'] and role_mode(candidate, {}) != 'narrator':
+            choices.append({'id': 'card:' + candidate['id'], 'name': candidate['name'],
+                            **character_to_persona(candidate)})
+    return choices[:200]
+
+
+@router.get('/api/roleplay/characters/{char_id}/identity')
+async def get_identity(char_id: str):
+    card = _get_char(char_id)
+    settings = _store.effective_settings(char_id)
+    return {'ok': True, 'identity': _store.identity(char_id),
+            'choices': _identity_choices(card), 'compatibility': card_features(card, settings, _store.load_worldinfo(char_id))}
+
+
+@router.put('/api/roleplay/characters/{char_id}/identity', dependencies=[Depends(_character_mutation)])
+async def update_identity(char_id: str, request: Request):
+    card = _get_char(char_id)
+    body = await _json_body(request)
+    source = body.get('source_character')
+    if source:
+        choice = next((c for c in _identity_choices(card) if c['id'] == source), None)
+        if not choice:
+            raise HTTPException(400, '玩家身份来源已不存在，请重新选择')
+        # A source selection populates the editor; explicit edits remain allowed.
+        body = {**choice, **body}
+    try:
+        identity = _store.update_identity(char_id, body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {'ok': True, 'identity': identity,
+            'compatibility': card_features(card, _store.effective_settings(char_id), _store.load_worldinfo(char_id))}
+
+
+@router.post('/api/roleplay/characters/{char_id}/sync-metadata', dependencies=[Depends(_character_mutation)])
+async def sync_character_metadata(char_id: str):
+    card = _get_char(char_id)
+    try:
+        if card.get('market_source'):
+            incoming, _ = await _market.card(card['market_source'], card['market_reference'])
+        elif card.get('source') == 'png' and _store.has_avatar(char_id):
+            with open(_store.avatar_path(char_id), 'rb') as stream:
+                incoming, _ = parse_card_bytes(stream.read(_MAX_UPLOAD_BYTES))
+        else:
+            raise HTTPException(400, '没有可重新读取的原始卡片，请导入原卡文件')
+    except (MarketError, CardError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    original = {str(e['id']): e for e in worldinfo.entries_from_card(incoming)}
+    entries = _store.load_worldinfo(char_id)
+    merged = []
+    for entry in entries:
+        base = original.get(str(entry['id']))
+        if base:
+            # Old UI could edit these values. New metadata must not overwrite them.
+            base = {**base, **{k: entry[k] for k in ('id', 'content', 'comment', 'keys', 'secondary_keys', 'enabled') if k in entry}}
+            merged.append(worldinfo.normalize_entry(base))
+        else:
+            merged.append(entry)
+    backup = os.path.join(_store.root, 'backups', 'card-metadata', char_id, str(time.time_ns()))
+    os.makedirs(backup, exist_ok=True)
+    shutil.copy2(_store.characters_file, os.path.join(backup, 'characters.json'))
+    if os.path.isfile(_store.worldinfo_path(char_id)):
+        shutil.copy2(_store.worldinfo_path(char_id), os.path.join(backup, 'worldinfo.json'))
+    for key in ('card_data', 'card_spec', 'card_spec_version', 'character_book'):
+        if key in incoming:
+            card[key] = incoming[key]
+    card['extensions'] = {**(incoming.get('extensions') or {}), **(card.get('extensions') or {})}
+    _store.upsert_character(card)
+    _store.save_worldinfo(char_id, merged)
+    return {'ok': True, 'compatibility': card_features(card, _store.effective_settings(char_id), merged)}
 
 
 def _apply_card_fields(body: Dict[str, Any], base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -197,7 +284,6 @@ async def market_install(request: Request):
             if (existing.get('market_source'), existing.get('market_reference'), existing.get('novel_id', '')) == (card['market_source'], card['market_reference'], novel_id):
                 return {'ok': True, 'character': _public(existing), 'reused': True}
         entries = worldinfo.entries_from_card(card)
-        card.pop('character_book', None)
         card.update(id=uuid.uuid4().hex, created_at=time.time())
         card = _store.upsert_character(card)
         if entries:
@@ -250,13 +336,14 @@ async def get_character(char_id: str):
 async def export_character(char_id: str):
     from urllib.parse import quote
     card = _get_char(char_id)
-    data = {key: card.get(key, '') for key in _TEXT_FIELDS}
+    data = dict(card.get('card_data') or {})
+    data.update({key: card.get(key, '') for key in _TEXT_FIELDS})
     for key in (*_LIST_FIELDS, 'extensions'):
         data[key] = card.get(key, [] if key in _LIST_FIELDS else {})
     entries = _store.load_worldinfo(char_id)
     if entries:
-        data['character_book'] = {'name': card['name'] + ' 世界书', 'entries': entries}
-    return Response(json.dumps({'spec': 'chara_card_v2', 'spec_version': '2.0', 'data': data}, ensure_ascii=False, indent=2),
+        data['character_book'] = {**(card.get('character_book') or data.get('character_book') or {}), 'entries': worldinfo.export_entries(entries)}
+    return Response(json.dumps({'spec': card.get('card_spec', 'chara_card_v2'), 'spec_version': card.get('card_spec_version', '2.0'), 'data': data}, ensure_ascii=False, indent=2),
                     media_type='application/json', headers={'Content-Disposition': "attachment; filename=character.json; filename*=UTF-8''" + quote(card['name']+'.json')})
 
 
@@ -316,7 +403,6 @@ async def import_character(request: Request):
     card["created_at"] = now
     card["updated_at"] = now
     book_entries = worldinfo.entries_from_card(card)
-    card.pop("character_book", None)
     card = _clamp_card(card)
     _store.upsert_character(card)
     if book_entries:
@@ -476,15 +562,16 @@ async def upload_avatar(char_id: str, request: Request):
 
 @router.get("/api/roleplay/characters/{char_id}/chat")
 async def get_chat(char_id: str):
-    _get_char(char_id)
-    return {"ok": True, "messages": _store.chat_messages(char_id)}
+    card = _get_char(char_id)
+    return {"ok": True, "messages": display_messages(_store.chat_messages(char_id), card, _store.effective_settings(char_id)),
+            'identity': _store.identity(char_id), 'identity_bound': os.path.isfile(_store.identity_path(char_id))}
 
 
 @router.post("/api/roleplay/characters/{char_id}/chat/start", dependencies=[Depends(_character_mutation)])
 async def start_chat(char_id: str):
-    _get_char(char_id)
+    card = _get_char(char_id)
     messages = _engine.ensure_chat(char_id)
-    return {"ok": True, "messages": messages}
+    return {"ok": True, "messages": display_messages(messages, card, _store.effective_settings(char_id)), 'identity': _store.identity(char_id)}
 
 
 @router.post("/api/roleplay/characters/{char_id}/chat/send")
@@ -528,7 +615,7 @@ async def swipe_chat(char_id: str, request: Request):
         messages = _engine.swipe_existing(char_id, direction)
         if messages is None:
             raise HTTPException(400, "没有可切换的回复版本")
-        return {"ok": True, "messages": messages}
+        return {"ok": True, "messages": display_messages(messages, _get_char(char_id), _store.effective_settings(char_id))}
     if direction != "new":
         raise HTTPException(400, "direction 只能是 next / prev / new")
     return _sse_response(_engine.stream_reply(char_id, message="/swipe new"))
@@ -630,7 +717,7 @@ async def clear_chat(char_id: str, request: Request):
     except Exception:
         pass
     messages = _engine.reset_chat(char_id, greeting_index)
-    return {"ok": True, "messages": messages}
+    return {"ok": True, "messages": display_messages(messages, _get_char(char_id), _store.effective_settings(char_id)), 'identity': _store.identity(char_id)}
 
 
 def _sse_response(event_generator) -> StreamingResponse:

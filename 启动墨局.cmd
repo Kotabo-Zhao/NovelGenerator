@@ -1,6 +1,10 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
+if exist "dist\windows-4.2.0\NovelGenerator\NovelGenerator.exe" (
+  start "" "dist\windows-4.2.0\NovelGenerator\NovelGenerator.exe" --data-dir "%~dp0."
+  exit /b 0
+)
 if exist "dist\windows\NovelGenerator\NovelGenerator.exe" (
   start "" "dist\windows\NovelGenerator\NovelGenerator.exe" --data-dir "%~dp0."
   exit /b 0

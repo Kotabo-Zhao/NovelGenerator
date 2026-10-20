@@ -20,14 +20,15 @@ logic (AND_ANY / AND_ALL / NOT_ANY / NOT_ALL), then a probability roll.
 from __future__ import annotations
 
 import json
+import copy
 import random
 import re
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
 MAX_ENTRIES = 500
-MAX_ENTRY_CHARS = 20000
-MAX_PROMPT_CHARS = 6000
+MAX_ENTRY_CHARS = 500000
+MAX_PROMPT_CHARS = 64000
 
 _LOGIC_AND_ANY = 0
 _LOGIC_AND_ALL = 1
@@ -57,23 +58,44 @@ def normalize_entry(raw: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
         selective_logic = int(raw.get("selectiveLogic", raw.get("selective_logic", _LOGIC_AND_ANY)) or 0)
     except (TypeError, ValueError):
         selective_logic = _LOGIC_AND_ANY
+    extensions = raw.get('extensions') if isinstance(raw.get('extensions'), dict) else {}
+    def option(*keys, default=None):
+        for source in (raw, extensions):
+            for key in keys:
+                if source.get(key) is not None:
+                    return source[key]
+        return default
     try:
-        order = int(raw.get("order", 100) or 100)
+        selective_logic = int(option('selective_logic', 'selectiveLogic', default=0))
+    except (TypeError, ValueError):
+        selective_logic = 0
+    try:
+        order = int(option('order', 'insertion_order', default=100))
     except (TypeError, ValueError):
         order = 100
     try:
-        depth = int(raw.get("depth", 4) or 4)
+        depth = int(option('depth', default=4))
     except (TypeError, ValueError):
         depth = 4
     try:
-        probability = int(raw.get("probability", 100) if raw.get("probability") is not None else 100)
+        probability = int(option('probability', default=100))
     except (TypeError, ValueError):
         probability = 100
     enabled_raw = raw.get("enabled")
     enabled = True if enabled_raw is None else bool(enabled_raw)
     if raw.get("disable"):
         enabled = False
+    positions = {0:'before_char', 1:'after_char', 2:'before_note', 3:'after_note',
+                 4:'at_depth', 5:'before_examples', 6:'after_examples', 7:'outlet'}
+    position = raw.get('position', 'before_char')
+    # V2's before/after flag can coexist with ST's more precise numeric extension.
+    if position in ('before_char', 'after_char') and isinstance(extensions.get('position'), int):
+        position = positions.get(extensions['position'], position)
+    position = positions.get(position, position) if isinstance(position, (int, str)) else 'before_char'
+    role = option('role', default='system')
+    role = {0:'system', 1:'user', 2:'assistant'}.get(role, role) if isinstance(role, (int, str)) else 'system'
     return {
+        **copy.deepcopy(raw),
         "id": str(entry_id)[:80],
         "comment": comment or ", ".join(keys[:2]) or f"条目 {index + 1}",
         "keys": keys[:50],
@@ -84,7 +106,13 @@ def normalize_entry(raw: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
         "selective": bool(raw.get("selective", bool(secondary))),
         "selective_logic": selective_logic if selective_logic in (0, 1, 2, 3) else 0,
         "order": max(-10000, min(10000, order)),
-        "position": str(raw.get("position", "before_char"))[:40],
+        "position": str(position)[:40],
+        "role": role if role in ('system', 'user', 'assistant') else 'system',
+        "case_sensitive": bool(option('case_sensitive', 'caseSensitive', default=False)),
+        "match_whole_words": bool(option('match_whole_words', 'matchWholeWords', default=False)),
+        "exclude_recursion": bool(option('exclude_recursion', 'excludeRecursion', default=False)),
+        "prevent_recursion": bool(option('prevent_recursion', 'preventRecursion', default=False)),
+        "use_probability": bool(option('use_probability', 'useProbability', default=True)),
         "depth": max(0, min(100, depth)),
         "probability": max(0, min(100, probability)),
     }
@@ -153,12 +181,12 @@ def entries_from_card(card: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
-def _matches(haystack: str, needle: str, case_sensitive: bool = False) -> bool:
+def _matches(haystack: str, needle: str, case_sensitive: bool = False, whole_words: bool = False) -> bool:
     if not needle:
         return False
-    if case_sensitive:
-        return needle in haystack
-    return needle.lower() in haystack.lower()
+    if whole_words:
+        return bool(re.search(r'(?<!\w)' + re.escape(needle) + r'(?!\w)', haystack, 0 if case_sensitive else re.I))
+    return needle in haystack if case_sensitive else needle.lower() in haystack.lower()
 
 
 def scan_world_info(
@@ -168,15 +196,18 @@ def scan_world_info(
     *,
     budget: int = 5,
     scan_depth: int = 6,
+    recursive: bool = False,
+    token_budget: int = 0,
 ) -> List[Dict[str, Any]]:
     """Return activated entries, ordered by ST ``order`` (descending)."""
     history = [
         str(msg.get("content") or "")
         for msg in messages
         if isinstance(msg, dict) and str(msg.get("content") or "").strip()
-    ][-max(1, scan_depth):]
+    ][-max(1, scan_depth):] if scan_depth else []
     haystack = "\n".join(history + [str(input_text or "")])
     activated: List[Dict[str, Any]] = []
+    entries = list(entries)
     for entry in entries:
         if not isinstance(entry, dict) or not entry.get("enabled", True):
             continue
@@ -185,40 +216,53 @@ def scan_world_info(
             continue
         primary = [str(key) for key in entry.get("keys") or [] if str(key).strip()]
         secondary = [str(key) for key in entry.get("secondary_keys") or [] if str(key).strip()]
+        matches = lambda key: _matches(haystack, key, entry.get('case_sensitive', False), entry.get('match_whole_words', False))
 
         if entry.get("constant"):
             pass
         elif not primary:
             continue
-        elif not any(_matches(haystack, key) for key in primary):
+        elif not any(matches(key) for key in primary):
             continue
         elif entry.get("selective") and secondary:
-            matches = [any(_matches(haystack, key) for key in secondary)]
             logic = int(entry.get("selective_logic") or 0)
             if logic == _LOGIC_AND_ANY:
                 # primary AND at least one secondary (ST AND_ANY)
-                if not any(_matches(haystack, key) for key in secondary):
+                if not any(matches(key) for key in secondary):
                     continue
             elif logic == _LOGIC_AND_ALL:
-                if not all(_matches(haystack, key) for key in secondary):
+                if not all(matches(key) for key in secondary):
                     continue
             elif logic == _LOGIC_NOT_ANY:
-                if any(_matches(haystack, key) for key in secondary):
+                if any(matches(key) for key in secondary):
                     continue
             elif logic == _LOGIC_NOT_ALL:
-                if all(_matches(haystack, key) for key in secondary):
+                if all(matches(key) for key in secondary):
                     continue
 
         probability = int(entry.get("probability", 100) or 0)
-        if probability < 100 and random.randint(1, 100) > probability:
+        if entry.get('use_probability', True) and probability < 100 and random.randint(1, 100) > probability:
             continue
         activated.append(entry)
+
+    if recursive:
+        # Only activated, recursion-enabled contents may trigger another entry.
+        seen = {str(e.get('id')) for e in activated}
+        for _ in range(min(len(entries), 20)):
+            extra = '\n'.join(str(e.get('content', '')) for e in activated if not e.get('prevent_recursion'))
+            pending = [e for e in entries if str(e.get('id')) not in seen and not e.get('exclude_recursion')]
+            new = scan_world_info(pending, messages, input_text + '\n' + extra,
+                                  budget=MAX_ENTRIES, scan_depth=scan_depth)
+            if not new:
+                break
+            activated.extend(new)
+            seen.update(str(e.get('id')) for e in new)
 
     activated.sort(key=lambda item: int(item.get("order", 100) or 100), reverse=True)
     total = 0
     capped: List[Dict[str, Any]] = []
     for entry in activated:
-        if len(capped) >= max(1, min(budget, 50)):
+        if len(capped) >= max(1, min(budget, MAX_ENTRIES)):
             break
         content = str(entry.get("content") or "")
         remaining = MAX_PROMPT_CHARS - total
@@ -228,6 +272,8 @@ def scan_world_info(
             if capped:
                 continue
             content = content[:remaining]
+        if token_budget and sum(estimate_tokens(str(e.get('content', ''))) for e in capped) + estimate_tokens(content) > token_budget:
+            continue
         item = dict(entry)
         item["content"] = content
         capped.append(item)
@@ -235,11 +281,17 @@ def scan_world_info(
     return capped
 
 
+def estimate_tokens(text):
+    """Conservative mixed CJK/Latin estimate; provider tokenizers differ."""
+    cjk = len(re.findall(r'[\u3400-\u9fff]', text))
+    return cjk + (len(text) - cjk + 3) // 4
+
+
 def format_world_info(entries: List[Dict[str, Any]]) -> str:
     if not entries:
         return ""
     lines = ["[世界书]"]
-    for entry in entries:
+    for entry in sorted(entries, key=lambda item: int(item.get('order', 100))):
         title = str(entry.get("comment") or "").strip()
         content = str(entry.get("content") or "").strip()
         if not content:
@@ -254,3 +306,20 @@ def merge_entries(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]]
     for entry in incoming:
         by_id[str(entry.get("id"))] = entry
     return list(by_id.values())[:MAX_ENTRIES]
+
+
+def export_entries(entries):
+    """Keep V2 before/after plus ST-specific positions in the extensions bag."""
+    positions = {'before_char':0, 'after_char':1, 'before_note':2, 'after_note':3,
+                 'at_depth':4, 'before_examples':5, 'after_examples':6, 'outlet':7}
+    result = []
+    for entry in entries:
+        item = copy.deepcopy(entry)
+        extension = dict(item.get('extensions') or {})
+        position = item.get('position', 'before_char')
+        extension.update(position=positions.get(position, 0), depth=item.get('depth', 4),
+                         role={'system':0, 'user':1, 'assistant':2}.get(item.get('role'), 0))
+        item.update(position='before_char' if position == 'before_char' else 'after_char',
+                    insertion_order=item.get('order', 100), extensions=extension)
+        result.append(item)
+    return result

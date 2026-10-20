@@ -20,7 +20,7 @@
     } catch (e) { /* 隐私模式下忽略 */ }
   })();
 </script>
-<link rel="stylesheet" href="/assets/roleplay.css?v=1efdee5c5ce7">
+<link rel="stylesheet" href="/assets/roleplay.css?v=48f3383b0421">
 <link rel="stylesheet" href="/assets/navigation.css?v=3c2c084407a7">
 <link rel="stylesheet" href="/assets/app-polish.css?v=131c32a89913">
 </head>
@@ -227,7 +227,12 @@
         </div>
       </div>
 
-      <div ref="chatEl" class="rp-chat" @scroll="onChatScroll">
+      <div v-if="currentCharacter" class="rp-identity-bar" aria-label="本段对话身份">
+        <div><span>你扮演</span> <strong>{{userDisplayName}}</strong><span class="rp-identity-divider">↔</span><span>AI 负责</span> <strong>{{currentCharacter.name}}</strong> <small>{{compatibility.mode==='narrator'?'世界主持 / 旁白':'卡面角色'}}</small></div>
+        <button class="btn btn-secondary btn-xs" :disabled="streaming||chatLoading" @click="openIdentity">玩家身份与卡片说明</button>
+        <p v-if="identityError" role="alert">{{identityError}}</p>
+      </div>
+      <div ref="chatEl" class="rp-chat" @scroll="onChatScroll" @click="onCardAction">
         <div class="rp-chat-inner">
 
           <div v-if="charactersLoading" class="rp-loading"><span class="rp-spinner"></span>正在加载角色列表…</div>
@@ -800,6 +805,27 @@
     </div>
   </div>
 
+  <div v-if="identityOpen" class="rp-modal-overlay" @click.self="!identitySaving && (identityOpen=false)">
+    <section class="rp-modal rp-identity-modal" role="dialog" aria-modal="true" aria-labelledby="rp-identity-title">
+      <div class="rp-modal-head"><h2 class="rp-modal-title" id="rp-identity-title">玩家身份与卡片说明</h2><button class="rp-modal-close" :disabled="identitySaving" @click="identityOpen=false" aria-label="关闭身份设置">✕</button></div>
+      <div class="rp-modal-body">
+        <p class="rp-hint">这张卡由 AI 负责。你在下面选择的是玩家本人在故事中的身份，二者不会互换。设置只绑定当前角色。</p>
+        <p v-if="identityLoading" role="status">读取身份…</p>
+        <template v-else>
+          <div class="rp-field"><label for="rp-player-source">玩家身份来源</label><select id="rp-player-source" class="rp-select" v-model="identityForm.source_character" @change="chooseIdentity"><option value="">自定义玩家身份</option><option v-for="choice in identityChoices" :key="choice.id" :value="choice.id">{{choice.name}} {{choice.id.startsWith('novel:')?'（小说人物）':'（角色转为玩家身份）'}}</option></select><p class="rp-hint">选中的小说人物由你控制；当前卡面人物仍由 AI 负责。没有预设身份时，可按原卡开场填写。</p></div>
+          <div class="rp-field"><label for="rp-player-name">玩家名字</label><input id="rp-player-name" type="text" v-model="identityForm.user_name" maxlength="60" placeholder="你在这段故事中的名字"></div>
+          <div class="rp-field"><label for="rp-player-persona">玩家设定</label><textarea id="rp-player-persona" v-model="identityForm.user_persona" rows="4" maxlength="16000" placeholder="身份、背景、与对方的关系；不要把卡面角色设定误填成自己。"></textarea></div>
+          <div class="rp-form-grid"><div class="rp-field"><label for="rp-player-pronouns">玩家第三人称代词</label><select id="rp-player-pronouns" class="rp-select" v-model="identityForm.player_pronouns"><option value="auto">依玩家与原卡设定</option><option value="他">他</option><option value="她">她</option><option value="TA">TA</option></select></div><div class="rp-field"><label for="rp-player-pov">叙述玩家时的人称</label><select id="rp-player-pov" class="rp-select" v-model="identityForm.narration_pov"><option value="card">遵循原卡</option><option value="second">第二人称（你）</option><option value="third">第三人称（名字 / 代词）</option></select></div></div>
+          <div class="rp-field"><label for="rp-card-mode">AI 的职责</label><select id="rp-card-mode" class="rp-select" v-model="identityForm.role_mode"><option value="auto">按原卡自动识别</option><option value="character">扮演卡面人物</option><option value="narrator">世界主持 / 旁白 / 模拟器</option></select></div>
+          <p class="rp-hint">更换身份只影响后续回复；已有消息和作者开场不会自动改写。需要新开场时，保存后使用「清空/重开」，原对话会留存历史快照。</p>
+          <details class="rp-card-features" open><summary>原卡说明与功能</summary><p class="rp-author-notes">{{compatibility.creator_notes||'作者没有提供额外使用说明。'}}</p><p v-if="compatibility.legacy_metadata_missing" class="rp-hint">这是旧版导入的卡，原始字段可能不完整。可重新读取原卡元数据，保留已编辑内容、聊天及世界书启用状态，并在本机留备份。<button class="btn btn-secondary btn-xs" :disabled="identitySaving" @click="syncCardMetadata">补齐旧卡功能数据</button></p><ul><li v-for="feature in compatibility.features" :key="feature.field||feature.name"><strong>{{feature.name}}</strong><span v-if="feature.count!==undefined"> · {{feature.count}} 项</span><span v-if="feature.status!=='active'">：{{feature.detail}}</span><span v-else> · 已接入</span></li></ul><p class="rp-hint">{{compatibility.group_fields}}</p></details>
+        </template>
+        <p v-if="identityError" class="rp-form-error" role="alert">{{identityError}}</p>
+      </div>
+      <div class="rp-modal-foot"><button class="btn btn-ghost" :disabled="identitySaving" @click="identityOpen=false">取消</button><button class="btn btn-primary" :disabled="identitySaving||identityLoading" @click="saveIdentity">{{identitySaving?'保存中…':(pendingIdentityChat?'保存并开始扮演':'保存当前玩家身份')}}</button></div>
+    </section>
+  </div>
+
   <!-- ═══════════════ 设置抽屉 ═══════════════ -->
   <div v-if="settingsOpen" class="rp-drawer-overlay" @click.self="closeSettings">
     <div class="rp-drawer" role="dialog" aria-modal="true" aria-labelledby="rp-settings-title">
@@ -814,12 +840,12 @@
           <section class="rp-settings-section">
             <div class="rp-settings-section-title"><span class="ic">🪪</span>你的身份</div>
             <div class="rp-field">
-              <label for="rp-s-name">你的名字（user_name）</label>
+              <label for="rp-s-name">默认玩家名字（未绑定身份的角色使用）</label>
               <input id="rp-s-name" v-model="settingsForm.user_name" type="text" maxlength="60" placeholder="例如：旅行者">
               <p class="rp-hint" v-pre>对话中代表「你」，可被 {{user}} 宏引用。</p>
             </div>
             <div class="rp-field" style="margin-bottom:0;">
-              <label for="rp-s-persona">你的角色设定（user_persona）</label>
+              <label for="rp-s-persona">默认玩家设定</label>
               <textarea id="rp-s-persona" v-model="settingsForm.user_persona" rows="3"
                         placeholder="描述「你」的身份、外貌、性格…"></textarea>
             </div>
@@ -831,7 +857,7 @@
               <label for="rp-s-system">全局系统提示词（system_prompt）</label>
               <textarea id="rp-s-system" v-model="settingsForm.system_prompt" rows="3"
                         placeholder="留空则使用内置 ST 式默认提示词"></textarea>
-              <p class="rp-hint" v-pre>会与角色卡提示词组合；可使用 {{char}} / {{user}} 宏。</p>
+              <p class="rp-hint" v-pre>卡片自带系统提示时优先使用原卡，原卡的 {{original}} 可引用此处。{{char}} 指 AI 卡，{{user}} 指玩家。</p>
             </div>
             <div class="rp-field" style="margin-bottom:0;">
               <label for="rp-s-note">作者注释（authors_note）</label>
@@ -950,8 +976,11 @@
 
 <script src="/vue.global.prod.js"></script>
 <script src="/assets/runtime.js?v=0b7e3913acf0"></script>
-<script src="/assets/app-shell.js?v=9ad3bf2288e3"></script>
-<script src="/assets/roleplay.js?v=12baee7f116e"></script>
+<script src="/assets/app-shell.js?v=c33ee71788b8"></script>
+<script src="/assets/marked.umd.js?v=b82b9334406d"></script>
+<script src="/assets/dompurify.min.js?v=cd37898f9782"></script>
+<script src="/assets/card-renderer.js?v=afea6edf546b"></script>
+<script src="/assets/roleplay.js?v=dccc0e6f0f58"></script>
 </body>
 
 

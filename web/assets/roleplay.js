@@ -161,6 +161,7 @@
   }
 
   function renderMarkdown(raw) {
+    if (window.NovelCardUI) return NovelCardUI.render(raw);
     var text = String(raw == null ? '' : raw).replace(/\r\n?/g, '\n');
     var lines = text.split('\n');
     var out = [];
@@ -293,6 +294,12 @@
       var settingsOpen = ref(false);
       var settingsLoading = ref(false);
       var settingsSaving = ref(false);
+      var identity = reactive({user_name:'',user_persona:'',player_pronouns:'auto',narration_pov:'card',role_mode:'auto',source_character:''});
+      var identityForm = reactive({});
+      var identityOpen = ref(false), identitySaving = ref(false), identityLoading = ref(false);
+      var pendingIdentityChat = ref(false);
+      var identityChoices = ref([]), compatibility = reactive({mode:'character',features:[],creator_notes:'',group_fields:''});
+      var identityError = ref('');
 
       /* ───────────── 角色编辑 ───────────── */
       var charModalOpen = ref(false);
@@ -513,7 +520,7 @@
       });
 
       var userDisplayName = computed(function () {
-        return metaUser.value || settings.user_name || '旅行者';
+        return metaUser.value || identity.user_name || settings.user_name || '旅行者';
       });
 
       var charDisplayName = computed(function () {
@@ -562,7 +569,8 @@
         if (activeMode.value === 'action') return '描述你的动作，例如：推门进去，同时拔剑，对' + name + '说：别动';
         if (activeMode.value === 'narration') return '以旁白补充场景，例如：窗外的雨忽然停了，铜铃轻轻响了一声';
         if (activeMode.value === 'ooc') return '出戏说明，例如：我想让剧情节奏慢一点，多写一点环境';
-        return '对 ' + name + ' 说点什么…（输入 / 打开指令）';
+        if (compatibility.mode === 'narrator') return '以「' + userDisplayName.value + '」的身份描述行动或台词…';
+        return '以「' + userDisplayName.value + '」的身份，与 ' + name + ' 对话…';
       });
 
       var modeHint = computed(function () {
@@ -709,7 +717,7 @@
         var parts = [sourceLabel(character.source)];
         var tags = characterTagsArr(character);
         if (tags.length) parts.push(tags.slice(0, 2).join(' / '));
-        else if (character.description) parts.push(shorten(character.description, 16));
+        else if (character.description) parts.push(shorten(character.description.replace(/\{\{char\}\}/gi, character.name).replace(/\{\{user\}\}/gi, '玩家'), 16));
         return parts.join(' · ');
       }
 
@@ -767,7 +775,13 @@
         try {
           var data = await apiChar(id, '/chat');
           if (seq !== chatSeq) return;
+          if (data.identity) Object.assign(identity, data.identity);
           var list = Array.isArray(data.messages) ? data.messages : [];
+          if (!list.length && !data.identity_bound) {
+            messages.value = []; Object.assign(identityForm, identity);
+            pendingIdentityChat.value = true; identityOpen.value = true;
+            return;
+          }
           if (!list.length) {
             data = await apiChar(id, '/chat/start', { method: 'POST' });
             if (seq !== chatSeq) return;
@@ -792,14 +806,27 @@
           activeMode.value = 'dialogue';
         }
         currentId.value = id;
+        messages.value = [];
+        chatLoading.value = true;
+        var routeParams = new URLSearchParams(location.search);
+        routeParams.set('character', id);
+        history.replaceState(null, '', '/roleplay.html?' + routeParams);
         metaUser.value = '';
         metaCharacter.value = '';
+        identity.user_name = '';
+        identityOpen.value = false;
+        pendingIdentityChat.value = false;
+        identityLoading.value = false;
+        identityError.value = '';
+        identityChoices.value = [];
         rememberCharacter(id);
         safeStorageSet('rp_last_character' + (novelId ? ':'+novelId : ''), id);
         libraryOpen.value = false;
         resetWorldExpanded();
         worldEntries.value = [];
         worldError.value = '';
+        await loadIdentity(id);
+        if (currentId.value !== id) return;
         await openChat(id);
         loadWorldInfo(true);
       }
@@ -843,6 +870,7 @@
           kind: normalizeKind(source.kind, role),
           speaker: source.speaker ? String(source.speaker) : '',
           content: NovelUI.textContent(source.content),
+          display_content: typeof source.display_content === 'string' ? source.display_content : null,
           ts: source.ts,
           variants: variants,
           variant_index: index,
@@ -885,6 +913,7 @@
 
       function displayContent(message) {
         if (!message) return '';
+        if (!message._streaming && typeof message.display_content === 'string') return message.display_content;
         if (!message._streaming && Array.isArray(message.variants) && message.variants.length) {
           var value = message.variants[variantIndex(message)];
           if (typeof value === 'string') return value;
@@ -1479,6 +1508,63 @@
 
       /* ═════════════ 设置读写 ═════════════ */
 
+      async function loadIdentity(id) {
+        try {
+          var data = await apiChar(id, '/identity');
+          if (currentId.value !== id) return;
+          Object.assign(identity, data.identity);
+          identityChoices.value = data.choices || [];
+          Object.assign(compatibility, data.compatibility || {});
+        } catch (err) { if (currentId.value === id) identityError.value = err.message; }
+      }
+
+      async function openIdentity() {
+        if (!currentId.value || streaming.value) return;
+        identityOpen.value = true; identityLoading.value = true; identityError.value = '';
+        var id = currentId.value;
+        await loadIdentity(id);
+        if (currentId.value === id) { Object.assign(identityForm, identity); identityLoading.value = false; }
+      }
+
+      function chooseIdentity() {
+        var choice = identityChoices.value.find(function (item) { return item.id === identityForm.source_character; });
+        if (choice) { identityForm.user_name = choice.user_name; identityForm.user_persona = choice.user_persona; }
+      }
+
+      async function saveIdentity() {
+        if (identitySaving.value || streaming.value) return;
+        var id = currentId.value;
+        identitySaving.value = true; identityError.value = '';
+        try {
+          var data = await apiChar(id, '/identity', {method:'PUT',body:identityForm});
+          if (currentId.value !== id) return;
+          Object.assign(identity, data.identity); Object.assign(compatibility, data.compatibility || {});
+          metaUser.value = ''; identityOpen.value = false;
+          if (pendingIdentityChat.value) { pendingIdentityChat.value = false; await startChat(); }
+          toastSuccess('已绑定到本角色，之后的回复使用此身份；原有对话保持不变。');
+        } catch (err) { if (currentId.value === id) identityError.value = err.message; }
+        finally { identitySaving.value = false; }
+      }
+
+      async function syncCardMetadata() {
+        if (identitySaving.value || streaming.value) return;
+        var id = currentId.value;
+        identitySaving.value = true; identityError.value = '';
+        try {
+          var data = await apiChar(id, '/sync-metadata', {method:'POST',timeout:45000});
+          if (currentId.value !== id) return;
+          Object.assign(compatibility, data.compatibility || {});
+          await loadCharacters(); await loadWorldInfo(true);
+          toastSuccess('原卡功能数据已补齐，旧数据已备份；编辑过的设定和聊天保持不变。');
+        } catch (err) { if (currentId.value === id) identityError.value = err.message; }
+        finally { identitySaving.value = false; }
+      }
+
+      function onCardAction(event) {
+        var button = event.target.closest('[data-message]');
+        if (button && !streaming.value) { draft.value = button.getAttribute('data-message') || ''; focusDraft(); }
+      }
+
       async function loadSettings(silent) {
         try {
           var data = await apiJson(API_BASE + '/settings');
@@ -1518,6 +1604,7 @@
           assignSettings(settings, data.settings || payload);
           copySettingsToForm();
           metaUser.value = '';
+          if (currentId.value) await loadIdentity(currentId.value);
           if (!silent) {
             settingsOpen.value = false;
             toastSuccess('角色扮演设置已保存', '保存成功', '✅');
@@ -2045,6 +2132,7 @@
       function onGlobalKeydown(event) {
         if (event.key !== 'Escape') return;
         if (confirmBox.visible) { resolveConfirm(false); return; }
+        if (identityOpen.value && !identitySaving.value) { identityOpen.value = false; return; }
         if (settingsOpen.value) { closeSettings(); return; }
         if (charModalOpen.value) { closeCharModal(); return; }
         if (fromNovelOpen.value) { closeFromNovel(); return; }
@@ -2093,6 +2181,10 @@
       /* ═════════════ 暴露给模板 ═════════════ */
 
       return {
+        identity:identity, identityForm:identityForm, identityOpen:identityOpen,
+        identitySaving:identitySaving, identityLoading:identityLoading, identityChoices:identityChoices, pendingIdentityChat:pendingIdentityChat,
+        identityError:identityError, compatibility:compatibility, openIdentity:openIdentity,
+        chooseIdentity:chooseIdentity, saveIdentity:saveIdentity, onCardAction:onCardAction, syncCardMetadata:syncCardMetadata,
         // 顶栏
         topTitle: topTitle,
         topSub: topSub,

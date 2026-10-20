@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 from config import NOVELS_DIR
 from ..atomic_io import atomic_write_json, safe_read_json
 from . import worldinfo
+from .identity import IDENTITY_DEFAULTS, normalize_identity
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "user_name": "旅行者",
@@ -113,6 +114,7 @@ class RoleplayStore:
         self.history_dir = os.path.join(self.root, "history")
         self.avatars_dir = os.path.join(self.root, "avatars")
         self.worldinfo_dir = os.path.join(self.root, "worldinfo")
+        self.personas_dir = os.path.join(self.root, 'personas')
         self._lock = threading.RLock()
         self._generating = set()
         self._characters_signature = None
@@ -122,6 +124,7 @@ class RoleplayStore:
         os.makedirs(self.history_dir, exist_ok=True)
         os.makedirs(self.avatars_dir, exist_ok=True)
         os.makedirs(self.worldinfo_dir, exist_ok=True)
+        os.makedirs(self.personas_dir, exist_ok=True)
         self._ensure_builtin()
 
     # ------------------------------------------------------------- characters
@@ -186,7 +189,7 @@ class RoleplayStore:
             if len(kept) == len(cards):
                 return False
             self.save_characters(kept)
-        for path in (self.chat_path(char_id), self.avatar_path(char_id), self.worldinfo_path(char_id)):
+        for path in (self.chat_path(char_id), self.avatar_path(char_id), self.worldinfo_path(char_id), self.identity_path(char_id)):
             try:
                 if os.path.exists(path):
                     os.remove(path)
@@ -364,6 +367,32 @@ class RoleplayStore:
         return self.save_worldinfo(char_id, merged)
 
     # ---------------------------------------------------------------- settings
+
+    def identity_path(self, char_id):
+        return os.path.join(self.personas_dir, self._validate_character_id(char_id) + '.json')
+
+    def identity(self, char_id):
+        with self._lock:
+            raw = safe_read_json(self.identity_path(char_id), default={})
+        defaults = {**IDENTITY_DEFAULTS, **{k: v for k, v in self.settings().items() if k in IDENTITY_DEFAULTS}}
+        defaults.update(raw if isinstance(raw, dict) else {})
+        identity = normalize_identity(defaults)
+        card = self.get_character(char_id)
+        if not raw and card and identity['user_name'].casefold() == str(card['name']).casefold():
+            identity.update(user_name='玩家' if card['name'] == '旅行者' else '旅行者', user_persona='')
+        return identity
+
+    def update_identity(self, char_id, patch):
+        identity = normalize_identity({**self.identity(char_id), **patch})
+        card = self.get_character(char_id)
+        if card and identity['user_name'].casefold() == str(card['name']).casefold():
+            raise ValueError('玩家与 AI 角色不能使用相同名字，请选择另一身份')
+        with self._lock:
+            atomic_write_json(self.identity_path(char_id), identity)
+        return identity
+
+    def effective_settings(self, char_id):
+        return {**self.settings(), **self.identity(char_id)}
 
     def settings(self) -> Dict[str, Any]:
         with self._lock:
