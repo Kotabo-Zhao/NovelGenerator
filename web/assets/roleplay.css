@@ -2441,7 +2441,7 @@ select.rp-select {
 .roleplay-page .rp-chat-sub { max-width:100%; }
 .rp-dropdown { position:relative; flex-shrink:0; }
 .rp-dropdown>summary { list-style:none; cursor:pointer; border:1px solid var(--border); border-radius:9px; padding:6px 10px; color:var(--text-2); font-size:12px; white-space:nowrap; }
-.rp-dropdown>summary::-webkit-details-marker,.rp-input-options>summary::-webkit-details-marker { display:none; }
+.rp-dropdown>summary::-webkit-details-marker { display:none; }
 .rp-dropdown[open]>summary { background:var(--glass-2); color:var(--accent); }
 .rp-dropdown-body { position:absolute; z-index:60; right:0; top:calc(100% + 8px); width:min(280px,calc(100vw - 28px)); padding:8px; border:1px solid var(--border-2); border-radius:13px; background:var(--sheet-bg); box-shadow:var(--shadow-lg); max-height:65dvh; overflow-y:auto; }
 .rp-dropdown-body button,.rp-dropdown-body a,.rp-dropdown-body .rp-select { display:flex; align-items:center; gap:8px; width:100%; max-width:100%; height:auto; min-height:40px; padding:9px 12px; text-align:left; border:0; border-radius:7px; background:transparent; color:var(--text); text-decoration:none; font:inherit; font-size:13px; }
@@ -2457,8 +2457,6 @@ select.rp-select {
 .roleplay-page .rp-msg-body,.roleplay-page .rp-msg.role-assistant.is-dialogue .rp-msg-body,.roleplay-page .rp-msg.kind-action .rp-msg-body { max-width:calc(100% - 48px); }
 .roleplay-page .rp-composer { padding:5px 12px calc(7px + env(safe-area-inset-bottom)); }
 .roleplay-page .rp-composer-shell { max-width:1100px; padding:3px 10px; }
-.rp-input-options>summary { list-style:none; cursor:pointer; font-size:11px; color:var(--text-3); padding:4px 2px; }
-.rp-input-options>summary span { float:right; }
 .rp-input-options .rp-composer-top { flex-wrap:wrap; gap:6px; padding:4px 0 8px; }
 .roleplay-page .rp-top-actions .rp-tool-btn { min-height:32px; }
 @media(max-width:600px) {

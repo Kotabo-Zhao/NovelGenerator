@@ -2120,13 +2120,13 @@
       /* ═════════════ 全局事件 ═════════════ */
 
       function closeMenus() {
-        document.querySelectorAll('.rp-dropdown[open], .rp-input-options[open]').forEach(function (menu) { menu.removeAttribute('open'); });
+        document.querySelectorAll('.rp-dropdown[open]').forEach(function (menu) { menu.removeAttribute('open'); });
       }
       function closeMenuAction(event) {
         if (event.target.closest('button') && !event.target.closest('button').disabled) closeMenus();
       }
       function onOutsideMenu(event) {
-        document.querySelectorAll('.rp-dropdown[open], .rp-input-options[open]').forEach(function (menu) {
+        document.querySelectorAll('.rp-dropdown[open]').forEach(function (menu) {
           if (!menu.contains(event.target)) menu.removeAttribute('open');
         });
       }

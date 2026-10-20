@@ -20,7 +20,7 @@
     } catch (e) { /* 隐私模式下忽略 */ }
   })();
 </script>
-<link rel="stylesheet" href="/assets/roleplay.css?v=692acbec833d">
+<link rel="stylesheet" href="/assets/roleplay.css?v=37d07299cf81">
 <link rel="stylesheet" href="/assets/navigation.css?v=3c2c084407a7">
 <link rel="stylesheet" href="/assets/app-polish.css?v=fb1bbb201a6b">
 </head>
@@ -314,16 +314,15 @@
       <!-- ═══════════════ 输入区 ═══════════════ -->
       <div class="rp-composer">
         <div class="rp-composer-shell">
-          <details class="rp-input-options">
-            <summary>输入方式 · {{ activeMode === 'action' ? '动作' : activeMode === 'ooc' ? '场外' : activeMode === 'narration' ? '旁白' : '对话' }} <span>⌄</span></summary>
+          <div class="rp-input-options">
             <div class="rp-composer-top">
               <div class="rp-modes" role="tablist" aria-label="输入模式">
-                <button v-for="mode in modes" :key="mode.key" type="button" class="rp-mode" :class="{ on: activeMode === mode.key }" role="tab" :aria-selected="activeMode === mode.key" @click="setMode(mode.key); closeMenus()">{{ mode.icon }} {{ mode.label }}</button>
+                <button v-for="mode in modes" :key="mode.key" type="button" class="rp-mode" :class="{ on: activeMode === mode.key }" role="tab" :aria-selected="activeMode === mode.key" @click="setMode(mode.key)">{{ mode.icon }} {{ mode.label }}</button>
               </div>
               <span class="rp-mode-hint">{{ modeHint }}</span>
               <span class="rp-hint">Enter 发送 · Shift+Enter 换行 · / 指令</span>
             </div>
-          </details>
+          </div>
           <div class="rp-input-row">
             <textarea ref="draftEl" v-model="draft" rows="1" :placeholder="composerPlaceholder"
                       :disabled="!currentCharacter || chatLoading" aria-label="消息输入框"
@@ -865,7 +864,7 @@
 <script src="/assets/marked.umd.js?v=b82b9334406d"></script>
 <script src="/assets/dompurify.min.js?v=cd37898f9782"></script>
 <script src="/assets/card-renderer.js?v=afea6edf546b"></script>
-<script src="/assets/roleplay.js?v=96f6ed78f4ed"></script>
+<script src="/assets/roleplay.js?v=fe942b0f7294"></script>
 </body>
 
 
