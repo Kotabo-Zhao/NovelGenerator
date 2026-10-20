@@ -19,3 +19,7 @@ button,a,input,select,textarea { touch-action:manipulation; }
 #app-errors { position:fixed; z-index:9999; bottom:24px; left:50%; transform:translateX(-50%); box-sizing:border-box; width:min(90vw,640px); padding:18px; border:1px solid #b94b50; border-radius:12px; background:#fff6f5; color:#813337; box-shadow:0 8px 32px #17192326; font:14px/1.6 system-ui,sans-serif; word-break:break-word; }
 #app-errors .app-error-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
 #app-errors .app-error-actions button, #app-errors .app-error-actions a { margin:0; padding:5px 10px; border:1px solid #d8b2b4; border-radius:6px; color:#813337; background:#fff; cursor:pointer; font:inherit; text-decoration:none; }
+
+/* Roleplay navigation is available in the application menu. */
+html .roleplay-page #app,html[data-platform="android"] .roleplay-page #app { padding-bottom:0; }
+html .roleplay-page .app-bottom-nav,html[data-platform="android"] .roleplay-page .app-bottom-nav { display:none; }

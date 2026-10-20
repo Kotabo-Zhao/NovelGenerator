@@ -13,7 +13,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-from .card_codec import parse_card_bytes
+from .card_codec import CardError, parse_card_bytes, shop_card_payload
 
 OFFICIAL_INDEX = 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/index.json'
 OFFICIAL_PREFIX = 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/assets/character/'
@@ -142,18 +142,12 @@ class Marketplace:
             raw = await self._fetch('https://api.chub.ai/api/characters/' + quote(reference, safe='/') + '?full=true')
             try:
                 node = json.loads(raw)['node']
-                definition = node['definition']
-                data = dict(name=definition.get('name') or node.get('name'),
-                            description=definition.get('personality', ''), personality=definition.get('tavern_personality', ''),
-                            scenario=definition.get('scenario', ''), first_mes=definition.get('first_message', ''),
-                            mes_example=definition.get('example_dialogs', ''), creator_notes=definition.get('description', ''),
-                            system_prompt=definition.get('system_prompt', ''),
-                            post_history_instructions=definition.get('post_history_instructions', ''),
-                            alternate_greetings=definition.get('alternate_greetings') or [], tags=node.get('topics') or [],
-                            creator=reference.split('/')[0], extensions=definition.get('extensions') or {},
-                            character_book=definition.get('embedded_lorebook'))
-                card, _ = parse_card_bytes(json.dumps({'spec': 'chara_card_v2', 'spec_version': '2.0', 'data': data}).encode(), 'card.json')
-            except (KeyError, TypeError, json.JSONDecodeError) as exc:
+                payload = shop_card_payload(node)
+                payload['data'].setdefault('creator', reference.split('/')[0])
+                card, _ = parse_card_bytes(json.dumps(payload).encode(), 'card.json')
+                if not card.get('creator'):
+                    card['creator'] = reference.split('/')[0]
+            except (CardError, KeyError, TypeError, json.JSONDecodeError) as exc:
                 raise MarketError('该角色的资料格式不兼容') from exc
             avatar = None
             image = str(node.get('avatar_url') or '')

@@ -341,7 +341,7 @@ async def export_character(char_id: str):
     for key in (*_LIST_FIELDS, 'extensions'):
         data[key] = card.get(key, [] if key in _LIST_FIELDS else {})
     entries = _store.load_worldinfo(char_id)
-    if entries:
+    if entries or card.get('character_book') or data.get('character_book'):
         data['character_book'] = {**(card.get('character_book') or data.get('character_book') or {}), 'entries': worldinfo.export_entries(entries)}
     return Response(json.dumps({'spec': card.get('card_spec', 'chara_card_v2'), 'spec_version': card.get('card_spec_version', '2.0'), 'data': data}, ensure_ascii=False, indent=2),
                     media_type='application/json', headers={'Content-Disposition': "attachment; filename=character.json; filename*=UTF-8''" + quote(card['name']+'.json')})
@@ -633,7 +633,7 @@ async def list_worldinfo(char_id: str):
 
 @router.post("/api/roleplay/characters/{char_id}/worldinfo/import", dependencies=[Depends(_character_mutation)])
 async def import_worldinfo(char_id: str, request: Request):
-    _get_char(char_id)
+    card = _get_char(char_id)
     body = await _json_body(request)
     raw_text = str(body.get("json_text") or "")
     if raw_text:
@@ -645,12 +645,28 @@ async def import_worldinfo(char_id: str, request: Request):
     if len(data) > _MAX_UPLOAD_BYTES:
         raise HTTPException(413, "世界书文件过大（最大 8MB）")
     try:
-        entries = worldinfo.import_worldinfo_bytes(data, str(body.get("filename") or ""))
+        payload = worldinfo.decode_worldinfo_bytes(data)
+        entries = worldinfo.parse_worldinfo_payload(payload)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    merged = _store.merge_worldinfo(char_id, entries)
-    log.info("Imported worldinfo for %s: %d entries", char_id, len(entries))
-    return {"ok": True, "imported": len(entries), "entries": merged}
+    previous_count = len(_store.load_worldinfo(char_id))
+    try:
+        merged = _store.merge_worldinfo(char_id, entries)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    # Keep book-level scan rules as well as entries (V2/V3 envelope or ST book).
+    book = payload
+    if isinstance(book, dict) and isinstance(book.get('data'), dict):
+        book = book['data']
+    if isinstance(book, dict) and isinstance(book.get('character_book'), dict):
+        book = book['character_book']
+    if isinstance(book, dict):
+        metadata = {k: v for k, v in book.items() if k != 'entries'}
+        card['character_book'] = {**(card.get('character_book') or {}), **metadata}
+        _store.upsert_character(card)
+    imported = len(merged) - previous_count
+    log.info("Imported worldinfo for %s: %d entries", char_id, imported)
+    return {"ok": True, "imported": imported, "skipped": len(entries) - imported, "entries": merged}
 
 
 @router.post("/api/roleplay/characters/{char_id}/worldinfo", dependencies=[Depends(_character_mutation)])

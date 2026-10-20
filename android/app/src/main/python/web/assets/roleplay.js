@@ -267,7 +267,7 @@
       var fromNovelLoading = ref(false);
 
       var panelTab = ref('world');
-      var panelOpen = ref(window.innerWidth >= 1200);
+      var panelOpen = ref(false);
       var libraryOpen = ref(false);
 
       var chatEl = ref(null);
@@ -555,7 +555,7 @@
 
       var modelKnown = computed(function () { return !!modelInfo.known; });
 
-      var isPanelOverlay = computed(function () { return viewportW.value < 1200; });
+      var isPanelOverlay = computed(function () { return true; });
 
       /* ═════════════ 计算属性：输入 ═════════════ */
 
@@ -1759,10 +1759,11 @@
             method: 'POST',
             body: { filename: file.name, data_base64: base64, novel_id: novelId }
           });
+          if (currentId.value !== character.id) return;
           if (Array.isArray(data.entries)) worldEntries.value = data.entries.map(normalizeWorldEntry);
           else await loadWorldInfo(true);
           var imported = Number(data.imported || 0);
-          toastSuccess('已导入 ' + (isFinite(imported) ? imported : 0) + ' 条世界书条目', '导入成功', '✅');
+          toastSuccess('已导入 ' + (isFinite(imported) ? imported : 0) + ' 条世界书条目' + (data.skipped ? '，跳过 ' + data.skipped + ' 条重复内容' : ''), '导入成功', '✅');
           panelTab.value = 'world';
           panelOpen.value = true;
         } catch (err) {
@@ -2118,19 +2119,32 @@
 
       /* ═════════════ 全局事件 ═════════════ */
 
+      function closeMenus() {
+        document.querySelectorAll('.rp-dropdown[open], .rp-input-options[open]').forEach(function (menu) { menu.removeAttribute('open'); });
+      }
+      function closeMenuAction(event) {
+        if (event.target.closest('button') && !event.target.closest('button').disabled) closeMenus();
+      }
+      function onOutsideMenu(event) {
+        document.querySelectorAll('.rp-dropdown[open], .rp-input-options[open]').forEach(function (menu) {
+          if (!menu.contains(event.target)) menu.removeAttribute('open');
+        });
+      }
+
       function onResize() {
         var width = window.innerWidth;
         viewportW.value = width;
         var wide = width >= 1200;
         if (wide !== lastWideLayout) {
           lastWideLayout = wide;
-          panelOpen.value = wide;
+          closeMenus();
         }
-        if (width >= 900) libraryOpen.value = false;
+
       }
 
       function onGlobalKeydown(event) {
         if (event.key !== 'Escape') return;
+        closeMenus();
         if (confirmBox.visible) { resolveConfirm(false); return; }
         if (identityOpen.value && !identitySaving.value) { identityOpen.value = false; return; }
         if (settingsOpen.value) { closeSettings(); return; }
@@ -2153,6 +2167,7 @@
         applyThemeValue(theme.value);
         window.addEventListener('resize', onResize);
         window.addEventListener('keydown', onGlobalKeydown);
+        document.addEventListener('click', onOutsideMenu);
         window.addEventListener('unhandledrejection', onUnhandledRejection);
         autoGrow();
 
@@ -2163,7 +2178,7 @@
           loadNovelTitle()
         ]);
 
-        panelOpen.value = window.innerWidth >= 1200;
+        panelOpen.value = false;
         if (!characters.value.length) { if (new URLSearchParams(location.search).get('create')) openCreate(); return; }
         var stored = new URLSearchParams(location.search).get('character') || safeStorageGet('rp_last_character' + (novelId ? ':'+novelId : '')) || '';
         var target = stored && findCharacter(stored) ? stored : (currentId.value || characters.value[0].id);
@@ -2175,6 +2190,7 @@
       onUnmounted(function () {
         window.removeEventListener('resize', onResize);
         window.removeEventListener('keydown', onGlobalKeydown);
+        document.removeEventListener('click', onOutsideMenu);
         window.removeEventListener('unhandledrejection', onUnhandledRejection);
       });
 
@@ -2186,6 +2202,8 @@
         identityError:identityError, compatibility:compatibility, openIdentity:openIdentity,
         chooseIdentity:chooseIdentity, saveIdentity:saveIdentity, onCardAction:onCardAction, syncCardMetadata:syncCardMetadata,
         // 顶栏
+        closeMenus: closeMenus,
+        closeMenuAction: closeMenuAction,
         topTitle: topTitle,
         topSub: topSub,
         modelLabel: modelLabel,

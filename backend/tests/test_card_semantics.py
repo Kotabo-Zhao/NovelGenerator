@@ -17,6 +17,95 @@ from core.roleplay.store import RoleplayStore
 from core.roleplay.worldinfo import normalize_entry, scan_world_info
 
 
+def test_lorebook_import_collisions_repeat_and_capacity_never_lose_entries(monkeypatch):
+    from core.roleplay import worldinfo as wi
+    first = wi.parse_worldinfo_payload({'entries': {'0': {'key':['城门'], 'content':'旧城'}}})
+    other = wi.parse_worldinfo_payload({'entries': {'0': {'key':['村落'], 'content':'新村'}}})
+    merged = wi.merge_entries(first, other)
+    assert len(merged) == 2 and len({e['id'] for e in merged}) == 2
+    assert len(wi.merge_entries(merged, other)) == 2
+    monkeypatch.setattr(wi, 'MAX_ENTRIES', 1)
+    with pytest.raises(ValueError, match='本次未导入'):
+        wi.merge_entries(first, other)
+    with pytest.raises(ValueError, match='未导入任何'):
+        wi.parse_worldinfo_payload({'entries': [first[0], other[0]]})
+    assert first[0]['content'] == '旧城'
+
+
+def test_worldinfo_st_aliases_do_not_revert_edits_or_duplicate_ids():
+    from core.roleplay import worldinfo as wi
+    entries = wi.import_worldinfo_bytes(json.dumps({'entries': {'7': {
+        'key':['旧关键词'], 'keysecondary':['旧次词'], 'content':'旧城', 'disable':True, 'position':'4'
+    }}}).encode('utf-16'))
+    entry = entries[0]
+    assert entry['id'] == '7' and entry['position'] == 'at_depth'
+    entry.update(id='local-renamed', keys=['新关键词'], secondary_keys=['新次词'], enabled=True)
+    loaded = wi.normalize_entry(entry)
+    assert loaded['id'] == 'local-renamed' and loaded['enabled']
+    exported = wi.export_entries([loaded])[0]
+    assert isinstance(exported['id'], int) and exported['key'] == ['新关键词'] and not exported['disable']
+    again = wi.parse_worldinfo_payload({'entries':[exported]})[0]
+    assert again['keys'] == ['新关键词'] and again['enabled'] and again['position'] == 'at_depth'
+
+
+def test_export_empty_book_does_not_restore_deleted_entries(client_store):
+    client, store = client_store
+    card = store.get_character('builtin-suwan')
+    card['character_book'] = {'name':'旧城','entries':[{'keys':['门'], 'content':'已删除'}]}
+    store.upsert_character(card)
+    store.save_worldinfo(card['id'], [])
+    book = client.get('/api/roleplay/characters/'+card['id']+'/export').json()['data']['character_book']
+    assert book['name'] == '旧城' and book['entries'] == []
+
+
+def test_worldinfo_api_repeated_import_different_books_and_export_reimport(client_store):
+    client, store = client_store
+    cid = 'builtin-suwan'
+    url = '/api/roleplay/characters/'+cid
+    for content in ('北方的旧城', '南方的港口', '南方的港口'):
+        response = client.post(url+'/worldinfo/import', json={'json_text':json.dumps({
+            'entries':{'0':{'uid':0, 'key':['地点'], 'content':content, 'disable':True}}
+        })})
+        assert response.status_code == 200, response.text
+    entries = store.load_worldinfo(cid)
+    assert len(entries) == 2
+    assert client.patch(url+'/worldinfo/'+entries[1]['id'], json={'enabled':True}).status_code == 200
+    assert store.load_worldinfo(cid)[1]['enabled']
+    exported = client.get(url+'/export').content
+    result = client.post('/api/roleplay/characters/import',json={
+        'filename':'shop-export.json','data_base64':base64.b64encode(exported).decode()})
+    assert result.status_code == 200, result.text
+    imported = store.load_worldinfo(result.json()['character']['id'])
+    assert len(imported) == 2 and imported[1]['enabled']
+
+
+def test_worldinfo_regex_keys_activate_and_import_keeps_book_scan_rules(client_store):
+    client, store = client_store
+    entry = normalize_entry({'keys':[r'/north\s+gate/i'], 'content':'北门守卫'} )
+    assert scan_world_info([entry], [], 'NORTH gate')[0]['content'] == '北门守卫'
+    assert scan_world_info([entry], [], 'south gate') == []
+    url = '/api/roleplay/characters/builtin-suwan/worldinfo/import'
+    body = {'json_text':json.dumps({'name':'旧城','scan_depth':32,'recursive_scanning':True,
+                                    'token_budget':800,'entries':[entry]})}
+    response = client.post(url, json=body)
+    assert response.status_code == 200 and response.json()['imported'] == 1
+    repeat = client.post(url, json=body).json()
+    assert repeat['imported'] == 0 and repeat['skipped'] == 1
+    book = store.get_character('builtin-suwan')['character_book']
+    assert book['scan_depth'] == 32 and book['recursive_scanning'] and book['token_budget'] == 800
+
+
+def test_imported_st_secondary_logic_uses_official_enum():
+    not_all = normalize_entry({'key':['城门'], 'keysecondary':['白天','守卫'],
+        'selective':True,'selectiveLogic':1,'content':'夜间通道'})
+    and_all = normalize_entry({'key':['城门'], 'keysecondary':['白天','守卫'],
+        'selective':True,'selectiveLogic':3,'content':'岗哨检查'})
+    assert scan_world_info([not_all], [], '城门 白天')
+    assert not scan_world_info([not_all], [], '城门 白天 守卫')
+    assert not scan_world_info([and_all], [], '城门 白天')
+    assert scan_world_info([and_all], [], '城门 白天 守卫')
+
+
 def test_player_identity_is_bound_to_character_and_does_not_relabel_history(tmp_path):
     store = RoleplayStore(str(tmp_path))
     store.upsert_character({'id':'other', 'name':'旅店店主'})

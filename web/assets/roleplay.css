@@ -2431,3 +2431,42 @@ select.rp-select {
 .rp-md img { max-width:100%; height:auto; }
 .rp-md details { padding:8px; border:1px solid var(--border); border-radius:6px; }
 @media(max-width:600px) { .rp-identity-bar { padding:8px 12px; font-size:11px; } .rp-identity-bar>div { flex-basis:100%; } }
+
+/* Reading-first layout: management lives in menus and overlay sheets. */
+.roleplay-page .rp-topbar { z-index:40; min-height:48px; padding:calc(6px + env(safe-area-inset-top)) 14px 6px; gap:8px; }
+.roleplay-page .rp-top-sub,.roleplay-page .rp-top-brand { display:none; }
+.roleplay-page .rp-chat-head { flex-wrap:nowrap; padding:6px 14px; min-height:48px; z-index:30; }
+.roleplay-page .rp-chat-who { flex:1 1 0; }
+.roleplay-page .rp-chat-who .rp-avatar.md { width:32px; height:32px; flex-basis:32px; border-radius:10px; }
+.roleplay-page .rp-chat-sub { max-width:100%; }
+.rp-dropdown { position:relative; flex-shrink:0; }
+.rp-dropdown>summary { list-style:none; cursor:pointer; border:1px solid var(--border); border-radius:9px; padding:6px 10px; color:var(--text-2); font-size:12px; white-space:nowrap; }
+.rp-dropdown>summary::-webkit-details-marker,.rp-input-options>summary::-webkit-details-marker { display:none; }
+.rp-dropdown[open]>summary { background:var(--glass-2); color:var(--accent); }
+.rp-dropdown-body { position:absolute; z-index:60; right:0; top:calc(100% + 8px); width:min(280px,calc(100vw - 28px)); padding:8px; border:1px solid var(--border-2); border-radius:13px; background:var(--sheet-bg); box-shadow:var(--shadow-lg); max-height:65dvh; overflow-y:auto; }
+.rp-dropdown-body button,.rp-dropdown-body a,.rp-dropdown-body .rp-select { display:flex; align-items:center; gap:8px; width:100%; max-width:100%; height:auto; min-height:40px; padding:9px 12px; text-align:left; border:0; border-radius:7px; background:transparent; color:var(--text); text-decoration:none; font:inherit; font-size:13px; }
+.rp-dropdown-body button:hover:not(:disabled),.rp-dropdown-body a:hover { background:var(--glass-2); }
+.rp-dropdown-body button:disabled { opacity:.4; }
+.rp-dropdown-body .rp-tool-text { display:inline; }
+.rp-menu-section { border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px; }
+.roleplay-page .rp-panel { position:fixed; inset:0 0 0 auto; z-index:80; flex:none; width:min(420px,94vw); max-width:94vw; max-height:100dvh; height:100dvh; border-radius:0; background:var(--sheet-bg); transform:none; box-shadow:var(--shadow-lg); }
+.roleplay-page .rp-panel.collapsed { display:none; }
+.roleplay-page .rp-panel.open { display:flex; transform:none; }
+.roleplay-page .rp-chat { padding:14px clamp(12px,3vw,36px); }
+.roleplay-page .rp-chat-inner { max-width:1100px; }
+.roleplay-page .rp-msg-body,.roleplay-page .rp-msg.role-assistant.is-dialogue .rp-msg-body,.roleplay-page .rp-msg.kind-action .rp-msg-body { max-width:calc(100% - 48px); }
+.roleplay-page .rp-composer { padding:5px 12px calc(7px + env(safe-area-inset-bottom)); }
+.roleplay-page .rp-composer-shell { max-width:1100px; padding:3px 10px; }
+.rp-input-options>summary { list-style:none; cursor:pointer; font-size:11px; color:var(--text-3); padding:4px 2px; }
+.rp-input-options>summary span { float:right; }
+.rp-input-options .rp-composer-top { flex-wrap:wrap; gap:6px; padding:4px 0 8px; }
+.roleplay-page .rp-top-actions .rp-tool-btn { min-height:32px; }
+@media(max-width:600px) {
+  .roleplay-page .rp-topbar { padding:calc(5px + env(safe-area-inset-top)) 10px 5px; min-height:44px; }
+  .roleplay-page .rp-top-title { font-size:13px; letter-spacing:0; }
+  .roleplay-page .rp-chat-head { padding:5px 10px; }
+  .roleplay-page .rp-chat { padding:10px 8px; }
+  .roleplay-page .rp-msg { gap:6px; }
+  .roleplay-page .rp-msg>.rp-avatar { width:26px; height:26px; flex-basis:26px; font-size:12px; border-radius:8px; }
+  .roleplay-page .rp-msg-body,.roleplay-page .rp-msg.role-assistant.is-dialogue .rp-msg-body,.roleplay-page .rp-msg.kind-action .rp-msg-body { max-width:calc(100% - 32px); }
+}

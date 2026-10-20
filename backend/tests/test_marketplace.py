@@ -32,6 +32,33 @@ def test_chub_adapter_preserves_prompt_fields_and_lorebook(monkeypatch):
     assert avatar is None
 
 
+@pytest.mark.parametrize('envelope', [False, True])
+def test_shop_standard_card_survives_install_export_and_import(monkeypatch, client, envelope):
+    from api.routers import roleplay
+    market = Marketplace()
+    data = {'name':'旧城店主', 'description':'角色描述', 'personality':'沉稳', 'first_mes':'欢迎',
+            'mes_example':'<START>\n{{char}}: 你好', 'assets':[{'type':'icon','uri':'ccdefault:'}],
+            'extensions':{'vendor':{'keep':True}}, 'character_book':{'name':'旧城', 'entries':[
+                {'id':0,'keys':['门'],'content':'北门','enabled':True}]}}
+    definition = {'spec':'chara_card_v3','spec_version':'3.0','data':data} if envelope else data
+    async def fetch(url, **kwargs):
+        return json.dumps({'node':{'definition':definition}}).encode()
+    monkeypatch.setattr(market, '_fetch', fetch)
+    monkeypatch.setattr(roleplay, '_market', market)
+    http, store = client
+    installed = http.post('/api/roleplay/marketplace/install', json={'source':'chub','reference':'author/card'}).json()['character']
+    assert installed['description'] == '角色描述' and installed['first_mes'] == '欢迎'
+    exported = http.get('/api/roleplay/characters/'+installed['id']+'/export').json()
+    assert exported['data']['assets'] == data['assets']
+    assert exported['data']['extensions'] == data['extensions']
+    response = http.post('/api/roleplay/characters/import',json={'filename':'export.json',
+        'data_base64':base64.b64encode(json.dumps(exported).encode()).decode()})
+    assert response.status_code == 200, response.text
+    imported = response.json()['character']
+    assert imported['first_mes'] == '欢迎' and imported['description'] == '角色描述'
+    assert store.load_worldinfo(imported['id'])[0]['content'] == '北门'
+
+
 def test_catalog_cache_coalesces_parallel_requests_without_sharing_mutable_results(monkeypatch):
     market=Marketplace();calls=[]
     async def fetch(*args,**kwargs):

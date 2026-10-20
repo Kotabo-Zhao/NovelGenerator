@@ -363,8 +363,9 @@ class RoleplayStore:
         return normalized
 
     def merge_worldinfo(self, char_id: str, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        merged = worldinfo.merge_entries(self.load_worldinfo(char_id), entries)
-        return self.save_worldinfo(char_id, merged)
+        with self._lock:
+            merged = worldinfo.merge_entries(self.load_worldinfo(char_id), entries)
+            return self.save_worldinfo(char_id, merged)
 
     # ---------------------------------------------------------------- settings
 

@@ -177,6 +177,12 @@ def normalize_card(raw: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise CardError("角色卡 JSON 顶层必须是对象")
 
+    # Public shop exports can wrap the definition rather than a V2 data object.
+    if isinstance(raw.get('node'), dict) and 'definition' in raw['node']:
+        raw = shop_card_payload(raw['node'])
+    elif isinstance(raw.get('character'), dict):
+        raw = raw['character']
+
     spec = str(raw.get("spec") or "")
     data = raw.get("data")
     if isinstance(data, dict) and (
@@ -194,7 +200,7 @@ def normalize_card(raw: Dict[str, Any]) -> Dict[str, Any]:
         "personality": _text(src, "personality"),
         "scenario": _text(src, "scenario", "world_scenario"),
         "first_mes": _text(src, "first_mes", "first_message", "char_greeting"),
-        "mes_example": _text(src, "mes_example", "example_dialogue"),
+        "mes_example": _text(src, "mes_example", "example_dialogue", "example_dialogs"),
         "system_prompt": _text(src, "system_prompt"),
         "post_history_instructions": _text(src, "post_history_instructions"),
         "alternate_greetings": _str_list(src.get("alternate_greetings")),
@@ -216,6 +222,40 @@ def normalize_card(raw: Dict[str, Any]) -> Dict[str, Any]:
         ),
     }
     return card
+
+
+def shop_card_payload(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert either Chub's legacy definition or a standard V2/V3 definition."""
+    definition = node.get('definition')
+    if isinstance(definition, str):
+        try:
+            definition = json.loads(definition)
+        except json.JSONDecodeError as exc:
+            raise CardError('商店角色定义不是有效 JSON') from exc
+    if not isinstance(definition, dict):
+        raise CardError('商店角色缺少有效的 definition')
+    if isinstance(definition.get('data'), dict):
+        return copy.deepcopy(definition)
+    data = copy.deepcopy(definition)
+    legacy = 'first_message' in data or 'tavern_personality' in data or 'embedded_lorebook' in data
+    if legacy:
+        data.update(description=definition.get('personality', ''),
+                    personality=definition.get('tavern_personality', ''),
+                    creator_notes=definition.get('creator_notes', definition.get('description', '')))
+    aliases = {'first_mes':'first_message', 'mes_example':'example_dialogs', 'character_book':'embedded_lorebook'}
+    for target, alias in aliases.items():
+        if target not in data and alias in definition:
+            data[target] = copy.deepcopy(definition[alias])
+    book = data.get('character_book')
+    if isinstance(book, str):
+        try:
+            data['character_book'] = json.loads(book)
+        except json.JSONDecodeError as exc:
+            raise CardError('商店内嵌世界书不是有效 JSON') from exc
+    data.setdefault('name', node.get('name', '未命名角色'))
+    data.setdefault('tags', node.get('topics') or [])
+    data.setdefault('creator', '')
+    return {'spec':'chara_card_v2', 'spec_version':'2.0', 'data':data}
 
 
 def parse_card_bytes(data: bytes, filename: str = "") -> tuple[Dict[str, Any], str]:

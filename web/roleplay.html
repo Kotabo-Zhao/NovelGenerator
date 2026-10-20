@@ -20,9 +20,9 @@
     } catch (e) { /* 隐私模式下忽略 */ }
   })();
 </script>
-<link rel="stylesheet" href="/assets/roleplay.css?v=48f3383b0421">
+<link rel="stylesheet" href="/assets/roleplay.css?v=692acbec833d">
 <link rel="stylesheet" href="/assets/navigation.css?v=3c2c084407a7">
-<link rel="stylesheet" href="/assets/app-polish.css?v=131c32a89913">
+<link rel="stylesheet" href="/assets/app-polish.css?v=31e91996a617">
 </head>
 <body class="roleplay-page">
 
@@ -44,17 +44,18 @@
       <div class="rp-top-sub">{{ topSub }}</div>
     </div>
     <div class="rp-top-actions">
-      <a class="rp-model-chip" href="/?view=settings" :title="modelTitle" aria-label="配置模型">
-        <span class="rp-model-dot" :class="{ unknown: !modelKnown }"></span>
-        <span class="rp-model-text">{{ modelLabel }}</span>
-      </a>
-      <button class="rp-icon-btn" type="button" :title="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
-              :aria-label="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="toggleTheme">
-        {{ theme === 'dark' ? '☀️' : '🌙' }}
-      </button>
-      <button class="rp-icon-btn" type="button" title="角色扮演设置" aria-label="角色扮演设置" @click="openSettings">⚙️</button>
-      <button class="rp-icon-btn" type="button" title="世界书与指令面板" aria-label="世界书与指令面板"
-              :class="{ active: panelOpen }" @click="togglePanel(panelTab)">📚</button>
+      <button class="rp-tool-btn" type="button" @click="openLibrary">角色库</button>
+      <details class="rp-dropdown">
+        <summary aria-label="应用菜单">☰ <span>菜单</span></summary>
+        <div class="rp-dropdown-body" @click="closeMenus">
+          <a href="/?view=settings">模型配置 · {{ modelLabel }}</a>
+          <button type="button" @click="openSettings">扮演设置</button>
+          <button type="button" @click="toggleTheme">{{ theme === 'dark' ? '切换浅色主题' : '切换深色主题' }}</button>
+          <button type="button" @click="openWorldPanel">世界书与指令</button>
+          <a href="/cards.html?tab=store">角色商店</a>
+          <a href="/">返回主应用</a>
+        </div>
+      </details>
     </div>
   </header>
 
@@ -66,113 +67,7 @@
   <input ref="worldInputEl" class="rp-hidden-input" type="file"
          accept=".json,.txt,application/json,text/plain" @change="onWorldFile">
 
-  <!-- ═══════════════ 移动端角色横栏 ═══════════════ -->
-  <div class="rp-rail-wrap">
-    <div class="rp-rail" aria-label="角色列表">
-      <template v-if="charactersLoading">
-        <span v-for="n in 4" :key="'rail-sk-' + n" class="rp-chip" aria-hidden="true">
-          <span class="rp-sk rp-avatar xs" style="border-radius: 9px;"></span>
-          <span class="rp-sk" style="width: 46px; height: 10px;"></span>
-        </span>
-      </template>
-      <template v-else>
-        <button v-for="c in characters" :key="'rail-' + c.id" type="button"
-                class="rp-chip" :class="{ active: c.id === currentId }"
-                :aria-pressed="c.id === currentId" @click="onCharacterClick(c.id)">
-          <span class="rp-avatar xs">
-            <img v-if="c.avatar_url && !avatarFailed[c.id]" :src="c.avatar_url" alt="" @error="onAvatarError(c.id)">
-            <span v-else>{{ charInitial(c) }}</span>
-          </span>
-          <span class="rp-chip-name">{{ c.name }}</span>
-        </button>
-        <button class="rp-chip rp-chip-add" type="button" title="打开角色库" @click="openLibrary">🔍 角色库</button>
-        <button class="rp-chip rp-chip-add" type="button" title="新建角色" @click="openCreate">＋ 新建</button>
-      </template>
-    </div>
-  </div>
-
   <div class="rp-body">
-
-    <!-- ═══════════════ 桌面角色库侧栏 ═══════════════ -->
-    <aside class="rp-sidebar" aria-label="角色库">
-      <div class="rp-side-head">
-        <div class="rp-side-title">角色库 <span class="rp-side-count">{{ characters.length }}</span></div>
-        <button class="rp-icon-btn" type="button" title="新建角色" aria-label="新建角色" @click="openCreate">＋</button>
-      </div>
-
-      <div class="rp-search">
-        <span class="rp-search-icon" aria-hidden="true">🔍</span>
-        <input v-model="charSearch" type="search" placeholder="搜索角色 / 标签" aria-label="搜索角色">
-        <button v-if="charSearch" class="rp-search-clear" type="button" aria-label="清空搜索" @click="charSearch = ''">✕</button>
-      </div>
-
-      <div class="rp-side-actions">
-        <button class="btn btn-secondary btn-sm" type="button" :disabled="importLoading" @click="pickImport">
-          {{ importLoading ? '⏳ 导入中…' : '📥 导入角色卡' }}
-        </button>
-        <button v-if="novelId" class="btn btn-secondary btn-sm" type="button" :disabled="fromNovelLoading" @click="openFromNovel">
-          {{ fromNovelLoading ? '⏳ 生成中…' : '📖 从本书生成' }}
-        </button>
-      </div>
-
-      <div class="rp-side-scroll">
-        <div v-if="charactersLoading" class="rp-side-list-skeleton" aria-hidden="true">
-          <div v-for="n in 5" :key="'side-sk-' + n" style="display:flex;align-items:center;gap:10px;padding:8px 9px;">
-            <span class="rp-sk rp-avatar" style="border-radius: 11px;"></span>
-            <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;">
-              <span class="rp-sk" style="width:62%;height:11px;"></span>
-              <span class="rp-sk" style="width:40%;height:9px;"></span>
-            </span>
-          </div>
-        </div>
-
-        <div v-else-if="charactersError" class="rp-side-empty">
-          角色加载失败
-          <div style="margin-top:10px;">
-            <button class="btn btn-secondary btn-xs" type="button" @click="reloadCharacters">重试</button>
-          </div>
-        </div>
-
-        <div v-else-if="!characters.length" class="rp-side-empty">
-          还没有角色。<br>导入角色卡、从本书生成或新建一个吧。
-        </div>
-
-        <template v-else>
-          <div v-for="group in sidebarGroups" :key="'g-' + group.key" class="rp-group">
-            <div class="rp-group-label">
-              <span>{{ group.label }}</span>
-              <span class="line"></span>
-              <span>{{ group.items.length }}</span>
-            </div>
-            <div v-for="c in group.items" :key="group.key + '-' + c.id"
-                 class="rp-side-card" :class="{ active: c.id === currentId }" role="button" tabindex="0"
-                 :aria-current="c.id === currentId ? 'true' : false"
-                 @click="onCharacterClick(c.id)"
-                 @keydown.enter.prevent.self="onCharacterClick(c.id)"
-                 @keydown.space.prevent.self="onCharacterClick(c.id)">
-              <span class="rp-avatar sm">
-                <img v-if="c.avatar_url && !avatarFailed[c.id]" :src="c.avatar_url" alt="" @error="onAvatarError(c.id)">
-                <span v-else>{{ charInitial(c) }}</span>
-              </span>
-              <span class="rp-side-meta">
-                <span class="rp-side-name">{{ c.name }}</span>
-                <span class="rp-side-sub">{{ charSubline(c) }}</span>
-              </span>
-              <span class="rp-side-card-tools">
-                <button class="rp-mini-btn" type="button" title="编辑角色" aria-label="编辑角色"
-                        @click.stop="openEdit(c)">✎</button>
-                <button class="rp-mini-btn danger" type="button" title="删除角色" aria-label="删除角色"
-                        @click.stop="deleteCharacter(c)">✕</button>
-              </span>
-            </div>
-          </div>
-
-          <div v-if="!filteredCharacters.length" class="rp-side-empty">
-            没有找到匹配「{{ charSearch }}」的角色
-          </div>
-        </template>
-      </div>
-    </aside>
 
     <!-- ═══════════════ 聊天主区 ═══════════════ -->
     <main class="rp-main">
@@ -187,25 +82,24 @@
           <span class="rp-chat-who-text">
             <span class="rp-chat-name-row">
               <span class="rp-chat-name">{{ currentCharacter ? currentCharacter.name : '角色扮演' }}</span>
-              <span v-if="currentCharacter" class="rp-chat-edit">
-                <button class="rp-mini-btn" type="button" title="编辑当前角色" aria-label="编辑当前角色"
-                        @click="openEdit(currentCharacter)">✎</button>
-                <button class="rp-mini-btn danger" type="button" title="删除当前角色" aria-label="删除当前角色"
-                        @click="deleteCharacter(currentCharacter)">✕</button>
-              </span>
+
             </span>
             <span class="rp-chat-sub">
-              <template v-if="currentCharacter">
-                <span>{{ sourceLabel(currentCharacter.source) }}</span>
-                <span v-if="characterTags(currentCharacter).length" class="dot"></span>
-                <span v-if="characterTags(currentCharacter).length" class="rp-chat-sub-tags">{{ characterTags(currentCharacter) }}</span>
-              </template>
+              <template v-if="currentCharacter">你：{{ userDisplayName }} · AI：{{ compatibility.mode === 'narrator' ? '世界主持' : currentCharacter.name }}</template>
               <template v-else>选择一个角色，开始沉浸式对话</template>
             </span>
           </span>
         </div>
 
-        <div class="rp-toolbar">
+        <details class="rp-dropdown rp-conversation-menu">
+          <summary aria-label="对话菜单">••• <span>对话</span></summary>
+          <div class="rp-dropdown-body">
+            <div class="rp-menu-section" @click="closeMenus">
+              <button type="button" :disabled="!currentCharacter || streaming || chatLoading" @click="openIdentity">玩家身份与卡片说明</button>
+              <button type="button" :disabled="!currentCharacter || streaming" @click="openEdit(currentCharacter)">编辑角色</button>
+              <button type="button" @click="openWorldPanel">世界书与指令</button>
+            </div>
+            <div class="rp-menu-section" @click="closeMenuAction">
           <button class="rp-tool-btn" type="button" title="重新生成最后一条回复" aria-label="重新生成最后一条回复"
                   :disabled="!currentCharacter || streaming || chatLoading || !messages.length" @click="regenerate">
             <span class="rp-tool-ic" aria-hidden="true">🔄</span><span class="rp-tool-text">重新生成</span>
@@ -224,14 +118,12 @@
             <span class="rp-tool-ic" aria-hidden="true">📚</span><span class="rp-tool-text">世界书</span>
             <span v-if="worldEntries.length" class="rp-tool-count">{{ worldEnabledCount }}</span>
           </button>
-        </div>
+            </div>
+            <button type="button" :disabled="!currentCharacter || streaming" @click="closeMenus(); deleteCharacter(currentCharacter)">删除角色</button>
+          </div>
+        </details>
       </div>
-
-      <div v-if="currentCharacter" class="rp-identity-bar" aria-label="本段对话身份">
-        <div><span>你扮演</span> <strong>{{userDisplayName}}</strong><span class="rp-identity-divider">↔</span><span>AI 负责</span> <strong>{{currentCharacter.name}}</strong> <small>{{compatibility.mode==='narrator'?'世界主持 / 旁白':'卡面角色'}}</small></div>
-        <button class="btn btn-secondary btn-xs" :disabled="streaming||chatLoading" @click="openIdentity">玩家身份与卡片说明</button>
-        <p v-if="identityError" role="alert">{{identityError}}</p>
-      </div>
+      <div v-if="identityError" class="rp-form-error" role="alert">{{ identityError }}</div>
       <div ref="chatEl" class="rp-chat" @scroll="onChatScroll" @click="onCardAction">
         <div class="rp-chat-inner">
 
@@ -422,15 +314,16 @@
       <!-- ═══════════════ 输入区 ═══════════════ -->
       <div class="rp-composer">
         <div class="rp-composer-shell">
-          <div class="rp-composer-top">
-            <div class="rp-modes" role="tablist" aria-label="输入模式">
-              <button v-for="mode in modes" :key="'mode-' + mode.key" type="button" class="rp-mode"
-                      :data-mode="mode.key" :class="{ on: activeMode === mode.key }"
-                      role="tab" :aria-selected="activeMode === mode.key"
-                      @click="setMode(mode.key)">{{ mode.icon }} {{ mode.label }}</button>
+          <details class="rp-input-options">
+            <summary>输入方式 · {{ activeMode === 'action' ? '动作' : activeMode === 'ooc' ? '场外' : activeMode === 'narration' ? '旁白' : '对话' }} <span>⌄</span></summary>
+            <div class="rp-composer-top">
+              <div class="rp-modes" role="tablist" aria-label="输入模式">
+                <button v-for="mode in modes" :key="mode.key" type="button" class="rp-mode" :class="{ on: activeMode === mode.key }" role="tab" :aria-selected="activeMode === mode.key" @click="setMode(mode.key); closeMenus()">{{ mode.icon }} {{ mode.label }}</button>
+              </div>
+              <span class="rp-mode-hint">{{ modeHint }}</span>
+              <span class="rp-hint">Enter 发送 · Shift+Enter 换行 · / 指令</span>
             </div>
-            <span class="rp-mode-hint">{{ modeHint }}</span>
-          </div>
+          </details>
           <div class="rp-input-row">
             <textarea ref="draftEl" v-model="draft" rows="1" :placeholder="composerPlaceholder"
                       :disabled="!currentCharacter || chatLoading" aria-label="消息输入框"
@@ -442,15 +335,6 @@
               发送<span class="rp-send-arrow" aria-hidden="true">↑</span>
             </button>
           </div>
-        </div>
-
-        <div class="rp-composer-hint">
-          <span><span class="rp-kbd">Enter</span> 发送</span>
-          <span class="sep"></span>
-          <span><span class="rp-kbd">Shift</span>+<span class="rp-kbd">Enter</span> 换行</span>
-          <span class="sep"></span>
-          <span><span class="rp-kbd">/</span> 指令</span>
-          <span v-if="streaming" class="rp-composer-stream-hint">· 生成中，可点「停止」保留已生成内容</span>
         </div>
 
         <div v-if="paletteOpen" class="rp-palette-wrap">
@@ -504,11 +388,12 @@
         <template v-if="panelTab === 'world'">
           <div class="rp-world-tools">
             <button class="btn btn-secondary btn-xs" type="button" :disabled="worldImporting || !currentCharacter"
-                    @click="pickWorldImport">{{ worldImporting ? '⏳ 导入中…' : '📥 导入世界书 JSON' }}</button>
+                    @click="pickWorldImport">{{ worldImporting ? '⏳ 导入中…' : '📥 导入世界书' }}</button>
             <button class="btn btn-ghost btn-xs" type="button" :disabled="worldLoading || !currentCharacter"
                     title="重新读取" @click="loadWorldInfo(false)">↻ 刷新</button>
           </div>
 
+          <p class="rp-hint">导入到当前角色。不同文件同编号会保留为独立条目；重复导入相同内容会跳过。</p>
           <div v-if="currentCharacter" class="rp-world-stats">
             <span>条目 <strong>{{ worldEntries.length }}</strong> · 启用 <strong>{{ worldEnabledCount }}</strong></span>
             <label class="rp-world-enable" title="世界书总开关">
@@ -980,7 +865,7 @@
 <script src="/assets/marked.umd.js?v=b82b9334406d"></script>
 <script src="/assets/dompurify.min.js?v=cd37898f9782"></script>
 <script src="/assets/card-renderer.js?v=afea6edf546b"></script>
-<script src="/assets/roleplay.js?v=dccc0e6f0f58"></script>
+<script src="/assets/roleplay.js?v=96f6ed78f4ed"></script>
 </body>
 
 

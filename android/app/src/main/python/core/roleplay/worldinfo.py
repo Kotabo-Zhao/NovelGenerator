@@ -23,6 +23,8 @@ import json
 import copy
 import random
 import re
+import time
+import regex
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -31,9 +33,9 @@ MAX_ENTRY_CHARS = 500000
 MAX_PROMPT_CHARS = 64000
 
 _LOGIC_AND_ANY = 0
-_LOGIC_AND_ALL = 1
+_LOGIC_AND_ALL = 3
 _LOGIC_NOT_ANY = 2
-_LOGIC_NOT_ALL = 3
+_LOGIC_NOT_ALL = 1
 
 
 def _str_list(value: Any) -> List[str]:
@@ -47,11 +49,11 @@ def _str_list(value: Any) -> List[str]:
 def normalize_entry(raw: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("世界书条目不合法")
-    entry_id = raw.get("uid", raw.get("id"))
+    entry_id = raw.get("id", raw.get("uid"))
     if entry_id is None or str(entry_id).strip() == "":
         entry_id = f"wi_{uuid.uuid4().hex[:12]}"
-    keys = _str_list(raw.get("key", raw.get("keys")))
-    secondary = _str_list(raw.get("keysecondary", raw.get("secondary_keys")))
+    keys = _str_list(raw.get("keys", raw.get("key")))
+    secondary = _str_list(raw.get("secondary_keys", raw.get("keysecondary")))
     content = str(raw.get("content", raw.get("text", "")) or "")[:MAX_ENTRY_CHARS]
     comment = str(raw.get("comment", raw.get("name", "")) or "").strip()[:200]
     try:
@@ -83,11 +85,13 @@ def normalize_entry(raw: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
         probability = 100
     enabled_raw = raw.get("enabled")
     enabled = True if enabled_raw is None else bool(enabled_raw)
-    if raw.get("disable"):
+    if enabled_raw is None and raw.get("disable"):
         enabled = False
     positions = {0:'before_char', 1:'after_char', 2:'before_note', 3:'after_note',
                  4:'at_depth', 5:'before_examples', 6:'after_examples', 7:'outlet'}
     position = raw.get('position', 'before_char')
+    if isinstance(position, str) and position.isdigit():
+        position = int(position)
     # V2's before/after flag can coexist with ST's more precise numeric extension.
     if position in ('before_char', 'after_char') and isinstance(extensions.get('position'), int):
         position = positions.get(extensions['position'], position)
@@ -134,13 +138,16 @@ def parse_worldinfo_payload(payload: Any) -> List[Dict[str, Any]]:
         elif isinstance(payload.get("data"), dict) and isinstance(payload["data"].get("entries"), (dict, list)):
             raw_entries = payload["data"]["entries"]
     if isinstance(raw_entries, dict):
-        raw_entries = list(raw_entries.values())
+        raw_entries = [dict(value, id=value.get('id', value.get('uid', key)))
+                       for key, value in raw_entries.items() if isinstance(value, dict)]
     if not isinstance(raw_entries, list):
         raise ValueError("不是有效的 SillyTavern 世界书 JSON（缺少 entries）")
 
     entries: List[Dict[str, Any]] = []
     seen: set = set()
-    for index, raw in enumerate(raw_entries[:MAX_ENTRIES]):
+    if len(raw_entries) > MAX_ENTRIES:
+        raise ValueError(f"世界书最多支持 {MAX_ENTRIES} 条，请拆分后导入；本次未导入任何条目")
+    for index, raw in enumerate(raw_entries):
         if not isinstance(raw, dict):
             continue
         try:
@@ -156,16 +163,21 @@ def parse_worldinfo_payload(payload: Any) -> List[Dict[str, Any]]:
     return entries
 
 
-def import_worldinfo_bytes(data: bytes, filename: str = "") -> List[Dict[str, Any]]:
+def decode_worldinfo_bytes(data: bytes) -> Any:
     try:
-        text = data.decode("utf-8-sig")
+        encoding = 'utf-16' if data.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig'
+        text = data.decode(encoding)
     except UnicodeDecodeError as exc:
         raise ValueError("世界书必须是 UTF-8 编码的 JSON") from exc
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"世界书 JSON 解析失败: {exc}") from exc
-    return parse_worldinfo_payload(payload)
+    return payload
+
+
+def import_worldinfo_bytes(data: bytes, filename: str = "") -> List[Dict[str, Any]]:
+    return parse_worldinfo_payload(decode_worldinfo_bytes(data))
 
 
 def entries_from_card(card: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -184,6 +196,18 @@ def entries_from_card(card: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _matches(haystack: str, needle: str, case_sensitive: bool = False, whole_words: bool = False) -> bool:
     if not needle:
         return False
+    if needle.startswith('/') and needle.rfind('/') > 0:
+        end = needle.rfind('/')
+        flags = needle[end + 1:]
+        if not set(flags) - set('gimsud') and len(needle) <= 12000:
+            options = regex.VERSION1
+            for flag, option in [('i', regex.I), ('m', regex.M), ('s', regex.S)]:
+                if flag in flags:
+                    options |= option
+            try:
+                return bool(regex.search(needle[1:end], haystack, flags=options, timeout=.01))
+            except (regex.error, TimeoutError):
+                return False
     if whole_words:
         return bool(re.search(r'(?<!\w)' + re.escape(needle) + r'(?!\w)', haystack, 0 if case_sensitive else re.I))
     return needle in haystack if case_sensitive else needle.lower() in haystack.lower()
@@ -208,6 +232,7 @@ def scan_world_info(
     haystack = "\n".join(history + [str(input_text or "")])
     activated: List[Dict[str, Any]] = []
     entries = list(entries)
+    regex_deadline = time.monotonic() + .15
     for entry in entries:
         if not isinstance(entry, dict) or not entry.get("enabled", True):
             continue
@@ -216,7 +241,10 @@ def scan_world_info(
             continue
         primary = [str(key) for key in entry.get("keys") or [] if str(key).strip()]
         secondary = [str(key) for key in entry.get("secondary_keys") or [] if str(key).strip()]
-        matches = lambda key: _matches(haystack, key, entry.get('case_sensitive', False), entry.get('match_whole_words', False))
+        def matches(key):
+            if key.startswith('/') and time.monotonic() > regex_deadline:
+                return False
+            return _matches(haystack, key, entry.get('case_sensitive', False), entry.get('match_whole_words', False))
 
         if entry.get("constant"):
             pass
@@ -301,11 +329,26 @@ def format_world_info(entries: List[Dict[str, Any]]) -> str:
 
 
 def merge_entries(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Append imported entries, replacing same-id entries."""
-    by_id = {str(entry.get("id")): entry for entry in existing}
-    for entry in incoming:
-        by_id[str(entry.get("id"))] = entry
-    return list(by_id.values())[:MAX_ENTRIES]
+    """Book-local numeric UIDs must never overwrite another book's entries."""
+    result = copy.deepcopy(existing)
+    ids = {str(entry.get('id')) for entry in result}
+    def signature(entry):
+        value = {k: v for k, v in normalize_entry(entry).items() if k not in ('id', 'uid')}
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+    known = {signature(entry) for entry in result}
+    for raw in incoming:
+        entry = copy.deepcopy(raw)
+        fingerprint = signature(entry)
+        if fingerprint in known:
+            continue
+        if str(entry.get('id')) in ids:
+            entry['id'] = f"wi_{uuid.uuid4().hex[:12]}"
+        ids.add(str(entry['id']))
+        known.add(fingerprint)
+        result.append(entry)
+    if len(result) > MAX_ENTRIES:
+        raise ValueError(f"合并后超过 {MAX_ENTRIES} 条，本次未导入；请先整理已有世界书")
+    return result
 
 
 def export_entries(entries):
@@ -313,13 +356,17 @@ def export_entries(entries):
     positions = {'before_char':0, 'after_char':1, 'before_note':2, 'after_note':3,
                  'at_depth':4, 'before_examples':5, 'after_examples':6, 'outlet':7}
     result = []
-    for entry in entries:
+    for index, entry in enumerate(entries):
         item = copy.deepcopy(entry)
         extension = dict(item.get('extensions') or {})
         position = item.get('position', 'before_char')
         extension.update(position=positions.get(position, 0), depth=item.get('depth', 4),
                          role={'system':0, 'user':1, 'assistant':2}.get(item.get('role'), 0))
-        item.update(position='before_char' if position == 'before_char' else 'after_char',
+        # V2 entry IDs are numeric. Legacy aliases must reflect current edits, too.
+        item.update(id=index, uid=index, key=item.get('keys', []),
+                    keysecondary=item.get('secondary_keys', []), disable=not item.get('enabled', True),
+                    selectiveLogic=item.get('selective_logic', 0),
+                    position='before_char' if position == 'before_char' else 'after_char',
                     insertion_order=item.get('order', 100), extensions=extension)
         result.append(item)
     return result
