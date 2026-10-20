@@ -1,10 +1,60 @@
 const API = window.location.origin;
-const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onErrorCaptured } = Vue;
+const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, onErrorCaptured } = Vue;
 
 const app = createApp({
   setup() {
     try {
-    const currentView = ref('shelf');
+    const requestedView = new URLSearchParams(window.location.search).get('view');
+    const routeViews = ['shelf','create','write','settings','export','worlds'];
+    const currentView = ref(routeViews.includes(requestedView) ? requestedView : 'shelf');
+    const _returnView = ref('shelf');          // bible/stats/ideas 返回来源
+    const bibleData = ref({characters:{},locations:{},terms:{},relations:[]});
+    const bibleTab = ref('characters');
+    const bibleLoading = ref(false);
+    const termCandidates = ref([]);
+    // v2.0: 圣经 CRUD 编辑状态
+    const bibleEdit = reactive({active:false, kind:'character', name:'', form:{}});
+    const bibleNewKind = ref('character');
+    const statsData = ref(null);
+    const statsLoading = ref(false);
+    // v2.0: 每日趋势折线计算
+    const trendW = 600, trendH = 140, trendPad = 10;
+    const trendPoints = computed(() => {
+      const daily = (statsData.value?.daily) || [];
+      if (daily.length < 2) return '';
+      const max = Math.max(...daily.map(d => d.chars), 1);
+      const stepX = (trendW - trendPad*2) / Math.max(daily.length - 1, 1);
+      return daily.map((d, i) => {
+        const x = trendPad + i*stepX;
+        const y = trendH - trendPad - (d.chars/max)*(trendH - trendPad*2);
+        return x.toFixed(1)+','+y.toFixed(1);
+      }).join(' ');
+    });
+    const trendMax = computed(() => Math.max(...((statsData.value?.daily)||[]).map(d => d.chars), 0));
+    const ideasData = ref([]); const ideasTags = ref([]);
+    const ideasTab = ref('ideas');             // 'ideas' | 'materials'
+    const materialsData = ref([]);
+    const ideasLoading = ref(false);
+    // v2.0: 统一弹窗（替代 prompt/confirm）
+    const modal = reactive({visible:false, title:'', kind:'input', label:'', value:'', rows:1,
+                            confirmText:'确定', onConfirm:null, textarea:false});
+    function openModal(opts) {
+      modal.visible = true; modal.title = opts.title || '';
+      modal.kind = opts.kind || 'input';
+      modal.label = opts.label || '';
+      modal.value = opts.value || '';
+      modal.rows = opts.rows || 1;
+      modal.textarea = !!opts.textarea;
+      modal.confirmText = opts.confirmText || '确定';
+      modal.onConfirm = opts.onConfirm || null;
+    }
+    function closeModal() { modal.visible = false; modal.onConfirm = null; }
+    function confirmModal() {
+      const cb = modal.onConfirm;
+      closeModal();
+      if (cb) cb(modal.value);
+    }
+
     const novels = ref([]); const activeNovel = ref(null);
     const planResult = ref(null); const error = ref(''); const preview = ref(null);
     const toast = reactive({ visible:false, title:'', message:'', icon:'⚠️' });
@@ -42,8 +92,58 @@ const app = createApp({
     const requirements = reactive({subtasks:[]}); const reqInspiration = ref(''); const showReqInput = ref(false);
     const supervisionReport = ref(null);
     const theme = ref(NovelUI.storage.get('theme', 'light'));
+    const uiStyle = ref(NovelUI.storage.get('uiStyle', 'macOS'));
+    const health = ref(null);  // v2.7: 设置页服务状态
+    // v2.7+: 设置页 LLM 配置（供应商预设 + OpenAI-compatible + Dots）
+    const llmProviders = ref([]);
+    const llmProvider = ref('deepseek');
+    const llmProviderMeta = computed(() => llmProviders.value.find(p => p.id === llmProvider.value) || null);
+    const llmApiKey = ref('');
+    const llmBaseUrl = ref('https://api.deepseek.com');
+    const llmModel = ref('deepseek-v4-flash');
+    const llmCustomModel = ref('');
+    const llmCustomModelMode = ref(false);
+    const llmSaving = ref(false);
+    const llmTesting = ref(false);
+    const llmKeySaved = ref(false);
+    const llmTested = ref(false);
+    const llmEffectiveModel = computed(() => llmCustomModelMode.value ? String(llmCustomModel.value || '').trim() : llmModel.value);
+
     const createProgress = ref(0); const createPhase = ref(''); const createPhaseLabel = ref('');
     const decomposeSummary = ref(null);  // v2.2: 需求拆解摘要
+    const outlineChangePlan = ref([]);
+    const outlineExecutionSummary = ref(null);
+    const outlineLoading = ref(false);
+    const requirementKindOrder = ['book_invariant','milestone','chapter_event','planning_only','preference'];
+    const requirementSnapshot = computed(() => {
+      const fresh = decomposeSummary.value;
+      if (fresh && Array.isArray(fresh.subtasks) && fresh.subtasks.length) return fresh;
+      return requirements;
+    });
+    function requirementsForKind(kind) {
+      const list = requirementSnapshot.value?.subtasks;
+      return Array.isArray(list) ? list.filter(item => item && (item.kind || 'book_invariant') === kind) : [];
+    }
+    function requirementKindLabel(kind) {
+      return ({
+        book_invariant:'全书规则', milestone:'剧情里程碑', chapter_event:'章节事件',
+        planning_only:'仅大纲规划', preference:'风格偏好'
+      })[kind] || '全书规则';
+    }
+    function requirementKindHelp(kind) {
+      return ({
+        book_invariant:'人物、世界规则和禁写内容；每章保持一致，但不要求逐字重复。',
+        milestone:'转折、高潮和伏笔回收；只在安排的进度窗口内生效。',
+        chapter_event:'明确绑定到某一章的事件，是该章必须完成的硬任务。',
+        planning_only:'卷数、章数和总体结构；只用于蓝图与大纲，不会塞入正文。',
+        preference:'文风、节奏和对话倾向；作为软质量目标，不阻塞章节完成。'
+      })[kind] || '';
+    }
+    function requirementScopeText(item) {
+      const chapters = Array.isArray(item?.chapter_numbers) ? item.chapter_numbers : [];
+      if (chapters.length) return '第' + chapters.join('、') + '章';
+      return ({global:'全书',opening:'开篇',mid:'中段',ending:'结局',chapter:'指定章节'})[item?.scope] || '待分配';
+    }
     // v2.3: 按 category 分组子任务（带防御）
     function groupedSubtasks(cat) {
       try {
@@ -931,6 +1031,7 @@ const app = createApp({
 
     onMounted(async () => {
       applyAppearance();
+      refreshHealth(); loadLLMProviders();
       NovelUI.requestJson('/api/system/connection').then(value => Object.assign(provider, value)).catch(() => {});
       loadStyles(); loadStyleSeeds(); // fire-and-forget
       // v2.50: 加载小红书模板列表（加载完自动加载预设）
@@ -983,12 +1084,12 @@ const app = createApp({
       } finally {
         loading.shelf = false;
         // v2.17: 全局安全阀 — 无论什么情况，30秒后强制清除loading
-        setTimeout(() => { if (loading.shelf) { loading.shelf = false; shelfLoadFailed.value = true; } }, 30000);
+
       }
       // 恢复上次session — 两步兜底：
       //   1) 书架里找（最优，带完整 state）
       //   2) 书架没找到/加载失败 → 直接用 sessionStorage 的 ID 去 API 拿
-      const savedId = sessionStorage.getItem('activeNovelId');
+      const savedId = new URLSearchParams(location.search).get('novel') || sessionStorage.getItem('activeNovelId');
       const savedView = sessionStorage.getItem('lastView');
       if (savedId) {
         let novel = novels.value.find(n => n.id === savedId);
@@ -1029,7 +1130,11 @@ const app = createApp({
       }
     });
 
-    function applyAppearance() { NovelUI.setTheme(theme.value); }
+    function applyAppearance() {
+      NovelUI.setTheme(theme.value);
+      document.documentElement.dataset.ui = uiStyle.value;
+      NovelUI.storage.set('uiStyle', uiStyle.value);
+    }
     function toggleTheme() { theme.value = theme.value === 'dark' ? 'light' : 'dark'; applyAppearance(); }
 
     // 刷新恢复：保存当前小说和视图到 sessionStorage
@@ -1039,7 +1144,7 @@ const app = createApp({
         fetch(API+'/api/novels/'+encodeURIComponent(novel.id))
           .then(r=>r.json()).then(d=>{planResult.value=d.novel;}).catch(()=>{});
       }
-      if (savedView && ['create','write'].includes(savedView)) {
+      if (!requestedView && savedView && ['create','write'].includes(savedView)) {
         currentView.value = savedView;
         const done = (novel.state.completed_chapters||[]);
         const total = novel.state.total_chapters||1;
@@ -1062,49 +1167,26 @@ const app = createApp({
 
     async function loadStyles() { try { const r=await fetch(API+'/api/styles'); styleCategories.value=(await r.json()).categories||{}; } catch(e){} }
     let _shelfDebounce=null;
-    async function _loadShelfOnce(_ft) {
-      // v2.17: _ft 是兼容旧WebView的 fetch timeout 包装
-      try {
-        const r = _ft ? await _ft(API+'/api/novels', 15000) : await fetch(API+'/api/novels');
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const data = await r.json();
-        const list = data.novels || [];
-        if (list.length > 0 || novels.value.length === 0) {
-          novels.value = list;
-        }
-        shelfLoadFailed.value = false;  // v2.17: 成功加载，清除失败状态
-        if (activeNovel.value && list.length > 0) {
-          const updated = list.find(n => n.id === activeNovel.value.id);
-          if (updated) activeNovel.value = updated;
-        }
-        return true;
-      } catch(e) {
-        console.warn('Shelf fetch failed:', e.message);
-        return false;
-      }
-    }
+    async function _loadShelfOnce() { return loadShelf(); }
+    let shelfPromise = null;
     async function loadShelf() {
-      if (_shelfDebounce) { clearTimeout(_shelfDebounce); _shelfDebounce=null; }
-      if (!loading.shelf && novels.value.length === 0) loading.shelf = true;
-      // v2.17: 兼容旧WebView的手动timeout
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
-      try {
-        const r = await fetch(API+'/api/novels', {signal: ctrl.signal});
-        if (r.ok) {
-          const data = await r.json();
-          const list = data.novels || [];
-          if (list.length > 0 || novels.value.length === 0) {
-            novels.value = list;
+      if (shelfPromise) return shelfPromise;
+      if (_shelfDebounce) {clearTimeout(_shelfDebounce);_shelfDebounce=null;}
+      loading.shelf=true;
+      shelfPromise=(async()=>{
+        try {
+          const data=await NovelApp.request(API+'/api/novels',{timeout:15000});
+          if(!Array.isArray(data.novels)) throw new Error('书架数据格式异常');
+          novels.value=data.novels;
+          if(activeNovel.value) {
+            activeNovel.value=data.novels.find(n=>n.id===activeNovel.value.id)||null;
           }
-          shelfLoadFailed.value = false;  // v2.17: 加载成功，清除失败标记
-        }
-      } catch(e) {
-        console.warn('Shelf refresh failed:', e.message);
-      } finally {
-        clearTimeout(timer);
-        loading.shelf = false;
-      }
+          shelfLoadFailed.value=false;
+          return true;
+        } catch(e) {shelfLoadFailed.value=true;error.value=e.message;return false;}
+        finally {loading.shelf=false;shelfPromise=null;}
+      })();
+      return shelfPromise;
     }
     function loadShelfDebounced() {
       if (_shelfDebounce) return;
@@ -1233,6 +1315,21 @@ const app = createApp({
     }
     function openWrite() { if(isBusy.value) return; if(activeNovel.value) { currentView.value='write'; writing.activeTab='write'; _saveSession(); } }
     // v3.10: 角色扮演模式（SillyTavern 风格独立页面，携带当前小说用于「从本书生成角色」）
+    function navigateMain(id, event) {
+      if (['shelf','create','worlds','settings'].includes(id)) {
+        event.preventDefault();
+        if (id==='create') { activeNovel.value ? openWrite() : openCreate(); }
+        else if(id==='settings') openSettings();
+        else currentView.value=id;
+      }
+    }
+    function openNovelWorld() { currentView.value = 'worlds'; }
+    function enterNovelWorld(novel) {
+      if (isBusy.value || !novel) return;
+      activeNovel.value = novel;
+      _saveSession();
+      window.location.href = '/scene.html?novel=' + encodeURIComponent(novel.id);
+    }
     function openRoleplay() {
       if (isBusy.value) return;
       const novel = activeNovel.value ? ('?novel=' + encodeURIComponent(activeNovel.value.id)) : '';
@@ -1793,9 +1890,340 @@ const app = createApp({
     async function deleteStyleSeed(seed) { try { await fetch(API+'/api/styles/seeds/'+encodeURIComponent(seed.filename),{method:'DELETE'}); await loadStyleSeeds(); } catch(e){} }
 
 
-    const connectionOpen = ref(false);
+    function openBible() {
+      if (!activeNovel.value) return;
+      _returnView.value = currentView.value;
+      currentView.value = 'bible';
+      loadBible();
+    }
+    async function loadBible() {
+      if (!activeNovel.value) return;
+      bibleLoading.value=true;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/bible');
+        bibleData.value = (await r.json()).bible || {characters:{},locations:{},terms:{},relations:[]};
+      } catch(e) { reportError('世界圣经加载失败: '+e.message); }
+      finally { bibleLoading.value=false; if(bibleTab.value==='relations') drawRelationGraph(); }
+    }
+    async function saveBible() {
+      if (!activeNovel.value) return;
+      bibleLoading.value=true;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/bible', {
+          method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(bibleData.value)
+        });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        showToast('世界圣经已保存', '保存成功', '✅');
+      } catch(e) { reportError('保存失败: '+e.message); }
+      finally { bibleLoading.value=false; }
+    }
+    // ── v2.0: 圣经 CRUD ──
+    function bibleStartNew() {
+      const kind = bibleTab.value==='locations' ? 'location' : (bibleTab.value==='terms' ? 'term' : 'character');
+      bibleEdit.active = true; bibleEdit.kind = kind; bibleEdit.name = '';
+      bibleEdit.form = {};
+      if (kind==='location') bibleEdit.form = {description:'', note:''};
+      else if (kind==='term') bibleEdit.form = {category:'术语', description:'', note:''};
+      else bibleEdit.form = {identity:'', appearance:'', note:''};
+    }
+    function bibleStartEdit(kind, name, entry) {
+      bibleEdit.active = true; bibleEdit.kind = kind; bibleEdit.name = name;
+      bibleEdit.form = JSON.parse(JSON.stringify(entry || {}));
+    }
+    function bibleCancelEdit() { bibleEdit.active = false; bibleEdit.name=''; bibleEdit.form={}; }
+    function bibleSaveEntry() {
+      const kind = bibleEdit.kind;
+      const name = (bibleEdit.name || '').trim();
+      const newName = (bibleEdit.form.name || name || '').trim();
+      if (kind !== 'relation' && !newName) { reportError('名称不能为空'); return; }
+      if (kind === 'relation' && (!bibleEdit.form.from || !bibleEdit.form.to)) { reportError('请选择关系两端的人物'); return; }
+      // 收集表单字段（去掉 name 字段本身，它作为 key）
+      const entry = JSON.parse(JSON.stringify(bibleEdit.form));
+      delete entry.name;
+      // 删除旧 key（如果是改名）
+      if (kind==='character') {
+        if (name && name !== newName) delete bibleData.value.characters[name];
+        bibleData.value.characters[newName] = entry;
+      } else if (kind==='location') {
+        if (name && name !== newName) delete bibleData.value.locations[name];
+        bibleData.value.locations[newName] = entry;
+      } else if (kind==='term') {
+        if (name && name !== newName) delete bibleData.value.terms[name];
+        bibleData.value.terms[newName] = entry;
+      } else if (kind==='relation') {
+        // 关系：新增/编辑
+        const idx = bibleEdit.form._idx;
+        const rel = {from: bibleEdit.form.from, to: bibleEdit.form.to, type: bibleEdit.form.type, note: bibleEdit.form.note};
+        if (idx !== undefined && idx !== null && bibleData.value.relations[idx]) bibleData.value.relations[idx] = rel;
+        else bibleData.value.relations.push(rel);
+      }
+      bibleCancelEdit();
+      showToast('已保存，点击「💾 保存」写入', '编辑完成', '✅');
+    }
+    function bibleDeleteEntry(kind, name) {
+      openModal({
+        title: '删除「'+name+'」', kind: 'confirm', label: '确定从世界圣经删除？', confirmText: '删除',
+        onConfirm: () => {
+          if (kind==='character') delete bibleData.value.characters[name];
+          else if (kind==='location') delete bibleData.value.locations[name];
+          else if (kind==='term') delete bibleData.value.terms[name];
+          showToast('已删除，点击「💾 保存」写入', '删除完成', '✅');
+        }
+      });
+    }
+    function bibleStartRelation() {
+      bibleEdit.active = true; bibleEdit.kind = 'relation'; bibleEdit.name = '';
+      bibleEdit.form = {from:'', to:'', type:'盟友', note:''};
+    }
+    function bibleEditRelation(idx) {
+      const r = bibleData.value.relations[idx] || {};
+      bibleEdit.active = true; bibleEdit.kind = 'relation'; bibleEdit.name = '';
+      bibleEdit.form = {from:r.from||'', to:r.to||'', type:r.type||'盟友', note:r.note||'', _idx:idx};
+    }
+    function bibleDeleteRelation(idx) {
+      bibleData.value.relations.splice(idx, 1);
+    }
+    async function extractTerms() {
+      if (!activeNovel.value) return;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/bible/terms/extract', {method:'POST'});
+        termCandidates.value = (await r.json()).candidates || [];
+        if (!termCandidates.value.length) showToast('未提取到新名词（正文过短或都已收录）', '提取完成', 'ℹ️');
+      } catch(e) { reportError('提取失败: '+e.message); }
+    }
+    function addTermFromCandidate(c) {
+      bibleData.value.terms[c.name] = { category:c.category||'术语', description:'', note:'' };
+      termCandidates.value = termCandidates.value.filter(x=>x.name!==c.name);
+    }
+    function switchBibleTab(t) { bibleTab.value=t; if(t==='relations') drawRelationGraph(); }
+    function drawRelationGraph() {
+      nextTick(() => {
+        const canvas = document.getElementById('relationCanvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const chars = bibleData.value.characters || {};
+        const relations = bibleData.value.relations || [];
+        const names = Object.keys(chars);
+        if (!names.length) { ctx.fillStyle='rgba(255,255,255,.4)'; ctx.font='14px sans-serif'; ctx.fillText('暂无人物，无法绘制关系图', 20, 30); return; }
+        const cx = canvas.width/2, cy = canvas.height/2;
+        const R = Math.min(canvas.width, canvas.height)/2 - 60;
+        const pos = {};
+        names.forEach((n, i) => {
+          const angle = (2*Math.PI*i)/names.length - Math.PI/2;
+          pos[n] = {x: cx + R*Math.cos(angle), y: cy + R*Math.sin(angle)};
+        });
+        const typeColor = { '盟友':'#7ee2a8', '敌对':'#ff6b81', '暧昧':'#ff9ecb', '导师':'#9ecbff', '未知':'#c9a7ff' };
+        relations.forEach(r => {
+          if (!pos[r.from] || !pos[r.to]) return;
+          const color = typeColor[r.type] || typeColor['未知'];
+          ctx.strokeStyle = color; ctx.globalAlpha = 0.7; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(pos[r.from].x, pos[r.from].y); ctx.lineTo(pos[r.to].x, pos[r.to].y); ctx.stroke();
+          ctx.globalAlpha = 1;
+          const mx = (pos[r.from].x+pos[r.to].x)/2, my = (pos[r.from].y+pos[r.to].y)/2;
+          ctx.fillStyle = color; ctx.font='10px sans-serif'; ctx.fillText(r.type, mx, my);
+        });
+        names.forEach(n => {
+          const p = pos[n];
+          ctx.beginPath(); ctx.arc(p.x, p.y, 24, 0, 2*Math.PI);
+          ctx.fillStyle = 'rgba(201,167,255,.18)'; ctx.fill();
+          ctx.strokeStyle = '#c9a7ff'; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = '#f5f3ff'; ctx.font='12px sans-serif'; ctx.textAlign='center';
+          ctx.fillText(n.slice(0,4), p.x, p.y+4);
+        });
+      });
+    }
+
+    function openStats() {
+      if (!activeNovel.value) return;
+      _returnView.value = currentView.value;
+      currentView.value = 'stats';
+      loadStats();
+    }
+    async function loadStats() {
+      if (!activeNovel.value) return;
+      statsLoading.value=true;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/stats');
+        statsData.value = await r.json();
+      } catch(e) { reportError('统计加载失败: '+e.message); }
+      finally { statsLoading.value=false; }
+    }
+    async function saveGoal() {
+      if (!activeNovel.value || !statsData.value) return;
+      try {
+        const r = await fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/stats/goal', {
+          method:'PUT', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(statsData.value.goal)
+        });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        showToast('写作目标已保存', '保存成功', '✅');
+      } catch(e) { reportError('保存失败: '+e.message); }
+    }
+
+    function openIdeas() {
+      _returnView.value = currentView.value;
+      currentView.value = 'ideas';
+      loadIdeas(); loadMaterials();
+    }
+    async function loadIdeas() {
+      ideasLoading.value=true;
+      try {
+        const r = await fetch(API+'/api/ideas');
+        const d = await r.json();
+        ideasData.value = d.ideas || []; ideasTags.value = d.tags || [];
+      } catch(e) { reportError('灵感加载失败: '+e.message); }
+      finally { ideasLoading.value=false; }
+    }
+    function filterIdeasByTag(tag) {
+      ideasData.value = ideasData.value.filter(i => (i.tags||[]).includes(tag));
+    }
+    async function loadMaterials() {
+      try {
+        const r = await fetch(API+'/api/ideas/materials');
+        materialsData.value = (await r.json()).materials || [];
+      } catch(e) {}
+    }
+    async function addIdea() {
+      openModal({
+        title: '💡 记一条灵感', kind: 'input', label: '灵感内容', rows: 3, textarea: true,
+        confirmText: '保存灵感',
+        onConfirm: async (text) => {
+          if (!text || !text.trim()) return;
+          try {
+            const r = await fetch(API+'/api/ideas', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:text.trim(), tags:[]})});
+            if (!r.ok) throw new Error('HTTP '+r.status);
+            await loadIdeas();
+          } catch(e) { reportError('添加失败: '+e.message); }
+        }
+      });
+    }
+    async function deleteIdea(id) {
+      openModal({
+        title: '删除灵感', kind: 'confirm', label: '删除这条灵感？', confirmText: '删除',
+        onConfirm: async () => {
+          try {
+            await fetch(API+'/api/ideas/'+encodeURIComponent(id), {method:'DELETE'});
+            await loadIdeas();
+          } catch(e) { reportError('删除失败: '+e.message); }
+        }
+      });
+    }
+    async function addMaterial() {
+      openModal({
+        title: '📚 新增素材', kind: 'input', label: '素材（格式：分类｜标题｜内容）', rows: 3, textarea: true,
+        confirmText: '保存素材',
+        onConfirm: async (raw) => {
+          if (!raw || !raw.trim()) return;
+          const parts = String(raw).split('｜');
+          const category = (parts[0]||'桥段').trim();
+          const title = (parts[1]||'').trim();
+          const content = (parts.slice(2).join('｜')||parts[1]||'').trim();
+          if (!title || !content) { reportError('格式：分类｜标题｜内容'); return; }
+          try {
+            const r = await fetch(API+'/api/ideas/materials', {method:'POST', headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({category:category, title:title, content:content})});
+            if (!r.ok) throw new Error('HTTP '+r.status);
+            await loadMaterials();
+          } catch(e) { reportError('添加失败: '+e.message); }
+        }
+      });
+    }
+    function ideaToNovel(text) {
+      openCreate();
+      form.inspiration = text;
+      currentView.value = 'create';
+    }
+    function switchIdeasTab(t) { ideasTab.value=t; }
+
+    function returnToPrevious() { currentView.value = _returnView.value; }
+
+    function openSettings() {
+      currentView.value = 'settings';
+      refreshHealth();
+      loadLLMProviders();
+    }
+    async function refreshHealth() {
+      if (loading.health) return;
+      loading.health = true;
+      try {
+        health.value = await NovelUI.requestJson('/api/health', { timeout: 8000 });
+        Object.assign(provider, { configured: health.value.llm_configured, model: health.value.model });
+      } catch (_) {
+        health.value = { status: 'offline', llm_configured: false, storage_exists: false };
+      } finally { loading.health = false; }
+    }
+    let llmConfigRequest = null;
+    function loadLLMProviders() {
+      if (llmConfigRequest) return llmConfigRequest;
+      llmConfigRequest = (async () => {
+        try {
+          const [catalog, saved] = await Promise.all([
+            NovelUI.requestJson('/api/config/llm/providers', { timeout: 8000 }),
+            NovelUI.requestJson('/api/config/llm', { timeout: 8000 })
+          ]);
+          llmProviders.value = catalog.providers || [];
+          llmProvider.value = saved.provider || 'deepseek';
+          llmBaseUrl.value = saved.base_url || '';
+          llmModel.value = saved.model || '';
+          const meta = llmProviderMeta.value;
+          llmCustomModelMode.value = !meta?.models?.includes(llmModel.value);
+          llmCustomModel.value = llmCustomModelMode.value ? llmModel.value : '';
+        } catch (e) { reportError(e.message, '模型配置读取失败'); }
+        finally { llmConfigRequest = null; }
+      })();
+      return llmConfigRequest;
+    }
+    function selectLLMProvider(providerId) {
+      const preset = llmProviders.value.find(p => p.id === providerId);
+      if (!preset) return;
+      llmProvider.value = providerId;
+      llmBaseUrl.value = preset.base_url || '';
+      llmModel.value = preset.default_model || '';
+      llmCustomModelMode.value = !preset.models?.length;
+      llmCustomModel.value = '';
+      llmApiKey.value = '';
+      llmKeySaved.value = false;
+      llmTested.value = false;
+    }
+    function onLLMModelSelect() {
+      if (llmModel.value === '__custom__') {
+        llmCustomModelMode.value = true;
+        llmCustomModel.value = '';
+      }
+      llmTested.value = false;
+    }
+    async function saveLLMConfig(testAfterSave = false) {
+      if (llmSaving.value) return;
+      llmSaving.value = true;
+      llmTesting.value = false;
+      llmKeySaved.value = false;
+      llmTested.value = false;
+      try {
+        const model = String(llmEffectiveModel.value || '').trim();
+        if (!model) throw new Error('请先选择或填写模型 ID');
+        const body = { provider: llmProvider.value, base_url: llmBaseUrl.value.trim(), model };
+        const key = llmApiKey.value.trim();
+        if (key) body.api_key = key;
+        const result = await NovelUI.requestJson('/api/config/llm', { method: 'POST', body, timeout: 10000 });
+        llmKeySaved.value = true;
+        llmApiKey.value = '';
+        window.dispatchEvent(new CustomEvent('provider-changed', { detail: {
+          configured: result.config.api_key_configured, model: result.config.model
+        } }));
+        if (testAfterSave) {
+          llmTesting.value = true;
+          await NovelUI.requestJson('/api/config/llm/test', { method: 'POST', timeout: 30000 });
+          llmTested.value = true;
+        }
+        await refreshHealth();
+        showToast(testAfterSave ? '连接测试通过，创作和角色扮演已使用该模型' : '配置已保存，创作和角色扮演立即生效', '模型服务', '✅');
+      } catch (e) { reportError(e.message || '保存失败', '模型配置失败'); }
+      finally { llmSaving.value = false; llmTesting.value = false; }
+    }
+
     const isAndroid = Boolean(window.AndroidBridge);
-    window.addEventListener('novelgen:connection', () => { connectionOpen.value = true; });
+    window.addEventListener('novelgen:connection', () => { openSettings(); });
     const provider = reactive({ configured: false, model: '' });
     window.addEventListener('provider-changed', event => Object.assign(provider, event.detail));
     const shelfQuery = ref(''), shelfFilter = ref('all'), shelfSort = ref('recent');
@@ -1810,14 +2238,40 @@ const app = createApp({
       if (shelfSort.value === 'progress') result = [...result].sort((a,b) => (b.state?.completed_chapters || []).length - (a.state?.completed_chapters || []).length);
       return result;
     });
-    const viewLabel = computed(() => ({shelf:'我的书架',create:'创作工作台',write:'写作空间',trends:'灵感探索',export:'作品导出'}[currentView.value] || '创作空间'));
+    watch(currentView, value => {
+      if (!routeViews.includes(value)) return;
+      const params = new URLSearchParams({view:value});
+      if (value==='write' && activeNovel.value) params.set('novel',activeNovel.value.id);
+      const target = '/?' + params;
+      if(location.pathname+location.search!==target) history.pushState(null,'',target);
+    });
+    const restoreRoute = () => {
+      const value = new URLSearchParams(location.search).get('view') || 'shelf';
+      if(routeViews.includes(value)) currentView.value=value;
+    };
+    window.addEventListener('popstate',restoreRoute);
+    onUnmounted(()=>window.removeEventListener('popstate',restoreRoute));
+    const viewLabel = computed(() => ({worlds:'进入小说世界',shelf:'我的书架',create:'创作工作台',write:'写作空间',trends:'灵感探索',export:'作品导出',settings:'设置',bible:'世界圣经',stats:'创作统计',ideas:'灵感与素材'}[currentView.value] || '创作空间'));
     const todayLabel = new Intl.DateTimeFormat('zh-CN', {month:'long', day:'numeric', weekday:'long'}).format(new Date());
 
-    return { isAndroid,connectionOpen,provider,shelfQuery,shelfFilter,shelfSort,shelfStats,filteredNovels,viewLabel,todayLabel,currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,toast,
+    return { isAndroid,provider,shelfQuery,shelfFilter,shelfSort,shelfStats,filteredNovels,viewLabel,todayLabel,currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,toast,
+      health,refreshHealth,applyAppearance,uiStyle,openSettings,
+      requirementKindOrder,requirementSnapshot,requirementsForKind,requirementKindLabel,requirementKindHelp,requirementScopeText,
+      outlineChangePlan,outlineExecutionSummary,outlineLoading,
+      llmProviders,llmProvider,llmProviderMeta,llmApiKey,llmBaseUrl,llmModel,llmCustomModel,llmCustomModelMode,
+      llmSaving,llmTesting,llmKeySaved,llmTested,llmEffectiveModel,loadLLMProviders,selectLLMProvider,onLLMModelSelect,saveLLMConfig,
+      bibleData,bibleTab,bibleLoading,termCandidates,bibleEdit,statsData,statsLoading,
+      ideasData,ideasTags,ideasTab,materialsData,ideasLoading,
+      openBible,loadBible,saveBible,extractTerms,addTermFromCandidate,switchBibleTab,
+      bibleStartNew,bibleStartEdit,bibleCancelEdit,bibleSaveEntry,bibleDeleteEntry,
+      bibleStartRelation,bibleEditRelation,bibleDeleteRelation,
+      openStats,loadStats,saveGoal,trendPoints,trendMax,trendW,trendH,
+      openIdeas,loadIdeas,loadMaterials,addIdea,deleteIdea,addMaterial,ideaToNovel,switchIdeasTab,filterIdeasByTag,
+      modal,closeModal,confirmModal,returnToPrevious,
       form,loading,writing,genres,editSaved,styleMode,customStyleDesc,styleSeeds,shelfLoadFailed,
       selectedCount,allSelected,availableChapters,currentOutline,
       pct,fmtWords,coverGradient,
-      openCreate,openWrite,openOutline,openOutlineFor,doCreate,openNovel,startWriting,openRoleplay,
+      navigateMain,openNovelWorld,enterNovelWorld,openCreate,openWrite,openOutline,openOutlineFor,doCreate,openNovel,startWriting,openRoleplay,
       openTrends,doTrendAnalyze,doBizarreQuick,doBizarreFull,createBizarreNovel,trendData,bizarreNovels,trendLoading,bizarreMode,
       selectChapter,doGenerateChapter,nextChapter,copyChapter,speakChapter,stopSpeaking,speaking,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
@@ -1872,5 +2326,6 @@ const app = createApp({
   }
 });
 
+NovelApp.register(app);
 NovelUI.install(app);
 app.mount('#app');

@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0912" id="sc-theme-color">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>小说世界 — 墨·局</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+<script>
+  /* 主题预置：避免首帧深色/浅色闪烁（与主应用、roleplay 共用 localStorage.theme） */
+  (function () {
+    try {
+      if (window.AndroidBridge) document.documentElement.dataset.platform = 'android';
+      var saved = localStorage.getItem('theme');
+      document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+      var meta = document.getElementById('sc-theme-color');
+      if (meta) meta.setAttribute('content', saved === 'light' ? '#f4f2fb' : '#0b0912');
+    } catch (e) { /* 隐私模式下忽略 */ }
+  })();
+</script>
+<link rel="stylesheet" href="/assets/scene.css?v=c2ab692be7e0">
+<link rel="stylesheet" href="/assets/navigation.css?v=3c2c084407a7">
+<link rel="stylesheet" href="/assets/app-polish.css?v=131c32a89913">
+</head>
+<body class="novel-world-page">
+<div id="boot-error"></div>
+
+<div id="app" v-cloak :style="appStyle">
+
+  <!-- ═══════════════ 顶栏 ═══════════════ -->
+  <header class="sc-topbar">
+    <a class="sc-back" href="/?view=worlds" title="返回主应用" aria-label="返回主应用">
+      <span class="sc-back-arrow">←</span><span class="sc-back-text">返回</span>
+    </a>
+    <div class="sc-brand" aria-hidden="true">🎬</div>
+
+    <div class="sc-top-meta">
+      <div class="sc-top-title">
+        <span class="sc-top-mark" aria-hidden="true">✦</span>
+        <span class="sc-title-text">{{ headerTitle }}</span>
+      </div>
+      <div class="sc-top-sub" v-if="hasState">
+        <span class="sc-sub-chip strong">{{ sceneLabel }}</span>
+        <span class="dot"></span>
+        <span class="sc-sub-chip">📍 {{ locationLabel }}</span>
+        <span class="dot sc-hide-sm"></span>
+        <span class="sc-sub-chip sc-hide-sm">🕰 {{ timeLabel }}</span>
+        <span class="dot sc-hide-sm"></span>
+        <span class="sc-sub-chip strong sc-hide-sm">{{ presentCount }} 人在场</span>
+      </div>
+      <div class="sc-top-sub" v-else>
+        <span class="sc-sub-chip">多角色同场 · 进入你的小说世界</span>
+      </div>
+    </div>
+
+    <div class="sc-top-actions">
+      <button class="sc-icon-btn" type="button" title="重开本局" aria-label="重开本局"
+              :disabled="!hasState || busy" @click="restart">↺</button>
+      <button class="sc-icon-btn" type="button" title="回退一步" aria-label="回退一步"
+              :disabled="!hasState || busy" @click="rollback">⏪</button>
+      <button class="sc-icon-btn" type="button" :title="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
+              :aria-label="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="toggleTheme">
+        {{ theme === 'dark' ? '☀️' : '🌙' }}
+      </button>
+      <div class="sc-menu-wrap">
+        <button class="sc-icon-btn" type="button" title="设置与帮助" aria-label="设置与帮助"
+                aria-haspopup="true" :aria-expanded="menuOpen" :class="{ active: menuOpen }"
+                @click.stop="toggleMenu">⋯</button>
+        <div v-if="menuOpen" class="sc-popover" role="menu" aria-label="设置与帮助" @click.stop>
+          <div class="sc-pop-head">
+            <div class="sc-pop-title">小说世界</div>
+            <button class="sc-pop-close" type="button" title="关闭" aria-label="关闭设置" @click="menuOpen = false">✕</button>
+          </div>
+          <div class="sc-pop-body"><a class="sc-pop-action" href="/?view=settings">⚙ 模型与完整设置</a>
+            <div class="sc-pop-section">
+              <div class="sc-pop-label">外观</div>
+              <div class="sc-seg" role="group" aria-label="主题">
+                <button type="button" :class="{ on: theme === 'dark' }" @click="setTheme('dark')">🌙 深色</button>
+                <button type="button" :class="{ on: theme === 'light' }" @click="setTheme('light')">☀️ 浅色</button>
+              </div>
+              <div class="sc-pop-row">
+                <span>阅读字号</span>
+                <div class="sc-seg sm" role="group" aria-label="阅读字号">
+                  <button type="button" :class="{ on: fontSize === 'md' }" @click="setFontSize('md')">标准</button>
+                  <button type="button" :class="{ on: fontSize === 'lg' }" @click="setFontSize('lg')">大</button>
+                </div>
+              </div>
+              <div class="sc-pop-row">
+                <span>自动滚动到最新</span>
+                <label class="sc-switch" title="自动滚动">
+                  <input type="checkbox" v-model="autoScroll" aria-label="自动滚动到最新">
+                  <span class="sc-switch-ui"></span>
+                </label>
+              </div>
+            </div>
+            <div class="sc-pop-section">
+              <div class="sc-pop-label">剧情存档</div>
+              <button class="sc-pop-action" type="button" :disabled="!hasState || busy" @click="refreshStateNow">🔄 同步最新状态</button>
+              <button class="sc-pop-action" type="button" :disabled="!hasState || busy" @click="rollback">⏪ 回退一步</button>
+              <button class="sc-pop-action danger" type="button" :disabled="!hasState || busy" @click="restart">↺ 重开本局</button>
+            </div>
+            <div class="sc-pop-section">
+              <div class="sc-pop-label">怎么玩</div>
+              <ul class="sc-help">
+                <li><b>对话</b>：直接输入你说的话，在场角色会回应。</li>
+                <li><b>动作</b>：描述你做的事，AI 会判断是否触发行动与状态变化。</li>
+                <li><b>@ 角色</b>：指定回应者，只有 TA 会回应这句话。</li>
+                <li><b>行动按钮</b>：右侧面板中的按钮可直接移动、交谈或使用物品。</li>
+                <li><b>继续剧情</b>：结束这段交流，进入下一幕。</li>
+              </ul>
+              <div class="sc-keys">
+                <span><kbd>Enter</kbd> 发送</span>
+                <span><kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
+                <span><kbd>Esc</kbd> 关闭浮层</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════ 移动端角色横栏 ═══════════════ -->
+  <div class="sc-rail-wrap">
+    <div class="sc-rail" aria-label="角色列表">
+      <button class="sc-rail-chip player" type="button" title="你扮演的角色" v-if="hasState"
+              :class="{ active: !target }" @click="clearTarget">
+        <sc-avatar :name="playerName" size="xs" :src="avatarSrc(playerName)" :initial="playerInitial" :tone="charTone(playerName)" :user="true"></sc-avatar>
+        <span class="sc-rail-name">你 · {{ playerName }}</span>
+      </button>
+      <button v-for="c in castCards" :key="'rail-' + c.name" type="button"
+              class="sc-rail-chip" :class="[{ active: target === c.name, away: !c.present }, 'sc-tone-' + c.tone]"
+              :title="c.present ? ('与 ' + c.name + ' 对话') : (c.name + ' 此刻不在场')"
+              @click="onRailCast(c)">
+        <sc-avatar :name="c.name" size="xs" :src="avatarSrc(c.name)" :initial="charInitial(c.name)" :tone="c.tone"></sc-avatar>
+        <span class="sc-rail-name">{{ c.name }}</span>
+        <span class="sc-rail-dot" :class="{ off: !c.present }"></span>
+      </button>
+      <button v-if="!hasState" class="sc-rail-chip" type="button" @click="startPanelTip">
+        <span class="sc-rail-name">进入小说后可选择角色</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="sc-body">
+
+    <!-- ═══════════════ 左侧：小说与角色 ═══════════════ -->
+    <aside class="sc-sidebar" aria-label="小说与在场角色">
+      <div class="sc-side-scroll">
+        <div class="sc-novel-card">
+          <div class="sc-novel-cover" aria-hidden="true">墨</div>
+          <div class="sc-novel-info">
+            <div class="sc-novel-title">{{ headerTitle }}</div>
+            <div class="sc-novel-sub">{{ hasState ? ('第 ' + sceneNo + ' 幕 · 小说世界') : '小说世界 · 待进入' }}</div>
+            <div class="sc-novel-tags" v-if="novelGenre || novelStyle">
+              <span class="sc-tag" v-if="novelGenre">{{ novelGenre }}</span>
+              <span class="sc-tag" v-if="novelStyle">{{ novelStyle }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sc-side-section" v-if="hasState">
+          <div class="sc-side-label"><span>你的身份</span><span class="line"></span></div>
+          <div class="sc-player-card">
+            <sc-avatar :name="playerName" size="md" :src="avatarSrc(playerName)" :initial="playerInitial" :tone="charTone(playerName)" :user="true"></sc-avatar>
+            <div class="sc-player-info">
+              <div class="sc-player-name-row">
+                <span class="sc-player-name">{{ playerName }}</span>
+                <span class="sc-player-role">扮演</span>
+              </div>
+              <div class="sc-player-line" v-if="playerIdentity">{{ playerIdentity }}</div>
+              <div class="sc-player-goal" v-if="objective"><b>目标</b> {{ objective }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sc-side-section" v-if="hasState">
+          <div class="sc-side-label">
+            <span>在场角色</span>
+            <span class="sc-side-count">{{ presentCast.length }}</span>
+            <span class="line"></span>
+          </div>
+          <button class="sc-cast-card" type="button" v-for="c in presentCast" :key="'pre-' + c.name"
+                  :class="[{ target: target === c.name }, 'sc-tone-' + c.tone]"
+                  :title="'与 ' + c.name + ' 对话'" @click="pickTarget(c.name)">
+            <sc-avatar :name="c.name" size="sm" :src="avatarSrc(c.name)" :initial="charInitial(c.name)" :tone="c.tone"></sc-avatar>
+            <span class="sc-cast-main">
+              <span class="sc-cast-name-row">
+                <span class="sc-cast-name">{{ c.name }}</span>
+                <span class="sc-cast-role" v-if="c.role">{{ roleLabel(c.role) }}</span>
+              </span>
+              <span class="sc-cast-sub" v-if="c.subline">{{ c.subline }}</span>
+              <span class="sc-cast-meta" v-if="c.mood || c.location">
+                <span class="sc-tag" v-if="c.mood">{{ c.mood }}</span>
+                <span class="sc-tag" v-if="c.location && c.location !== locationLabel">📍 {{ c.location }}</span>
+              </span>
+            </span>
+            <span class="sc-cast-target-mark" v-if="target === c.name">@</span>
+            <span class="sc-cast-presence" v-else></span>
+          </button>
+          <div class="sc-side-empty" v-if="!presentCast.length">此刻四下无人。可以观察环境，或继续剧情等角色登场。</div>
+        </div>
+
+        <div class="sc-side-section" v-if="hasState && absentCast.length">
+          <div class="sc-side-label">
+            <span>其他角色</span>
+            <span class="sc-side-count">{{ absentCast.length }}</span>
+            <span class="line"></span>
+          </div>
+          <button class="sc-cast-card away" type="button" v-for="c in absentCast" :key="'abs-' + c.name"
+                  :class="'sc-tone-' + c.tone"
+                  :title="c.name + ' 此刻不在场'" @click="onRailCast(c)">
+            <sc-avatar :name="c.name" size="sm" :src="avatarSrc(c.name)" :initial="charInitial(c.name)" :tone="c.tone"></sc-avatar>
+            <span class="sc-cast-main">
+              <span class="sc-cast-name-row">
+                <span class="sc-cast-name">{{ c.name }}</span>
+                <span class="sc-cast-role" v-if="c.role">{{ roleLabel(c.role) }}</span>
+              </span>
+              <span class="sc-cast-sub">{{ c.location ? ('📍 ' + c.location) : '不在场' }}</span>
+            </span>
+            <span class="sc-cast-presence off"></span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ═══════════════ 中间：场景流 ═══════════════ -->
+    <main class="sc-main">
+      <div class="sc-scene-head" v-if="hasState">
+        <div class="sc-scene-chips">
+          <span class="sc-scene-badge">{{ sceneLabel }}</span>
+          <span class="sc-scene-place">📍 {{ locationLabel }}</span>
+          <span class="sc-scene-time">🕰 {{ timeLabel }}</span>
+          <span class="sc-scene-time">👥 {{ presentCount }}</span>
+        </div>
+        <div class="sc-scene-head-tools"><button class="sc-refresh-btn sc-state-button" type="button" v-if="isPanelOverlay" @click="openPanel" aria-label="打开行动与状态面板">行动</button>
+          <button class="sc-refresh-btn" type="button" title="刷新行动选项" aria-label="刷新行动选项"
+                  :disabled="busy || actionsLoading" @click="refreshActions">↻</button>
+          <button class="btn btn-primary sc-continue-btn" type="button" :disabled="busy" @click="continueScene">
+            <span v-if="busy && streamKind === 'scene'" class="sc-spinner"></span>
+            <span v-else aria-hidden="true">▶</span>
+            <span>继续剧情</span>
+          </button>
+        </div>
+      </div>
+
+      <div ref="streamEl" class="sc-stream" @scroll="onStreamScroll" aria-live="polite" :aria-busy="busy ? 'true' : 'false'">
+        <div class="sc-stream-inner">
+
+          <div v-if="initializing" class="sc-skeleton" aria-hidden="true">
+            <div class="sc-skeleton-row">
+              <div class="sc-sk sc-skeleton-av"></div>
+              <div class="sc-skeleton-lines">
+                <div class="sc-sk sc-skeleton-line w40"></div>
+                <div class="sc-sk sc-skeleton-line w80"></div>
+                <div class="sc-sk sc-skeleton-line w60"></div>
+              </div>
+            </div>
+            <div class="sc-skeleton-row">
+              <div class="sc-sk sc-skeleton-av"></div>
+              <div class="sc-skeleton-lines">
+                <div class="sc-sk sc-skeleton-line w60"></div>
+                <div class="sc-sk sc-skeleton-line w80"></div>
+              </div>
+            </div>
+            <div class="sc-skeleton-row">
+              <div class="sc-sk sc-skeleton-av"></div>
+              <div class="sc-skeleton-lines">
+                <div class="sc-sk sc-skeleton-line w40"></div>
+                <div class="sc-sk sc-skeleton-line w80"></div>
+                <div class="sc-sk sc-skeleton-line w60"></div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="!novelId" class="sc-empty-state">
+            <div class="sc-empty-icon" aria-hidden="true">📖</div>
+            <div class="sc-empty-title">请从书架选择一本小说进入</div>
+            <div class="sc-empty-desc">小说世界需要一本小说作为舞台。回到书架，打开一本书后选择「小说世界」。</div>
+            <div class="sc-empty-actions">
+              <a class="btn btn-primary" href="/">前往书架</a>
+            </div>
+            <div class="sc-empty-hint">链接格式：/scene.html?novel=小说ID</div>
+          </div>
+
+          <div v-else-if="initError" class="sc-empty-state">
+            <div class="sc-empty-icon" aria-hidden="true">⚠️</div>
+            <div class="sc-empty-title">无法载入互动存档</div>
+            <div class="sc-empty-desc">{{ initError }}</div>
+            <div class="sc-empty-actions">
+              <button class="btn btn-primary" type="button" @click="reloadAll">重试</button>
+              <a class="btn btn-secondary" href="/">返回书架</a>
+            </div>
+            <div class="sc-empty-hint">请确认后端已启动，且当前账号拥有这本小说。</div>
+          </div>
+
+          <!-- ── 无存档：选择扮演角色 ── -->
+          <div v-else-if="!hasState && !startBusy && !sceneStream.active" class="sc-start">
+            <div class="sc-start-hero">
+              <span class="sc-start-orb a" aria-hidden="true"></span>
+              <span class="sc-start-orb b" aria-hidden="true"></span>
+              <span class="sc-start-orb c" aria-hidden="true"></span>
+              <div class="sc-start-eyebrow">小说世界 · 进入小说世界</div>
+              <div class="sc-start-title" v-if="novelTitle">《{{ novelTitle }}》</div>
+              <div class="sc-start-title" v-else>进入小说世界</div>
+              <div class="sc-start-desc">选一个角色，走进这个场景。旁白与对白会在这里展开，你可以与在场角色实时对话、采取行动，或继续把剧情推向下一幕。</div>
+              <div class="sc-start-meta">
+                <span class="sc-tag accent" v-if="startOptions.length">可扮演 {{ startOptions.length }} 人</span>
+                <span class="sc-tag" v-if="novelGenre">{{ novelGenre }}</span>
+                <span class="sc-tag" v-if="novelStyle">{{ novelStyle }}</span>
+                <span class="sc-tag">多角色同场</span>
+                <span class="sc-tag">实时剧情</span>
+              </div>
+            </div>
+            <div class="sc-start-body">
+              <div class="sc-start-step"><span class="sc-start-step-num">1</span>选择你要扮演的角色</div>
+              <div class="sc-cast-grid" v-if="startOptions.length">
+                <button type="button" class="sc-cast-opt" v-for="opt in startOptions" :key="'opt-' + opt.name"
+                        :class="[{ on: startChar === opt.name }, 'sc-tone-' + opt.tone]"
+                        :aria-pressed="startChar === opt.name" @click="startChar = opt.name">
+                  <sc-avatar :name="opt.name" size="lg" :src="opt.avatar" :initial="charInitial(opt.name)" :tone="opt.tone"></sc-avatar>
+                  <span class="sc-cast-opt-main">
+                    <span class="sc-cast-opt-top">
+                      <span class="sc-cast-opt-name">{{ opt.name }}</span>
+                      <span class="sc-cast-opt-role">{{ roleLabel(opt.role) }}</span>
+                    </span>
+                    <span class="sc-cast-opt-identity" v-if="opt.identity">{{ opt.identity }}</span>
+                    <span class="sc-cast-opt-persona" v-if="opt.personality">{{ opt.personality }}</span>
+                    <span class="sc-cast-opt-style" v-if="opt.speak_style">说话风格：{{ opt.speak_style }}</span>
+                  </span>
+                  <span class="sc-cast-opt-check" aria-hidden="true">✓</span>
+                </button>
+              </div>
+              <div class="sc-start-empty" v-else>没有读取到可扮演角色档案。也可以不指定角色，直接以主角身份进入。</div>
+              <div class="sc-start-actions">
+                <button class="btn btn-primary sc-start-btn" type="button"
+                        :disabled="startBusy || (startOptions.length > 0 && !startChar)" @click="startInteractive">
+                  <span v-if="startBusy" class="sc-spinner sm"></span>
+                  <span>{{ startBusy ? '正在开启故事…' : '进入小说' }}</span>
+                </button>
+                <a class="btn btn-secondary" href="/">返回书架</a>
+              </div>
+              <div class="sc-start-error" v-if="startError">{{ startError }}</div>
+              <div class="sc-start-note">进入后会先播放一幕开场场景；进度会自动保存，刷新页面可继续。只有重开并选择新角色时才会清空当前进度。</div>
+            </div>
+          </div>
+
+          <!-- ── 场景流 ── -->
+          <template v-else>
+            <button v-if="earlierCount" class="sc-pop-action sc-history-more" @click="showEarlier">查看更早的 {{ earlierCount }} 条记录</button>
+            <div v-for="item in visibleFeed" :key="item.id" class="sc-feed-item">
+
+              <div v-if="item.type === 'scene-break'" class="sc-divider">
+                <span class="line"></span>
+                <span class="txt">第 {{ item.sceneNum }} 幕<template v-if="item.place"> · {{ item.place }}</template></span>
+                <span class="line"></span>
+              </div>
+
+              <div v-else-if="item.type === 'intro'" class="sc-intro">
+                <div class="sc-intro-head">
+                  <span class="ic" aria-hidden="true">✦</span>
+                  <span class="sc-intro-title">故事背景</span>
+                  <button class="sc-intro-toggle" type="button" @click="item.expanded = !item.expanded">{{ item.expanded ? '收起' : '展开' }}</button>
+                </div>
+                <div class="sc-intro-body" :class="{ clamp: !item.expanded }">
+                  <md-text :content="item.content"></md-text>
+                </div>
+              </div>
+
+              <div v-else-if="item.type === 'narration'" class="sc-narration" :class="{ stream: item.stream }">
+                <md-text :content="cleanText(item.content)"></md-text>
+                <span v-if="item.stream && item.content" class="sc-cursor" aria-hidden="true"></span>
+              </div>
+
+              <div v-else-if="item.type === 'action'" class="sc-action-block">
+                <span class="sc-action-bar" aria-hidden="true"></span>
+                <div class="sc-action-body">
+                  <span class="sc-block-tag">动作</span>
+                  <md-text :content="cleanText(item.content)"></md-text>
+                  <span v-if="item.stream && item.content" class="sc-cursor" aria-hidden="true"></span>
+                </div>
+              </div>
+
+              <div v-else-if="item.type === 'result'" class="sc-action-block">
+                <span class="sc-action-bar" aria-hidden="true"></span>
+                <div class="sc-action-body">
+                  <span class="sc-block-tag result">行动结果</span>
+                  <md-text :content="cleanText(item.content)"></md-text>
+                  <span v-if="item.stream && item.content" class="sc-cursor" aria-hidden="true"></span>
+                  <span v-if="item.stream && !item.content" class="sc-typing" aria-label="正在生成"><i></i><i></i><i></i></span>
+                </div>
+              </div>
+
+              <div v-else-if="item.type === 'dialogue'" class="sc-dialogue" :class="'sc-tone-' + charTone(item.speaker)">
+                <sc-avatar :name="item.speaker" size="sm" :src="avatarSrc(item.speaker)" :initial="charInitial(item.speaker)" :tone="charTone(item.speaker)"></sc-avatar>
+                <div class="sc-dialogue-body">
+                  <div class="sc-dialogue-meta">
+                    <span class="sc-dialogue-name">{{ item.speaker || '旁白' }}</span>
+                    <span v-if="item.sceneNum" class="sc-scene-tag">第 {{ item.sceneNum }} 幕</span>
+                  </div>
+                  <div class="sc-bubble">
+                    <md-text :content="item.content"></md-text>
+                    <span v-if="item.stream && item.content" class="sc-cursor" aria-hidden="true"></span>
+                    <span v-if="item.stream && !item.content" class="sc-typing" aria-label="正在输入"><i></i><i></i><i></i></span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else-if="item.type === 'user'" class="sc-user-line" :class="'sc-tone-' + charTone(playerName)">
+                <sc-avatar :name="playerName" size="sm" :src="avatarSrc(playerName)" :initial="playerInitial" :tone="charTone(playerName)" :user="true"></sc-avatar>
+                <div class="sc-user-body">
+                  <div class="sc-user-meta">
+                    <span class="sc-dialogue-name">{{ playerName }}</span>
+                    <span class="sc-mode-tag" :class="{ action: item.mode === 'action' }">{{ item.mode === 'action' ? '动作' : '对话' }}</span>
+                    <span v-if="item.target" class="sc-target-tag">@{{ item.target }}</span>
+                  </div>
+                  <div class="sc-bubble user">
+                    <md-text :content="item.content"></md-text>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else-if="item.type === 'node'" class="sc-node">
+                <div class="sc-node-head">
+                  <span>🎯 剧情节点</span>
+                  <span class="sc-tag" v-for="name in item.chars" :key="'nc-' + name">{{ name }}</span>
+                </div>
+                <div class="sc-node-reason" v-if="item.reason">{{ item.reason }}</div>
+                <div class="sc-agenda" v-if="item.agenda && item.agenda.goal"><b>议程</b> {{ item.agenda.goal }}</div>
+                <div class="sc-suggests" v-if="item.suggestions.length">
+                  <span class="sc-suggests-label">可以试试</span>
+                  <button class="sc-suggest-chip" type="button" v-for="(s, si) in item.suggestions" :key="'sg-' + si"
+                          @click="useSuggestion(s)">{{ s }}</button>
+                </div>
+              </div>
+
+              <div v-else-if="item.type === 'notice'" class="sc-notice" :class="[item.tone, item.kind === 'state' ? 'state' : '']">
+                <span class="sc-notice-ic" aria-hidden="true">{{ noticeIcon(item.tone) }}</span>
+                <span class="sc-notice-text">{{ item.text }}</span>
+                <button class="sc-notice-close" type="button" title="关闭提示" aria-label="关闭提示"
+                        @click="dismissItem(item)">✕</button>
+              </div>
+
+              <div v-else-if="item.type === 'cta'" class="sc-cta">
+                <span class="sc-cta-text">{{ item.text }}</span>
+                <button class="btn btn-primary btn-sm" type="button" :disabled="busy" @click="continueScene">继续剧情 ▸</button>
+              </div>
+            </div>
+
+            <div v-if="hasState && !feed.length && !sceneStream.active && !busy" class="sc-empty-state">
+              <div class="sc-empty-icon" aria-hidden="true">🎬</div>
+              <div class="sc-empty-title">场景尚未开始</div>
+              <div class="sc-empty-desc">互动存档已就绪，点击下方按钮开始第一幕。</div>
+              <div class="sc-empty-actions">
+                <button class="btn btn-primary" type="button" @click="continueScene">继续剧情</button>
+              </div>
+            </div>
+
+            <div v-if="sceneStream.active" class="sc-scene-streaming">
+              <div class="sc-sp-head">
+                <span class="sc-sp-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="sc-sp-title">{{ streamKind === 'start' ? '正在开启故事' : ('正在书写第 ' + (sceneStream.sceneNum || (sceneNo + 1)) + ' 幕') }}</span>
+                <span class="sc-sp-phase">{{ sceneStream.phase || '请稍候…' }}</span>
+              </div>
+              <div class="sc-sp-preview" v-if="scenePreview">{{ scenePreview }}<span class="sc-cursor" aria-hidden="true"></span></div>
+              <div class="sc-sp-preview muted" v-else>场景正在铺开，请稍候…</div>
+              <button class="sc-sp-stop" type="button" @click="stopStream">⏹ 停止生成</button>
+            </div>
+
+            <div v-if="busy && !sceneStream.active" class="sc-thinking">
+              <span class="sc-spinner sm"></span>
+              <span>{{ streamPhase || '正在推进剧情…' }}</span>
+            </div>
+          </template>
+
+        </div>
+
+        <button v-if="showJump" class="sc-jump" type="button" @click="scrollToBottom(true)">↓ 回到最新</button>
+      </div>
+
+      <!-- ═══════════════ 输入区 ═══════════════ -->
+      <div class="sc-composer" v-if="hasState">
+        <div class="sc-composer-shell">
+          <div class="sc-composer-top">
+            <div class="sc-modes" role="tablist" aria-label="输入模式">
+              <button class="sc-mode" type="button" data-mode="dialogue" role="tab"
+                      :aria-selected="inputMode === 'dialogue'" :class="{ on: inputMode === 'dialogue' }"
+                      @click="setInputMode('dialogue')">💬 对话</button>
+              <button class="sc-mode" type="button" data-mode="action" role="tab"
+                      :aria-selected="inputMode === 'action'" :class="{ on: inputMode === 'action' }"
+                      @click="setInputMode('action')">🎭 动作</button>
+            </div>
+            <div class="sc-target-area">
+              <button class="sc-target-btn" type="button"
+                      :class="[{ on: !!target }, 'sc-tone-' + charTone(target || playerName)]"
+                      :title="target ? ('当前目标：' + target) : '指定回应角色'"
+                      aria-haspopup="listbox" :aria-expanded="targetPickerOpen"
+                      @click.stop="toggleTargetPicker">
+                <span aria-hidden="true">@</span>
+                <span class="name">{{ target || '指定角色' }}</span>
+                <span class="sc-target-clear" v-if="target" role="button" title="取消指定"
+                      @click.stop="clearTarget">✕</span>
+              </button>
+              <span class="sc-force-hint" v-if="target">仅 {{ target }} 回应</span>
+            </div>
+            <span class="sc-mode-hint" :class="{ stream: busy }">{{ composerHint }}</span>
+          </div>
+          <div class="sc-input-row">
+            <textarea ref="draftEl" v-model="draft" rows="1" :placeholder="composerPlaceholder"
+                      :disabled="busy" aria-label="场景输入框"
+                      @keydown="onComposerKeydown" @input="autoGrow"></textarea>
+            <button v-if="busy" class="sc-stop" type="button" title="停止生成（保留已生成内容）" @click="stopStream">⏹ 停止</button>
+            <button v-else class="btn btn-primary sc-send" type="button" :disabled="!canSend" @click="sendChat">
+              发送<span class="sc-send-arrow" aria-hidden="true">↑</span>
+            </button>
+          </div>
+
+          <div class="sc-target-pop" v-if="targetPickerOpen" role="listbox" aria-label="选择对话对象" @click.stop>
+            <div class="sc-target-pop-head">
+              <span class="title">选择对话对象</span>
+              <span>仅在场角色</span>
+            </div>
+            <div class="sc-target-list">
+              <button class="sc-target-item" type="button" v-for="c in presentCast" :key="'tp-' + c.name"
+                      :class="[{ on: target === c.name }, 'sc-tone-' + c.tone]" role="option"
+                      :aria-selected="target === c.name" @click="pickTarget(c.name)">
+                <sc-avatar :name="c.name" size="sm" :src="avatarSrc(c.name)" :initial="charInitial(c.name)" :tone="c.tone"></sc-avatar>
+                <span class="sc-target-item-main">
+                  <span class="sc-target-item-name">{{ c.name }}</span>
+                  <span class="sc-target-item-sub">{{ castSubline(c) }}</span>
+                </span>
+              </button>
+              <div class="sc-target-empty" v-if="!presentCast.length">此刻没有可对话的角色。</div>
+            </div>
+          </div>
+        </div>
+        <div class="sc-composer-hint">
+          <span><span class="sc-kbd">Enter</span> 发送</span>
+          <span class="sep"></span>
+          <span><span class="sc-kbd">Shift</span>+<span class="sc-kbd">Enter</span> 换行</span>
+          <span class="sep"></span>
+          <span><span class="sc-kbd">@</span> 指定角色</span>
+          <span class="sep"></span>
+          <span>行动按钮在右侧面板</span>
+          <span v-if="busy">· {{ streamPhase || '生成中…' }}</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══════════════ 右侧：行动与状态 ═══════════════ -->
+    <aside class="sc-panel" :class="{ open: panelOpen }" aria-label="行动与状态">
+      <div class="sc-panel-head">
+        <div class="sc-panel-title"><span class="ic" aria-hidden="true">✦</span>行动与状态</div>
+        <button class="sc-panel-close" type="button" title="关闭面板" aria-label="关闭面板" @click="closePanel">✕</button>
+      </div>
+      <div class="sc-panel-scroll">
+
+        <section class="sc-panel-section">
+          <div class="sc-panel-label">
+            <span>行动</span>
+            <span class="count">{{ actions.length }}</span>
+            <span class="line"></span>
+            <button class="sc-panel-refresh" type="button" title="刷新行动选项" aria-label="刷新行动选项"
+                    :disabled="busy || actionsLoading" @click="refreshActions">↻</button>
+          </div>
+          <div class="sc-actions" v-if="actions.length">
+            <button class="sc-action-chip" type="button" v-for="a in actions" :key="a.id || a.label"
+                    :class="'intent-' + a.intent" :disabled="busy" @click="onAction(a)">
+              <span class="sc-action-emoji" aria-hidden="true">{{ a.emoji || '✦' }}</span>
+              <span class="sc-action-label">{{ a.label }}</span>
+              <span class="sc-action-intent">{{ intentLabel(a.intent) }}</span>
+            </button>
+          </div>
+          <div class="sc-empty-mini" v-else>
+            {{ actionsLoading ? '正在整理可行动作…' : (hasState ? '暂无推荐行动，直接输入对话或动作。' : '进入小说后可查看行动建议。') }}
+          </div>
+        </section>
+
+        <section class="sc-panel-section" v-if="hasState">
+          <div class="sc-panel-label"><span>世界状态</span><span class="line"></span></div>
+          <div class="sc-stat-grid">
+            <div class="sc-stat"><span class="sc-stat-k">场景</span><span class="sc-stat-v">{{ sceneLabel }}</span></div>
+            <div class="sc-stat"><span class="sc-stat-k">时间</span><span class="sc-stat-v">{{ timeLabel }}</span></div>
+            <div class="sc-stat"><span class="sc-stat-k">地点</span><span class="sc-stat-v" :title="locationLabel">{{ locationLabel }}</span></div>
+            <div class="sc-stat"><span class="sc-stat-k">在场</span><span class="sc-stat-v">{{ presentCount }} 人</span></div>
+          </div>
+          <div class="sc-goal" v-if="objective">
+            <div class="sc-goal-k">当前目标</div>
+            <div class="sc-goal-text">{{ objective }}</div>
+          </div>
+          <div class="sc-subblock" v-if="relationsList.length">
+            <span class="sc-sub-label">关系</span>
+            <div class="sc-relations">
+              <div class="sc-relation" v-for="rel in relationsList" :key="'rel-' + rel.name">
+                <span class="sc-relation-name">{{ rel.name }}</span>
+                <span class="sc-relation-bar"><i :style="relationBarStyle(rel)"></i></span>
+                <span class="sc-relation-value">{{ rel.label }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="sc-subblock" v-if="recentEvents.length">
+            <span class="sc-sub-label">最近发生</span>
+            <div class="sc-events">
+              <div class="sc-event" v-for="(ev, ei) in recentEvents" :key="'ev-' + ei">
+                <span class="sc-event-ts">{{ ev.ts }}</span>
+                <span class="sc-event-text">{{ ev.summary }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="sc-subblock" v-if="flags.length || factsCount">
+            <span class="sc-sub-label">剧情线索</span>
+            <div class="sc-chips">
+              <span class="sc-tag accent" v-if="factsCount">已确认剧情 {{ factsCount }} 条</span>
+              <span class="sc-tag" v-for="f in flags" :key="'flag-' + f">{{ f }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="sc-panel-section" v-if="nodeInfo">
+          <div class="sc-panel-label"><span>剧情节点</span><span class="line"></span></div>
+          <div class="sc-panel-node">
+            <div class="sc-node-head">
+              <span>🎯 需要对话</span>
+              <span class="sc-tag" v-for="n in nodeInfo.chars" :key="'pn-' + n">{{ n }}</span>
+            </div>
+            <div class="sc-node-reason" v-if="nodeInfo.reason">{{ nodeInfo.reason }}</div>
+            <div class="sc-agenda" v-if="nodeInfo.agenda && nodeInfo.agenda.goal"><b>议程</b> {{ nodeInfo.agenda.goal }}</div>
+            <div class="sc-suggests" v-if="nodeInfo.suggestions.length">
+              <button class="sc-suggest-chip" type="button" v-for="(s, si) in nodeInfo.suggestions" :key="'pns-' + si"
+                      @click="useSuggestion(s)">{{ s }}</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="sc-panel-section" v-if="presentCast.length">
+          <div class="sc-panel-label">
+            <span>在场角色</span><span class="count">{{ presentCast.length }}</span><span class="line"></span>
+          </div>
+          <div class="sc-panel-cast">
+            <button class="sc-panel-cast-row" type="button" v-for="c in presentCast" :key="'pc-' + c.name"
+                    :class="'sc-tone-' + c.tone" :title="'与 ' + c.name + ' 对话'" @click="pickTarget(c.name)">
+              <sc-avatar :name="c.name" size="xs" :src="avatarSrc(c.name)" :initial="charInitial(c.name)" :tone="c.tone"></sc-avatar>
+              <span class="sc-panel-cast-main">
+                <span class="sc-panel-cast-name">{{ c.name }}</span>
+                <span class="sc-panel-cast-sub">{{ castSubline(c) }}</span>
+              </span>
+            </button>
+          </div>
+        </section>
+
+      </div>
+    </aside>
+
+    <div class="sc-panel-backdrop" v-if="panelOpen && isPanelOverlay" @click="closePanel"></div>
+  </div>
+
+
+  <!-- ═══════════════ 确认框 ═══════════════ -->
+  <div class="sc-modal-overlay" v-if="confirmBox.visible" @click.self="resolveConfirm(false)">
+    <div class="sc-modal" role="dialog" aria-modal="true" :aria-label="confirmBox.title">
+      <div class="sc-modal-head">
+        <div class="sc-modal-title">{{ confirmBox.title }}</div>
+      </div>
+      <div class="sc-modal-body">
+        <div class="sc-confirm-msg">{{ confirmBox.message }}</div>
+      </div>
+      <div class="sc-modal-foot">
+        <button class="btn btn-ghost" type="button" @click="resolveConfirm(false)">{{ confirmBox.cancelText }}</button>
+        <button class="btn btn-danger" type="button" @click="resolveConfirm(true)">{{ confirmBox.confirmText }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Toast ═══════════════ -->
+  <div class="sc-toast-stack" aria-live="polite">
+    <div class="sc-toast" v-for="t in toasts" :key="t.id" :class="t.kind" @click="dismissToast(t.id)">
+      <span class="sc-toast-icon" aria-hidden="true">{{ t.icon }}</span>
+      <span class="sc-toast-content">
+        <span class="sc-toast-title">{{ t.title }}</span>
+        <span class="sc-toast-msg" v-if="t.message">{{ t.message }}</span>
+      </span>
+    </div>
+  </div>
+
+<app-navigation desktop active="worlds" :novel="novelId"></app-navigation>
+</div>
+
+<!-- 头像组件模板 -->
+<script type="text/x-template" id="sc-avatar-tpl"><span class="sc-avatar" :class="[sizeClass, 'sc-tone-' + tone, { user: user }]"><img v-if="src && !failed" :src="src" alt="" @error="failed = true"><span v-else>{{ initialText }}</span></span></script>
+
+<!-- 安全 Markdown 渲染：只生成文本 / strong / em / code / br 节点，不注入 HTML -->
+<script type="text/x-template" id="sc-md-tpl"><span class="sc-md"><template v-for="(tok, i) in tokens" :key="i"><strong v-if="tok.t === 'strong'">{{ tok.v }}</strong><em v-else-if="tok.t === 'em'">{{ tok.v }}</em><code v-else-if="tok.t === 'code'">{{ tok.v }}</code><br v-else-if="tok.t === 'br'"><template v-else>{{ tok.v }}</template></template></span></script>
+
+<script src="/vue.global.prod.js"></script>
+<script src="/assets/runtime.js?v=0b7e3913acf0"></script>
+<script src="/assets/scene-runtime.js?v=8c0c90dc83d1"></script>
+<script src="/assets/app-shell.js?v=9ad3bf2288e3"></script>
+<script src="/assets/scene.js?v=4c08b7440af3"></script>
+</body>
+</html>

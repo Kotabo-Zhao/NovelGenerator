@@ -25,7 +25,10 @@ class ServerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!started.compareAndSet(false, true)) return START_STICKY
+        val updateOnly = intent?.getBooleanExtra("update_only", false) ?: false
+        val internalBuild = intent?.getBooleanExtra("internal_build", BuildConfig.INTERNAL_BUILD)
+            ?: BuildConfig.INTERNAL_BUILD
+        if (!updateOnly && !started.compareAndSet(false, true)) return START_STICKY
         val apiKey = intent?.getStringExtra("api_key")
             ?: getSharedPreferences("novelgen", MODE_PRIVATE).getString("api_key", "") ?: ""
         val logDir = filesDir.absolutePath

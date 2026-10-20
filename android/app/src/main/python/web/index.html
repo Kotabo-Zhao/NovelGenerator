@@ -8,13 +8,15 @@
     <meta name="theme-color" content="#0d1117">
     <title>墨局 · 让灵感落成故事</title>
 <link rel="manifest" href="/manifest.json">
-<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
-<script src="/assets/runtime.js?v=20261019"></script>
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=62cce142b355">
+<script src="/assets/runtime.js?v=0b7e3913acf0"></script>
 <script src="/vue.global.prod.js" defer></script>
-<script src="/assets/workshop.js?v=20261019" defer></script>
-<link rel="stylesheet" href="/assets/theme.css?v=20261019">
-<link rel="stylesheet" href="/assets/tools.css?v=20261019">
-<link rel="stylesheet" href="/assets/workshop.css?v=20261019">
+<script src="/assets/app-shell.js?v=9ad3bf2288e3"></script><script src="/assets/workshop.js?v=eb415dbd7d58" defer></script>
+<link rel="stylesheet" href="/assets/theme.css?v=865324615487">
+<link rel="stylesheet" href="/assets/tools.css?v=ce007915307d">
+<link rel="stylesheet" href="/assets/workshop.css?v=740eab95b3e5">
+<link rel="stylesheet" href="/assets/navigation.css?v=3c2c084407a7">
+<link rel="stylesheet" href="/assets/app-polish.css?v=131c32a89913">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -33,17 +35,22 @@
     <nav class="sidebar-nav" aria-label="主导航">
       <button class="nav-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><icon name="grid"></icon>我的书架</button>
       <button class="nav-item" :class="{active:currentView==='create'}" @click="openCreate"><icon name="feather"></icon>创作工作台</button>
+      <button class="nav-item" :class="{active:currentView==='worlds'}" @click="openNovelWorld"><icon name="compass"></icon>进入小说世界</button>
+      <a class="nav-item" href="/cards.html?tab=library"><icon name="mask"></icon>按小说管理角色</a>
+      <a class="nav-item" href="/cards.html?tab=store"><icon name="spark"></icon>角色商店</a>
       <button class="nav-item" @click="openRoleplay"><icon name="mask"></icon>角色扮演</button>
       <button class="nav-item" :class="{active:currentView==='trends'}" @click="openTrends"><icon name="compass"></icon>灵感探索</button>
       <button class="nav-item" v-if="activeNovel" :class="{active:currentView==='write'}" @click="openWrite"><icon name="book"></icon>继续写作</button>
       <button class="nav-item" :class="{active:currentView==='export'}" @click="currentView='export'"><icon name="download"></icon>作品导出</button>
+      <button class="nav-item" :class="{active:currentView==='ideas'}" @click="openIdeas"><icon name="spark"></icon>灵感与素材</button>
+      <button class="nav-item" :class="{active:currentView==='settings'}" @click="openSettings"><icon name="settings"></icon>设置与模型</button>
     </nav>
     <div class="sidebar-note"><icon name="spark"></icon><strong>每个灵感，都值得写下</strong><p>从世界的第一笔，<br>到故事的下一章。</p></div>
-    <div class="sidebar-footer"><button class="btn btn-ghost btn-xs" @click="connectionOpen=true"><icon name="settings" size="15"></icon>连接设置</button><button class="icon-button" @click="toggleTheme" :aria-label="theme==='dark'?'切换浅色主题':'切换深色主题'"><icon :name="theme==='dark'?'sun':'moon'" size="17"></icon></button></div>
+    <div class="sidebar-footer"><button class="btn btn-ghost btn-xs" @click="openSettings"><icon name="settings" size="15"></icon>完整设置</button><button class="icon-button" @click="toggleTheme" :aria-label="theme==='dark'?'切换浅色主题':'切换深色主题'"><icon :name="theme==='dark'?'sun':'moon'" size="17"></icon></button></div>
   </aside>
 
   <main class="main">
-    <header class="workspace-topbar"><div class="workspace-breadcrumb"><span>墨局</span><span>/</span><span>{{ viewLabel }}</span></div><div class="workspace-actions"><span class="workspace-date">{{ todayLabel }}</span><button class="connection-chip" @click="connectionOpen=true"><i class="connection-dot" :class="{ready:provider.configured}"></i>{{ provider.configured ? provider.model : '连接模型' }}</button></div></header>
+    <header class="workspace-topbar"><div class="workspace-breadcrumb"><span>墨局</span><span>/</span><span>{{ viewLabel }}</span></div><div class="workspace-actions"><span class="workspace-date">{{ todayLabel }}</span><button class="connection-chip" @click="openSettings" aria-label="配置模型"><i class="connection-dot" :class="{ready:provider.configured}"></i>{{ provider.configured ? provider.model : '配置模型' }}</button></div></header>
 
     <template v-if="currentView==='shelf'">
       <section class="library-hero">
@@ -77,6 +84,7 @@
               <span class="tag">{{ n.style }}</span>
               <span class="badge" :class="((n.state.completed_chapters||[]).length)?'badge-ok':'badge-warn'">{{ (n.state.completed_chapters||[]).length }}/{{ n.state.total_chapters }}</span>
             </div>
+            <div class="book-quick-actions"><button @click.stop="enterNovelWorld(n)">进入小说世界</button><a :href="'/cards.html?tab=library&novel='+encodeURIComponent(n.id)" @click.stop>本书角色</a></div>
             <div class="book-progress-row">
               <div class="progress-bar"><div class="progress-fill" :style="{width:pct(n)}"></div></div>
               <span class="progress-text">{{ (n.state.completed_chapters||[]).length }}章</span>
@@ -86,7 +94,14 @@
         <div v-if="!filteredNovels.length" class="library-no-results">没有找到匹配的作品，试试其他关键词。</div>
         <button class="book-card book-add" @click="openCreate"><span class="book-add-circle"><icon name="plus" size="23"></icon></span><strong>开始一个新故事</strong><small>你的下一个世界，从这里开始</small></button>
       </div>
-    </section>
+    </template>
+
+    <template v-if="currentView==='worlds'">
+      <section class="world-intro"><span class="eyebrow">LIVE YOUR STORY</span><h1>走进你笔下的世界</h1><p>选择一部作品，成为书中人物，与在场角色交谈、探索和行动。你的选择会留下剧情记录，随时可以回来继续。</p><button class="btn btn-secondary" @click="openSettings">配置模型</button></section>
+      <div v-if="loading.shelf" class="empty">正在读取作品…</div>
+      <div v-else-if="!novels.length" class="empty"><h3>先创建一个世界</h3><p>作品有了大纲和人物后，就可以选择身份入世。</p><button class="btn btn-primary" @click="openCreate">新建作品</button></div>
+      <div v-else class="world-grid"><article class="world-card" v-for="n in novels" :key="n.id"><span class="tag">{{ n.genre || '原创故事' }}</span><h2>{{ n.title }}</h2><p>{{ n.style || '你的故事，你的选择' }}</p><button class="btn btn-primary" @click="enterNovelWorld(n)">进入小说世界 →</button></article></div>
+    </template>
 
     <template v-if="currentView==='create'">
       <div class="main-header">
@@ -227,7 +242,7 @@
         <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
         <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
       </div>
-      <button v-else class="btn btn-primary btn-lg w-full" @click="doCreate" v-if="!planReady" :disabled="outlineLoading">{{ outlineLoading ? '⏳ 正在加载大纲…' : '✨ 生成大纲' }}</button>
+      <button v-else-if="!planReady" class="btn btn-primary btn-lg w-full" @click="doCreate" :disabled="outlineLoading">{{ outlineLoading ? '⏳ 正在加载大纲…' : '✨ 生成大纲' }}</button>
 
       <div v-if="decomposeSummary" class="card" style="margin-top:12px;background:var(--bg2);border-color:var(--accent)">
         <div class="card-title" style="color:var(--accent);display:flex;align-items:center;justify-content:space-between">
@@ -377,16 +392,9 @@
               {{ g }} ×{{ trendData.patterns.top_genres[g] }}
             </span>
           </div>
-          <!-- 安卓「⋯」下拉菜单 -->
-          <div v-if="writeMoreOpen" class="write-more-menu glass" @click.stop>
-            <button class="write-more-item" @click="writeMoreGo('search')">🔍 全文检索</button>
-            <button class="write-more-item" @click="writeMoreGo('bible')">📖 世界圣经</button>
-            <button class="write-more-item" @click="writeMoreGo('stats')">📊 创作统计</button>
-            <button class="write-more-item" @click="writeMoreGo('scan')">🔬 设定扫描</button>
-            <button class="write-more-item" @click="writeMoreGo('versions')">🕘 版本历史</button>
-            <button class="write-more-item" @click="writeMoreGo('outline')">📋 大纲</button>
-          </div>
         </div>
+
+      </div>
 
       <div class="card" v-if="trendData?.hot_novels?.length">
         <div class="card-title">🔥 {{ trendData.source === 'live' ? '实时' : '内置' }}热门榜 TOP{{ trendData.hot_novels.length }}</div>
@@ -450,11 +458,13 @@
               <div class="mode-pill"><span>🐉 网文</span><label class="toggle-switch"><input type="checkbox" v-model="writingModeLiterary" @change="onModeChange"><span class="toggle-slider"></span></label><span>📖 文学</span></div>
               <span class="text-xs color-text3">系统会按章节契约自动选择最合适的生成策略</span>
             </div>
-          </details>
+          </div>
+        </div>
 
         <div class="sg-tabs">
           <button class="sg-tab" :class="{active:writing.activeTab==='write'}" @click="writing.activeTab='write'"><icon name="feather" size="15"></icon> 写作</button>
           <button class="sg-tab" :class="{active:writing.activeTab==='storygraph'}" @click="switchToStoryGraph"><icon name="compass" size="15"></icon> 剧情图谱</button>
+          <button class="sg-tab" @click="enterNovelWorld(activeNovel)"><icon name="compass" size="15"></icon> 进入小说世界</button>
           <button class="sg-tab" @click="openRoleplay"><icon name="mask" size="15"></icon> 角色扮演</button>
         </div>
 
@@ -1260,19 +1270,12 @@
       </div>
     </template>
 
-    <template v-if="currentView==='export'">
-      <div class="main-header">
-        <h2>导出</h2>
-        <div class="sub">{{ novels.length }} 部作品 · {{ isAndroid ? '单本或批量导出 TXT' : '单本或批量导出 TXT / PDF / EPUB' }}</div>
-      </div>
-    </section>
-
     <!-- ══════════ 导出视图 ══════════ -->
     <section v-if="currentView==='export'" class="view export-view">
       <div class="view-head">
         <div>
           <h2 class="view-title">付梓 · 导出</h2>
-          <p class="view-sub">{{ novels.length }} 部作品 · 单本或批量导出 TXT/EPUB</p>
+          <p class="view-sub">{{ novels.length }} 部作品 · {{ isAndroid ? '单本或批量导出 TXT' : '单本或批量导出 TXT / PDF / EPUB' }}</p>
         </div>
       </div>
       <div class="glass panel">
@@ -1305,7 +1308,7 @@
       <div class="view-head">
         <div>
           <h2 class="view-title">设置</h2>
-          <p class="view-sub">外观、服务与关于</p>
+          <p class="view-sub">模型配置、外观与创作工具</p>
         </div>
       </div>
 
@@ -1364,7 +1367,7 @@
         </div>
 
         <!-- 多供应商 LLM 配置 -->
-        <div class="llm-config">
+        <div class="llm-config" id="model-config">
           <div class="llm-config-title">🧠 选择模型服务</div>
           <div class="llm-provider-grid" v-if="llmProviders.length">
             <button v-for="p in llmProviders" :key="p.id" type="button" class="llm-provider" :class="{on:llmProvider===p.id}" @click="selectLLMProvider(p.id)">
@@ -1392,15 +1395,27 @@
             <button class="btn btn-primary btn-sm" type="button" @click="saveLLMConfig(true)" :disabled="loading.health || llmSaving">{{ llmTesting ? '测试中…' : '保存并测试' }}</button>
           </div>
           <div class="llm-config-hint" v-if="llmTested">✅ 已连通 {{ llmProviderMeta?.name || llmProvider }} / {{ llmEffectiveModel }}</div>
-          <div class="llm-config-hint" style="color:var(--text3)">Key 只发送到本地后端并保存在本机运行时配置中，不会回显明文。</div>
+          <div class="llm-config-hint" style="color:var(--text3)">同一服务留空 Key 会保留已保存的密钥。配置用于小说创作、小说世界与角色扮演，保存在本机，重启后仍然有效。</div>
         </div>
+      </div>
+
+      <div class="glass panel">
+        <div class="panel-title">创作工具</div>
+        <div class="settings-tools"><a class="btn btn-secondary" href="/cards.html?tab=library">角色库</a><a class="btn btn-secondary" href="/cards.html?tab=store">角色商店</a><button class="btn btn-secondary" @click="currentView='export'">作品导出</button>
+          <button class="btn btn-secondary" @click="openRoleplay">🎭 角色扮演（SillyTavern）</button>
+          <button class="btn btn-secondary" @click="openIdeas">💡 灵感与素材</button>
+          <button class="btn btn-secondary" @click="openTrends">🧭 灵感探索</button>
+          <button class="btn btn-secondary" :disabled="!activeNovel" @click="openBible">📖 世界圣经</button>
+          <button class="btn btn-secondary" :disabled="!activeNovel" @click="openStats">📊 创作统计</button>
+        </div>
+        <p class="field-note" v-if="!activeNovel">从书架打开作品后，可编辑世界圣经和查看创作统计。</p>
       </div>
 
       <!-- 关于 -->
       <div class="glass panel">
         <div class="panel-title">ℹ️ 关于</div>
         <div class="about-row"><span class="about-k">应用</span><span class="about-v">墨·局 — AI 小说创作</span></div>
-        <div class="about-row"><span class="about-k">版本</span><span class="about-v">2.6.0</span></div>
+        <div class="about-row"><span class="about-k">版本</span><span class="about-v">4.1.0</span></div>
         <div class="about-row"><span class="about-k">架构</span><span class="about-v">Vue 3 · FastAPI · 本地优先</span></div>
       </div>
     </section>
@@ -1658,8 +1673,18 @@
     </section>
   </main>
 
-  <nav class="bottom-nav" aria-label="移动端导航"><button class="bn-item" :class="{active:currentView==='shelf'}" @click="currentView='shelf'"><icon name="grid"></icon>书架</button><button class="bn-item" :class="{active:currentView==='create'}" @click="openCreate"><icon name="feather"></icon>创作</button><button class="bn-item" @click="openRoleplay"><icon name="mask"></icon>扮演</button><button class="bn-item" :class="{active:currentView==='export'}" @click="currentView='export'"><icon name="download"></icon>导出</button><button class="bn-item" @click="connectionOpen=true"><icon name="settings"></icon>设置</button></nav>
-  <connection-dialog :open="connectionOpen" @close="connectionOpen=false"></connection-dialog>
+  <app-navigation :active="currentView==='write'?'create':currentView" :novel="activeNovel?activeNovel.id:''" @navigate="navigateMain"></app-navigation>
+  <div v-if="modal.visible" class="toast-overlay" @click.self="closeModal">
+    <section class="toast-box" role="dialog" aria-modal="true" :aria-label="modal.title">
+      <h2 class="panel-title">{{ modal.title }}</h2>
+      <label for="tool-modal-value">{{ modal.label }}</label>
+      <template v-if="modal.kind!=='confirm'">
+        <textarea v-if="modal.textarea" id="tool-modal-value" v-model="modal.value" :rows="modal.rows"></textarea>
+        <input v-else id="tool-modal-value" v-model="modal.value" @keyup.enter="confirmModal">
+      </template>
+      <div class="toast-actions"><button class="btn btn-secondary" @click="closeModal">取消</button><button class="btn btn-primary" @click="confirmModal">{{ modal.confirmText }}</button></div>
+    </section>
+  </div>
 </div>
 
 

@@ -1,0 +1,21 @@
+/* Shared finishing layer; layout-specific styles remain with their feature. */
+html { scrollbar-gutter:auto; }
+button,a,input,select,textarea { touch-action:manipulation; }
+:focus-visible { outline:2px solid var(--accent,#6976d9); outline-offset:3px; }
+.app-bottom-nav .bn-item { transition:background .16s,color .16s; }
+.app-bottom-nav .bn-item:hover { background:var(--accent-soft,#6976d914); }
+.book-quick-actions { display:flex;align-items:center;gap:8px;margin:14px 0 2px; }
+.book-quick-actions button,.book-quick-actions a { display:inline-flex;font:11px/1.5 inherit;color:var(--accent);border:1px solid var(--border);padding:5px 7px;border-radius:6px;background:var(--bg);text-decoration:none; }
+[data-theme="light"] .roleplay-page,[data-theme="light"] .novel-world-page { --bg:#f5f6fa;--bg-2:#f0f2f8;--panel-solid:#fff;--text:#252733;--text-2:#686e83;--text-3:#8c91a4;--accent:#6976d9;--active:#6976d913;--border:#25273312;--border-2:#6976d92a;--topbar:#ffffffdf;--sheet-bg:#fff; }
+.roleplay-page .rp-bubble,.novel-world-page .sc-bubble { box-shadow:0 3px 12px #17192304; }
+.roleplay-page .rp-composer,.novel-world-page .sc-composer { border-top-color:var(--border); }
+.roleplay-page .rp-stream,.novel-world-page .sc-stream { overscroll-behavior:contain; }
+.world-card { box-shadow:0 4px 20px #25273303;transition:transform .15s; }
+.world-card:hover { transform:translateY(-2px); }
+@media(max-width:768px) { .book-quick-actions { flex-wrap:wrap; } .book-quick-actions button,.book-quick-actions a { min-height:32px; } }
+@media(prefers-reduced-motion:reduce) { .app-bottom-nav .bn-item,.world-card { transition:none; } }
+
+@media(min-width:769px) { .roleplay-page #app,.novel-world-page #app {padding-bottom:78px;} .app-bottom-nav.shell-desktop {display:flex;} }
+#app-errors { position:fixed; z-index:9999; bottom:24px; left:50%; transform:translateX(-50%); box-sizing:border-box; width:min(90vw,640px); padding:18px; border:1px solid #b94b50; border-radius:12px; background:#fff6f5; color:#813337; box-shadow:0 8px 32px #17192326; font:14px/1.6 system-ui,sans-serif; word-break:break-word; }
+#app-errors .app-error-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+#app-errors .app-error-actions button, #app-errors .app-error-actions a { margin:0; padding:5px 10px; border:1px solid #d8b2b4; border-radius:6px; color:#813337; background:#fff; cursor:pointer; font:inherit; text-decoration:none; }

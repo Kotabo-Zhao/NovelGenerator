@@ -29,12 +29,14 @@ from config import NOVELS_DIR
 from core.atomic_io import safe_read_json
 from core.roleplay import CardError, RoleplayEngine, RoleplayStore, parse_card_bytes
 from core.roleplay import novel_cards, worldinfo
+from core.roleplay.marketplace import Marketplace, MarketError
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_owner)])
 
 _store = RoleplayStore()
 _engine = RoleplayEngine(engine, _store)
+_market = Marketplace()
 
 _TEXT_FIELDS = (
     "name", "description", "personality", "scenario", "first_mes", "mes_example",
@@ -106,6 +108,16 @@ def _get_char(char_id: str) -> Dict[str, Any]:
     return card
 
 
+async def _character_mutation(char_id: str):
+    _get_char(char_id)
+    if not _store.begin_generation(char_id):
+        raise HTTPException(409, '这个角色正在回复，请先停止生成再修改')
+    try:
+        yield
+    finally:
+        _store.end_generation(char_id)
+
+
 def _public(card: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(card)
     cid = str(out.get("id") or "")
@@ -141,6 +153,74 @@ def _apply_card_fields(body: Dict[str, Any], base: Optional[Dict[str, Any]] = No
 
 # -------------------------------------------------------------------- settings
 
+def _book_scope(value):
+    novel_id = str(value or '').strip()
+    if novel_id:
+        _validate_novel_id(novel_id)
+        if not engine.get_novel(novel_id):
+            raise HTTPException(404, '目标小说不存在')
+    return novel_id
+
+
+@router.get('/api/roleplay/marketplace/catalog')
+async def market_catalog(source: str = 'official', q: str = '', page: int = 1):
+    try:
+        return {'ok': True, **await _market.catalog(source, q, page)}
+    except MarketError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.post('/api/roleplay/marketplace/preview')
+async def market_preview(request: Request):
+    body = await _json_body(request)
+    try:
+        card, _ = await _market.card(str(body.get('source', 'official')), str(body.get('reference', '')))
+        return {'ok': True, 'character': _clamp_card(card)}
+    except (MarketError, CardError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post('/api/roleplay/marketplace/install')
+async def market_install(request: Request):
+    body = await _json_body(request)
+    novel_id = _book_scope(body.get('novel_id', ''))
+    try:
+        card, avatar = await _market.card(str(body.get('source', 'official')), str(body.get('reference', '')))
+    except (MarketError, CardError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    card = _clamp_card(card)
+    card['novel_id'] = novel_id
+    card['source'] = 'marketplace'
+    # Network work finishes before claiming the short storage transaction.
+    with _store._lock:
+        for existing in _store.list_characters():
+            if (existing.get('market_source'), existing.get('market_reference'), existing.get('novel_id', '')) == (card['market_source'], card['market_reference'], novel_id):
+                return {'ok': True, 'character': _public(existing), 'reused': True}
+        entries = worldinfo.entries_from_card(card)
+        card.pop('character_book', None)
+        card.update(id=uuid.uuid4().hex, created_at=time.time())
+        card = _store.upsert_character(card)
+        if entries:
+            _store.save_worldinfo(card['id'], entries)
+        if avatar:
+            _store.save_avatar(card['id'], avatar)
+    return {'ok': True, 'character': _public(card), 'reused': False, 'worldinfo_imported': len(entries)}
+
+
+@router.post('/api/roleplay/characters/{char_id}/copy')
+async def copy_character(char_id: str, request: Request):
+    body = await _json_body(request)
+    card = dict(_get_char(char_id))
+    card.update(id=uuid.uuid4().hex, novel_id=_book_scope(body.get('novel_id', '')), created_at=time.time())
+    card = _store.upsert_character(card)
+    if _store.has_avatar(char_id):
+        with open(_store.avatar_path(char_id), 'rb') as stream:
+            _store.save_avatar(card['id'], stream.read(_MAX_UPLOAD_BYTES))
+    entries = _store.load_worldinfo(char_id)
+    if entries:
+        _store.save_worldinfo(card['id'], entries)
+    return {'ok': True, 'character': _public(card)}
+
 @router.get("/api/roleplay/settings")
 async def get_settings():
     return {"ok": True, "settings": _store.settings()}
@@ -156,13 +236,28 @@ async def update_settings(request: Request):
 # ------------------------------------------------------------------ characters
 
 @router.get("/api/roleplay/characters")
-async def list_characters():
-    return {"ok": True, "characters": [_public(c) for c in _store.list_characters()]}
+async def list_characters(novel_id: Optional[str] = None, summary: bool = False):
+    cards = _store.list_characters(novel_id=novel_id, summary=summary)
+    return {"ok": True, "characters": [_public(c) for c in cards]}
 
 
 @router.get("/api/roleplay/characters/{char_id}")
 async def get_character(char_id: str):
     return {"ok": True, "character": _public(_get_char(char_id))}
+
+
+@router.get('/api/roleplay/characters/{char_id}/export')
+async def export_character(char_id: str):
+    from urllib.parse import quote
+    card = _get_char(char_id)
+    data = {key: card.get(key, '') for key in _TEXT_FIELDS}
+    for key in (*_LIST_FIELDS, 'extensions'):
+        data[key] = card.get(key, [] if key in _LIST_FIELDS else {})
+    entries = _store.load_worldinfo(char_id)
+    if entries:
+        data['character_book'] = {'name': card['name'] + ' 世界书', 'entries': entries}
+    return Response(json.dumps({'spec': 'chara_card_v2', 'spec_version': '2.0', 'data': data}, ensure_ascii=False, indent=2),
+                    media_type='application/json', headers={'Content-Disposition': "attachment; filename=character.json; filename*=UTF-8''" + quote(card['name']+'.json')})
 
 
 @router.post("/api/roleplay/characters")
@@ -174,24 +269,27 @@ async def create_character(request: Request):
     now = time.time()
     card["id"] = uuid.uuid4().hex
     card["source"] = "manual"
+    card['novel_id'] = _book_scope(body.get('novel_id', ''))
     card["created_at"] = now
     card["updated_at"] = now
     _store.upsert_character(card)
     return {"ok": True, "character": _public(card)}
 
 
-@router.put("/api/roleplay/characters/{char_id}")
+@router.put("/api/roleplay/characters/{char_id}", dependencies=[Depends(_character_mutation)])
 async def update_character(char_id: str, request: Request):
     existing = _get_char(char_id)
     body = await _json_body(request)
     card = _apply_card_fields(body, existing)
+    if 'novel_id' in body:
+        card['novel_id'] = _book_scope(body['novel_id'])
     if not str(card.get("name") or "").strip():
         raise HTTPException(400, "角色名不能为空")
     _store.upsert_character(card)
     return {"ok": True, "character": _public(card)}
 
 
-@router.delete("/api/roleplay/characters/{char_id}")
+@router.delete("/api/roleplay/characters/{char_id}", dependencies=[Depends(_character_mutation)])
 async def delete_character(char_id: str):
     if not _store.delete_character(char_id):
         raise HTTPException(404, "角色不存在")
@@ -214,6 +312,7 @@ async def import_character(request: Request):
     now = time.time()
     card["id"] = uuid.uuid4().hex
     card["source"] = fmt
+    card['novel_id'] = _book_scope(body.get('novel_id', ''))
     card["created_at"] = now
     card["updated_at"] = now
     book_entries = worldinfo.entries_from_card(card)
@@ -355,7 +454,7 @@ async def get_avatar(char_id: str):
     )
 
 
-@router.post("/api/roleplay/characters/{char_id}/avatar")
+@router.post("/api/roleplay/characters/{char_id}/avatar", dependencies=[Depends(_character_mutation)])
 async def upload_avatar(char_id: str, request: Request):
     _get_char(char_id)
     body = await _json_body(request)
@@ -381,7 +480,7 @@ async def get_chat(char_id: str):
     return {"ok": True, "messages": _store.chat_messages(char_id)}
 
 
-@router.post("/api/roleplay/characters/{char_id}/chat/start")
+@router.post("/api/roleplay/characters/{char_id}/chat/start", dependencies=[Depends(_character_mutation)])
 async def start_chat(char_id: str):
     _get_char(char_id)
     messages = _engine.ensure_chat(char_id)
@@ -445,7 +544,7 @@ async def list_worldinfo(char_id: str):
     return {"ok": True, "entries": entries, "total": len(entries), "enabled": enabled}
 
 
-@router.post("/api/roleplay/characters/{char_id}/worldinfo/import")
+@router.post("/api/roleplay/characters/{char_id}/worldinfo/import", dependencies=[Depends(_character_mutation)])
 async def import_worldinfo(char_id: str, request: Request):
     _get_char(char_id)
     body = await _json_body(request)
@@ -467,7 +566,7 @@ async def import_worldinfo(char_id: str, request: Request):
     return {"ok": True, "imported": len(entries), "entries": merged}
 
 
-@router.post("/api/roleplay/characters/{char_id}/worldinfo")
+@router.post("/api/roleplay/characters/{char_id}/worldinfo", dependencies=[Depends(_character_mutation)])
 async def replace_worldinfo(char_id: str, request: Request):
     _get_char(char_id)
     body = await _json_body(request)
@@ -483,7 +582,7 @@ async def replace_worldinfo(char_id: str, request: Request):
     return {"ok": True, "entries": entries}
 
 
-@router.patch("/api/roleplay/characters/{char_id}/worldinfo/{entry_id}")
+@router.patch("/api/roleplay/characters/{char_id}/worldinfo/{entry_id}", dependencies=[Depends(_character_mutation)])
 async def update_worldinfo_entry(char_id: str, entry_id: str, request: Request):
     _get_char(char_id)
     body = await _json_body(request)
@@ -509,7 +608,7 @@ async def update_worldinfo_entry(char_id: str, entry_id: str, request: Request):
     return {"ok": True, "entry": found, "entries": entries}
 
 
-@router.delete("/api/roleplay/characters/{char_id}/worldinfo/{entry_id}")
+@router.delete("/api/roleplay/characters/{char_id}/worldinfo/{entry_id}", dependencies=[Depends(_character_mutation)])
 async def delete_worldinfo_entry(char_id: str, entry_id: str):
     _get_char(char_id)
     entries = _store.load_worldinfo(char_id)
@@ -520,7 +619,7 @@ async def delete_worldinfo_entry(char_id: str, entry_id: str):
     return {"ok": True, "entries": entries}
 
 
-@router.post("/api/roleplay/characters/{char_id}/chat/clear")
+@router.post("/api/roleplay/characters/{char_id}/chat/clear", dependencies=[Depends(_character_mutation)])
 async def clear_chat(char_id: str, request: Request):
     _get_char(char_id)
     greeting_index: Optional[int] = None

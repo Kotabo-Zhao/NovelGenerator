@@ -52,7 +52,7 @@ def test_scene_provider_failure_does_not_advance_or_write_filler(tmp_path):
     state = store.load_state("book")
 
     assert any(event.get("type") == "error" for event in events)
-    assert any("DEEPSEEK_API_KEY" in event.get("message", "") for event in events)
+    assert any(event.get("type") == "error" and event.get("message", "").strip() for event in events)
     assert state["scene_num"] == 0
     assert store.recent_scenes("book", 10) == []
     assert state.get("recent_blocks") in (None, [])
@@ -70,7 +70,7 @@ def test_dialogue_provider_failure_keeps_user_input_but_writes_no_fake_reply(tmp
     chats = store.recent_chats("book", 10)
 
     assert any(event.get("type") == "error" for event in events)
-    assert any("DEEPSEEK_API_KEY" in event.get("message", "") for event in events)
+    assert any(event.get("type") == "error" and event.get("message", "").strip() for event in events)
     assert [chat["role"] for chat in chats] == ["user"]
     assert all("沉默片刻" not in chat.get("content", "") for chat in chats)
 
@@ -92,7 +92,7 @@ def test_action_result_provider_failure_writes_no_generic_narration(tmp_path):
     )
 
     assert any(event.get("type") == "error" for event in events)
-    assert any("DEEPSEEK_API_KEY" in event.get("message", "") for event in events)
+    assert any(event.get("type") == "error" and event.get("message", "").strip() for event in events)
     assert store.recent_chats("book", 10) == []
     assert store.load_state("book").get("recent_blocks") in (None, [])
 

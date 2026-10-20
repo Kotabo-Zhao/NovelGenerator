@@ -115,6 +115,9 @@ class RoleplayStore:
         self.worldinfo_dir = os.path.join(self.root, "worldinfo")
         self._lock = threading.RLock()
         self._generating = set()
+        self._characters_signature = None
+        self._characters_cache = []
+        self._character_index = {}
         os.makedirs(self.chats_dir, exist_ok=True)
         os.makedirs(self.history_dir, exist_ok=True)
         os.makedirs(self.avatars_dir, exist_ok=True)
@@ -123,26 +126,43 @@ class RoleplayStore:
 
     # ------------------------------------------------------------- characters
 
-    def list_characters(self) -> List[Dict[str, Any]]:
-        with self._lock:
-            raw = safe_read_json(self.characters_file, default=[])
+    def _refresh_characters(self):
+        try:
+            info = os.stat(self.characters_file)
+            signature = (info.st_mtime_ns, info.st_size)
+        except FileNotFoundError:
+            signature = (0, 0)
+        if signature == self._characters_signature:
+            return
+        raw = safe_read_json(self.characters_file, default=[])
         if isinstance(raw, dict):
-            raw = raw.get("characters") or []
-        if not isinstance(raw, list):
-            raw = []
-        cards = [self._with_defaults(item) for item in raw if isinstance(item, dict)]
-        cards.sort(key=lambda c: (c.get("updated_at") or 0), reverse=True)
-        return cards
+            raw = raw.get('characters') or []
+        cards = [self._with_defaults(item) for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+        cards.sort(key=lambda card: (card.get('updated_at') or 0), reverse=True)
+        self._characters_cache = cards
+        self._character_index = {card['id']: card for card in cards}
+        self._characters_signature = signature
+
+    def list_characters(self, *, novel_id=None, summary=False) -> List[Dict[str, Any]]:
+        with self._lock:
+            self._refresh_characters()
+            cards = self._characters_cache
+            if novel_id is not None:
+                cards = [card for card in cards if card.get('novel_id', '') == novel_id]
+            if summary:
+                cards = [{key: card.get(key) for key in ('id', 'name', 'novel_id', 'tags', 'source', 'creator', 'updated_at', 'market_source', 'market_reference')}
+                         | {'description': str(card.get('description') or '')[:240]} for card in cards]
+            return copy.deepcopy(cards)
 
     def get_character(self, char_id: str) -> Optional[Dict[str, Any]]:
-        for card in self.list_characters():
-            if card.get("id") == char_id:
-                return card
-        return None
+        with self._lock:
+            self._refresh_characters()
+            return copy.deepcopy(self._character_index.get(char_id))
 
     def save_characters(self, cards: List[Dict[str, Any]]) -> None:
         with self._lock:
             atomic_write_json(self.characters_file, [self._with_defaults(c) for c in cards])
+            self._characters_signature = None
 
     def upsert_character(self, card: Dict[str, Any]) -> Dict[str, Any]:
         card = self._with_defaults(card)

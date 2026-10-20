@@ -1,0 +1,839 @@
+# -*- coding: utf-8 -*-
+"""WorldState — 互动小说世界状态三支柱（v3.6）
+
+三支柱：time（时间） / location（地点） / chars（人物在场）
+铁律：**状态变化由确定性规则驱动，LLM 输出仅作候选**（防幻觉）。
+      LLM 负责填内容（对话/描写），不负责改状态。
+
+数据结构（state["world"]）：
+{
+  "time":     {"label": "正午", "slot": 3, "day": 1},
+  "location": "茶楼",
+  "chars":    {"林晚晚": {"present": true, "location": "茶楼", "relation": 62}},
+  "locations": {                       # 地点图谱
+    "茶楼": {"desc": "...", "connected": ["街市"], "chars": ["林晚晚"], "items": []}
+  }
+}
+"""
+from __future__ import annotations
+
+import logging
+import re
+from typing import List, Optional, Tuple
+
+log = logging.getLogger(__name__)
+
+# ── 时间档位表（确定性推进）──
+TIME_SLOTS = ["清晨", "上午", "正午", "下午", "傍晚", "夜晚", "深夜"]
+_LOCATION_GRAPH_VERSION = 2
+
+# v3.6 P2: 时段 → 场景氛围提示（时间驱动内容生成——LLM 描写必须体现）
+TIME_SCENE_HINTS = {
+    "清晨": "清晨：天色初亮、空气清冷，街市刚开张，人们睡眼惺忪",
+    "上午": "上午：日光充足，市面繁忙，正是办事的好时候",
+    "正午": "正午：日头高照，行人稀少，酒楼茶馆里人声鼎沸",
+    "下午": "下午：光线渐斜，长街的影子拉长，茶客陆续散去",
+    "傍晚": "傍晚：暮色四合、灯火初上，归家与开夜市的人流交汇",
+    "夜晚": "夜晚：灯火明亮或昏黄，月色或明或暗，坊市或喧嚣或沉寂",
+    "深夜": "深夜：万籁俱寂，只有更声与犬吠，多数门户紧闭",
+}
+
+
+def time_scene_hint(world: dict) -> str:
+    """当前时段的场景氛围提示（空则无提示）。"""
+    t = world.get("time") or {}
+    return TIME_SCENE_HINTS.get(str(t.get("label", "")), "")
+
+
+# ── v3.6.5: 时间连续性（P0）——权威时间横幅 + 场景文本时间漂移检测 ──
+def time_now_brief(world: dict) -> str:
+    """权威时间横幅：第X天·时段 + 时段氛围 + 时间纪律（注入场景/对话 prompt 顶部）。
+
+    让 LLM 对"现在是什么时候"有确定概念——时间由规则引擎唯一决定，
+    叙事/台词/心理中的时间表述必须以它为基准，不得臆造。
+    """
+    t = world.get("time") or {}
+    label = str(t.get("label", "")) or ""
+    day = int(t.get("day") or 1)
+    when = f"第{day}天·{label}" if day > 1 else label
+    lines = [
+        f"现在的时间（系统权威，叙事/台词/心理的所有时间表述必须与此一致）: {when}",
+        "时间纪律（P0）: "
+        "①叙事时间只能从当前时刻向前流动，禁止倒流（不得回到已过去的时段/天）；"
+        "②一个场景内最多跨越 1 个时段（如从傍晚写到深夜可以，从下午写到次日清晨不行——跨天只能由系统推进）；"
+        "③旁白/台词中出现具体时刻（如'深夜十一点'）必须落在当前时段前后 1 档内；"
+        "④约定未来时间用相对表述（'明天下午'/'后天'），以当前系统时间为基准推算，不得凭空跳日；"
+        "⑤问候语（早安/晚安/夜里好）必须匹配当前时段。",
+    ]
+    hint = TIME_SCENE_HINTS.get(label, "")
+    if hint:
+        lines.append(f"当前时段的氛围（场景的光线/声响/节奏必须体现）: {hint}")
+    return "\n".join(lines)
+
+
+# 文本 → 时间档位 规则提取（零 LLM，供漂移检测）
+_SLOT_WORDS = {
+    "清晨": 0, "早晨": 0, "早上": 0, "一早": 0, "天明": 0, "破晓": 0, "拂晓": 0,
+    "晨": 0,  # 晨阳/晨光/晨风——清晨语境
+    "上午": 1, "午前": 1,
+    "正午": 2, "中午": 2, "午时": 2, "晌午": 2, "午间": 2,
+    "下午": 3, "午后": 3,
+    "傍晚": 4, "黄昏": 4, "日落": 4, "夕阳": 4, "暮色": 4, "入暮": 4,
+    "夜晚": 5, "晚上": 5, "入夜": 5, "夜幕": 5, "掌灯": 5, "月上": 5,
+    "深夜": 6, "半夜": 6, "午夜": 6, "凌晨": 6, "子时": 6, "夜里": 6, "三更": 6,
+}
+
+# 未来修饰词：紧跟其后的档位词是"未来约定"（明天下午见），不是叙事时间，跳过
+_FUTURE_MARKERS = ("明天", "明日", "后天", "后日", "次日", "改天", "明早", "明晚",
+                   "明儿", "过两", "下周", "下个", "礼拜", "星期", "月底", "今晚")
+
+
+def _is_future_marked(text: str, start: int) -> bool:
+    """档位词 start 前 6 字符内出现未来修饰词 → 该档位是约定不是叙事。"""
+    ctx = text[max(0, start - 6):start]
+    return any(m in ctx for m in _FUTURE_MARKERS)
+
+
+def _strip_dialogue_blocks(text: str) -> str:
+    """剥离【角色名】台词块——台词常含未来约定（'明天下午见'），不参与叙事时间检测。
+
+    保留【旁白】【动作】块（叙事主体）。
+    """
+    return re.sub(r"【(?![旁白动作])[^】]+】[^【]*", "", text or "")
+
+
+def _hour_to_slot(hour: int) -> Optional[int]:
+    """具体时刻 → 档位（5-7清晨 / 8-10上午 / 11-13正午 / 14-17下午 / 17-19傍晚 / 19-22夜晚 / 22-4深夜）。"""
+    if 5 <= hour < 8:
+        return 0
+    if 8 <= hour < 11:
+        return 1
+    if 11 <= hour < 14:
+        return 2
+    if 14 <= hour < 17:
+        return 3
+    if 17 <= hour < 19:
+        return 4
+    if 19 <= hour < 22:
+        return 5
+    return 6  # 22-24 与 0-4
+
+
+def time_slots_of_text(text: str) -> List[int]:
+    """从文本中提取提到的时间档位（去重、升序）。零 LLM。
+
+    覆盖：档位词（清晨/上午/正午/下午/傍晚/夜晚/深夜）+ 具体时刻（'深夜十一点'/'23点'）。
+    - 台词块（【角色名】…）整体剥离——台词里的'明天下午'是约定不是叙事
+    - '明天/后天/明日'等未来修饰词后的档位跳过（未来约定由承诺台账管理）
+    """
+    if not text:
+        return []
+    text = _strip_dialogue_blocks(text)
+    if not text:
+        return []
+    slots: set = set()
+    for word, slot in _SLOT_WORDS.items():
+        for m in re.finditer(word, text):
+            if not _is_future_marked(text, m.start()):
+                slots.add(slot)
+                break
+    # 数字时刻：'23点' / '深夜十一点' / '11点'
+    for m in re.finditer(r"(?<![0-9])([0-9]{1,2})\s*[点时]", text):
+        if _is_future_marked(text, m.start()):
+            continue
+        try:
+            h = int(m.group(1))
+            if 0 <= h <= 24:
+                slots.add(_hour_to_slot(h))
+        except (TypeError, ValueError):
+            pass
+    return sorted(slots)
+
+
+def time_drift_check(scene_text: str, world: dict, max_gap: int = 1) -> str:
+    """场景文本时间漂移检测（纯函数）——场景叙事提到的时段 vs 系统权威时间。
+
+    返回违规描述（空串 = 无违规）。逻辑：
+    - 场景文本提到的最晚档位 比 系统当前档位 超前 >max_gap 档 → 违规（LLM 穿越时间）
+    - 场景文本提到的最早档位 比 系统当前档位 落后 >max_gap 档 → 违规（时间倒流）
+    宽松点：
+    - 台词块（【角色名】…）不参与检测——'明天下午见'是未来约定不是叙事
+    - '明天/后天'等未来修饰词后的档位跳过
+    """
+    t = world.get("time") or {}
+    cur_slot = int(t.get("slot", 0) or 0)
+    mentions = time_slots_of_text(scene_text or "")
+    if not mentions:
+        return ""
+    earliest, latest = mentions[0], mentions[-1]
+    cur_label = str(t.get("label", "")) or ""
+    problems = []
+    if latest > cur_slot + max_gap:
+        problems.append(
+            f"叙事时间超前：场景提到「{TIME_SLOTS[latest]}」（第{int(t.get('day') or 1)}天系统时间是「{cur_label}」），"
+            f"跨了 {latest - cur_slot} 档")
+    if earliest + max_gap < cur_slot:
+        problems.append(
+            f"叙事时间倒流：场景提到「{TIME_SLOTS[earliest]}」，早于系统当前「{cur_label}」{cur_slot - earliest} 档")
+    return "；".join(problems)
+
+# ── 移动目标规则解析 ──
+# 高置信移动表达（命中 → travel 意图）
+_TRAVEL_VERBS = (
+    "回家|回府|回宫|回房|回宅|回府邸|回去|回城|进城|出城|上楼|下楼|"
+    "进屋|出屋|进门|出门|回客栈|回酒楼|回店铺|回到|赶回|赶往|"
+    "去(?:了|到|往|向)?|前往|来到|走到|抵达|到达|离开|出发|"
+    "回(?:到)?"
+)
+TRAVEL_RE = re.compile(
+    r"^(?:(?:我|咱|咱们|我们|人家)?(?:这就|现在|马上|要|想|打算|就|已经|先)?)"
+    r"(" + _TRAVEL_VERBS + r")([\u4e00-\u9fff]{0,12})[。！!]?$")
+
+# 无目标纯移动词（"走吧/出发/我们走"——目标由剧情/默认决定，P0 走对话不硬转）
+_TRAVEL_BARE = re.compile(r"^(?:走吧|出发|我们走|咱们走|走)[。！!]?$")
+
+# 确认/否定词（回问确认流）
+# v3.6.2: 确认/取消正则——支持自然语言确认（"好，去吧"/"行 走吧"/"ok 走"）——
+# 原先只匹配 1-2 字短词，带逗号/语气词的确认全部漏掉 → 确认流形同虚设
+CONFIRM_RE = re.compile(
+    r"^(?:嗯+|好[的嘛]?|行[的嘛]?|确定|是的?|是|对|可以|没问题|ok|OK|好呀|好啊|"
+    r"走|去吧?|出发(?:吧)?|走起|带路吧?|就[这那]样|听你的|都行)"
+    r"(?:[，,、\s]*(?:那就?|就|也|都)?(?:走|去|出发|吧|呗|去吧?|听你的)?)*[。！!～~]?$")
+DENY_RE = re.compile(
+    r"^(?:不|算了|取消|等等|别|没|不是|不行|不去|再想想|稍等|逗你的|开玩笑的?|"
+    r"先不去|不去了|算了吧?|改天吧?|回头再说|以后再说)[。！!，,～~]?$")
+
+# "家"类节点别名（图谱内查找居住地）
+_HOME_ALIASES = ("家", "府", "宅", "住处", "居所", "小院", "院子", "府邸", "房")
+# 反义词：明确非家（防止把"茶楼"当回家目标）
+_NON_HOME = ("茶楼", "茶馆", "酒楼", "酒店", "客栈", "店铺", "铺", "衙门",
+             "宫", "殿", "集市", "码头", "野外", "山上", "路上", "坊", "档口")
+# 语气词（"回家了"的"了"不算目标）
+_TONE_WORDS = "了吧呀啊呢的么嘛"
+
+
+# ── 三支柱初始化/迁移 ──
+def ensure_world(state: dict) -> dict:
+    """旧存档迁移 + 三支柱初始化（幂等，任何入口可安全调用）。"""
+    w = state.setdefault("world", {})
+    t = w.setdefault("time", {})
+    if not isinstance(t, dict):
+        t = {}
+        w["time"] = t
+    if not t.get("slot") or not t.get("label"):
+        # 从 player_state.time（LLM 历史提取）迁移；无则默认正午
+        ps = state.get("player_state") or {}
+        old = str(ps.get("time", "")).strip()
+        idx = TIME_SLOTS.index(old) if old in TIME_SLOTS else 2
+        t["slot"] = idx
+        t["label"] = TIME_SLOTS[idx]
+        t["day"] = int(t.get("day") or 1)
+    else:
+        # label 与 slot 不一致时以 label 为准（防脏数据）
+        try:
+            _idx = TIME_SLOTS.index(str(t.get("label", "")))
+            if _idx != int(t.get("slot", _idx)):
+                t["slot"] = _idx
+        except (ValueError, TypeError):
+            t["slot"] = int(t.get("slot", 2))
+            t["label"] = TIME_SLOTS[int(t["slot"]) % len(TIME_SLOTS)]
+    w.setdefault("location", "")
+    w.setdefault("chars", {})
+    w.setdefault("locations", {})
+    # location 与 state.location / player_state.location 对齐（三处一致性）
+    s = state.get("state") or {}
+    ps = state.get("player_state") or {}
+    cur = w.get("location") or clean_loc(s.get("location")) or clean_loc(ps.get("location")) or ""
+    locations = w.get("locations") if isinstance(w.get("locations"), dict) else {}
+    # 地点图谱迁移只执行一次。运行期图谱会动态注册地点、编辑连线；若每次
+    # world_brief/行动判定都重新推导和清洗，会把显式删除的节点复活，或误删
+    # 刚加入的合法连线。版本升级时才重新跑迁移。
+    if int(w.get("_location_graph_version", 0) or 0) < _LOCATION_GRAPH_VERSION:
+        discovered = build_location_graph(state)
+        for name, entry in discovered.items():
+            if name not in locations:
+                locations[name] = entry
+                continue
+            current_entry = locations[name] if isinstance(locations[name], dict) else {}
+            links = list(current_entry.get("connected") or [])
+            for target in entry.get("connected") or []:
+                if target not in links:
+                    links.append(target)
+            current_entry["connected"] = links[:8]
+            locations[name] = current_entry
+        trusted_locations = [
+            clean_loc(value)
+            for value in (state.get("known_locations") or [])
+            if clean_loc(value)
+        ]
+        trusted_locations.extend(
+            clean_loc(item.get("location"))
+            for item in (state.get("cast_states") or {}).values()
+            if isinstance(item, dict) and clean_loc(item.get("location"))
+        )
+        locations = _sanitize_location_graph(locations, cur, trusted_locations)
+        w["_location_graph_version"] = _LOCATION_GRAPH_VERSION
+    w["locations"] = locations
+    if cur:
+        w["location"] = cur
+        w["locations"].setdefault(
+            cur, {"desc": "", "connected": [], "chars": [], "items": []}
+        )
+        if s.get("location") != cur:
+            s["location"] = cur
+        if ps.get("location") != cur:
+            ps["location"] = cur
+        state["player_state"] = ps
+    # chars 与 cast_states 对齐
+    _sync_chars_from_cast(state, w)
+    return w
+
+
+def clean_loc(loc) -> str:
+    """地点字符串清洗（去 JSON 残留/多段列表，取第一段）。"""
+    if not loc:
+        return ""
+    loc = str(loc).strip()
+    m = re.search(r'"(?:name|location)"\s*:\s*"([^"]+)"', loc)
+    if m:
+        loc = m.group(1).strip()
+    for sep in ("，", ",", "；", ";"):
+        if sep in loc:
+            return loc.split(sep)[0].strip()[:60]
+    return loc[:60]
+
+
+_NON_LOCATION_FRAGMENT_RE = re.compile(
+    r"era:|power_|core_|faction|世界观|规则|体系|市值|离婚|婚姻|父亲|母亲|家庭|"
+    r"声誉|社交|资本|商业|利益|象征|编织|丑闻|女主|男主|当代|年代|世纪|"
+    r"王朝名为|正值|不稳|玄功|境界|修为|春节|前后|租售|设定|背景|"
+    r"——|—|：|:|,|，|。"
+)
+_LOCATION_HINT_RE = re.compile(
+    r"(?:市|区|县|镇|村|城|关|山|峰|谷|岭|江|河|湖|海|岛|街|路|巷|桥|"
+    r"府|宅|院|屋|房|楼|阁|馆|店|门|港|坡|塔|场|客栈|酒楼|茶楼|码头|机场|车站|广场|"
+    r"宫|殿|堂|寺|庙|营|寨|洞|林|原|秘境|总部|办公室|医院|学校|大学|"
+    r"民政局|法院|警局|公司|集团|庄园|公寓|别墅|会所|酒吧|餐厅|咖啡馆|"
+    r"甜品店|书房|卧室|大厅|场景)$"
+)
+_LOCATION_EXACT = {"家", "街市", "集市", "码头", "茶楼", "客栈", "府", "宅", "宫"}
+
+
+def _is_location_candidate(text: str) -> bool:
+    """过滤世界观描述片段；保留短地名、专名与常见场所。"""
+    value = clean_loc(text)
+    if not value or len(value) > 24:
+        return False
+    if _NON_LOCATION_FRAGMENT_RE.search(value):
+        return False
+    if value.endswith(("时期", "时代", "制度", "能力", "冲突", "势力", "系统")):
+        return False
+    return value in _LOCATION_EXACT or bool(_LOCATION_HINT_RE.search(value))
+
+
+def _sanitize_location_graph(locations, current: str = "", trusted=()) -> dict:
+    """迁移旧地点图谱，剔除伪地点并清理对应连线。"""
+    if not isinstance(locations, dict):
+        return {}
+    cleaned = {}
+    current = clean_loc(current)
+    trusted_names = {clean_loc(value) for value in trusted if clean_loc(value)}
+    for raw_name, raw_entry in locations.items():
+        name = clean_loc(raw_name)
+        if not name or (
+            name != current
+            and name not in trusted_names
+            and not _is_location_candidate(name)
+        ):
+            continue
+        entry = dict(raw_entry) if isinstance(raw_entry, dict) else {}
+        entry.setdefault("desc", "")
+        entry.setdefault("chars", [])
+        entry.setdefault("items", [])
+        entry["connected"] = [
+            clean_loc(target)
+            for target in (entry.get("connected") or [])
+            if clean_loc(target)
+            and clean_loc(target) != name
+            and (
+                clean_loc(target) in trusted_names
+                or _is_location_candidate(target)
+            )
+        ][:8]
+        cleaned[name] = entry
+    return cleaned
+
+
+# ── 地点图谱 ──
+def build_location_graph(state: dict) -> dict:
+    """规则构建地点图谱（零 LLM）：
+    - 来源：known_locations（去过）、player_state.location（当前）、
+      cast_states[].location（角色位置）、worldbuilding_brief 地理串
+    - 边：同批出现的候选地点彼此互连（当前地点 ↔ 已知地点）
+    """
+    w = state.get("world") or {}
+    locations: dict = {}
+    known = [clean_loc(x) for x in (state.get("known_locations") or []) if clean_loc(x)]
+    ps = state.get("player_state") or {}
+    cur = clean_loc(w.get("location")) or clean_loc(ps.get("location"))
+    cs = state.get("cast_states") or {}
+    char_locs = [clean_loc(c.get("location")) for c in cs.values() if clean_loc(c.get("location"))]
+
+    cands = []
+    for x in known + [cur] + char_locs:
+        if x and x not in cands:
+            cands.append(x)
+    # worldbuilding 只解析 geography/地理/地点字段；如果是旧版无标签文本，
+    # 再对全文做兼容解析。禁止把 era/power_system/core_conflict 的句子建成地点。
+    wb = str(state.get("worldbuilding_brief", ""))
+    geo_values = []
+    for line in wb.splitlines():
+        match = re.match(r"\s*(?:geography|starting_location|地理|地点)\s*[:：]\s*(.+)", line, re.I)
+        if match:
+            geo_values.append(match.group(1))
+    sources = geo_values or ([wb] if wb and "\n" not in wb else [])
+    for source in sources:
+        for match in re.finditer(
+            r"['\"]name['\"]\s*:\s*['\"]([^'\"]{1,24})['\"]",
+            source,
+        ):
+            named_location = clean_loc(match.group(1))
+            if (_is_location_candidate(named_location)
+                    and named_location not in cands):
+                cands.append(named_location)
+        for seg in re.split(r"[，,、;；\n]", source):
+            seg = clean_loc(seg)
+            if (_is_location_candidate(seg) and 1 <= len(seg) <= 12
+                    and seg not in cands):
+                cands.append(seg)
+    for name in cands:
+        locations[name] = {
+            "desc": "",
+            "connected": [c for c in cands if c != name][:8],
+            "chars": [],
+            "items": [],
+        }
+    # 图谱为空且至少知道当前地点 → 注册当前地点
+    if not locations and cur:
+        locations[cur] = {"desc": "", "connected": [], "chars": [], "items": []}
+    return locations
+
+
+def find_home_location(state: dict) -> str:
+    """在图谱中找"家"类节点（回家目标）。规则：优先名字含家/府/宅且非茶楼类。"""
+    w = state.get("world") or {}
+    locations = w.get("locations") or {}
+    if not locations:
+        return ""
+    for name in locations:
+        if any(a in name for a in _HOME_ALIASES) and not any(n in name for n in _NON_HOME):
+            return name
+    # 兜底：known_locations 里找；再兜底第一个节点（当前地点的 connected 中第一个）
+    known = [clean_loc(x) for x in (state.get("known_locations") or [])]
+    for name in known:
+        if any(a in name for a in _HOME_ALIASES):
+            return name
+    return ""
+
+
+# ── 移动目标解析（规则，零 LLM）──
+def resolve_travel_target(text: str, state: dict) -> Tuple[str, bool]:
+    """解析玩家输入的移动目标。
+    返回 (target, ok)；ok=False 表示解析不出明确目标（不硬转 travel）。
+    """
+    m = TRAVEL_RE.match(text.strip())
+    if not m:
+        return "", False
+    verb, raw = m.group(1), m.group(2).strip()
+    raw = raw.rstrip(_TONE_WORDS)  # 去语气词（"回家了"→"回家"+目标空）
+    # "回X"类动词自带目标（"回家吃饭"→家，"回府"→府）；"回去/回来/回到"无明确目标
+    if verb.startswith("回") and verb not in ("回去", "回来", "回到", "回归"):
+        raw = verb[1:] or raw
+    if not raw:
+        return "", False
+    w = state.get("world") or {}
+    locations = w.get("locations") or {}
+    cur = clean_loc(w.get("location")) or ""
+
+    # 1) 回家类（动词含"回"且无具体地点）→ 图谱 home 节点
+    if verb.startswith("回") and raw in ("家", "府", "宅", "房", "府邸", "住处"):
+        home = find_home_location(state)
+        if home and home != cur:
+            return home, True
+        # 图谱无 home → 返回原始目标，走确认流注册（v3.6：绝不静默退回对话）
+        return raw, True
+    # 2) 直接匹配图谱节点
+    for name in locations:
+        if raw == name or raw in name or name in raw:
+            if name != cur:
+                return name, True
+            return "", False
+    # 3) 未命中图谱 → 原样返回 raw（走确认流，确认后注册）
+    if raw != cur:
+        return raw, True
+    return "", False
+
+
+# ── 时间推进（确定性）──
+def advance_time(world: dict, steps: int = 1) -> List[str]:
+    """时间推进：slot +steps，跨过深夜 → 次日清晨，day+1。返回变化描述。"""
+    t = world.setdefault("time", {})
+    try:
+        slot = int(t.get("slot", 3)) + int(steps)
+    except (TypeError, ValueError):
+        slot = int(t.get("slot", 3)) + 1
+    day = int(t.get("day") or 1)
+    while slot >= len(TIME_SLOTS):
+        slot -= len(TIME_SLOTS)
+        day += 1
+    old_label = t.get("label", "")
+    t["slot"] = slot
+    t["label"] = TIME_SLOTS[slot]
+    t["day"] = day
+    changes = []
+    if old_label != t["label"]:
+        changes.append(f"时间: {old_label or '?'} → {t['label']}")
+    if day > 1 and steps > 0:
+        changes.append(f"第{day}天")
+    return changes
+
+
+def time_label(world: dict) -> str:
+    t = world.get("time") or {}
+    label = t.get("label") or ""
+    day = int(t.get("day") or 1)
+    return f"第{day}天·{label}" if day > 1 else label
+
+
+# ── 人物在场重算（跟随规则）──
+def recompute_presence(state: dict, world: dict, moved_from: str = "") -> List[str]:
+    """地点变化后重算人物在场 + 跟随。
+    规则：
+    - player_state.with 中的角色 → 跟随（location 同步）
+    - cast_states 中 location == 旧地点 且非跟随 → 留在原地
+    - 其余角色位置未知 → 保留原标记
+    返回变化描述列表。
+    """
+    cur = clean_loc(world.get("location"))
+    ps = state.get("player_state") or {}
+    with_chars = [str(x) for x in (ps.get("with") or [])]
+    cs = state.get("cast_states") or {}
+    changes = []
+    for name, c in cs.items():
+        cloc = clean_loc(c.get("location"))
+        if name in with_chars:
+            if cloc != cur:
+                c["location"] = cur
+                c["present"] = True
+                changes.append(f"{name}跟随来到{cur}")
+        elif moved_from and cloc == moved_from:
+            c["present"] = False
+            changes.append(f"{name}留在{moved_from}")
+    state["cast_states"] = cs
+    # v3.6 P2: 图谱 chars 双写（locations[地点].chars 与 cast_states 一致）
+    try:
+        locations = world.setdefault("locations", {})
+        if moved_from and moved_from in locations:
+            _chars = locations[moved_from].setdefault("chars", [])
+            locations[moved_from]["chars"] = [x for x in _chars if x not in with_chars]
+        if cur and cur in locations:
+            _chars = locations[cur].setdefault("chars", [])
+            for _nm in with_chars:
+                if _nm not in _chars:
+                    _chars.append(_nm)
+    except Exception:
+        pass
+    # world.chars 同步
+    _sync_chars_from_cast(state, world)
+    return changes
+
+
+def _sync_chars_from_cast(state: dict, world: dict):
+    """world.chars 与 cast_states 对齐（present/location/relation 镜像）。"""
+    chars = world.setdefault("chars", {})
+    cs = state.get("cast_states") or {}
+    rel = (state.get("state") or {}).get("relations") or {}
+    for name, c in cs.items():
+        entry = chars.setdefault(str(name), {})
+        entry["present"] = bool(c.get("present", entry.get("present", False)))
+        loc = clean_loc(c.get("location"))
+        if loc:
+            entry["location"] = loc
+        if name in rel:
+            entry["relation"] = rel[name]
+    # 保留不在 cast_states 的关系角色
+    for name, v in rel.items():
+        chars.setdefault(str(name), {}).setdefault("relation", v)
+
+
+# ── 移动执行器 ──
+def execute_travel(state: dict, target: str, register_new: bool = True) -> Tuple[List[str], bool]:
+    """执行移动：图谱校验 → 更新 location → 时间推进 → 在场重算。
+    返回 (changes, ok)。图谱无此节点且 register_new=True → 注册后移动（确认流已通过）。
+    """
+    w = ensure_world(state)
+    locations = w.get("locations") or {}
+    target = clean_loc(target)
+    cur = clean_loc(w.get("location"))
+    if not target or target == cur:
+        return [], False
+    if target not in locations:
+        if not register_new:
+            return [], False
+        # 注册新节点（确认流通过后）
+        locations[target] = {"desc": "", "connected": [cur] if cur else [], "chars": [], "items": []}
+        if cur and target not in locations[cur]["connected"]:
+            locations[cur]["connected"].append(target)
+    changes = [f"地点: {cur or '?'} → {target}"]
+    w["location"] = target
+    s = state.get("state") or {}
+    s["location"] = target
+    ps = state.get("player_state") or {}
+    ps["location"] = target
+    ps["situation"] = f"刚到达{target}"
+    state["player_state"] = ps
+    state.setdefault("known_locations", [])
+    if target not in state["known_locations"]:
+        state["known_locations"].append(target)
+    # 时间推进（移动 +1 档）
+    changes.extend(advance_time(w, 1))
+    # 在场重算（跟随/留守）
+    changes.extend(recompute_presence(state, w, moved_from=cur))
+    return changes, True
+
+
+# ── 三支柱注入文本（场景/行动 prompt 用）──
+def world_brief(state: dict, max_chars: int = 400) -> str:
+    """确定性三支柱快照（不依赖 LLM 记忆）。"""
+    w = ensure_world(state)
+    lines = []
+    loc = clean_loc(w.get("location"))
+    locations = w.get("locations") or {}
+    desc = ""
+    if loc in locations:
+        desc = str(locations[loc].get("desc") or "")[:120]
+    lines.append(f"时间: {time_label(w)}")
+    lines.append(f"地点: {loc}{('（' + desc + '）') if desc else ''}")
+    chars = w.get("chars") or {}
+    present = [n for n, c in chars.items() if c.get("present")]
+    if present:
+        lines.append(f"在场人物: {'、'.join(present[:6])}")
+    return "\n".join(lines)[:max_chars]
+
+
+# ── v3.6 P3: 对话承诺 → 行动兑现（地点锚定）──
+# 约定地点模式（"在码头见/码头等你/去茶楼碰头"——图谱节点名 + 位置介词）
+_LOCATION_PATTERNS = [
+    re.compile(r"(?:在|到|去|回|前往|赶到|来到|于)\s*([\u4e00-\u9fff]{1,8})\s*(?:见|等|碰头|会合|汇合|找你|见面|赴宴|吃饭|喝茶|等)", re.S),
+    re.compile(r"([\u4e00-\u9fff]{1,8})\s*(?:见|碰头|会合|汇合|等我|找我)", re.S),
+]
+
+
+def extract_location_from_text(text: str, state: dict) -> str:
+    """从约定文本中规则提取地点（图谱节点匹配，零 LLM）。
+    优先"在X见"类模式；其次扫描图谱节点名在文本中的出现。"""
+    if not text:
+        return ""
+    w = state.get("world") or {}
+    locations = w.get("locations") or {}
+    names = sorted(locations.keys(), key=len, reverse=True)  # 长名优先
+    for pat in _LOCATION_PATTERNS:
+        m = pat.search(text)
+        if m:
+            cand = m.group(1).strip()
+            for n in names:
+                if cand == n or cand in n or n in cand:
+                    return n
+            # 图谱无此节点时仅接受形态明确的地点，避免把“晚上一起吃饭”
+            # 里的“上/一起”误建成地点锚点。
+            if _is_location_candidate(cand):
+                return cand
+    for n in names:
+        if n and n in text:
+            return n
+    return ""
+
+
+def fulfill_promises_at(state: dict, location: str) -> List[str]:
+    """玩家到达某地点 → 兑现该地点的待兑现约定（规则，零 LLM）。
+    返回变化描述列表。"""
+    location = clean_loc(location)
+    if not location:
+        return []
+    ledger = state.get("pending_promises") or []
+    changes = []
+    for p in ledger:
+        if p.get("status") != "pending":
+            continue
+        ploc = clean_loc(p.get("location"))
+        if ploc and ploc == location:
+            p["status"] = "fulfilled"
+            changes.append(
+                f"约定兑现: 与{p.get('who', '?')}的约定（{p.get('what', '')}）在{location}履行")
+            try:
+                from .char_memory import add_event
+                add_event(state, f"约定兑现: 与{p.get('who', '?')}{p.get('what', '')}"
+                                 f"（{p.get('when_raw', '')}）在{location}", "promise")
+            except Exception:
+                pass
+    if changes:
+        state["pending_promises"] = ledger
+    return changes
+
+
+def pending_promises_brief(state: dict, location: str = "", max_chars: int = 200) -> str:
+    """待兑现约定简报（注入场景 prompt：地点匹配优先）。"""
+    ledger = state.get("pending_promises") or []
+    loc = clean_loc(location)
+    pending = [p for p in ledger if p.get("status") == "pending"]
+    if not pending:
+        return ""
+    lines = []
+    for p in pending[:3]:
+        ploc = clean_loc(p.get("location"))
+        if loc and ploc and ploc == loc:
+            lines.append(f"● {p.get('who', '?')}约你{p.get('when_raw', '')}在此地{p.get('what', '')}（待赴约）")
+        elif not ploc:
+            lines.append(f"● 你与{p.get('who', '?')}有约：{p.get('what', '')}（{p.get('when_raw', '') or '未定时间'}，待赴约）")
+    return "\n".join(lines)[:max_chars]
+
+
+# ── v3.6.4: 行动选项生成器（按钮化——玩家点按钮 = 意图已确定，零 LLM 识别）──
+
+# 图谱节点清洗：worldbuilding 解析可能塞入设定描述片段（"era: 2020年代"/"市值超千亿"），
+# 这些不是地点，不能进行动按钮
+_NON_LOC_RE = re.compile(
+    _NON_LOCATION_FRAGMENT_RE.pattern
+    + r"|权[力势]?$|与|和|的$"
+)
+_LOC_MAX_LEN = 8  # 地点名超过 8 字基本是描述片段（"上海陆家嘴金融区——甜品店内"除外，它带——）
+
+# 脏角色名清洗（LLM 状态提取把内心描写当角色名的历史脏数据）
+_DIRTY_CHAR_RE = re.compile(r"^你|^我|心中|冷笑|面上|不露|内心|感到|觉得")
+
+
+def _clean_action_target(text: str, kind: str) -> bool:
+    """行动目标有效性校验（清洗脏数据）"""
+    t = str(text or "").strip()
+    if not t or len(t) > 24:
+        return False
+    if kind == "travel":
+        if _NON_LOC_RE.search(t) or not _is_location_candidate(t):
+            return False
+        if len(t) > _LOC_MAX_LEN and "——" not in t and "甜品店" not in t:
+            return False
+        if t in ("家", "街市", "码头", "茶楼"):  # 白名单短地点
+            return True
+    elif kind == "char":
+        if _DIRTY_CHAR_RE.match(t):
+            return False
+        if len(t) > 10:
+            return False
+    return True
+
+# 通用动作模板（按角色/物品/地点场景套用）
+_GENERIC_ACTIONS = [
+    {"type": "interact", "tpl": "和{name}说话", "target_kind": "char"},
+    {"type": "interact", "tpl": "仔细打量{name}", "target_kind": "char"},
+    {"type": "interact", "tpl": "把随身的东西递给{name}", "target_kind": "char"},
+    {"type": "use", "tpl": "使用{name}", "target_kind": "item"},
+    {"type": "use", "tpl": "仔细查看{name}", "target_kind": "item"},
+    {"type": "investigate", "tpl": "观察四周环境", "target_kind": "none"},
+    {"type": "investigate", "tpl": "查看随身物品", "target_kind": "none"},
+]
+
+
+def action_options(state: dict, max_actions: int = 8) -> list:
+    """上下文行动按钮列表（确定性规则，零 LLM）。
+
+    来源：
+    - 移动：当前地点图谱 connected 节点（"去X"）
+    - 交互：当前在场角色（"和X说话"等）
+    - 物品：玩家背包 + 当前地点 items
+    返回 [{id, label, intent, target, kind, emoji}]
+    """
+    try:
+        w = state.get("world") or {}
+        locations = w.get("locations") or {}
+        ps = state.get("player_state") or {}
+        s = state.get("state") or {}
+        cur = clean_loc(w.get("location")) or clean_loc(ps.get("location")) or clean_loc(s.get("location"))
+        player_name = (state.get("player_char") or {}).get("name", "")
+        opts = []
+
+        # 1) 移动选项（图谱 connected，清洗非地点节点）
+        entry = locations.get(cur) if cur else None
+        connected = []
+        if isinstance(entry, dict):
+            connected = [str(x) for x in (entry.get("connected") or []) if str(x) != cur]
+        if not connected and cur:  # 兜底：全部图谱节点（防图谱边缺失导致无路可走）
+            connected = [str(x) for x in locations.keys() if str(x) != cur]
+        for loc in connected[:6]:
+            if not _clean_action_target(loc, "travel"):
+                continue
+            opts.append({
+                "id": f"go_{loc}", "label": f"去{loc}", "intent": "travel",
+                "target": loc, "kind": "travel", "emoji": "📍",
+            })
+
+        # 2) 在场角色交互（清洗脏角色名）
+        try:
+            from .story_director import compute_present
+            present, _away = compute_present(state)
+        except Exception:
+            present = []
+        for name in present[:4]:
+            if name and name != player_name and _clean_action_target(name, "char"):
+                opts.append({
+                    "id": f"talk_{name}", "label": f"和{name}说话", "intent": "talk",
+                    "target": name, "kind": "char", "emoji": "👥",
+                })
+
+        # 3) 物品选项（背包 + 地点物品）
+        inv = [str(x) for x in (s.get("inventory") or [])]
+        loc_items = [str(x) for x in ((entry or {}).get("items") or [])] if isinstance(entry, dict) else []
+        for item in (inv + loc_items)[:3]:
+            if item and not any(o.get("target") == item for o in opts):
+                opts.append({
+                    "id": f"use_{item}", "label": f"使用{item}", "intent": "act",
+                    "target": item, "kind": "item", "emoji": "📦",
+                })
+
+        # 4) 常用行动（兜底，保证按钮条不空）
+        if not opts:
+            opts.append({"id": "observe", "label": "观察四周环境", "intent": "act",
+                         "target": "", "kind": "investigate", "emoji": "🔍"})
+        return opts[:max_actions]
+    except Exception as e:
+        log.warning(f"action_options failed: {e}")
+        return []
+
+
+# ── LLM 状态提取结果校验（防幻觉：候选 → 规则裁决）──
+def validate_llm_state(state: dict, extracted_ps: dict) -> dict:
+    """场景/对话后的 LLM 状态提取结果与三支柱合并：
+    - location：LLM 候选过图谱/known 校验（图谱外 → 不采纳）
+    - time：LLM 候选过单调校验（与 world 冲突 → 不采纳；world 空才采纳）
+    - with/holding/situation/condition：直接采纳（不破坏世界结构）
+    """
+    w = ensure_world(state)
+    if not isinstance(extracted_ps, dict):
+        return state.get("player_state") or {}
+    ps = state.get("player_state") or {}
+    # time 由规则驱动（world 档位推进）：LLM 的 time 不采纳，同步档位
+    ps["time"] = (w.get("time") or {}).get("label", ps.get("time", ""))
+    llm_loc = clean_loc(extracted_ps.get("location"))
+    if llm_loc:
+        locations = w.get("locations") or {}
+        known = [clean_loc(x) for x in (state.get("known_locations") or [])]
+        if llm_loc in locations or llm_loc in known:
+            if llm_loc != clean_loc(w.get("location")):
+                # 场景叙述显示玩家换地 → 同步三支柱（LLM 候选 + 图谱可查 → 采纳）
+                w["location"] = llm_loc
+                ps["location"] = llm_loc
+                recompute_presence(state, w)
+    for k in ("with", "holding", "situation", "condition", "disguise", "money"):
+        if k in extracted_ps and extracted_ps.get(k):
+            ps[k] = extracted_ps[k]
+    state["player_state"] = ps
+    return ps

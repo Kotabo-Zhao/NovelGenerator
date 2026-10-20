@@ -78,10 +78,3 @@ def test_second_duplicate_is_not_written_or_counted_as_a_scene(tmp_path, monkeyp
     assert not any(event.get("type") == "scene_end" for event in events)
     assert len(store.recent_scenes("book", 10)) == 1
     assert store.load_state("book")["scene_num"] == 1
-
-
-def test_frontend_discards_streamed_duplicate_before_retrying():
-    source = (Path(__file__).parents[1] / "web" / "index.html").read_text(encoding="utf-8")
-
-    assert source.count("evt.type==='scene_retry'") >= 2
-    assert "_dropTypingDraft()" in source

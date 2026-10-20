@@ -1,9 +1,6 @@
 /* Application assets update together. Mutations and SSE always use the network. */
-const CACHE = 'novel-workshop-20261019';
-const SHELL = ['/', '/roleplay.html', '/vue.global.prod.js', '/manifest.json', '/assets/icon.svg',
-  '/assets/runtime.js?v=20261019', '/assets/theme.css?v=20261019',
-  '/assets/workshop.js?v=20261019', '/assets/tools.css?v=20261019', '/assets/workshop.css?v=20261019',
-  '/assets/roleplay.js?v=20261019', '/assets/roleplay.css?v=20261019', '/assets/roleplay-forms.css?v=20261019'];
+const CACHE = 'novel-workshop-f5a5ec920fe7';
+const SHELL = ["/", "/roleplay.html", "/scene.html", "/cards.html", "/vue.global.prod.js", "/manifest.json", "/assets/app-polish.css?v=131c32a89913", "/assets/app-shell.js?v=9ad3bf2288e3", "/assets/cards.css?v=9d915d2a84f2", "/assets/cards.js?v=5bc5cc62c612", "/assets/icon.svg?v=62cce142b355", "/assets/navigation.css?v=3c2c084407a7", "/assets/roleplay.css?v=1efdee5c5ce7", "/assets/roleplay.js?v=12baee7f116e", "/assets/runtime.js?v=0b7e3913acf0", "/assets/scene-runtime.js?v=8c0c90dc83d1", "/assets/scene.css?v=c2ab692be7e0", "/assets/scene.js?v=4c08b7440af3", "/assets/theme.css?v=865324615487", "/assets/tools.css?v=ce007915307d", "/assets/workshop.css?v=740eab95b3e5", "/assets/workshop.js?v=eb415dbd7d58"];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });

@@ -1,6 +1,7 @@
 /* Shared browser runtime. No CDN, build step, or external font dependency. */
 (() => {
   'use strict';
+  if (window.AndroidBridge) document.documentElement.dataset.platform = 'android';
   const storage = {
     get(key, fallback = '') { try { return localStorage.getItem(key) || fallback; } catch (_) { return fallback; } },
     set(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
@@ -24,7 +25,8 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeout || 25000);
     const abort = () => controller.abort();
-    if (options.signal) options.signal.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
+    else if (options.signal) options.signal.addEventListener('abort', abort, { once: true });
     try {
       const init = { ...options, signal: controller.signal, headers: { Accept: 'application/json', ...options.headers } };
       if (init.body && typeof init.body !== 'string') {
@@ -33,7 +35,11 @@
       }
       const response = await fetch(url, init);
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(detailMessage(data) || `请求失败（${response.status}）`);
+      if (!response.ok) {
+        const error = new Error(detailMessage(data) || `请求失败（${response.status}）`);
+        error.status = response.status;
+        throw error;
+      }
       if (data === null) throw new Error('服务器返回了无法读取的数据');
       return data;
     } catch (error) {
@@ -224,7 +230,13 @@
           <footer><button type="button" class="btn btn-secondary" :disabled="busy" @click="save(true)">{{ busy ? '处理中…' : '保存并测试' }}</button><button type="submit" class="btn btn-primary" :disabled="busy">保存设置</button></footer></form>
         </section></div>`
     });
-    app.config.errorHandler = (error) => showError(error.message || '页面操作失败，请刷新后重试');
+    guard(app);
+  }
+  function guard(app) {
+    app.config.errorHandler = error => {
+      console.error(error);
+      showError(error.message || '页面操作失败，请刷新后重试');
+    };
   }
   function showError(message) {
     let banner = document.getElementById('app-errors');
@@ -232,8 +244,13 @@
       banner = document.createElement('div'); banner.id = 'app-errors'; banner.setAttribute('role', 'alert');
       document.body.appendChild(banner);
     }
-    banner.textContent = String(message).slice(0, 220);
-    const close = document.createElement('button'); close.textContent = '关闭'; close.onclick = () => banner.remove(); banner.appendChild(close);
+    banner.textContent = '页面遇到问题：' + String(message).slice(0, 220);
+    const actions = document.createElement('div'); actions.className = 'app-error-actions';
+    const reload = document.createElement('button'); reload.textContent = '重新加载'; reload.onclick = () => location.reload(); actions.appendChild(reload);
+    const home = document.createElement('a'); home.textContent = '返回书架'; home.href = '/?view=shelf'; actions.appendChild(home);
+    const settings = document.createElement('a'); settings.textContent = '模型设置'; settings.href = '/?view=settings'; actions.appendChild(settings);
+    const close = document.createElement('button'); close.textContent = '关闭提示'; close.onclick = () => banner.remove(); actions.appendChild(close);
+    banner.appendChild(actions);
   }
   window.addEventListener('error', event => { if (event.message) showError(event.message); });
   window.addEventListener('unhandledrejection', event => showError(event.reason?.message || '网络操作失败，请重试'));
@@ -248,7 +265,7 @@
     if (event.shiftKey && document.activeElement === first) { last.focus(); event.preventDefault(); }
     else if (!event.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) { first.focus(); event.preventDefault(); }
   });
-  window.NovelUI = { storage, setTheme, requestJson, readSSE, textContent, renderMessage, download, copy, install, showError };
+  window.NovelUI = { storage, setTheme, requestJson, readSSE, textContent, renderMessage, download, copy, install, guard, showError };
   window.addEventListener('load', () => {
     if (!window.AndroidBridge && 'serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

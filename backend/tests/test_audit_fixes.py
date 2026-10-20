@@ -160,22 +160,23 @@ def test_rate_limit_client_ip_prefers_forwarded_header(monkeypatch):
 
 
 def test_rate_limit_key_pruning_removes_stale_keys(monkeypatch):
-    """回归：限流表 IP 键此前永不删除，内存单调上涨。修复后周期清理过期键。"""
-    from api import server as server_mod
-    import time
-
-    server_mod._rate_last_clean["t"] = 0.0  # 强制触发清理
-    server_mod._rate_limits["stale-ip"] = [time.time() - 1000]  # 远超窗口
-    server_mod._rate_limits["fresh-ip"] = [time.time()]
-    server_mod._generate_conns["dead-ip"] = 0
-    server_mod._generate_conns["live-ip"] = 2
-
-    server_mod._prune_rate_keys()
-
-    assert "stale-ip" not in server_mod._rate_limits, "过期键应被清理"
-    assert "fresh-ip" in server_mod._rate_limits, "活跃键应保留"
-    assert "dead-ip" not in server_mod._generate_conns, "计数为 0 的生成键应清理"
-    assert "live-ip" in server_mod._generate_conns, "活跃生成键应保留"
+    import asyncio
+    from collections import deque
+    from api.middleware import RequestLimits
+    from api import middleware
+    async def downstream(scope, receive, send):
+        await send({'type':'http.response.start','status':200,'headers':[]})
+        await send({'type':'http.response.body','body':b''})
+    limiter=RequestLimits(downstream)
+    limiter.cleaned=0
+    limiter.requests['stale-ip']=deque([1])
+    limiter.requests['fresh-ip']=deque([119])
+    monkeypatch.setattr(middleware.time,'monotonic',lambda:120)
+    async def receive():return {'type':'http.request','body':b''}
+    async def send(message):pass
+    asyncio.run(limiter({'type':'http','path':'/api/health','method':'GET','client':('test',1)},receive,send))
+    assert 'stale-ip' not in limiter.requests
+    assert 'fresh-ip' in limiter.requests
 
 
 # ── v3.8 修复回归：job 创建前锁文件预检 ──

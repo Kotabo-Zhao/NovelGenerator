@@ -3,9 +3,7 @@ import json
 import logging
 import sys
 import os
-import time as _time
 import urllib.parse
-from collections import defaultdict
 
 # 提高递归深度限制，防止大型 JSON 解析时触发 RecursionError
 sys.setrecursionlimit(10000)
@@ -33,12 +31,15 @@ from core.path_security import validate_novel_id, RESERVED_NOVEL_IDS
 # 共享依赖：engine 单例 + log（见 deps.py）
 from .deps import engine, log, ownership_store
 from .auth import owner_id_from_authorization, is_internal_version
+from .middleware import RequestLimits, NovelWorldJobs
 from core.auth import AuthError
-from .routers import auth, novels, v1, outline, quality, requirements, styles, trends, characters, feedback, tts, bible, ideas, roleplay, system
+from .routers import auth, novels, v1, outline, quality, requirements, styles, trends, characters, feedback, tts, bible, ideas, roleplay, system, interactive
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
 app = FastAPI(title="NovelGenerator API", version="1.0.0")
+app.add_middleware(NovelWorldJobs)
+app.add_middleware(RequestLimits)
 # CORS 来源统一走 config（逗号分隔），与 Android 副本保持一致；
 # wildcard + credentials 是浏览器禁止的组合，通配时自动关闭 credentials
 _cors_origins = CORS_ORIGINS.split(",") if isinstance(CORS_ORIGINS, str) else CORS_ORIGINS
@@ -146,140 +147,9 @@ async def legacy_novel_owner_middleware(request: Request, call_next):
 
 # ── Rate Limiting Middleware ──
 
-_rate_limits: dict = defaultdict(list)  # {ip: [timestamps]}
-_RATE_WINDOW = 60  # 1 minute window
-_RATE_MAX_REQUESTS = int(os.getenv("RATE_LIMIT", "60"))  # 60 req/min per IP
-_auth_rate_limits: dict = defaultdict(list)  # {ip: [timestamps]}
-_AUTH_RATE_WINDOW = 15 * 60
-_AUTH_RATE_MAX_REQUESTS = int(os.getenv("AUTH_RATE_LIMIT", "10"))
-# 生成端点是 SSE 长连接（单章 60-90s），用"并发连接数"而非"次数/min"限流：
-# 同一 IP 同时最多 N 个生成连接，连接释放即恢复，避免连点/刷新被窗口计数锁死
-_RATE_GENERATE_MAX_CONCURRENT = int(os.getenv("RATE_LIMIT_GENERATE_CONCURRENT", "3"))
-
-_generate_conns: dict = defaultdict(int)  # {ip: 当前并发生成连接数}
-
-# v3.8: 内存键清理——_rate_limits/_auth_rate_limits/_generate_conns 的 IP 键
-# 此前永不删除，长期运行内存单调上涨。周期裁剪过期键（两倍窗口内无活动即删除）。
-_RATE_KEY_CLEAN_INTERVAL = 2 * 60
-_rate_last_clean = {"t": 0.0}
-
-
 def _client_ip(request: Request) -> str:
-    """解析客户端 IP：受信任代理场景优先取 x-forwarded-for 首地址。
-
-    直接取 request.client.host 在 Nginx/Render 代理后会让全站共享同一 IP 桶
-    （任意用户可耗尽他人限流额度）。仅当 TRUST_PROXY_HEADERS=true 时信任
-    x-forwarded-for（部署方确认代理会覆写该头，防止客户端伪造）。
-    """
-    if os.getenv("TRUST_PROXY_HEADERS", "false").strip().lower() in {"1", "true", "yes", "on"}:
-        forwarded = request.headers.get("x-forwarded-for", "")
-        if forwarded:
-            first = forwarded.split(",", 1)[0].strip()
-            if first:
-                return first
-    return request.client.host if request.client else "unknown"
-
-
-def _prune_rate_keys() -> None:
-    """删除窗口内无活动（超过 2 倍窗口）的 IP 键，防止内存单调增长。"""
-    now = _time.time()
-    if now - _rate_last_clean["t"] < _RATE_KEY_CLEAN_INTERVAL:
-        return
-    _rate_last_clean["t"] = now
-    for table, window in ((_rate_limits, _RATE_WINDOW),
-                          (_auth_rate_limits, _AUTH_RATE_WINDOW)):
-        cutoff = now - window * 2
-        for ip in [k for k, stamps in table.items()
-                   if not stamps or stamps[-1] < cutoff]:
-            del table[ip]
-    for ip, count in list(_generate_conns.items()):
-        if count <= 0:
-            del _generate_conns[ip]
-
-
-@app.middleware("http")
-async def rate_limit_middleware(request: Request, call_next):
-    """内存速率限制：普通端点按 60s 窗口计数，生成端点按并发连接数"""
-    client_ip = _client_ip(request)
-    is_generate = "/generate" in request.url.path
-
-    if request.url.path == "/api/auth/wechat-login":
-        now = _time.time()
-        window_start = now - _AUTH_RATE_WINDOW
-        _auth_rate_limits[client_ip] = [
-            timestamp for timestamp in _auth_rate_limits[client_ip]
-            if timestamp > window_start
-        ]
-        if len(_auth_rate_limits[client_ip]) >= _AUTH_RATE_MAX_REQUESTS:
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "detail": "登录尝试过于频繁，请稍后再试",
-                    "retry_after": _AUTH_RATE_WINDOW,
-                },
-                headers={"Retry-After": str(_AUTH_RATE_WINDOW)},
-            )
-        _auth_rate_limits[client_ip].append(now)
-
-    if is_generate:
-        # 生成端点：并发连接限流（流结束/断开才释放计数）
-        if _generate_conns[client_ip] >= _RATE_GENERATE_MAX_CONCURRENT:
-            log.warning("生成并发限制触发: IP=%s, path=%s, conns=%d",
-                        client_ip, request.url.path, _generate_conns[client_ip])
-            return JSONResponse(
-                status_code=429,
-                content={"detail": f"已有生成任务正在进行，请等待完成后再试（当前 {_generate_conns[client_ip]} 个并发）",
-                         "retry_after": 10},
-            )
-        _generate_conns[client_ip] += 1
-
-        def _release():
-            _generate_conns[client_ip] = max(0, _generate_conns[client_ip] - 1)
-
-        try:
-            response = await call_next(request)
-        except Exception:
-            _release()
-            raise
-
-        # StreamingResponse 的 body 在 handler 返回后才被消费：把计数释放
-        # 挂到流结束/断开时，而不是 handler 返回时（否则并发限流形同虚设）。
-        from starlette.responses import StreamingResponse as _StreamingResponse
-        if isinstance(response, _StreamingResponse):
-            original_iterator = response.body_iterator
-
-            async def _counted_stream():
-                try:
-                    async for chunk in original_iterator:
-                        yield chunk
-                finally:
-                    _release()
-
-            response.body_iterator = _counted_stream()
-            return response
-        _release()
-        return response
-
-    # 普通端点：60 秒窗口计数
-    # v3.5.17: 静态资源不限流（favicon/sw.js/vue.js 页面加载即消耗多次，
-    # 计入 60/min 窗口会误伤正常使用）；只对 /api 接口限流
-    if not request.url.path.startswith("/api/"):
-        _prune_rate_keys()  # 借任意非 API 流量触发周期键清理
-        return await call_next(request)
-
-    now = _time.time()
-    window_start = now - _RATE_WINDOW
-    _rate_limits[client_ip] = [t for t in _rate_limits[client_ip] if t > window_start]
-
-    if len(_rate_limits[client_ip]) >= _RATE_MAX_REQUESTS:
-        log.warning("速率限制触发: IP=%s, path=%s, count=%d", client_ip, request.url.path, len(_rate_limits[client_ip]))
-        return JSONResponse(
-            status_code=429,
-            content={"detail": f"请求过于频繁，请 {_RATE_WINDOW} 秒后再试", "retry_after": _RATE_WINDOW},
-        )
-
-    _rate_limits[client_ip].append(now)
-    return await call_next(request)
+    from .middleware import client_ip
+    return client_ip(request.scope)
 
 
 @app.middleware("http")
@@ -339,6 +209,20 @@ async def serve_roleplay():
     if os.path.isfile(path):
         return FileResponse(path, media_type="text/html", headers={"Cache-Control": "no-cache"})
     return HTMLResponse("<h1>角色扮演页面不存在</h1>", status_code=404)
+
+
+@app.get("/scene.html", response_class=HTMLResponse)
+async def serve_novel_world():
+    path = os.path.join(WEB_DIR, "scene.html")
+    if os.path.isfile(path):
+        return FileResponse(path, media_type="text/html", headers={"Cache-Control": "no-cache, no-store"})
+    return HTMLResponse("<h1>小说世界页面不存在</h1>", status_code=404)
+
+
+@app.get('/cards.html', response_class=HTMLResponse)
+async def serve_character_space():
+    return FileResponse(os.path.join(WEB_DIR, 'cards.html'), media_type='text/html',
+                        headers={'Cache-Control': 'no-cache'})
 
 
 # ── Static JS/CSS assets (自托管，不依赖外部CDN) ──
@@ -416,6 +300,8 @@ async def health():
     return {
         "status": "ok",
         "service": "NovelGenerator",
+        "app_version": "4.1.1",
+        "workspace_id": __import__('hashlib').sha256(os.path.normcase(os.path.abspath(NOVELS_DIR)).encode()).hexdigest()[:12],
         "storage_exists": novels_exist,
         "novel_count": novel_count,
         "llm_configured": current["api_key_configured"],
@@ -450,6 +336,9 @@ async def set_llm_config(req: dict):
     """
     if not isinstance(req, dict):
         raise HTTPException(status_code=400, detail="配置格式无效")
+    from .middleware import active_generations
+    if active_generations() or roleplay._store._generating:
+        raise HTTPException(status_code=409, detail="请先停止当前生成，再修改模型连接")
     provider = (req.get("provider") or "").strip().lower()
     api_key = (req.get("api_key") or "").strip()
     base_url = (req.get("base_url") or "").strip()
@@ -520,7 +409,7 @@ async def test_llm_config():
 
 # ── 业务路由挂载（2026-07-31 按域拆分）──
 
-for _router in (auth, v1, novels, outline, quality, requirements, styles, trends, characters, feedback, tts, bible, ideas, roleplay, system):
+for _router in (auth, v1, novels, outline, quality, requirements, styles, trends, characters, feedback, tts, bible, ideas, roleplay, system, interactive):
     app.include_router(_router.router)
 
 

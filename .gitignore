@@ -31,3 +31,11 @@ android/signing.properties
 android/keys/
 backend/data/
 reports/**/failure*
+
+# Local credentials, desktop browser profile and generated verification data.
+/llm_config.json
+/webview/
+/reports/desktop-blank-check/
+/reports/refactor-4.1/
+/reports/windows-4.1.1/
+/reports/android-4.1.1/

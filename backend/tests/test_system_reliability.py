@@ -48,14 +48,14 @@ def test_novel_path_rejects_unsafe_identifiers(tmp_path, name):
         novel_path(str(tmp_path), name)
 
 
-def test_application_serves_canonical_assets_and_no_legacy_mode(monkeypatch, tmp_path):
+def test_application_serves_canonical_assets_and_novel_world(monkeypatch, tmp_path):
     from api.server import app, WEB_DIR
     assert Path(WEB_DIR).name == "web"
     assert (Path(WEB_DIR) / "index.html").is_file()
     client = TestClient(app)
-    for path in ("/", "/roleplay.html", "/assets/runtime.js", "/assets/theme.css", "/assets/workshop.js"):
+    for path in ("/", "/scene.html", "/assets/scene.js", "/assets/scene.css", "/roleplay.html", "/assets/runtime.js", "/assets/theme.css", "/assets/workshop.js"):
         assert client.get(path).status_code == 200
-    assert not any(
+    assert any(
         getattr(route, "path", None) == "/api/novels/{novel_id}/interactive/start"
         for route in app.routes
     )

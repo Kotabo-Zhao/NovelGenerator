@@ -100,7 +100,7 @@ class MainActivity : AppCompatActivity() {
                 setStatus("正在打开工作台…", R.color.success)
                 binding.offlineBanner.visibility = View.GONE
                 binding.progressBar.visibility = View.VISIBLE
-                binding.webView.loadUrl("http://127.0.0.1:8899/")
+                binding.webView.loadUrl("http://127.0.0.1:8899/?app_version=${BuildConfig.VERSION_CODE}")
                 frontendLoaded = true
                 return
             }
@@ -131,7 +131,7 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true; domStorageEnabled = true
             allowFileAccess = false; allowContentAccess = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            useWideViewPort = true; loadWithOverviewMode = true
+            useWideViewPort = true; loadWithOverviewMode = false
             // v2.5.15: 禁缓存——升级 APK 后 WebView 必加载新前端（否则缓存旧页面
             // 导致功能"没生效"的假象）
             cacheMode = WebSettings.LOAD_NO_CACHE
