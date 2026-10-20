@@ -207,6 +207,9 @@ class DialogueEngine:
                          f"身体[{ps.get('condition', '健康')}] 身份[{ps.get('disguise', '本名') or '本名'}] "
                          f"处境[{ps.get('situation', '')}]")
         # v3.5.27: 角色白名单——本轮只有你与读者，严禁其他人出现
+        from .participation import canon_context
+        if state.get('participation'):
+            parts.append(canon_context(state, target_char, 6000))
         parts.append(f"## 对话对象: 你（{target_char}）与读者（{((state.get('player_char') or {}).get('name', '你'))}）"
                      "两人。其他角色一律不得出现、插话或提及在场（读者主动提起时只回应其内容）。")
         # v3.4: 读者刚执行的行动（角色需即时反应，不复述行动本身）
@@ -402,7 +405,7 @@ class DialogueEngine:
     # ── 对话（SSE）──
     async def chat_stream(self, novel_id: str, user_input: str,
                           target_char: Optional[str] = None,
-                          force_talk: bool = False) -> AsyncIterator[dict]:
+                          force_talk: bool = False, force_action: bool = False) -> AsyncIterator[dict]:
         """玩家发消息 → 角色回复（流式）
 
         v3.6.4: force_talk=True 时跳过行动识别——输入框纯对话（方案C：
@@ -415,6 +418,11 @@ class DialogueEngine:
             yield {"type": "error", "message": "互动存档不存在，请先 start"}
             return
 
+        prepared_action = None
+        if force_action:
+            prepared_action = self.action.detect_action(user_input,state) or {
+                'intent':'act','type':'interact','input':user_input,'summary':user_input,
+                'target':'','end_chat':False}
         # @角色 切换（v3.5.16: 对话对象永远排除玩家自己——玩家扮演的主角只跟 NPC 对话）
         player_name = (state.get("player_char") or {}).get("name", "")
         target = target_char
@@ -453,12 +461,14 @@ class DialogueEngine:
             node_chars = [n for n in (state.get("node_chars") or []) if n != player_name]
             target = node_chars or [n for n in casts.keys() if n != player_name]
             target = target[0] if target else ""
+        if not target and prepared_action:
+            target = "旁白"
         if not target:
             yield {"type": "error", "message": "没有可对话的角色"}
             return
 
         # v3.9: 在场性校验——目标不在当前场景/不同行 → 旁白提示而非'隐身角色'开口
-        if target and target != player_name:
+        if target and target != player_name and not prepared_action:
             _present = self._is_target_present(novel_id, target, state)
             if _present is False:
                 _near = []
@@ -493,6 +503,11 @@ class DialogueEngine:
         entry_user = {"role": "user", "content": clean_input, "speaker": "player",
                       "ts": time.strftime("%H:%M:%S")}
         self.store.append_chat(novel_id, entry_user)
+        if state.get('participation'):
+            state.setdefault('recent_blocks',[]).append({'type':'user','speaker':player_name,
+                'content':clean_input,'mode':'action' if prepared_action else 'dialogue'})
+            state['recent_blocks'] = state['recent_blocks'][-260:]
+            self.store.save_state(novel_id,state)
 
         # v3.5.19: 阶段提示（对话生成中）
         yield {"type": "phase", "label": "💭 角色思考中…"}
@@ -500,7 +515,7 @@ class DialogueEngine:
         # v3.6.3: 待确认移动流——上轮"去图谱外地点"已反问，本轮玩家确认/取消
         # 必须在 detect_action 之前检查（LLM 会把"好，去吧"误判为独立 act，
         # 导致 `not action` 为 False → pending 检查被跳过 → 确认流形同虚设）
-        action = None
+        action = prepared_action
         # v3.6.4: force_talk（纯对话模式）——输入框永不触发行动识别/确认流
         pending = state.get("pending_travel") or {} if not force_talk else {}
         if pending:
@@ -531,6 +546,9 @@ class DialogueEngine:
         # （无 pending 时也走同样路径，避免重复 LLM 调用）
         if not action and not force_talk:  # v3.6.4: force_talk 跳过行动识别
             action = self.action.detect_action(clean_input, state)
+            if not action and force_action:
+                action = {'intent':'act','type':'interact','input':clean_input,
+                          'summary':clean_input,'target':target_char or '', 'end_chat':False}
         # v3.6: travel 到图谱外地点 → 回问确认流（不静默执行，也不静默退回对话）
         if action and action.get("intent") == "travel" and action.get("need_confirm") \
                 and not action.get("confirmed"):
@@ -592,7 +610,11 @@ class DialogueEngine:
             yield {"type": "action_detect", "action_type": action.get("type", "other"),
                    "summary": action.get("summary", ""), "end_chat": action.get("end_chat", False),
                    "blocked": bool(action.get("blocked"))}
+            action.setdefault('input',clean_input)
+            if target and target != '旁白':
+                action['recipient'] = target
             applied = self.action.apply_action(novel_id, action)
+            state = applied.get("state") or state
             changed = applied.get("changed", [])
             # 行动结果场景（流式，1-3 句）
             action_scene_failed = False
@@ -606,6 +628,10 @@ class DialogueEngine:
                 # 触发前端自动推进，否则会在故障态连续消费后续场景。
                 yield {"type": "done"}
                 return
+            if (action.get('resolution') or {}).get('status') in ('failure','refused','pending'):
+                yield {'type':'action_done','end_chat':False,'action':action,'snapshot':_state_snapshot(state)}
+                yield {'type':'done'}
+                return
             # 行动改变场景（离开/进入新地点）→ 对话自然收尾
             if action.get("end_chat"):
                 yield {"type": "action_done", "end_chat": True, "action": action, "snapshot": _state_snapshot(state)}
@@ -614,6 +640,9 @@ class DialogueEngine:
                 return
             # 行动后角色反应（对话继续）
             yield {"type": "action_done", "end_chat": False, "action": action, "snapshot": _state_snapshot(state)}
+            if state.get('participation') or force_action:
+                yield {'type':'done'}
+                return
             last_action = action
         else:
             last_action = None
@@ -761,6 +790,10 @@ class DialogueEngine:
         True/None=放行（None=数据不足，不误伤远程对话）。
         v3.9: 修复'隐身角色开口'逻辑BUG——玩家 @ 任意角色即触发对话，
         不在场角色突兀回应造成因果断裂。"""
+        if state.get('participation'):
+            from .story_director import compute_present
+            return target in compute_present(state)[0]
+
         try:
             scenes = self.store.recent_scenes(novel_id, 1)
             if scenes:

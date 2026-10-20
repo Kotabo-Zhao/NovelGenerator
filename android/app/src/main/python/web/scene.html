@@ -20,9 +20,9 @@
     } catch (e) { /* 隐私模式下忽略 */ }
   })();
 </script>
-<link rel="stylesheet" href="/assets/scene.css?v=c2ab692be7e0">
+<link rel="stylesheet" href="/assets/scene.css?v=f2eb7dae578a">
 <link rel="stylesheet" href="/assets/navigation.css?v=3c2c084407a7">
-<link rel="stylesheet" href="/assets/app-polish.css?v=31e91996a617">
+<link rel="stylesheet" href="/assets/app-polish.css?v=fb1bbb201a6b">
 </head>
 <body class="novel-world-page">
 <div id="boot-error"></div>
@@ -246,6 +246,24 @@
         </div>
       </div>
 
+      <details v-if="hasState" class="sc-participation">
+        <summary v-if="participation.enabled">你：{{playerName}} · 第{{participation.chapter}}章 · {{participation.title}} · {{participation.mode === 'branch' ? '允许分支' : '保守参与'}} <span>身份 / 事件 / 行动结果 ⌄</span></summary>
+        <summary v-else>旧版存档 · 可保留进度升级原著参与 ⌄</summary>
+        <div v-if="participation.enabled" class="sc-participation-body">
+          <p><b>你扮演：</b>{{playerName}} · {{playerIdentity}}。AI 负责环境与其他人物，你的关键行动由你决定。</p>
+          <p><b>你的目标：</b>{{participation.goal}}</p>
+          <p><b>当前事件：</b>{{participation.event || (participation.event_state === 'resolved' ? '本章事件已解决，可继续后续剧情。' : '当前章节事件尚在准备；先观察或继续场景。')}}</p>
+          <button v-if="participation.mode === 'branch' && participation.event" class="btn btn-secondary btn-sm" :disabled="busy" @click="declineEvent">拒绝当前事件 · 进入后果分支</button>
+          <p v-if="participation.entry_seed"><b>开局状态依据：</b>{{participation.entry_seed.note}}</p>
+          <p><b>依据：</b>{{participation.source === 'chapter_text' ? '原著正文' : '仅大纲（正文未提供）'}}</p>
+          <p v-if="participation.last_action && participation.last_action.status"><b>{{outcomeLabel(participation.last_action.status)}}：</b>{{participation.last_action.input}}<br>{{participation.last_action.reason}}</p>
+          <ul v-if="participation.last_action && participation.last_action.changes"><li v-for="(change,i) in participation.last_action.changes" :key="i">{{change}}</li></ul>
+          <details><summary>原著开篇参考（不等于本局已发生）</summary><p class="sc-canon-reference">{{participation.opening}}</p></details>
+          <details v-if="participation.completed_events && participation.completed_events.length"><summary>已参与完成的事件</summary><p v-for="event in participation.completed_events" :key="event.action_id">第{{event.chapter}}章 · {{event.event}}</p></details>
+          <details v-if="participation.divergences && participation.divergences.length"><summary>本局造成的变化</summary><p v-for="change in participation.divergences" :key="change.action_id">{{change.changes.join('；')}}</p></details>
+        </div>
+        <div v-else class="sc-participation-body"><p>保留人物、物品、聊天及剧情进度，按当前章节补充原著依据；旧节点完成记录不会自动重演。</p><button class="btn btn-secondary" :disabled="busy" @click="upgradeParticipation">保留进度并升级</button></div>
+      </details>
       <div ref="streamEl" class="sc-stream" @scroll="onStreamScroll" aria-live="polite" :aria-busy="busy ? 'true' : 'false'">
         <div class="sc-stream-inner">
 
@@ -305,7 +323,7 @@
               <div class="sc-start-eyebrow">小说世界 · 进入小说世界</div>
               <div class="sc-start-title" v-if="novelTitle">《{{ novelTitle }}》</div>
               <div class="sc-start-title" v-else>进入小说世界</div>
-              <div class="sc-start-desc">选一个角色，走进这个场景。旁白与对白会在这里展开，你可以与在场角色实时对话、采取行动，或继续把剧情推向下一幕。</div>
+              <div class="sc-start-desc">选择你是谁、从原著哪一章进入，以及是否允许改变剧情。你的输入只是行动意图，系统会先判定能否执行，再记录实际后果。</div>
               <div class="sc-start-meta">
                 <span class="sc-tag accent" v-if="startOptions.length">可扮演 {{ startOptions.length }} 人</span>
                 <span class="sc-tag" v-if="novelGenre">{{ novelGenre }}</span>
@@ -334,6 +352,23 @@
                 </button>
               </div>
               <div class="sc-start-empty" v-else>没有读取到可扮演角色档案。也可以不指定角色，直接以主角身份进入。</div>
+              <div class="sc-entry-fields">
+                <label>2 · 进入原著章节
+                  <select v-model.number="entryChapter" aria-label="进入章节">
+                    <option v-for="ch in entryChapters" :key="ch.index" :value="ch.index">第{{ch.number}}章 · {{ch.title}} {{ch.has_text ? '（有正文）' : '（仅大纲）'}}</option>
+                  </select>
+                </label>
+                <p class="sc-entry-source">{{entryPreview.has_text ? '从本章开端参与；前章正文用作已发生事实，本章内容作为事件参考。' : '本章尚无正文，将基于大纲开局；无法保证与未提供的原著细节一致。'}}</p>
+                <label>3 · 剧情规则
+                  <select v-model="canonMode" aria-label="剧情规则">
+                    <option value="branch">允许分支 · 行动可以改变原剧情</option>
+                    <option value="canon">保守参与 · 限制关键事件改写</option>
+                  </select>
+                </label>
+                <label>你的当前目标（可选）
+                  <input v-model="playerGoal" maxlength="200" aria-label="玩家目标" placeholder="留空使用所选角色的动机，例如：找到失踪的同伴">
+                </label>
+              </div>
               <div class="sc-start-actions">
                 <button class="btn btn-primary sc-start-btn" type="button"
                         :disabled="startBusy || (startOptions.length > 0 && !startChar)" @click="startInteractive">
@@ -696,7 +731,7 @@
 <script src="/vue.global.prod.js"></script>
 <script src="/assets/runtime.js?v=0b7e3913acf0"></script>
 <script src="/assets/scene-runtime.js?v=8c0c90dc83d1"></script>
-<script src="/assets/app-shell.js?v=c33ee71788b8"></script>
-<script src="/assets/scene.js?v=4c08b7440af3"></script>
+<script src="/assets/app-shell.js?v=f1da60c7ad3e"></script>
+<script src="/assets/scene.js?v=e5b4c14b914b"></script>
 </body>
 </html>

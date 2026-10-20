@@ -2112,3 +2112,29 @@ img { display: block; max-width: 100%; }
 .sc-state-button { width:auto; padding:0 9px; font-size:12px; }
 
 @media(max-width:1179px) { .novel-world-page .sc-panel.open { z-index:100; } .novel-world-page .sc-panel-backdrop { z-index:99; } }
+
+.sc-entry-fields { display:grid; gap:12px; margin:20px 0; }
+.sc-entry-fields label { display:grid; gap:7px; font-size:13px; font-weight:600; }
+.sc-entry-fields select,.sc-entry-fields input { width:100%; box-sizing:border-box; padding:11px 12px; border:1px solid var(--border); border-radius:10px; background:var(--panel); color:var(--text); font:inherit; }
+.sc-entry-source { color:var(--text-3); font-size:12px; line-height:1.7; margin:0; }
+.sc-participation { flex:none; padding:9px 16px; border-bottom:1px solid var(--border); background:var(--panel); font-size:12px; }
+.sc-participation>summary { cursor:pointer; color:var(--accent); }
+.sc-participation>summary span { color:var(--text-3); margin-left:12px; }
+.sc-participation-body { max-height:38dvh; overflow:auto; line-height:1.8; padding:8px 0; }
+.sc-participation-body p { margin:7px 0; }
+.sc-canon-reference { white-space:pre-wrap; color:var(--text-3); }
+@media(max-width:600px) { .sc-participation { padding:8px 10px; } .sc-participation>summary span { display:block; margin:3px 0 0; } .sc-entry-fields select,.sc-entry-fields input { font-size:16px; } }
+
+/* 4.3: reading surface stays central; management opens on request. */
+.novel-world-page .sc-sidebar,.novel-world-page .sc-rail-wrap { display:none; }
+.novel-world-page .sc-panel { display:none; position:fixed; inset:0 0 0 auto; z-index:90; width:min(390px,94vw); height:100dvh; max-height:100dvh; flex:none; background:var(--sheet-bg,var(--panel)); border-radius:0; transform:none; }
+.novel-world-page .sc-panel.open { display:flex; transform:none; }
+.novel-world-page .sc-panel-close { display:flex; }
+.novel-world-page .sc-topbar { min-height:48px; padding:calc(5px + env(safe-area-inset-top)) 12px 5px; }
+.novel-world-page .sc-stream-inner { max-width:1000px; }
+.novel-world-page .sc-narration { font-size:16px; line-height:1.9; font-style:normal; text-align:left; }
+.novel-world-page .sc-narration .sc-md { text-align:left; }
+.novel-world-page .sc-bubble,.novel-world-page .sc-action-body { font-size:15px; line-height:1.85; }
+.novel-world-page .sc-dialogue-body { max-width:calc(100% - 44px); }
+.novel-world-page .sc-composer-hint { display:none; }
+.novel-world-page .sc-composer { padding-bottom:calc(8px + env(safe-area-inset-bottom)); }

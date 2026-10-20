@@ -23,3 +23,6 @@ button,a,input,select,textarea { touch-action:manipulation; }
 /* Roleplay navigation is available in the application menu. */
 html .roleplay-page #app,html[data-platform="android"] .roleplay-page #app { padding-bottom:0; }
 html .roleplay-page .app-bottom-nav,html[data-platform="android"] .roleplay-page .app-bottom-nav { display:none; }
+
+html .novel-world-page #app,html[data-platform="android"] .novel-world-page #app { padding-bottom:0; }
+html .novel-world-page .app-bottom-nav,html[data-platform="android"] .novel-world-page .app-bottom-nav { display:none; }

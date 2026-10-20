@@ -352,7 +352,40 @@ class ActionEngine:
                 set_main_flow(novel_id, False)
 
     # ── 行动识别（v3.6：意图四分类 + 输出收窄）──
-    def detect_action(self, user_input: str, state: dict) -> Optional[dict]:
+    def detect_action(self, user_input: str, state: dict):
+        from .participation import request_kind, _typed
+        kind, clause = request_kind(user_input)
+        if kind in ('refused', 'conditional'):
+            return {'intent':'act', 'type':kind, 'input':user_input,
+                    'summary':user_input[:120], 'target':'', 'end_chat':False}
+        typed = _typed(clause, state, {})
+        if typed['verb'] in ('travel','give','use','take','observe','rescue','combat'):
+            return {'intent':'travel' if typed['verb']=='travel' else 'act',
+                    'type':typed['verb'],'input':user_input,'summary':user_input[:120],
+                    'target':typed['target'],'end_chat':typed['verb']=='travel',
+                    'need_confirm':typed['verb']=='travel' and typed['target'] not in ((state.get('world') or {}).get('locations') or {})}
+        action = self._detect_action_legacy(clause, state)
+        if action:
+            action['input'] = user_input
+        return action
+
+    def _adjudicate_action(self, state, request):
+        from .participation import canon_context
+        system = ("你是行动裁定员，不是续写者。玩家输入只是意图，不能当成成功。"
+                  "基于当前在场人物、物品、能力和原著证据判断本次尝试。"
+                  "资料不够返回pending。不能创造物品、能力、NPC或替玩家作决定。"
+                  "event_completed只能表示本次实际执行已满足当前事件结果，不是提到关键词。"
+                  "返回JSON：{status:success/failure/pending,reason:具体依据,event_completed:布尔,effect:injured/defeated/dead/none}。战斗结果必须结合双方属性；救援必须检查目标是否仍然存活。")
+        world = {'location':(state.get('world') or {}).get('location'),
+                 'characters':{n:{'present':c.get('present'), 'condition':c.get('condition'),
+                                  'profile':c.get('profile')} for n,c in (state.get('casts') or {}).items()},
+                 'inventory':(state.get('state') or {}).get('inventory'),
+                 'player':state.get('player_char')}
+        user = json.dumps({'world':world,'attempt':request},ensure_ascii=False)[:9000] + '\n' + canon_context(state,request['input'],6000)
+        raw = self._llm(system,user,temperature=0.1,max_tokens=450)
+        return _parse_json(raw) or {}
+
+    def _detect_action_legacy(self, user_input: str, state: dict) -> Optional[dict]:
         """识别玩家输入意图。返回 action dict 或 None（talk/判定失败）。
 
         返回: {intent, type, summary, target, end_chat, reason, forced, blocked?, need_confirm?}
@@ -524,158 +557,23 @@ class ActionEngine:
 
     # ── 行动执行：更新状态（v3.6：travel 走确定性移动执行器）──
     def apply_action(self, novel_id: str, action: dict) -> dict:
-        """把行动结果写回 state（location/flags/inventory/relations）
-
-        v3.6 规则：travel 意图 → world_state.execute_travel（图谱校验/时间推进/
-        在场重算，同步更新三支柱，不依赖 LLM 输出）；其他意图 → 既有护栏
-        （LLM 输出仅候选，sanity check 后写回）。
-        """
-        if action.get("blocked"):
-            # 超现实/凭空获得：不更新剧情状态，只记录尝试痕迹（结果场景按"无果"生成）
-            state = self.store.load_state(novel_id) or {}
-            if state:
-                state["last_action"] = {
-                    "type": action.get("type", "unrealistic"),
-                    "summary": action.get("summary", ""),
-                    "blocked": True,
-                    "ts": time.strftime("%H:%M:%S"),
-                }
-                self.store.save_state(novel_id, state)
-            return {"changed": [], "state": state}
-        state = self.store.load_state(novel_id)
-        if state is None:
-            return {}
-        # v3.6: travel 意图 → 确定性移动执行器（目标已过图谱/确认流校验）
-        if action.get("intent") == "travel":
-            from .world_state import execute_travel, ensure_world, fulfill_promises_at
-            ensure_world(state)
-            target = action.get("target", "")
-            changes, ok = execute_travel(state, target, register_new=True)
-            # v3.6 P3: 到达地点 → 兑现该地点的待兑现约定（对话承诺 → 行动兑现闭环）
-            try:
-                changes.extend(fulfill_promises_at(state, target))
-            except Exception as e:
-                log.warning(f"fulfill promises failed: {e}")
-            # v3.6 P5: 行动 ↔ 章节 beat 联动（命中推进主线节点）
-            try:
-                from .story_director import beat_advance_by_action
-                changes.extend(beat_advance_by_action(state, action))
-            except Exception as e:
-                log.warning(f"beat advance failed: {e}")
-            state["last_action"] = {
-                "type": "travel", "summary": action.get("summary", f"前往{target}"),
-                "target": target, "ts": time.strftime("%H:%M:%S"),
-            }
-            if not ok:
-                changes = [f"移动未执行（{target or '目标不明'}）"]
-            self.store.save_state(novel_id, state)
-            return {"changed": changes, "state": state}
-        # meta 意图：不进剧情（无状态变化）
-        if action.get("intent") == "meta":
-            state["last_action"] = {
-                "type": "meta", "summary": action.get("summary", ""),
-                "ts": time.strftime("%H:%M:%S"),
-            }
-            self.store.save_state(novel_id, state)
-            return {"changed": [], "state": state}
-
-        su = dict(action.get("state_updates") or {})
-        a_type = action.get("type", "other")
-        s = state.setdefault("state", {})
-        changed = []
-        # 护栏 1：location 只允许 move/leave/interact 类行动修改
-        if su.get("location"):
-            if a_type in ("move", "leave", "interact", "combat"):
-                old = s.get("location", "")
-                # v3.5.52: 写入前清洗——LLM 可能输出 JSON 对象/数组
-                su["location"] = clean_location(su["location"])
-                if old != su["location"]:
-                    # v1.1 P3: 地点可达性校验（L2 领域约束）+ 已知地点累积
-                    # + L1 变更审计（延迟导入防循环依赖）
-                    try:
-                        from .story_director import location_valid, append_change
-                    except Exception:
-                        location_valid, append_change = None, None
-                    known = state.setdefault("known_locations", [])
-                    if location_valid is None or location_valid(old, su["location"], known):
-                        s["location"] = su["location"]
-                        if su["location"] not in known:
-                            known.append(su["location"])
-                        changed.append(f"地点: {old or '?'} → {su['location']}")
-                        if append_change:
-                            append_change(state, {"field": "location", "old": old,
-                                                  "new": su["location"]}, "action:" + a_type)
-                    else:
-                        su["location"] = ""  # 非法移动 → 拒绝（保持原地点）
-            else:
-                su["location"] = ""  # 其他类型行动不许改地点
-        # 护栏 2：flags 限量（单次 ≤3，总量 ≤20）
-        flags = s.setdefault("flags", [])
-        for f in su.get("flags", []):
-            if f and f not in flags and len(flags) < 20:
-                flags.append(f)
-                changed.append(f"flag: {f}")
-        # 护栏 3：物品只随 use/interact/accept/combat 类行动变化
-        if a_type in ("use", "interact", "accept", "combat", "other"):
-            inv = s.setdefault("inventory", [])
-            for item in su.get("inventory", []):
-                if item and item not in inv and len(inv) < 30:
-                    inv.append(item)
-                    changed.append(f"物品: {item}")
-        # 护栏 4：relations 数值 clamp 0-100（字符串描述保留）
-        rel_map = s.setdefault("relations", {})
-        for k, v in (su.get("relations") or {}).items():
-            if k and k != "player":
-                if isinstance(v, (int, float)):
-                    rel_map[k] = max(0, min(100, int(v)))
-                else:
-                    rel_map[k] = str(v)[:60]
-                changed.append(f"关系[{k}]: {v}")
-        # v3.5.37: 行动同步到主角状态卡（location/物品/处境更新）
-        ps = state.get("player_state") or {}
-        if action.get("type") in ("move", "leave", "interact") and su.get("location"):
-            ps["location"] = clean_location(su["location"])[:80]
-        if action.get("type") in ("use", "interact") and su.get("inventory"):
-            ps["holding"] = [str(x)[:30] for x in su["inventory"]][:5]
-        if action.get("type") in ("move", "leave"):
-            ps["situation"] = f"刚执行行动：{str(action.get('summary', ''))[:60]}"
-        if ps:
-            state["player_state"] = ps
-        # 记录最近一次行动（PACT/场景生成可感知）
-        state["last_action"] = {
-            "type": action.get("type", "other"),
-            "summary": action.get("summary", ""),
-            "blocked": bool(action.get("blocked")),
-            "ts": time.strftime("%H:%M:%S"),
-        }
-        # v3.5.9: 行动沉淀为角色记忆 + 事件时间线（行动真实留在角色记忆里）
-        if not action.get("blocked"):
-            from .char_memory import add_event, add_memory
-            summary = action.get("summary", "")[:60]
-            add_event(state, summary or f"{action.get('type', '行动')}", "action")
-            # 关系变化 → 对应角色记忆
-            for k, v in (su.get("relations") or {}).items():
-                if k and k != "player" and k in (state.get("casts") or {}):
-                    add_memory(state, k, "attitude",
-                               f"读者对你做了行动：{summary or '…'}（你对他的态度因此变化）",
-                               source="action")
-            # location 变化 → 全体在场角色记忆
-            if changed and any(c.startswith("地点") for c in changed):
-                loc = s.get("location", "")
-                for name in (state.get("casts") or {}):
-                    add_memory(state, name, "event",
-                               f"读者去了{loc or '新的地方'}",
-                               source="action")
-        # v3.6 P5: 行动 ↔ 章节 beat 联动（命中推进主线节点/未命中累积偏离）
-        try:
+        from .participation import resolve_action
+        # Resolve and commit against the latest save under the same novel lock.
+        with self.store._novel_lock(novel_id):
+            state = self.store.load_state(novel_id)
+            if state is None:
+                return {}
+            if action.get('intent') == 'meta':
+                return {'changed':[], 'state':state}
+            result = resolve_action(state, action, self._adjudicate_action)
+            changed = list(result['changes'])
             from .story_director import beat_advance_by_action
-            _beat_changes = beat_advance_by_action(state, action)
-            if _beat_changes:
-                changed = list(changed) + _beat_changes
-        except Exception as e:
-            log.warning(f"beat advance failed: {e}")
-        self.store.save_state(novel_id, state)
-        return {"changed": changed, "state": state}
+            event_changes = beat_advance_by_action(state,action)
+            changed += event_changes
+            if state.get('participation') and (event_changes or any('事件分支' in c for c in changed)):
+                state.update(pending_node=False,node_chars=[],agenda=None,suggestions=[])
+            self.store.save_state(novel_id,state)
+            return {'changed':changed, 'state':state,'resolution':result}
 
     # ── 行动结果场景（流式）──
     async def action_scene_stream(self, novel_id: str, action: dict,
@@ -746,10 +644,11 @@ class ActionEngine:
         user = (
             f"小说: 《{state.get('title', '')}》 {state.get('genre', '')}·{state.get('style', '')}\n"
             f"当前地点: {clean_location(s.get('location', '')) or '（未定）'}\n"
-            f"你的行动（主角 {((state.get('player_char') or {}).get('name', '你'))} 刚刚做的）: {action.get('summary', '')}\n"
+            f"玩家尝试（玩家 {((state.get('player_char') or {}).get('name', '你'))} 刚刚做的）: {action.get('summary', '')}\n"
             f"行动类型: {action.get('intent', action.get('type', 'other'))}"
             + (f"（移动 → 到达新地点，必须按铁律 3 给环境描写）" if action.get("intent") == "travel" else "")
             + f"\n"
+            f"执行裁定（不可改写）: {json.dumps(action.get('resolution', {}), ensure_ascii=False)}\n"
             f"状态变化: {'；'.join(changed) or '（无）'}\n"
             + (f"世界状态快照（新地点）:\n{_travel_brief}\n" if _travel_brief else "")
             + (f"{_route_brief}\n" if _route_brief else "")
@@ -759,6 +658,20 @@ class ActionEngine:
             + f"在场角色:\n{chr(10).join(char_briefs) or '（无）'}\n"
             f"生成这段行动的结果场景（1-3 句）。"
         )
+        resolution = action.get('resolution') or {}
+        if resolution.get('status') in ('failure','refused','pending'):
+            labels = {'failure':'未成功','refused':'未执行','pending':'待确认'}
+            text = '【旁白】' + labels[resolution['status']] + '：' + resolution.get('reason','')
+            yield {'type':'action_chunk','content':text}
+            self.store.append_chat(novel_id, {'role':'assistant','speaker':'旁白',
+                'type':'action_result','content':text,'resolution':resolution,'ts':time.strftime('%H:%M:%S')})
+            state.setdefault('recent_blocks',[]).append({'type':'narration','speaker':'','content':text})
+            state['recent_blocks'] = state['recent_blocks'][-260:]
+            self.store.save_state(novel_id,state)
+            yield {'type':'action_end','content':text,'action':action,'snapshot':_state_snapshot(state)}
+            return
+        from .participation import canon_context
+        user += '\n' + canon_context(state, action.get('input',''), 5000)
         collected = []
         # v3.5.19: 阶段提示（行动结果生成中）
         yield {"type": "phase", "label": "⚡ 正在生成行动结果…"}

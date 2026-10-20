@@ -1,16 +1,16 @@
-# 墨局 · NovelGenerator 4.2.0
+# 墨局 · NovelGenerator 4.3.0
 
 本地小说创作与沉浸式角色扮演工作台。保留世界观、大纲、章节写作、剧情图谱、质量监督与导出；保留兼容 SillyTavern 角色卡的角色扮演，以及进入原作剧情的小说世界。
 
 ## Windows 启动与升级
 
-已构建 Windows 程序时，双击根目录 **`启动墨局.cmd`** 或 **`启动Windows版.cmd`**，打开 Windows 原生窗口，并沿用当前项目的 `novels/`、`_roleplay/` 和 `llm_config.json`。可执行程序位于 `dist/windows-4.2.0/NovelGenerator/NovelGenerator.exe`。首次克隆仓库请按下文安装源码依赖或构建 Windows 程序。
+已构建 Windows 程序时，双击根目录 **`启动墨局.cmd`** 或 **`启动Windows版.cmd`**，打开 Windows 原生窗口，并沿用当前项目的 `novels/`、`_roleplay/` 和 `llm_config.json`。可执行程序位于 `dist/windows-4.3.0/NovelGenerator/NovelGenerator.exe`。首次克隆仓库请按下文安装源码依赖或构建 Windows 程序。
 
-独立分发：解压 `dist/NovelGenerator-v4.2.0-windows-x64.zip`，运行里面的 `NovelGenerator.exe`，无需安装 Python。独立运行的数据在 `%LOCALAPPDATA%/NovelGenerator`，也可通过 `--data-dir <目录>` 指定。窗口使用系统 WebView2；若窗口环境不可用，会回退到本机浏览器。
+独立分发：解压 `dist/NovelGenerator-v4.3.0-windows-x64.zip`，运行里面的 `NovelGenerator.exe`，无需安装 Python。独立运行的数据在 `%LOCALAPPDATA%/NovelGenerator`，也可通过 `--data-dir <目录>` 指定。窗口使用系统 WebView2；若窗口环境不可用，会回退到本机浏览器。
 
 Windows 4.1.1 修复「开始扮演」进入后白屏：补回消息时间格式化函数，所有页面接入统一异常提示，并提供重新加载、返回书架和模型设置入口。
 
-当前版本包含统一前端导航、模型配置入口、角色商店、按小说管理角色卡、真实参与小说剧情的入世模式，以及消息流与保存可靠性修复。安卓版本为 `4.2.0-internal`（versionCode 71），保留无原生顶部标题栏的界面。
+当前版本包含统一前端导航、模型配置入口、角色商店、按小说管理角色卡、真实参与小说剧情的入世模式，以及消息流与保存可靠性修复。安卓版本为 `4.3.0-internal`（versionCode 72），保留无原生顶部标题栏的界面。
 
 仓库提交源码；`dist/` 中的 EXE、ZIP 和 APK 是本地构建产物，不随 Git 提交。README 中的 `dist/` 路径不代表 GitHub 下载链接。
 
@@ -79,7 +79,7 @@ py -3.13 -m venv .venv
 
 ## 安卓安装包
 
-`dist/NovelGenerator-v4.2.0-miniprogram-arm64-debug.apk`，Android 8.0+，ARM64，版本号 71，内部 debug 版。同步玩家身份、人称、角色卡字段与富文本状态栏改进，并保留此前的白屏修复。与此前版本保持包名和 debug 签名，原生顶部标题栏继续移除。模型、角色库、商店和小说世界使用同一套前端。安卓 PDF / EPUB 暂缓，仍保留 TXT 导出。
+`dist/NovelGenerator-v4.3.0-arm64-debug.apk`，Android 8.0+，ARM64，版本号 72，内部 debug 版。同步玩家身份、人称、角色卡字段与富文本状态栏改进，并保留此前的白屏修复。与此前版本保持包名和 debug 签名，原生顶部标题栏继续移除。模型、角色库、商店和小说世界使用同一套前端。安卓 PDF / EPUB 暂缓，仍保留 TXT 导出。
 
 构建及签名验证通过。没有连接安卓真机，实际安装、键盘和后台行为仍需真机验收。Windows 已验证打包后的 EXE 启动与内嵌 API/页面资源；浏览器核对了桌面和手机布局，真实模型长时间体验不属于这些技术检查。
 
@@ -102,7 +102,7 @@ $env:CHAQUOPY_BUILD_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
 .\.venv\Scripts\python.exe tools/build_release.py --target android
 ```
 
-Windows 输出目录为 `dist/windows-4.2.0/NovelGenerator/`，分发时须保留整个目录；Android 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。本地沿用原 debug 签名可覆盖旧内部版；其他电脑自行构建的签名可能不同，请先备份数据。
+Windows 输出目录为 `dist/windows-4.3.0/NovelGenerator/`，分发时须保留整个目录；Android 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。本地沿用原 debug 签名可覆盖旧内部版；其他电脑自行构建的签名可能不同，请先备份数据。
 
 ## 开发验证
 
@@ -125,4 +125,15 @@ node tests/novel_world_runtime.test.cjs
 - 扮演页采用正文优先布局：角色库、设置、世界书和对话操作收进二级菜单或抽屉；输入方式默认折叠。
 - 世界书导入避免跨文件编号冲突、重复导入及容量超限时静默丢失；修复旧字段覆盖启用状态、空世界书导出恢复旧条目等问题。
 - 统一商店旧版定义与 V2/V3 卡片转换，保留开场白、内嵌世界书及扩展，覆盖安装、导出、重新导入的往返验证。
-- 当前修复已同步网页与 Android 源码。此前发布的 4.2.0 安装包不包含本节后续修改，安装包需要重新构建。
+- 本节修复已包含在 4.3.0 的 Windows 与安卓构建中。
+
+
+## 4.3 小说世界参与重构
+
+开局先选玩家角色、进入章节、剧情规则（允许分支 / 保守参与）和个人目标。原著正文按章节编号关联，缺失章节明确标为仅大纲；未来章节正文不注入当前生成。过去证据和当前章节参考分别检索，当前原著走向不等同于本局已经发生。
+
+行动经过独立裁定，再提交物品、人物和事件结果。拒绝、条件设想、缺少物品、目标不在场或前置条件不足不会直接完成事件；模型不可用时保留未决。物品交付、拾取和消耗有实际库存变化；救援和战斗需要模型裁定，效果只通过受限规则提交。节点不再因场景数或提到关键词自动完成。允许分支时可以明确拒绝当前事件，记录拒绝后果并放弃完成奖励。
+
+身份 / 事件 / 行动结果面板显示原著依据、当前目标、执行结果、完成事件和本局变化。旧存档可以保留进度升级，升级前建立快照；重开仍保留旧存档备份。小说正文不会被游玩结果覆盖。
+
+验证覆盖隔离存档与模拟模型，不等于真实模型长时间游玩或安卓真机验收。细节见 [小说参与契约](docs/NOVEL-PARTICIPATION-4.3.md)。

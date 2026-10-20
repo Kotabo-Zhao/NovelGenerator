@@ -80,6 +80,7 @@ class ChatRequest(BaseModel):
     target: Optional[str] = None
     # v3.6.4: force_talk=True → 纯对话（跳过行动识别，输入框专用）
     force_talk: Optional[bool] = False
+    input_mode: Optional[str] = Field(default=None, regex='^(dialogue|action)$')
 
 
 class VoiceOverrideRequest(BaseModel):
@@ -90,6 +91,9 @@ class VoiceOverrideRequest(BaseModel):
 
 class StartRequest(BaseModel):
     character: Optional[str] = Field(default=None, max_length=80)
+    chapter_index: int = Field(default=0, ge=0)
+    canon_mode: str = Field(default='branch', regex='^(branch|canon)$')
+    player_goal: str = Field(default='', max_length=200)
 
 
 # ── start：初始化 + 开场场景 ──
@@ -340,7 +344,35 @@ async def interactive_start(novel_id: str, req: Optional[StartRequest] = None):
     except Exception as e:
         log.warning("interactive assets auto-sync failed: %s", e)
 
+    # A new playthrough enters the selected chapter before any narration.
+    if not _exist_st or not _exist_st.get('scene_num', 0):
+        from core.interactive.participation import initialize_participation
+        fresh = _store.load_state(novel_id)
+        try:
+            initialize_participation(fresh, os.path.join(NOVELS_DIR, novel_id), _story._load_plan(novel_id),
+                req.chapter_index if req else 0, req.canon_mode if req else 'branch', req.player_goal if req else '')
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        _store.save_state(novel_id, fresh)
+
     async def event_stream():
+        initial = _store.load_state(novel_id) or {}
+        if initial.get('participation') and not initial.get('scene_num'):
+            from core.interactive.participation import apply_entry_seed
+            contract = initial['participation']
+            system = ('依据引用确认玩家开局状态。只提取当前开端已持有的物品、玩家所在地点、实际在场NPC。'
+                      '每项附原文逐字quote；无依据返回空。不能把尚未发生的将来事件变成已发生。'
+                      'JSON: {location:{value,quote},inventory:[{value,quote}],items:[{value,quote}],present:[{name,quote}]}')
+            evidence = {'player':(initial.get('player_char') or {}).get('name'),
+                        'opening':contract.get('opening'),
+                        'past':(contract.get('past_evidence') or [])[-8:]}
+            try:
+                from core.interactive.action_engine import _parse_json
+                raw = await asyncio.to_thread(_story._llm, system, json.dumps(evidence,ensure_ascii=False),temperature=0.1,max_tokens=700)
+                apply_entry_seed(initial, _parse_json(raw) or {})
+                _store.save_state(novel_id,initial)
+            except Exception as exc:
+                log.warning('Entry evidence extraction unavailable: %s',type(exc).__name__)
         # 挂载出场角色人设（异步后台，不阻塞开场）
         try:
             state = _store.load_state(novel_id)
@@ -416,7 +448,8 @@ async def interactive_chat(novel_id: str, req: ChatRequest):
     async def event_stream():
         async for data in _sse_with_heartbeat(
             _chat.chat_stream(novel_id, req.message, req.target,
-                              force_talk=bool(req.force_talk))
+                              force_talk=(req.input_mode == 'dialogue' if req.input_mode else bool(req.force_talk)),
+                              force_action=req.input_mode == 'action')
         ):
             yield data
 
@@ -570,6 +603,8 @@ async def interactive_state(novel_id: str):
     for name, c in (state.get("casts") or {}).items():
         cc = dict(c)
         prof = cc.get("profile") or {}
+        if not isinstance(prof, dict):
+            prof = {}
         cc["profile_brief"] = {
             "dna": [str(d.get("name", d))[:50] if isinstance(d, dict) else str(d)[:50]
                     for d in prof.get("expression_dna", [])[:3]],
@@ -578,12 +613,50 @@ async def interactive_state(novel_id: str):
         }
         cc.pop("profile", None)
         casts[name] = cc
+    if state.get('participation'):
+        from core.interactive.story_director import compute_present
+        present, _ = compute_present(state)
+        for name, cast in casts.items():
+            cast['present'] = name in present
     out["casts"] = casts
     # v3.5.42: 返回完整 recent_blocks（场景+对话+行动，切回时恢复全部进度；
     # 旧逻辑只返回最近 1 场景——切回剧情对不上的根因）
     out["recent_blocks"] = state.get("recent_blocks") or []
     out["recent_scene_num"] = state.get("scene_num", 0) or 0
+    from core.interactive.participation import participation_view
+    out['participation_view'] = participation_view(state)
+    if out.get('participation'):
+        out['participation'] = {k:v for k,v in out['participation'].items() if k not in ('past_evidence','reference')}
     return {"ok": True, "state": out}
+
+
+@router.get('/api/novels/{novel_id}/interactive/entry-options')
+async def interactive_entry_options(novel_id: str):
+    from core.interactive.participation import chapter_catalog
+    catalog = chapter_catalog(os.path.join(NOVELS_DIR,novel_id), _story._load_plan(novel_id))
+    return {'ok':True, 'chapters':catalog}
+
+
+@router.post('/api/novels/{novel_id}/interactive/participation/upgrade')
+async def interactive_upgrade(novel_id: str, req: StartRequest):
+    from core.interactive.participation import initialize_participation, participation_view
+    import copy
+    state = _store.load_state(novel_id)
+    if not state:
+        raise HTTPException(404,'请先进入小说')
+    _store.snapshot(novel_id)
+    old_progress = copy.deepcopy(state.get('outline_progress') or {})
+    old_beats = copy.deepcopy(state.get('chapter_beats'))
+    try:
+        initialize_participation(state,os.path.join(NOVELS_DIR,novel_id),_story._load_plan(novel_id),
+                                 int(old_progress.get('idx',0)),req.canon_mode,req.player_goal)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
+    state['outline_progress'] = old_progress
+    if old_beats:
+        state['chapter_beats'] = old_beats
+    _store.save_state(novel_id,state)
+    return {'ok':True,'participation_view':participation_view(state)}
 
 
 # ── assets：小说素材 / 互动完整导出 ──
@@ -797,6 +870,10 @@ async def interactive_act(novel_id: str, req: ActRequest):
             if action_scene_failed:
                 yield {"type": "done"}
                 return
+            if (action.get('resolution') or {}).get('status') in ('failure','refused','pending'):
+                yield {'type':'action_done','end_chat':False,'action':action,'snapshot':_state_snapshot(applied.get('state') or {})}
+                yield {'type':'done'}
+                return
             if action.get("end_chat"):
                 yield {"type": "action_done", "end_chat": True, "action": action,
                        "snapshot": _state_snapshot(applied.get("state") or {})}
@@ -805,7 +882,7 @@ async def interactive_act(novel_id: str, req: ActRequest):
                 yield {"type": "action_done", "end_chat": False, "action": action,
                        "snapshot": _state_snapshot(applied.get("state") or {})}
                 # 非 end_chat 行动后角色反应（对话继续）
-                async for ev in _chat.chat_stream(novel_id, action.get("summary", ""), None):
+                async for ev in _chat.chat_stream(novel_id, action.get("summary", ""), None, force_talk=True):
                     yield ev
         except Exception as e:
             log.error(f"act stream error: {e}")

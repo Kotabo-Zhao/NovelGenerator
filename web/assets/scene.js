@@ -256,6 +256,12 @@
     var actions = ref([]);
     var actionsLoading = ref(false);
     var startChar = ref('');
+    var entryChapters = ref([]);
+    var entryChapter = ref(0);
+    var canonMode = ref('branch');
+    var playerGoal = ref('');
+    var participation = computed(function () { return state.value && state.value.participation_view || {}; });
+    var entryPreview = computed(function () { return entryChapters.value.find(function(c){return c.index === Number(entryChapter.value);}) || {}; });
     var startBusy = ref(false);
     var startError = ref('');
     var sceneStream = reactive({ active: false, phase: '', text: '', sceneNum: 0 });
@@ -340,7 +346,7 @@
     var appStyle = computed(function () {
       return { '--read-size': READ_SIZES[fontSize.value] || READ_SIZES.md };
     });
-    var isPanelOverlay = computed(function () { return viewportW.value < 1180; });
+    var isPanelOverlay = computed(function () { return true; });
     var streamPhase = computed(function () {
       return sceneStream.phase || chatStream.phase || '';
     });
@@ -353,7 +359,7 @@
     });
     var composerHint = computed(function () {
       if (busy.value) return streamPhase.value || '生成中…';
-      if (inputMode.value === 'action') return '描述你的行动，AI 会判断是否触发剧情行动';
+      if (inputMode.value === 'action') return '描述尝试；先判定能否执行，再记录实际后果';
       return 'Enter 发送 · 可 @ 指定回应角色';
     });
     var composerPlaceholder = computed(function () {
@@ -674,6 +680,10 @@
         var type = String((b && b.type) || 'narration');
         var content = String((b && b.content) || '');
         if (!content.trim()) return;
+        if (type === 'user') {
+          pushItem(makeItem('user',{speaker:String(b.speaker || playerName.value),content:content,mode:b.mode || 'dialogue'}));
+          return;
+        }
         if (type === 'dialogue') {
           pushBlock({
             type: blockTypeForSpeaker(b.speaker),
@@ -717,10 +727,36 @@
         return false;
       }
       applyStateMeta(st);
+      if (!st.pending_node) nodeInfo.value = null;
       if (rebuild) restoreFeed(st);
       return true;
     }
 
+    async function loadEntryOptions() {
+      try {
+        var data = await apiJson(API_ROOT + '/entry-options');
+        entryChapters.value = data.chapters || [];
+      } catch (err) { startError.value = '读取原著章节失败：' + err.message; }
+    }
+    async function upgradeParticipation() {
+      if (busy.value) return;
+      busy.value = true;
+      try {
+        await apiJson(API_ROOT + '/participation/upgrade', {method:'POST',body:{canon_mode:canonMode.value,player_goal:playerGoal.value}});
+        await loadState(false);
+        toastSuccess('已保留原进度并建立章节依据', '原著参与已启用');
+      } catch(err) { toastError(err.message,'升级失败'); }
+      finally { busy.value = false; }
+    }
+    async function declineEvent() {
+      if (busy.value || !participation.value.event) return;
+      inputMode.value = 'action';
+      draft.value = '我拒绝当前事件';
+      await sendChat();
+    }
+    function outcomeLabel(status) {
+      return {success:'已执行',failure:'未成功',refused:'未执行',pending:'待确认'}[status] || '尚无行动';
+    }
     async function loadCasts() {
       try {
         var data = await apiJson(URLS.casts);
@@ -981,7 +1017,7 @@
       startError.value = '';
       menuOpen.value = false;
       try {
-        var body = startChar.value ? { character: startChar.value } : {};
+        var body = {character:startChar.value || null,chapter_index:Number(entryChapter.value),canon_mode:canonMode.value,player_goal:playerGoal.value};
         await runSceneLike('start', URLS.start, body);
       } finally {
         startBusy.value = false;
@@ -1234,7 +1270,7 @@
       autoScroll.value = true;
       scrollToBottom();
 
-      var payload = { message: raw };
+      var payload = { message: raw, input_mode:mode };
       if (tgt) {
         payload.target = tgt;
         if (mode === 'dialogue') payload.force_talk = true;
@@ -1339,7 +1375,7 @@
       initError.value = '';
       initializing.value = true;
       try {
-        await Promise.all([loadCasts(), loadCharacters(), loadNovelMeta()]);
+        await Promise.all([loadCasts(), loadCharacters(), loadNovelMeta(), loadEntryOptions()]);
         var ok = await loadState(true);
         if (!ok) {
           startChar.value = defaultStartChar();
@@ -1440,7 +1476,7 @@
       var desktop = viewportW.value >= 1180;
       if (desktop !== lastDesktopLayout) {
         lastDesktopLayout = desktop;
-        panelOpen.value = desktop;
+        panelOpen.value = false;
       }
     }
 
@@ -1520,7 +1556,7 @@
         return;
       }
       try {
-        await Promise.all([loadCasts(), loadCharacters(), loadNovelMeta()]);
+        await Promise.all([loadCasts(), loadCharacters(), loadNovelMeta(), loadEntryOptions()]);
         var ok = await loadState(true);
         if (!ok) {
           startChar.value = defaultStartChar();
@@ -1550,6 +1586,9 @@
 
     /* ───────── 暴露给模板 ───────── */
     return {
+      entryChapters:entryChapters, entryChapter:entryChapter, entryPreview:entryPreview,
+      canonMode:canonMode, playerGoal:playerGoal, participation:participation,
+      upgradeParticipation:upgradeParticipation, outcomeLabel:outcomeLabel, declineEvent:declineEvent,
       /* 顶栏 */
       theme: theme,
       fontSize: fontSize,

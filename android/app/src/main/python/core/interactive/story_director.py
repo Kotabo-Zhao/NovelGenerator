@@ -64,7 +64,10 @@ def chapter_complete(state: dict, min_scenes: int = 2) -> bool:
         if beats and int(cb.get("chapter_idx", -1)) == int(op.get("idx", 0)):
             if cnt < 2:
                 return False  # 最小场景数保护，防异常快速切章
-            return all(str(b.get("status", "")) == "done" for b in beats)
+            terminal = ('done','declined','failed') if state.get('participation') else ('done',)
+            return all(str(b.get("status", "")) in terminal for b in beats)
+        if state.get('participation'):
+            return False
         return cnt >= max(1, int(min_scenes))
     except Exception:
         return False
@@ -141,52 +144,17 @@ def _cond_match(field, op, value, state: dict, s: dict, tension: int, target=Non
         return False
 
 
-# ── v3.6 P5: 行动 ↔ 章节 beat 联动（玩家行动直接推进主线节点，规则零 LLM）──
-_BEAT_STOP_CHARS = set("的了在要去来回我们你们他们你我这那是和与及就都也很把被从往向到于为以之其这那").union(
-    set("，。！？、；：""''（）《》…—"))
-
-
-def _beat_key_chars(text: str) -> set:
-    return {c for c in str(text or "") if c not in _BEAT_STOP_CHARS and '\u4e00' <= c <= '\u9fff'}
-
-
-def beat_action_match(state: dict, summary: str, target: str = "") -> Optional[dict]:
-    """行动是否推进当前 beat（规则匹配，零 LLM）。
-
-    判据（命中任一）：
-    1. travel 目标地点名出现在 beat 文本（"去码头" ↔ beat"码头接头"）
-    2. 行动摘要与 beat 文本有 >=2 个公共非停用字（"答应" ↔ "答应林晚晚护送"）
-    返回 {"beat_id", "desc"} 或 None。
-    """
-    cb = state.get("chapter_beats") or {}
-    beats = cb.get("beats") or []
-    cur = next((b for b in beats if b.get("status") == "current"), None)
-    if not cur:
-        return None
-    text = f"{cur.get('desc', '')} {cur.get('entry_hook', '')}"
-    if target and str(target).strip() and str(target) in text:
-        return {"beat_id": cur.get("id"), "desc": str(cur.get("desc", ""))[:60]}
-    common = _beat_key_chars(summary) & _beat_key_chars(text)
-    if len(common) >= 2:
-        return {"beat_id": cur.get("id"), "desc": str(cur.get("desc", ""))[:60]}
-    return None
-
-
+# ── v4.3: only validated action outcomes may complete chapter events. ──
 def beat_advance_by_action(state: dict, action: dict) -> List[str]:
-    """行动后调用：命中当前 beat → 推进（含 state_output 应用）；未命中 → 偏离计数。
+    """完成有执行证据且满足条件的当前事件，并提交节点产出。
 
-    偏离计数 >= DRIFT_LIMIT → 标记 beat_drift（场景生成注入主线牵引）。
+    意图文本、拒绝、未决或失败不触发完成，也不累积强制回轨计数。
     返回变化描述列表。
     """
     changes: List[str] = []
     try:
-        summary = str(action.get("summary", ""))
-        target = str(action.get("target", ""))
-        m = beat_action_match(state, summary, target)
-        if not m:
-            state["drift_count"] = int(state.get("drift_count", 0) or 0) + 1
-            if int(state["drift_count"]) >= 3:
-                state["beat_drift"] = True
+        from .participation import event_matches
+        if not event_matches(state, action):
             return changes
         # 命中 → 推进当前 beat
         cb = state.get("chapter_beats") or {}
@@ -195,6 +163,11 @@ def beat_advance_by_action(state: dict, action: dict) -> List[str]:
         if cur_i is None:
             return changes
         beats[cur_i]["status"] = "done"
+        contract = state.get('participation')
+        if contract:
+            contract.setdefault('completed_events',[]).append({
+                'id':beats[cur_i].get('id'), 'chapter':contract.get('chapter_number'),
+                'event':beats[cur_i].get('desc'), 'action_id':action['resolution']['id']})
         # state_output 应用（与锚点推进一致）
         _so = (beats[cur_i].get("trigger") or {}).get("state_output") or {}
         _s = state.setdefault("state", {})
@@ -248,6 +221,8 @@ def anchor_trigger_check(state: dict) -> Optional[dict]:
     - trigger.timeout_scenes 超限 → 强制触发（reason=timeout，防死锁）
     返回 {beat_id, reason, hook} 或 None。任何异常 → None（不炸）。
     """
+    if state.get('participation'):
+        return None
     try:
         cb = state.get("chapter_beats") or {}
         beats = cb.get("beats") or []
@@ -1075,6 +1050,23 @@ def compute_present(state: dict) -> tuple:
 
     返回 (present_list, away_list)。
     """
+    if state.get('participation'):
+        here = (state.get('world') or {}).get('location') or (state.get('state') or {}).get('location','')
+        world_chars = (state.get('world') or {}).get('chars') or {}
+        casts = state.get('casts') or {}
+        player = (state.get('player_char') or {}).get('name')
+        present, away = [], []
+        for name, cast in casts.items():
+            if name == player:
+                continue
+            entry = world_chars.get(name) or (state.get('cast_states') or {}).get(name) or cast
+            if cast.get('alive') is False or entry.get('present') is False or entry.get('location') not in (None,'',here):
+                away.append(name)
+            elif entry.get('present') is True:
+                present.append(name)
+            else:
+                away.append(name)
+        return present, away
     s = state.get("state", {})
     ps = state.get("player_state") or {}
     cs = state.get("cast_states") or {}
@@ -1550,6 +1542,10 @@ class StoryDirector:
         """v3.5.37/43: 场景后（后台）提取【世界状态】——主角状态卡 + NPC 状态卡 + 关系矩阵"""
         try:
             st = self.store.load_state(novel_id) or {}
+            if st.get('participation'):
+                # Generated prose cannot change possessions, injuries or presence.
+                # Those are committed only by the action resolver / cited entry seed.
+                return
             expected_revision = int(st.get("revision", 0))
             old_ps = st.get("player_state") or {}
             old_cs = st.get("cast_states") or {}
@@ -1656,7 +1652,7 @@ class StoryDirector:
             _present, away = self.compute_present(st)
             hits = sorted({str(b.get("speaker")) for b in (blocks or [])
                            if b.get("type") == "dialogue" and b.get("speaker") in away})
-            if hits:
+            if hits and not st.get('participation'):
                 location = clean_location((st.get("player_state") or {}).get("location") or "")
                 for speaker in hits:
                     char = st.setdefault("cast_states", {}).setdefault(speaker, {})
@@ -1771,6 +1767,10 @@ class StoryDirector:
     def _build_scene_prompt(self, state: dict, summary: str) -> str:
         s = state.get("state", {})
         parts = []
+        from .participation import canon_context
+        canon = canon_context(state, str(s.get('location','')) + ' ' + str((state.get('last_action') or {}).get('summary','')))
+        if canon:
+            parts.append(canon)
         parts.append(f"## 小说：《{state.get('title', '')}》（{state.get('genre', '')}·{state.get('style', '')}）")
         # v3.5.34: 文风要求（来自小说风格配置——文笔/语气/对话风格必须符合）
         _sb = state.get("style_brief") or ""
@@ -1818,7 +1818,7 @@ class StoryDirector:
                 if beats:
                     _b_lines = []
                     for _b in beats:
-                        _mk = {"done": "已完成", "current": "进行中(本场景推进)",
+                        _mk = {"done": "已完成", "declined":"玩家已拒绝（禁止重演成功，承接拒绝后果）", "failed":"已失败（承接失败后果）", "current": "进行中(本场景推进)",
                                "pending": "未开始"}.get(_b.get("status"), "未开始")
                         _b_lines.append(f"  [{_mk}] {_b.get('desc', '')}")
                     parts.append("## 本章事件进度（P0 硬约束——防重复生成）:\n"
@@ -1835,16 +1835,17 @@ class StoryDirector:
         _endpoint = _obj or "推进本章目标"
         _push = (f"当前主线（{_obj}）正在逼近，与它相关的事件/人物正朝你而来"
                  if _obj else "故事正在酝酿新的变化")
-        parts.append(
-            f"## 剧情引导（v1.1 锚点式）:\n"
-            f"本章终点: {_endpoint[:80]}\n"
-            f"剧情张力: {_tension}/10\n"
-            + (f"世界推力: {_push}\n" if _tension >= 3 else "")
-            + "引导原则: 玩家的行动塑造过程——永远不要否认玩家的行动，让它的后果"
-              "与剧情推进相连（如玩家执意逛街 → 逛街中偶遇关键人物/发现线索）；"
-              "张力较高时，让世界事件/角色主动推动剧情（事件找上门）；"
-              "玩家明确拒绝当前事件时，以'拒绝及其后果'推进事件"
-              "（如拒绝交易→对方翻脸），而不是跳过事件另起炉灶。")
+        if not state.get('participation'):
+            parts.append(
+                f"## 剧情引导（v1.1 锚点式）:\n"
+                f"本章终点: {_endpoint[:80]}\n"
+                f"剧情张力: {_tension}/10\n"
+                + (f"世界推力: {_push}\n" if _tension >= 3 else "")
+                + "引导原则: 玩家的行动塑造过程——永远不要否认玩家的行动，让它的后果"
+                  "与剧情推进相连（如玩家执意逛街 → 逛街中偶遇关键人物/发现线索）；"
+                  "张力较高时，让世界事件/角色主动推动剧情（事件找上门）；"
+                  "玩家明确拒绝当前事件时，以'拒绝及其后果'推进事件"
+                  "（如拒绝交易→对方翻脸），而不是跳过事件另起炉灶。")
         # v2.5.58: 世界状态简报（玩家现状/角色情绪态度/关系/最近事件——角色反应与剧情展开的依据）
         try:
             _wctx = state_context_brief(state)
@@ -2100,7 +2101,8 @@ class StoryDirector:
         if cached and not force and cached_char == pc_name:
             return cached
         s = state.get("state", {})
-        parts = []
+        from .participation import canon_context
+        parts = [canon_context(state, pc_name, 7000)] if state.get('participation') else []
         # v2.5.63: 你扮演的角色放最前 + 加粗强调（LLM 易被世界观简报带偏写成主角）
         if pc.get("name"):
             parts.append(f"【你扮演的角色（全文'你'必须指代 TA，最高优先级）】: {pc['name']}")
@@ -2344,6 +2346,13 @@ class StoryDirector:
         # v3.5.18/v3.5.27: 过滤玩家角色的自动台词（通用函数，场景/对话/行动结果共用）
         player_name = (state.get("player_char") or {}).get("name", "")
         blocks = _clean_player_dialogue(blocks, player_name)
+        if state.get('participation'):
+            present, _ = self.compute_present(state)
+            world_chars = (state.get('world') or {}).get('chars') or {}
+            allowed = {n for n in present if world_chars.get(n,{}).get('present') is not False
+                       and (state.get('casts') or {}).get(n,{}).get('alive') is not False}
+            blocks = [b for b in blocks if b.get('type') != 'dialogue' or b.get('speaker') in allowed]
+            scene_text = '\n'.join('【'+str(b.get('speaker') or {'narration':'旁白','action':'动作'}.get(b.get('type'),'旁白'))+'】'+str(b.get('content','')) for b in blocks)
         scene_record = {
             "scene_num": scene_num,
             "scene_text": scene_text,
@@ -2704,6 +2713,13 @@ class StoryDirector:
         state = self.store.load_state(novel_id)
         if state is None:
             return result
+        if state.get('participation'):
+            facts = [f for f in facts if isinstance(f,dict)]
+            for fact in facts:
+                fact['source'] = 'dialogue_testimony'
+                if fact.get('type') not in ('promise','request','threat'):
+                    fact['content'] = '[对话中的说法，尚未独立核实] ' + str(fact.get('content',''))
+            result['facts'] = facts
         existing_ids = {f.get("id") for f in state.get("facts", [])}
         # 内容级去重（防 LLM 重复提取同一事实）
         existing_contents = {str(f.get("content", ""))[:40] for f in state.get("facts", [])}
@@ -2770,6 +2786,8 @@ class StoryDirector:
         # 覆盖两类：读者承诺（target=角色） + 角色邀约（target=player，who=subject）
         try:
             _act_sum = str((state.get("last_action") or {}).get("summary", "") or "")
+            if state.get('participation'):
+                _act_sum = ''
             promise_ledger_update(state, state.get("facts", []), action_summary=_act_sum)
         except Exception as e:
             log.warning(f"promise ledger failed: {e}")
@@ -2952,6 +2970,10 @@ class StoryDirector:
             user = (f"本章目标: 第{ch.get('number', idx + 1)}章《{ch.get('title', '')}》"
                     f"—— {ch.get('summary', '')}\n"
                     f"请拆解为 {n} 个事件节点。")
+            if state.get('participation'):
+                from .participation import canon_context
+                user += '\n' + canon_context(state, str(ch.get('summary','')), 8000)
+                user += '\n事件必须取自当前章节参考，不要编造原著事实。事件应给玩家可执行的干预点；拒绝也必须产生真实分支，而不能自动算完成。'
             raw = self._llm(BEAT_SYSTEM, user, temperature=0.4, max_tokens=500)
             import re as _re3
             m = _re3.search(r"\{.*\}", raw or "", _re3.S)
@@ -3011,6 +3033,8 @@ class StoryDirector:
         仅当本场景触发了锚点（anchor_triggered）才推进 current → done；
         未触发 → 不推进（玩家自由区，锚点保持 current，张力累积牵引）。
         """
+        if state.get('participation'):
+            return
         try:
             trig = state.get("anchor_triggered")
             cb = state.get("chapter_beats") or {}
@@ -3145,6 +3169,10 @@ class StoryDirector:
         _check_state["outline_progress"] = dict(op)
         _check_state["outline_progress"]["scene_in_chapter"] = cnt
         _do_cut = chapter_complete(_check_state, per)
+        if _do_cut and state.get('participation'):
+            from .participation import advance_canon_chapter
+            advance_canon_chapter(state, self.store.novels_dir, novel_id)
+
         # v1.1 P3: 切章时状态一致性修复（L3 规则修复，零 LLM）——先修复再切章
         if _do_cut:
             try:
@@ -3152,7 +3180,7 @@ class StoryDirector:
             except Exception as e:
                 log.warning(f"consistency repair failed: {e}")
         # v1.1 P4: 主线健康度对账（保险④）——进度落后 → 捷径标记（下一场景注入）
-        if _do_cut:
+        if _do_cut and not state.get('participation'):
             try:
                 _mc = mainline_check(state)
                 if _mc.get("shortcut"):
@@ -3191,6 +3219,9 @@ class StoryDirector:
                 # 注入"本章事件进度"，每场景推进 1 个事件，杜绝重复生成
                 try:
                     _st_new = self.store.load_state(novel_id) or state
+                    if state.get('participation'):
+                        _st_new = dict(state)
+                        _st_new['outline_progress'] = {'idx':idx,'scene_in_chapter':0,'scene_start':state.get('scene_num',0)}
                     enqueue_background(self._ensure_chapter_beats, novel_id, _st_new, True, critical=True)
                 except Exception as e:
                     log.warning(f"beats pregen failed: {e}")
