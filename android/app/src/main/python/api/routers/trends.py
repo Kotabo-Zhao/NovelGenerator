@@ -12,7 +12,6 @@ router = APIRouter()
 from ..deps import engine, log, _validate_novel_id, _validate_chapter_range, ownership_store
 from ..auth import require_owner
 from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
-from core.trend_analyzer import quick_bizarre, BizarreNovelGenerator
 
 @router.post("/api/trends/analyze")
 async def analyze_trends(req: dict = None, _owner_id: str = Depends(require_owner)):
@@ -20,7 +19,6 @@ async def analyze_trends(req: dict = None, _owner_id: str = Depends(require_owne
     if not req:
         req = {}
     try:
-        from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
 
         # v2.8.5: 传入真实 LLM client——此前恒传 None，deep_analyze 的
         # LLM 深度分析分支全部跳过，趋势分析退化为纯离线规则。
@@ -59,7 +57,6 @@ async def generate_bizarre(req: dict, _owner_id: str = Depends(require_owner)):
     genre = req.get("genre", "")
 
     try:
-        from core.trend_analyzer import TrendAnalyzer, BizarreNovelGenerator
 
         # v2.8.5: 传入真实 LLM client，启用 LLM 增强的逆天生成分支
         gen = BizarreNovelGenerator(getattr(engine, "client", None), getattr(engine, "model", ""))

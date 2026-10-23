@@ -145,10 +145,8 @@ def _identity_choices(card):
             if candidate['name'] != card['name']:
                 choices.append({'id': 'novel:' + candidate['name'], 'name': candidate['name'],
                                 **character_to_persona(candidate)})
-    for candidate in _store.list_characters(novel_id=novel_id):
-        if candidate['id'] != card['id'] and candidate['name'] != card['name'] and role_mode(candidate, {}) != 'narrator':
-            choices.append({'id': 'card:' + candidate['id'], 'name': candidate['name'],
-                            **character_to_persona(candidate)})
+    if len(choices) < 200:
+        choices.extend(_store.persona_choices(card, limit=200-len(choices)))
     return choices[:200]
 
 
@@ -180,6 +178,7 @@ async def update_identity(char_id: str, request: Request):
 
 
 async def _original_card(card):
+    char_id = card['id']
     try:
         if card.get('market_source'):
             incoming, _ = await _market.card(card['market_source'], card['market_reference'])

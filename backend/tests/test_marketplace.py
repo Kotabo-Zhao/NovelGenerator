@@ -228,3 +228,57 @@ def test_original_card_repair_is_previewed_selective_and_rejects_stale_edits(cli
     assert store.get_character('repair')['personality']=='手动修改的性格'
     assert store.chat_messages('repair')[0]['content']=='旧对话'
     assert http.post(url,json=payload).status_code==409
+
+
+def test_market_cache_is_bounded_by_bytes_and_cancellation_does_not_duplicate(monkeypatch):
+    import core.roleplay.marketplace as module
+    monkeypatch.setattr(module,'MAX_CACHE_BYTES',100)
+    market=Marketplace()
+    async def scenario():
+        started=asyncio.Event();release=asyncio.Event();calls=[]
+        async def load():
+            calls.append(1);started.set();await release.wait();return b'x'*80
+        first=asyncio.create_task(market._cached('shared',load))
+        await started.wait()
+        second=asyncio.create_task(market._cached('shared',load))
+        await asyncio.sleep(0)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):await first
+        release.set()
+        assert await second==b'x'*80 and len(calls)==1
+        async def other():return b'y'*80
+        await market._cached('other',other)
+        assert market._cache_bytes<=100
+        assert 'shared' not in market._cache
+        assert not market._inflight
+        async def large():return b'z'*101
+        assert len(await market._cached('large',large))==101
+        assert 'large' not in market._cache
+    asyncio.run(scenario())
+
+
+def test_failed_shop_load_is_shared_and_retryable():
+    market=Marketplace();calls=[]
+    async def fail():
+        calls.append(1);await asyncio.sleep(.01);raise MarketError('offline')
+    async def scenario():
+        results=await asyncio.gather(*(market._cached('failed',fail) for _ in range(4)),return_exceptions=True)
+        assert all(isinstance(result,MarketError) for result in results)
+        assert len(calls)==1 and not market._inflight
+        with pytest.raises(MarketError):await market._cached('failed',fail)
+        assert len(calls)==2
+    asyncio.run(scenario())
+
+
+def test_summary_is_small_and_full_card_and_persona_remain_available(client):
+    http,store=client
+    text='guard background '*3000
+    store.upsert_character({'id':'large','name':'Guard','description':text,'card_data':{'description':text},'alternate_greetings':[text]})
+    summary=http.get('/api/roleplay/characters?summary=true').json()['characters']
+    card=next(c for c in summary if c['id']=='large')
+    assert card['_summary'] and len(card['description'])<=240
+    assert 'card_data' not in card and 'alternate_greetings' not in card
+    assert http.get('/api/roleplay/characters/large').json()['character']['description']==text
+    choices=store.persona_choices(store.get_character('builtin-suwan'))
+    persona=next(c for c in choices if c['id']=='card:large')
+    assert persona['user_persona']==text[:16000]

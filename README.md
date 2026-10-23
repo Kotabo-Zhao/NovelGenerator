@@ -1,18 +1,18 @@
-# 墨局 · NovelGenerator 4.3.1
+# 墨局 · NovelGenerator 4.3.2
 
 本地小说创作与沉浸式角色扮演工作台。保留世界观、大纲、章节写作、剧情图谱、质量监督与导出；保留兼容 SillyTavern 角色卡的角色扮演，以及进入原作剧情的小说世界。
 
 ## Windows 启动与升级
 
-已构建 Windows 程序时，双击根目录 **`启动墨局.cmd`** 或 **`启动Windows版.cmd`**，打开 Windows 原生窗口，并沿用当前项目的 `novels/`、`_roleplay/` 和 `llm_config.json`。可执行程序位于 `dist/windows-4.3.1/NovelGenerator/NovelGenerator.exe`。首次克隆仓库请按下文安装源码依赖或构建 Windows 程序。
+已构建 Windows 程序时，双击根目录 **`启动墨局.cmd`** 或 **`启动Windows版.cmd`**，打开 Windows 原生窗口，并沿用当前项目的 `novels/`、`_roleplay/` 和 `llm_config.json`。可执行程序位于 `dist/windows-4.3.2/NovelGenerator/NovelGenerator.exe`。首次克隆仓库请按下文安装源码依赖或构建 Windows 程序。
 
-独立分发：解压 `dist/NovelGenerator-v4.3.1-windows-x64.zip`，运行里面的 `NovelGenerator.exe`，无需安装 Python。独立运行的数据在 `%LOCALAPPDATA%/NovelGenerator`，也可通过 `--data-dir <目录>` 指定。窗口使用系统 WebView2；若窗口环境不可用，会回退到本机浏览器。
+独立分发：解压 `dist/NovelGenerator-v4.3.2-windows-x64.zip`，运行里面的 `NovelGenerator.exe`，无需安装 Python。独立运行的数据在 `%LOCALAPPDATA%/NovelGenerator`，也可通过 `--data-dir <目录>` 指定。窗口使用系统 WebView2；若窗口环境不可用，会回退到本机浏览器。
 
 Windows 4.1.1 修复「开始扮演」进入后白屏：补回消息时间格式化函数，所有页面接入统一异常提示，并提供重新加载、返回书架和模型设置入口。
 
-当前版本包含统一前端导航、模型配置入口、角色商店、按小说管理角色卡、真实参与小说剧情的入世模式，以及消息流与保存可靠性修复。安卓版本为 `4.3.1-internal`（versionCode 73），保留无原生顶部标题栏的界面。
+当前版本包含统一前端导航、模型配置入口、角色商店、按小说管理角色卡、真实参与小说剧情的入世模式，以及消息流与保存可靠性修复。安卓版本为 `4.3.2-internal`（versionCode 74），保留无原生顶部标题栏的界面。
 
-仓库 main 提交源码；安装包通过 [GitHub Release v4.3.1](https://github.com/Kotabo-Zhao/NovelGenerator/releases/tag/v4.3.1) 分发：[Windows ZIP](https://github.com/Kotabo-Zhao/NovelGenerator/releases/download/v4.3.1/NovelGenerator-v4.3.1-windows-x64.zip)、[安卓 ARM64 APK](https://github.com/Kotabo-Zhao/NovelGenerator/releases/download/v4.3.1/NovelGenerator-v4.3.1-arm64-debug.apk)。`dist/` 为本地构建目录，不直接纳入 Git。
+仓库 main 提交源码；安装包通过 [GitHub Release v4.3.2](https://github.com/Kotabo-Zhao/NovelGenerator/releases/tag/v4.3.2) 分发：[Windows ZIP](https://github.com/Kotabo-Zhao/NovelGenerator/releases/download/v4.3.2/NovelGenerator-v4.3.2-windows-x64.zip)、[安卓 ARM64 APK](https://github.com/Kotabo-Zhao/NovelGenerator/releases/download/v4.3.2/NovelGenerator-v4.3.2-arm64-debug.apk)。`dist/` 为本地构建目录，不直接纳入 Git。
 
 首次使用在「设置」填写模型地址、名称和 API Key，保存并测试。模型用于小说创作、小说世界和角色扮演。密钥保存在本机 `llm_config.json`，读取接口不返回密钥。升级不会删除已有作品、角色或对话。
 
@@ -60,7 +60,7 @@ py -3.13 -m venv .venv
 
 ## 角色扮演
 
-源码最新修复：商店旧 Chub 字段与标准 V2/V3 字段分别解析，避免把角色设定覆盖为性格或作者介绍；角色编辑保留长设定与多段备选开场白。已下载卡可在「玩家身份与卡片说明 → 原卡说明与功能 → 预览原卡字段差异」逐项核对，勾选后恢复，应用前自动备份。未勾选的自定义设定、玩家身份和聊天不改写。此项与常驻输入模式切换一起纳入 4.3.1 的 Windows 与安卓安装包。
+源码最新修复：商店旧 Chub 字段与标准 V2/V3 字段分别解析，避免把角色设定覆盖为性格或作者介绍；角色编辑保留长设定与多段备选开场白。已下载卡可在「玩家身份与卡片说明 → 原卡说明与功能 → 预览原卡字段差异」逐项核对，勾选后恢复，应用前自动备份。未勾选的自定义设定、玩家身份和聊天不改写。此项与常驻输入模式切换一起纳入 4.3.2 的 Windows 与安卓安装包。
 
 字段对应参考 [SillyTavern 的 Chub 转换实现](https://github.com/SillyTavern/SillyTavern/blob/release/src/endpoints/content-manager.js)：旧 API 的 `personality` 是角色设定，`tavern_personality` 是性格，`description` 是作者说明；标准卡保持 `description` / `personality` 的原始含义。
 
@@ -83,7 +83,7 @@ py -3.13 -m venv .venv
 
 ## 安卓安装包
 
-`dist/NovelGenerator-v4.3.1-arm64-debug.apk`，Android 8.0+，ARM64，版本号 73，内部 debug 版。同步玩家身份、人称、角色卡字段与富文本状态栏改进，并保留此前的白屏修复。与此前版本保持包名和 debug 签名，原生顶部标题栏继续移除。模型、角色库、商店和小说世界使用同一套前端。安卓 PDF / EPUB 暂缓，仍保留 TXT 导出。
+`dist/NovelGenerator-v4.3.2-arm64-debug.apk`，Android 8.0+，ARM64，版本号 74，内部 debug 版。同步玩家身份、人称、角色卡字段与富文本状态栏改进，并保留此前的白屏修复。与此前版本保持包名和 debug 签名，原生顶部标题栏继续移除。模型、角色库、商店和小说世界使用同一套前端。安卓 PDF / EPUB 暂缓，仍保留 TXT 导出。
 
 构建及签名验证通过。没有连接安卓真机，实际安装、键盘和后台行为仍需真机验收。Windows 已验证打包后的 EXE 启动与内嵌 API/页面资源；浏览器核对了桌面和手机布局，真实模型长时间体验不属于这些技术检查。
 
@@ -106,7 +106,7 @@ $env:CHAQUOPY_BUILD_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
 .\.venv\Scripts\python.exe tools/build_release.py --target android
 ```
 
-Windows 输出目录为 `dist/windows-4.3.1/NovelGenerator/`，分发时须保留整个目录；Android 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。本地沿用原 debug 签名可覆盖旧内部版；其他电脑自行构建的签名可能不同，请先备份数据。
+Windows 输出目录为 `dist/windows-4.3.2/NovelGenerator/`，分发时须保留整个目录；Android 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。本地沿用原 debug 签名可覆盖旧内部版；其他电脑自行构建的签名可能不同，请先备份数据。
 
 ## 开发验证
 
@@ -129,7 +129,7 @@ node tests/novel_world_runtime.test.cjs
 - 扮演页采用正文优先布局：角色库、设置、世界书和对话操作收进二级菜单或抽屉；对话、动作、旁白、OOC 切换常驻显示。
 - 世界书导入避免跨文件编号冲突、重复导入及容量超限时静默丢失；修复旧字段覆盖启用状态、空世界书导出恢复旧条目等问题。
 - 统一商店旧版定义与 V2/V3 卡片转换，保留开场白、内嵌世界书及扩展，覆盖安装、导出、重新导入的往返验证。
-- 本节修复已包含在 4.3.1 的 Windows 与安卓构建中。
+- 本节修复已包含在 4.3.2 的 Windows 与安卓构建中。
 
 
 ## 4.3 小说世界参与重构
@@ -149,3 +149,15 @@ node tests/novel_world_runtime.test.cjs
 315 项后端测试、前端编辑保存验证通过；Windows 冻结程序完成隔离数据目录启动检查，包内 110 个后端模块与源码一致；安卓包内 115 个 Python 模块、两端各 28 个前端文件与源码一致。安卓包名与签名沿用旧版，versionCode 73。未执行安卓真机安装与真实模型长时间扮演验收。
 
 安装包大小、SHA-256 和验证范围见 [构建回执](docs/releases/4.3.1.json)，Release 同时提供 `.sha256` 文件。
+
+## 4.3.2 稳定性与性能优化
+
+- 角色列表只加载摘要，选中和编辑时读取完整设定；防止快速切换角色时旧响应覆盖新页面。
+- 每张角色卡独立保留当前浏览器会话内的输入草稿与输入模式；对话、动作、旁白、OOC 保持常驻。
+- 修复 PNG 原卡字段恢复、全部角色分组的新建入口、小说人物对话的场景和轮次上下文。
+- 商店缓存采用 32 MiB 内容预算和条目限制，同一资源请求合并；一个客户端取消不会中断其他等待者。
+- 损坏的 JSON 存档保留原文件和备份并提示错误，阻止用空数据覆盖；流式解析限制超大事件，区分主动取消与超时。
+- 清理无效校准逻辑和不显示结果的隐藏模型请求；修复模型错误被二次异常掩盖的问题。
+- 改善移动端触控、长文本换行和预览操作区。
+
+326 项默认后端测试、5 项写作策略测试及前端回归通过。构建与验证结果见 [4.3.2 构建回执](docs/releases/4.3.2.json)。未执行安卓真机和真实模型长时间验收。

@@ -18,7 +18,7 @@
     const gradient=name=>{const hue=Array.from(String(name)).reduce((a,c)=>a+c.charCodeAt(0),0)%360;return `linear-gradient(135deg,hsl(${hue} 35% 82%),hsl(${(hue+50)%360} 30% 66%))`;};
     function notify(text){notice.value=text;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>notice.value='',6000);}
     function updateUrl(){const p=new URLSearchParams({tab:tab.value});if(book.value&&book.value!=='*')p.set('novel',book.value);history.replaceState(null,'','/cards.html?'+p);}
-    async function loadLibrary(){const d=await api('/api/roleplay/characters?summary=true');characters.value=d.characters||[];}
+    async function loadLibrary(options={}){const d=await api('/api/roleplay/characters?summary=true',options);characters.value=d.characters||[];}
     async function reload(){
       const sequence=++loadSequence;
       listController?.abort();listController=new AbortController();loading.value=true;error.value='';
@@ -28,14 +28,17 @@
           const d=await api('/api/roleplay/marketplace/catalog?'+p,{signal:listController.signal});
           if(sequence!==loadSequence)return;
           items.value=d.items||[];total.value=d.total||0;
-        }else await loadLibrary();
+        }else {
+          const d=await api('/api/roleplay/characters?summary=true',{signal:listController.signal});
+          if(sequence===loadSequence)characters.value=d.characters||[];
+        }
       }catch(e){if(sequence===loadSequence)error.value=e.message;}
       finally{if(sequence===loadSequence)loading.value=false;}
     }
     function search(){clearTimeout(searchTimer);page.value=1;reload();}
     function changeBook(){updateUrl();}
-    function setTab(value){tab.value=value;query.value='';page.value=1;if(value==='store'&&book.value==='*')book.value='';updateUrl();reload();}
-    function turnPage(delta){page.value+=delta;reload();window.scrollTo({top:0,behavior:'smooth'});}
+    function setTab(value){clearTimeout(searchTimer);tab.value=value;query.value='';page.value=1;if(value==='store'&&book.value==='*')book.value='';updateUrl();reload();}
+    function turnPage(delta){if(loading.value)return;page.value=Math.max(1,Math.min(Math.max(1,Math.ceil(total.value/24)),page.value+delta));reload();window.scrollTo({top:0,behavior:'smooth'});}
     async function previewCard(card){
       const sequence=++previewSequence;
       previewController?.abort();previewController=new AbortController();preview.value=null;previewLoading.value=true;error.value='';
@@ -71,8 +74,8 @@
     function toggleTheme(){NovelUI.setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}
     function escape(event){if(event.key==='Escape'){closePreview();editing.value=null;}}
     watch(query,()=>{if(tab.value==='store'){clearTimeout(searchTimer);searchTimer=setTimeout(search,500);}});
-    onMounted(async()=>{window.addEventListener('keydown',escape);try{await loadLibrary();const d=await api('/api/novels');novels.value=d.novels||[];if(book.value&&book.value!=='*'&&!novels.value.some(n=>n.id===book.value))book.value='';}catch(e){error.value=e.message;}await reload();});
-    onUnmounted(()=>{listController?.abort();previewController?.abort();clearTimeout(searchTimer);clearTimeout(noticeTimer);window.removeEventListener('keydown',escape);});
+    onMounted(async()=>{window.addEventListener('keydown',escape);const initial=reload();try{const d=await api('/api/novels');novels.value=d.novels||[];if(book.value&&book.value!=='*'&&!novels.value.some(n=>n.id===book.value))book.value='';}catch(e){error.value=e.message;}await initial;});
+    onUnmounted(()=>{++loadSequence;++previewSequence;listController?.abort();previewController?.abort();clearTimeout(searchTimer);clearTimeout(noticeTimer);window.removeEventListener('keydown',escape);});
     return {tab,book,novels,characters,items,query,source,page,total,loading,error,notice,remoteLink,preview,previewLoading,installing,editing,targetBook,saving,fileInput,failedImages,previewFields,filtered,bookTitle,plain,gradient,reload,search,changeBook,setTab,turnPage,previewCard,previewLink,closePreview,install,manage,saveGroup,importFile,exportCard,toggleTheme,chatUrl:NovelApp.characterUrl};
   }});
   NovelApp.register(app);app.mount('#app');

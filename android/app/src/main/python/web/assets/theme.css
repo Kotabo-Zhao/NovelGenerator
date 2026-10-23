@@ -71,3 +71,10 @@ label { color:var(--text2); font-size:13px; }
 #app-errors button { margin-left:15px; color:var(--text2); border:0; background:transparent; }
 @media(max-width:600px) { .connection-overlay { padding:14px; } .connection-dialog { padding:22px; } }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.01ms!important; transition-duration:.01ms!important; scroll-behavior:auto!important; } }
+
+/* Touch controls stay usable without increasing the chat text area's height. */
+@media (pointer:coarse) {
+  .btn,.icon-button,.card-btn { min-height:44px; }
+  input:not([type="checkbox"]):not([type="radio"]),textarea,select { font-size:16px; }
+}
+[role="dialog"] { overscroll-behavior:contain; }

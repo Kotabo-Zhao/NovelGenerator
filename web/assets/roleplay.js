@@ -286,6 +286,10 @@
 
       var abortCtrl = null;
       var streamSeq = 0;
+      var selectionSeq = 0, listSeq = 0, editSeq = 0;
+      var selectionController = null;
+      var currentDetail = ref(null);
+      var draftTimer = null;
       var lastWideLayout = window.innerWidth >= 1200;
 
       /* ───────────── 设置 ───────────── */
@@ -471,6 +475,7 @@
       var currentCharacter = computed(function () {
         var id = currentId.value;
         if (!id) return null;
+        if (currentDetail.value && currentDetail.value.id === id) return currentDetail.value;
         for (var i = 0; i < characters.value.length; i++) {
           if (characters.value[i].id === id) return characters.value[i];
         }
@@ -618,7 +623,22 @@
         paletteIndex.value = 0;
       });
 
-      watch(draft, function () { autoGrow(); });
+      function persistDraft() {
+        if (!currentId.value) return;
+        try {
+          var key = 'rp_draft:' + currentId.value;
+          if (draft.value) sessionStorage.setItem(key, JSON.stringify({text:draft.value,mode:activeMode.value}));
+          else sessionStorage.removeItem(key);
+        } catch (_) {}
+      }
+      function restoreDraft(id) {
+        try {
+          var saved = JSON.parse(sessionStorage.getItem('rp_draft:' + id) || '{}');
+          draft.value = typeof saved.text === 'string' ? saved.text : '';
+          activeMode.value = Object.prototype.hasOwnProperty.call(MODE_PREFIX, saved.mode) ? saved.mode : 'dialogue';
+        } catch (_) { draft.value = ''; activeMode.value = 'dialogue'; }
+      }
+      watch(draft, function () { autoGrow(); clearTimeout(draftTimer); draftTimer = setTimeout(persistDraft, 250); });
 
       function applyCommand(cmd) {
         if (!cmd) return;
@@ -737,20 +757,22 @@
       }
 
       async function loadCharacters() {
+        var sequence = ++listSeq;
         charactersLoading.value = true;
         charactersError.value = '';
         try {
-          var data = await apiJson(API_BASE + '/characters' + (novelId ? '?novel_id=' + encodeURIComponent(novelId) : ''));
+          var data = await apiJson(API_BASE + '/characters?summary=true' + (novelId ? '&novel_id=' + encodeURIComponent(novelId) : ''));
+          if (sequence !== listSeq) return;
           characters.value = Array.isArray(data.characters) ? data.characters : [];
           if (currentId.value && !characters.value.some(function (c) { return c.id === currentId.value; })) {
             currentId.value = '';
           }
         } catch (err) {
-          characters.value = [];
+          if (sequence !== listSeq) return;
           charactersError.value = err.message;
           toastError(err.message, '加载角色失败');
         } finally {
-          charactersLoading.value = false;
+          if (sequence === listSeq) charactersLoading.value = false;
         }
       }
 
@@ -791,8 +813,7 @@
           messages.value = list.map(normalizeMessage);
           scrollToBottom();
         } catch (err) {
-          if (seq === chatSeq) chatError.value = err.message;
-          toastError(err.message, '对话加载失败');
+          if (seq === chatSeq && currentId.value === id) { chatError.value = err.message; toastError(err.message, '对话加载失败'); }
         } finally {
           if (seq === chatSeq) chatLoading.value = false;
         }
@@ -801,12 +822,15 @@
       async function selectCharacter(id) {
         var found = findCharacter(id);
         if (!found) return;
-        if (streaming.value) stopStream();
-        if (currentId.value !== id) {
-          draft.value = '';
-          activeMode.value = 'dialogue';
-        }
+        persistDraft();
+        var sequence = ++selectionSeq;
+        ++chatSeq;
+        selectionController?.abort();
+        selectionController = new AbortController();
+        if (streaming.value) { stopStream(); ++streamSeq; streaming.value = false; }
+        if (currentId.value !== id) restoreDraft(id);
         currentId.value = id;
+        currentDetail.value = null;
         messages.value = [];
         chatLoading.value = true;
         var routeParams = new URLSearchParams(location.search);
@@ -826,22 +850,29 @@
         resetWorldExpanded();
         worldEntries.value = [];
         worldError.value = '';
-        await loadIdentity(id);
-        if (currentId.value !== id) return;
-        await openChat(id);
-        loadWorldInfo(true);
+        try {
+          var data = await apiChar(id, '', {signal:selectionController.signal});
+          if (sequence !== selectionSeq) return;
+          currentDetail.value = data.character;
+          await loadIdentity(id);
+          if (sequence !== selectionSeq) return;
+          await openChat(id);
+          if (sequence === selectionSeq) loadWorldInfo(true);
+        } catch (err) {
+          if (sequence === selectionSeq && err.name !== 'AbortError') chatError.value = err.message;
+        } finally { if (sequence === selectionSeq) chatLoading.value = false; }
       }
 
       function onCharacterClick(id) {
         if (!id) return;
         if (id === currentId.value && messages.value.length && !chatError.value) return;
-        selectCharacter(id);
+        return selectCharacter(id);
       }
 
       function selectFromLibrary(character) {
         if (!character) return;
         libraryOpen.value = false;
-        selectCharacter(character.id);
+        return selectCharacter(character.id);
       }
 
       function openLibrary() { libraryOpen.value = true; }
@@ -1328,8 +1359,9 @@
             if (type === 'done') return false;
             if (type === 'ping') return;
           });
-          if (sseError) toastError(sseError, '生成失败');
+          if (sseError && seq === streamSeq) toastError(sseError, '生成失败');
         } catch (err) {
+          if (seq !== streamSeq) return;
           if (err && err.name === 'AbortError') {
             toastInfo('已停止生成，已生成的内容会保存', '已停止', '⏹');
           } else {
@@ -1338,9 +1370,10 @@
         } finally {
           clearInterval(flushTimer); flushDelta();
           var stillCurrent = seq === streamSeq && currentId.value === charId;
-          streaming.value = false;
-          abortCtrl = null;
-          messages.value.forEach(function (message) { message._streaming = false; });
+          if (seq === streamSeq) {
+            streaming.value = false; abortCtrl = null;
+            messages.value.forEach(function (message) { message._streaming = false; });
+          }
           if (stillCurrent) await resyncChat(charId, seq);
         }
       }
@@ -1574,7 +1607,10 @@
           var data = await apiChar(id, '/sync-metadata', {method:'POST',timeout:45000,body:{fields:chosen.map(function (field) { return field.field; }),expected:expected,proposed:proposed}});
           if (currentId.value !== id) return;
           Object.assign(compatibility, data.compatibility || {});
-          await loadCharacters(); await loadWorldInfo(true); cardRepair.value = null;
+          await loadCharacters();
+          var refreshed = await apiChar(id, '');
+          if (currentId.value === id) currentDetail.value = refreshed.character;
+          await loadWorldInfo(true); cardRepair.value = null;
           toastSuccess('已恢复勾选字段并补齐元数据；原数据已备份，未勾选字段、玩家身份和聊天保持不变。');
         } catch (err) { if (currentId.value === id) identityError.value = err.message; }
         finally { identitySaving.value = false; }
@@ -1834,11 +1870,17 @@
         charModalOpen.value = true;
       }
 
-      function openEdit(character) {
+      async function openEdit(character) {
         if (!character) return;
         if (streaming.value) {
           toastInfo('生成中，暂时不能编辑角色', '请稍候');
           return;
+        }
+        var sequence = ++editSeq;
+        if (character._summary) {
+          try { character = (await apiChar(character.id, '')).character; }
+          catch (err) { if (sequence === editSeq) toastError(err.message, '读取完整角色失败'); return; }
+          if (sequence !== editSeq) return;
         }
         charForm.id = character.id || '';
         charForm.name = character.name || '';
@@ -1864,6 +1906,7 @@
 
       function closeCharModal() {
         if (charSaving.value) return;
+        ++editSeq;
         charModalOpen.value = false;
         charFormError.value = '';
         avatarPreview.value = '';
@@ -2187,6 +2230,7 @@
 
       onMounted(async function () {
         applyThemeValue(theme.value);
+        window.addEventListener('pagehide', persistDraft);
         window.addEventListener('resize', onResize);
         window.addEventListener('keydown', onGlobalKeydown);
         document.addEventListener('click', onOutsideMenu);
@@ -2210,6 +2254,10 @@
       });
 
       onUnmounted(function () {
+        persistDraft(); clearTimeout(draftTimer); clearTimeout(commandTimer);
+        ++selectionSeq; ++chatSeq; ++streamSeq; ++editSeq; ++listSeq;
+        selectionController?.abort(); stopStream();
+        window.removeEventListener('pagehide', persistDraft);
         window.removeEventListener('resize', onResize);
         window.removeEventListener('keydown', onGlobalKeydown);
         document.removeEventListener('click', onOutsideMenu);

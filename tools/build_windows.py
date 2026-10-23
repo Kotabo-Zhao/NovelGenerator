@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument('--output-dir', type=Path, default=ROOT/'dist/windows-4.3.1')
+parser.add_argument('--output-dir', type=Path, default=ROOT/'dist/windows-4.3.2')
 args = parser.parse_args()
 subprocess.run([sys.executable, str(ROOT/'tools/prepare_frontend.py')], cwd=ROOT, check=True)
 command = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir', '--windowed',

@@ -179,7 +179,9 @@ class DialogueEngine:
 
     # ── 上下文组装 ──
     def _build_chat_prompt(self, state: dict, target_char: str,
-                           history: list, last_action: Optional[dict] = None) -> str:
+                           history: list, last_action: Optional[dict] = None,
+                           novel_id: Optional[str] = None) -> str:
+        novel_id = novel_id or state.get("novel_id")
         parts = []
         # v3.5.34: 文风要求（来自小说风格配置——对话风格/语气必须符合）
         _sb = state.get("style_brief") or ""
@@ -324,7 +326,7 @@ class DialogueEngine:
         # v3.9: 当前场景状态注入——角色知道'此刻'在哪、和谁、刚发生什么，
         # 避免行动-对话衔接断裂（如玩家未起身角色却'追上前几步'）
         try:
-            _recent_sc = self.store.recent_scenes(novel_id, 1)
+            _recent_sc = self.store.recent_scenes(novel_id, 1) if novel_id else []
             if _recent_sc:
                 _sc_last = _recent_sc[-1]
                 _loc_now = s.get('location', '') or ''
@@ -382,7 +384,7 @@ class DialogueEngine:
         parts.append(f"## 现在{player_name}对你说：\n<player_input>\n{(history[-1].get('content', '') if history else '')[:500]}\n</player_input>")
         # v3.9: 接近对话上限 → 引导自然收尾（不开启新话题）
         try:
-            _rounds = len(self.store.recent_chats(novel_id, 200)) // 2
+            _rounds = len(self.store.recent_chats(novel_id, 200)) // 2 if novel_id else 0
         except Exception:
             _rounds = 0
         if _rounds >= CHAT_WARN_ROUNDS:
@@ -651,7 +653,7 @@ class DialogueEngine:
         history = self.store.recent_chats(novel_id, 20)
         history = [h for h in history if h.get("role") in ("user", "assistant")
                    and h.get("type") != "action_result"]
-        prompt = self._build_chat_prompt(state, target, history, last_action)
+        prompt = self._build_chat_prompt(state, target, history, last_action, novel_id=novel_id)
 
         # 流式回复
         collected = []

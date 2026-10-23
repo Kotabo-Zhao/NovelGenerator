@@ -20,7 +20,7 @@ import os
 import re
 import time
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, List
 
 from ..resilient_client import ResilientLLMClient, llm_error_message
 from .action_engine import _state_snapshot, clean_location
@@ -2810,7 +2810,6 @@ class StoryDirector:
     def _load_plan(self, novel_id: str) -> dict:
         """读取 plan.json（v2.5.62 角色预设构建用）——失败返回 {}"""
         try:
-            import os
             from config import NOVELS_DIR
             plan_path = os.path.join(NOVELS_DIR, novel_id, "plan.json")
             if os.path.exists(plan_path):
@@ -2832,7 +2831,6 @@ class StoryDirector:
             # 通过 engine 的 get_novel 获取
             from ..engine import NovelEngine
             # 避免重复实例化：直接读 plan.json
-            import os
             from config import NOVELS_DIR
             plan_path = os.path.join(NOVELS_DIR, novel_id, "plan.json")
             if os.path.exists(plan_path):
@@ -2880,7 +2878,6 @@ class StoryDirector:
 
     def _worldbook_brief(self, novel_id: str, plan: dict) -> str:
         """世界书摘要（bible.json / character_bible.json）供互动场景注入。"""
-        import os
         from config import NOVELS_DIR
         novel_dir = os.path.join(NOVELS_DIR, novel_id)
         bible = {}

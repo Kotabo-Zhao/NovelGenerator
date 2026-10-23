@@ -15,6 +15,13 @@ import time
 log = logging.getLogger(__name__)
 
 
+class StoredDataError(ValueError):
+    """A damaged save must be recovered before further writes are allowed."""
+
+    def __init__(self, path):
+        super().__init__(f'本地数据 {os.path.basename(path)} 无法读取，请从备份恢复后重试；原文件已保留，未覆盖。')
+
+
 def _replace_file(source: str, destination: str):
     for attempt in range(5):
         try:
@@ -47,11 +54,11 @@ def atomic_write_json(path: str, data, indent: int = 2):
         raise
 
 
-def safe_read_json(path: str, default=None):
+def safe_read_json(path: str, default=None, *, strict=False):
     """安全读取 JSON，损坏时备份原文件并返回 default（绝不覆写用户数据）。
 
-    损坏的原文件会被原子移到 ``<path>.corrupted.<时间戳>`` 保留，
-    由显式修复流程决定是否重建；本函数不写回 default，避免静默覆盖。
+    损坏的原文件会复制到 ``<path>.corrupted.<时间戳>``，原文件保持不变。
+    strict=True 用于读后写流程，阻止把读取失败误当成空存档。
     """
     if default is None:
         default = {}
@@ -71,7 +78,9 @@ def safe_read_json(path: str, default=None):
             log.warning(f"Corrupted file backed up: {backup}")
         except Exception:
             pass
-        log.error(f"Failed to read {path}: {e}. Restoring to default.")
+        log.error(f"Failed to read {path}: {e}. Original file retained.")
+        if strict:
+            raise StoredDataError(path) from e
         # A read must not replace a damaged original with an empty default.
         return default
 

@@ -21,7 +21,7 @@ function boot(page, search = '') {
   };
   const context = vm.createContext({window,document,location,Vue,console,URL,URLSearchParams,
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-    sessionStorage:{getItem:()=>null,setItem(){}},history:{},navigator:{},
+    sessionStorage:{getItem:key=>storage.get('session:'+key)||null,setItem:(key,value)=>storage.set('session:'+key,value),removeItem:key=>storage.delete('session:'+key)},history:{replaceState(){}},navigator:{},
     setTimeout,clearTimeout,setInterval,clearInterval,AbortController,TextDecoder,
     matchMedia:()=>({matches:false,addEventListener(){}})});
   for (const file of ['runtime.js','app-shell.js']) {
@@ -70,4 +70,35 @@ async function cardEditorRoundtrip() {
   assert.deepEqual(payload.alternate_greetings,source.alternate_greetings);
   assert.notEqual(roleplay.state.charForm.alternate_greetings,source.alternate_greetings);
 }
-cardEditorRoundtrip().then(()=>console.log('All four page setups, timestamps and lossless card editor roundtrip passed.')).catch(error=>{console.error(error);process.exitCode=1;});
+async function characterSelectionRace() {
+  const {state,context}=boot('roleplay.js');
+  const a={id:'a',name:'Alpha',_summary:true},b={id:'b',name:'Beta',_summary:true};
+  state.characters.value=[a,b];
+  let resolveA;
+  const response=data=>({ok:true,status:200,json:async()=>data});
+  context.fetch=async(url)=>{
+    if(url.endsWith('/a'))return new Promise(resolve=>{resolveA=resolve;});
+    if(url.endsWith('/b'))return response({character:{id:'b',name:'Beta',description:'Full setting',personality:'Patient',alternate_greetings:['First\nSecond']}});
+    if(url.endsWith('/identity'))return response({identity:{user_name:'Player'},choices:[],compatibility:{}});
+    if(url.endsWith('/chat'))return response({messages:[{role:'assistant',content:'Welcome'}],identity_bound:true});
+    if(url.endsWith('/worldinfo'))return response({entries:[]});
+    throw new Error('Unexpected URL '+url);
+  };
+  const pending=state.selectFromLibrary(a);
+  await state.selectFromLibrary(b);
+  resolveA(response({character:{id:'a',name:'Alpha',description:'Stale'}}));
+  await pending;
+  assert.equal(state.currentCharacter.value.id,'b');
+  assert.equal(state.currentCharacter.value.description,'Full setting');
+  assert.equal(state.chatLoading.value,false);
+  await state.openEdit(b);
+  assert.equal(state.charForm.description,'Full setting');
+  assert.deepEqual(Array.from(state.charForm.alternate_greetings),['First\nSecond']);
+  state.draft.value='Unsent Beta draft';
+  const next=state.selectFromLibrary(a);
+  resolveA(response({character:{id:'a',name:'Alpha'}}));await next;
+  state.draft.value='Unsent Alpha draft';
+  await state.selectFromLibrary(b);
+  assert.equal(state.draft.value,'Unsent Beta draft');
+}
+Promise.all([cardEditorRoundtrip(),characterSelectionRace()]).then(()=>console.log('All four page setups, timestamps and lossless card editor roundtrip passed.')).catch(error=>{console.error(error);process.exitCode=1;});

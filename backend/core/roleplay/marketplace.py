@@ -18,6 +18,7 @@ from .card_codec import CardError, parse_card_bytes, shop_card_payload
 OFFICIAL_INDEX = 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/index.json'
 OFFICIAL_PREFIX = 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/assets/character/'
 MAX_BYTES = 8 * 1024 * 1024
+MAX_CACHE_BYTES = 32 * 1024 * 1024
 
 
 class MarketError(ValueError):
@@ -27,7 +28,8 @@ class MarketError(ValueError):
 class Marketplace:
     def __init__(self):
         self._cache = {}
-        self._locks = {}
+        self._inflight = {}
+        self._cache_bytes = 0
 
     async def _fetch(self, url, *, params=None):
         async with httpx.AsyncClient(timeout=httpx.Timeout(20, connect=8), follow_redirects=False) as client:
@@ -45,24 +47,54 @@ class Marketplace:
             except httpx.HTTPError as exc:
                 raise MarketError('连接角色源超时或网络不可用，请稍后重试') from exc
 
+    @staticmethod
+    def _value_size(value):
+        if isinstance(value, bytes):
+            return len(value)
+        if isinstance(value, str):
+            return len(value.encode('utf-8'))
+        if isinstance(value, dict):
+            return sum(Marketplace._value_size(k) + Marketplace._value_size(v) for k, v in value.items())
+        if isinstance(value, (list, tuple)):
+            return sum(Marketplace._value_size(v) for v in value)
+        return 32
+
+    def _evict(self, key):
+        self._cache_bytes -= self._cache.pop(key)[2]
+
     async def _cached(self, key, loader, ttl=600):
+        now = time.monotonic()
+        for stale in [k for k, entry in self._cache.items() if entry[0] <= now]:
+            self._evict(stale)
         entry = self._cache.get(key)
-        if entry and entry[0] > time.monotonic():
+        if entry:
+            # Refresh insertion order for LRU eviction without extending TTL.
+            self._cache[key] = self._cache.pop(key)
             return copy.deepcopy(entry[1])
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        try:
-            async with lock:
-                entry = self._cache.get(key)
-                if entry and entry[0] > time.monotonic():
-                    return copy.deepcopy(entry[1])
-                value = await loader()
-                if len(self._cache) >= 64:
-                    self._cache.pop(next(iter(self._cache)))
-                self._cache[key] = (time.monotonic() + ttl, value)
-                return copy.deepcopy(value)
-        finally:
-            if not lock.locked():
-                self._locks.pop(key, None)
+
+        async def load():
+            value = await loader()
+            size = self._value_size(value)
+            if size <= MAX_CACHE_BYTES:
+                while self._cache and (len(self._cache) >= 64 or self._cache_bytes + size > MAX_CACHE_BYTES):
+                    self._evict(next(iter(self._cache)))
+                self._cache[key] = (time.monotonic() + ttl, value, size)
+                self._cache_bytes += size
+            return value
+
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(load())
+            self._inflight[key] = task
+            def completed(done):
+                if self._inflight.get(key) is done:
+                    self._inflight.pop(key, None)
+                # Retrieve errors even when all requesting clients disconnect.
+                if not done.cancelled():
+                    done.exception()
+            task.add_done_callback(completed)
+        # Cancelling one browser request must not cancel another client's load.
+        return copy.deepcopy(await asyncio.shield(task))
 
     async def official(self):
         async def load():

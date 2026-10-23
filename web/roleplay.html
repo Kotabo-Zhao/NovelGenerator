@@ -319,7 +319,7 @@
               <div class="rp-modes" role="tablist" aria-label="输入模式">
                 <button v-for="mode in modes" :key="mode.key" type="button" class="rp-mode" :class="{ on: activeMode === mode.key }" role="tab" :aria-selected="activeMode === mode.key" @click="setMode(mode.key)">{{ mode.icon }} {{ mode.label }}</button>
               </div>
-              <span class="rp-mode-hint">{{ modeHint }}</span>
+              <span v-if="activeMode!=='dialogue'" class="rp-mode-hint">{{ modeHint }}</span>
               <span class="rp-hint">Enter 发送 · Shift+Enter 换行 · / 指令</span>
             </div>
           </div>
@@ -876,12 +876,12 @@
 </div>
 
 <script src="/vue.global.prod.js"></script>
-<script src="/assets/runtime.js?v=0b7e3913acf0"></script>
-<script src="/assets/app-shell.js?v=803ddc66d6ae"></script>
+<script src="/assets/runtime.js?v=84400d7649a3"></script>
+<script src="/assets/app-shell.js?v=ec2111e3db6b"></script>
 <script src="/assets/marked.umd.js?v=b82b9334406d"></script>
 <script src="/assets/dompurify.min.js?v=cd37898f9782"></script>
 <script src="/assets/card-renderer.js?v=afea6edf546b"></script>
-<script src="/assets/roleplay.js?v=216fe2f70c41"></script>
+<script src="/assets/roleplay.js?v=6a97434e9981"></script>
 </body>
 
 

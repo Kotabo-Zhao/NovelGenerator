@@ -14,3 +14,11 @@
 .filter-label { white-space:nowrap; }
 
 @media(max-width:600px) { .cards-hero {min-height:155px;padding:20px;} .cards-toolbar {margin-bottom:14px;} .link-import input {flex:1 1 0;width:0;} .link-import {flex-wrap:nowrap;} }
+
+.cards-modal-footer { position:sticky; bottom:-28px; background:var(--card); padding:16px 0; border-top:1px solid var(--border); gap:12px; flex-wrap:wrap; }
+.cards-modal .preview-section p { overflow-wrap:anywhere; }
+@media(max-width:600px) {
+  .cards-modal { max-height:calc(100dvh - 24px); overscroll-behavior:contain; }
+  .cards-modal-footer { bottom:-22px; }
+  .cards-modal-footer .card-btn { flex:1; }
+}

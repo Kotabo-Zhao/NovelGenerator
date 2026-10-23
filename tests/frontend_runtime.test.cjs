@@ -43,6 +43,18 @@ async function parse(text, chunkSize = 1) {
   assert.ok(!html.includes('<img')); assert.ok(html.includes('&lt;img')); checks+=2;
   assert.equal(ui.renderMessage('```html\n<script>alert(1)</script>```'),'<pre><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></pre>'); checks++;
   assert.ok(ui.renderMessage('普通 {JSON} 和 C:\\new 路径').includes('C:\\new')); checks++;
+  await assert.rejects(()=>parse('data: '+ 'x'.repeat(2*1024*1024+1),65536),/事件过大/); checks++;
+  await assert.rejects(()=>parse(('data: '+ 'x'.repeat(1024)+'\n').repeat(2050),65536),/事件过大/); checks++;
+  const originalFetch=context.fetch;
+  context.fetch=(_,options)=>new Promise((_,reject)=>{
+    const abort=()=>{const e=new Error('aborted');e.name='AbortError';reject(e);};
+    if(options.signal.aborted)abort();else options.signal.addEventListener('abort',abort,{once:true});
+  });
+  const cancellation=new AbortController();
+  const cancelled=ui.requestJson('/test',{signal:cancellation.signal});cancellation.abort();
+  await assert.rejects(cancelled,e=>e.name==='AbortError');checks++;
+  await assert.rejects(ui.requestJson('/test',{timeout:5}),e=>e.name==='TimeoutError');checks++;
+  context.fetch=originalFetch;
   let saved;
   context.FileReader = class {
     readAsDataURL(blob) {

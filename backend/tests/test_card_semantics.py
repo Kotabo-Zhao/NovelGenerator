@@ -313,3 +313,21 @@ def test_unbound_chat_does_not_claim_player_identity_is_confirmed(client_store):
     assert client.get(url).json()['identity_bound'] is False
     store.update_identity('builtin-suwan',{'user_name':'青禾'})
     assert client.get(url).json()['identity_bound'] is True
+
+
+def test_png_original_fields_can_be_previewed_and_restored(client_store):
+    import struct,zlib
+    client,store=client_store
+    def chunk(kind,payload):
+        return struct.pack('>I',len(payload))+kind+payload+struct.pack('>I',zlib.crc32(kind+payload)&0xffffffff)
+    raw={'name':'Guard','description':'Original background','personality':'Patient'}
+    png=b'\x89PNG\r\n\x1a\n'+chunk(b'tEXt',b'chara\x00'+base64.b64encode(json.dumps(raw).encode()))+chunk(b'IEND',b'')
+    store.upsert_character({'id':'png-repair','name':'Guard','description':'Wrong','source':'png'})
+    store.save_avatar('png-repair',png)
+    url='/api/roleplay/characters/png-repair/sync-metadata'
+    response=client.get(url)
+    assert response.status_code==200,response.text
+    assert any(f['incoming']=='Original background' for f in response.json()['fields'])
+    response=client.post(url,json={'fields':['description'],'expected':{'description':'Wrong'},'proposed':{'description':'Original background'}})
+    assert response.status_code==200,response.text
+    assert store.get_character('png-repair')['description']=='Original background'

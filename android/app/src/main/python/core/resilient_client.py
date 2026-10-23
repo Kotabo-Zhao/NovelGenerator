@@ -204,10 +204,11 @@ class ResilientLLMClient:
                 time.sleep(wait)
                 
             except APIError as e:
+                status = getattr(e, "status_code", None) or 500
                 # 其他 API 错误（500等）
-                if attempt < self.config.max_retries and getattr(e, 'status_code', 500) >= 500:
+                if attempt < self.config.max_retries and status >= 500:
                     wait = self._calc_backoff(attempt)
-                    log.warning(f"LLM API错误({e.status_code}), 等待{wait:.1f}s后重试: {e}")
+                    log.warning(f"LLM API错误({status}), 等待{wait:.1f}s后重试: {e}")
                     last_error = e
                     _metrics.retry_count += 1
                     time.sleep(wait)

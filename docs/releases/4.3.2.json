@@ -1,0 +1,31 @@
+{
+  "version": "4.3.2",
+  "android_version_code": 74,
+  "changes": [
+    "Roleplay summaries, race guards and per-character session drafts",
+    "Bounded marketplace cache and corrupted-save protection",
+    "PNG restoration, novel dialogue context and removal of hidden model calls"
+  ],
+  "python_tests_passed": 331,
+  "frontend_roundtrip": "PASS",
+  "windows_smoke": "PASS",
+  "windows_source_modules_verified": 110,
+  "android_source_modules_verified": 115,
+  "frontend_files_verified_per_platform": 28,
+  "android_same_signer": true,
+  "user_data_embedded": false,
+  "real_model": "NOT_RUN",
+  "android_device": "NOT_RUN",
+  "packages": [
+    {
+      "name": "NovelGenerator-v4.3.2-windows-x64.zip",
+      "bytes": 36530031,
+      "sha256": "3b9ef7d943f6357b877f33cfa61fc899ea88f1f5663e9fd5a038bce9171facb7"
+    },
+    {
+      "name": "NovelGenerator-v4.3.2-arm64-debug.apk",
+      "bytes": 23615065,
+      "sha256": "e25fcb35eff9af59213e2a99e514f484f3af32be711a81b3aaa639e62b6f1c5a"
+    }
+  ]
+}

@@ -43,7 +43,12 @@
       if (data === null) throw new Error('服务器返回了无法读取的数据');
       return data;
     } catch (error) {
-      if (error.name === 'AbortError') throw new Error('请求超时或已取消，请重试');
+      if (error.name === 'AbortError') {
+        const cancelled = !!options.signal?.aborted;
+        const failure = new Error(cancelled ? '请求已取消' : '请求超时，请重试');
+        failure.name = cancelled ? 'AbortError' : 'TimeoutError';
+        throw failure;
+      }
       throw error;
     } finally {
       clearTimeout(timer);
@@ -63,11 +68,14 @@
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let line = '', dataLines = [], afterCR = false, finished = false, timedOut = false;
+    let eventSize = 0;
+    const maxEventSize = 2 * 1024 * 1024;
     let lastData = Date.now();
     function dispatch() {
       if (!dataLines.length || finished) return;
       const raw = dataLines.join('\n');
       dataLines = [];
+      eventSize = 0;
       let event;
       try { event = raw === '[DONE]' ? { type: 'done' } : JSON.parse(raw); }
       catch (_) { throw new Error('消息流格式异常，请重试；已保存的对话仍可查看'); }
@@ -76,7 +84,11 @@
     }
     function endLine() {
       if (!line) dispatch();
-      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+      else if (line.startsWith('data:')) {
+        eventSize += line.length + 1;
+        if (eventSize > maxEventSize) throw new Error('消息流事件过大');
+        dataLines.push(line.slice(5).replace(/^ /, ''));
+      }
       line = '';
     }
     function consume(text) {
@@ -84,10 +96,12 @@
         if (afterCR && char === '\n') { afterCR = false; continue; }
         afterCR = false;
         if (char === '\r' || char === '\n') { endLine(); afterCR = char === '\r'; }
-        else line += char;
+        else {
+          line += char;
+          if (line.length + eventSize > maxEventSize) throw new Error('消息流事件过大');
+        }
         if (finished) break;
       }
-      if (line.length > 2 * 1024 * 1024) throw new Error('消息流事件过大');
     }
     const timer = setInterval(() => {
       if (Date.now() - lastData > idleTimeout) {

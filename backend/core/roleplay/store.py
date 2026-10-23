@@ -21,9 +21,9 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from config import NOVELS_DIR
-from ..atomic_io import atomic_write_json, safe_read_json
+from ..atomic_io import atomic_write_json, safe_read_json, StoredDataError
 from . import worldinfo
-from .identity import IDENTITY_DEFAULTS, normalize_identity
+from .identity import IDENTITY_DEFAULTS, normalize_identity, role_mode, character_to_persona
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "user_name": "旅行者",
@@ -137,9 +137,11 @@ class RoleplayStore:
             signature = (0, 0)
         if signature == self._characters_signature:
             return
-        raw = safe_read_json(self.characters_file, default=[])
+        raw = safe_read_json(self.characters_file, default=[], strict=True)
         if isinstance(raw, dict):
-            raw = raw.get('characters') or []
+            raw = raw.get('characters')
+        if not isinstance(raw, list) or any(not isinstance(item, dict) or not item.get('id') for item in raw):
+            raise StoredDataError(self.characters_file)
         cards = [self._with_defaults(item) for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
         cards.sort(key=lambda card: (card.get('updated_at') or 0), reverse=True)
         self._characters_cache = cards
@@ -154,8 +156,25 @@ class RoleplayStore:
                 cards = [card for card in cards if card.get('novel_id', '') == novel_id]
             if summary:
                 cards = [{key: card.get(key) for key in ('id', 'name', 'novel_id', 'tags', 'source', 'creator', 'updated_at', 'market_source', 'market_reference')}
-                         | {'description': str(card.get('description') or '')[:240]} for card in cards]
+                         | {'_summary': True, 'description': str(card.get('description') or '')[:240], 'personality': str(card.get('personality') or '')[:240]} for card in cards]
             return copy.deepcopy(cards)
+
+    def persona_choices(self, card, limit=200):
+        """Project only usable identity data; never clone every card and avatar payload."""
+        choices = []
+        with self._lock:
+            self._refresh_characters()
+            for candidate in self._characters_cache:
+                if candidate.get('novel_id', '') != (card.get('novel_id') or ''):
+                    continue
+                if candidate['id'] == card['id'] or candidate['name'] == card['name'] or role_mode(candidate, {}) == 'narrator':
+                    continue
+                persona = character_to_persona({'name': candidate['name'], 'description': str(candidate.get('description') or '')[:16000]})
+                persona['user_persona'] = persona['user_persona'][:16000]
+                choices.append({'id': 'card:' + candidate['id'], 'name': candidate['name'], **persona})
+                if len(choices) >= limit:
+                    break
+        return choices
 
     def get_character(self, char_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -164,6 +183,7 @@ class RoleplayStore:
 
     def save_characters(self, cards: List[Dict[str, Any]]) -> None:
         with self._lock:
+            safe_read_json(self.characters_file, default=[], strict=True)
             atomic_write_json(self.characters_file, [self._with_defaults(c) for c in cards])
             self._characters_signature = None
 
@@ -268,7 +288,7 @@ class RoleplayStore:
 
     def chat_messages(self, char_id: str) -> List[Dict[str, Any]]:
         with self._lock:
-            raw = safe_read_json(self.chat_path(char_id), default={})
+            raw = safe_read_json(self.chat_path(char_id), default={}, strict=True)
         if isinstance(raw, list):
             messages = [m for m in raw if isinstance(m, dict)]
         else:
@@ -290,7 +310,7 @@ class RoleplayStore:
             "updated_at": now,
         }
         with self._lock:
-            existing = safe_read_json(self.chat_path(char_id), default={})
+            existing = safe_read_json(self.chat_path(char_id), default={}, strict=True)
             created_at = existing.get("created_at") if isinstance(existing, dict) else None
             payload["created_at"] = created_at or now
             atomic_write_json(self.chat_path(char_id), payload)
@@ -342,7 +362,7 @@ class RoleplayStore:
 
     def load_worldinfo(self, char_id: str) -> List[Dict[str, Any]]:
         with self._lock:
-            raw = safe_read_json(self.worldinfo_path(char_id), default=[])
+            raw = safe_read_json(self.worldinfo_path(char_id), default=[], strict=True)
         entries = raw.get("entries") if isinstance(raw, dict) else raw
         if not isinstance(entries, list):
             return []
@@ -359,6 +379,7 @@ class RoleplayStore:
     def save_worldinfo(self, char_id: str, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized = [worldinfo.normalize_entry(entry, index) for index, entry in enumerate(entries)]
         with self._lock:
+            safe_read_json(self.worldinfo_path(char_id), default=[], strict=True)
             atomic_write_json(self.worldinfo_path(char_id), {"entries": normalized})
         return normalized
 
@@ -374,7 +395,7 @@ class RoleplayStore:
 
     def identity(self, char_id):
         with self._lock:
-            raw = safe_read_json(self.identity_path(char_id), default={})
+            raw = safe_read_json(self.identity_path(char_id), default={}, strict=True)
         defaults = {**IDENTITY_DEFAULTS, **{k: v for k, v in self.settings().items() if k in IDENTITY_DEFAULTS}}
         defaults.update(raw if isinstance(raw, dict) else {})
         identity = normalize_identity(defaults)
@@ -397,7 +418,7 @@ class RoleplayStore:
 
     def settings(self) -> Dict[str, Any]:
         with self._lock:
-            raw = safe_read_json(self.settings_file, default={})
+            raw = safe_read_json(self.settings_file, default={}, strict=True)
         merged = dict(DEFAULT_SETTINGS)
         if isinstance(raw, dict):
             merged.update({k: v for k, v in raw.items() if k in DEFAULT_SETTINGS})

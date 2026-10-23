@@ -119,3 +119,56 @@ def test_recreating_workspace_preserves_existing_novel(tmp_path):
     with pytest.raises(FileExistsError):
         memory.create_novel_workspace('原作品')
     assert marker.read_text(encoding='utf-8')=='{"title":"原作品"}'
+
+
+@pytest.mark.parametrize('kind',['characters','chat','worldinfo','settings','identity'])
+def test_corrupt_roleplay_data_cannot_be_overwritten_by_followup_save(tmp_path,kind):
+    from core.roleplay.store import RoleplayStore
+    from core.atomic_io import StoredDataError
+    store=RoleplayStore(str(tmp_path/'cards'));cid='builtin-suwan'
+    paths={'characters':store.characters_file,'chat':store.chat_path(cid),'worldinfo':store.worldinfo_path(cid),
+           'settings':store.settings_file,'identity':store.identity_path(cid)}
+    path=Path(paths[kind]);path.write_bytes(b'{broken')
+    actions={'characters':lambda:store.upsert_character({'id':'new','name':'New'}),
+             'chat':lambda:store.save_chat(cid,[]),'worldinfo':lambda:store.save_worldinfo(cid,[]),
+             'settings':lambda:store.update_settings({'user_name':'New'}),
+             'identity':lambda:store.update_identity(cid,{'user_name':'New'})}
+    with pytest.raises(StoredDataError):actions[kind]()
+    assert path.read_bytes()==b'{broken'
+    assert list(path.parent.glob(path.name+'.corrupted.*'))
+    # An externally recovered file is usable without restarting the application.
+    path.write_text('[]' if kind=='characters' else '{}',encoding='utf-8')
+    actions[kind]()
+
+
+def test_nonretryable_provider_error_is_preserved():
+    import httpx
+    from openai import APIStatusError
+    from types import SimpleNamespace
+    from core.resilient_client import ResilientLLMClient
+    response = httpx.Response(400, request=httpx.Request("POST", "https://example.invalid"))
+    original = APIStatusError("invalid request", response=response, body=None)
+    calls = []
+    def fail(**kwargs):
+        calls.append(kwargs)
+        raise original
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fail)))
+    with pytest.raises(APIStatusError) as caught:
+        ResilientLLMClient(client, "fixture").create(messages=[])
+    assert caught.value is original
+    assert len(calls) == 1
+
+
+def test_dialogue_prompt_uses_current_novel_scene_and_rounds():
+    from core.interactive.dialogue_engine import DialogueEngine, CHAT_WARN_ROUNDS
+    from types import SimpleNamespace
+    calls = []
+    def scenes(novel_id, limit):
+        calls.append(novel_id)
+        return [{"blocks": [{"speaker": "守卫", "content": "城门刚刚关闭。"}]}]
+    store = SimpleNamespace(recent_scenes=scenes, recent_chats=lambda nid, limit: [{}] * (CHAT_WARN_ROUNDS * 2))
+    engine = DialogueEngine(None, "fixture", store)
+    prompt = engine._build_chat_prompt({"state": {"location": "城门"}}, "守卫", [], novel_id="fixture-novel")
+    assert calls == ["fixture-novel"]
+    assert "城门刚刚关闭。" in prompt
+    assert "请让对话自然告一段落" in prompt

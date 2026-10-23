@@ -2404,38 +2404,6 @@ class GenerationMixin:
                 }
                 log.warning(f"Consistency auto-validation skipped: {e}")
 
-            # ── 自动校准（每10章）──
-            try:
-                from ..autocalibrator import should_calibrate, calibrate
-                if should_calibrate(chapter_num):
-                    plan = self.get_novel(novel_id)
-                    sg_data = safe_read_json(sg_path) or {}
-                    report = calibrate(chapter_num, plan, sg_data,
-                                       completed_chapters=completed)
-
-                    # 将校准报告注入 storygraph
-                    if not report.is_healthy():
-                        calib_ctx = report.to_context_block()
-                        if calib_ctx and sg_data:
-                            sg_data["_last_calibration"] = {
-                                "chapter": chapter_num,
-                                "report": report.to_context_block(),
-                                "score": report.score,
-                            }
-                            atomic_write_json(sg_path, sg_data)
-                            self.memory.invalidate("storygraph", novel_id)
-
-                        if not report.is_healthy():
-                            log.warning(f"Calibration issues found: "
-                                       f"{len(report.plot_drift_items)} drifts, "
-                                       f"{len(report.overdue_foreshadows)} overdue "
-                                       f"foreshadows, score={report.score}")
-                            yield {"type": "calibration", "report": report.to_context_block(),
-                                   "score": report.score}
-                    log.info(f"AutoCalibration done at chapter {chapter_num}: score={report.score}")
-            except Exception as e:
-                log.warning(f"AutoCalibration skipped: {e}")
-
             # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
             try:
                 chapter_text = self.get_chapter(novel_id, chapter_num) or full_text

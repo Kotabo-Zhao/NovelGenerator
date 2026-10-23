@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, LLM_CONFIG_FILE
 from core.path_security import validate_novel_id, RESERVED_NOVEL_IDS
+from core.atomic_io import StoredDataError
 
 # 共享依赖：engine 单例 + log（见 deps.py）
 from .deps import engine, log, ownership_store
@@ -70,6 +71,11 @@ if is_internal_version() and HOST not in ("127.0.0.1", "localhost", "::1"):
 
 
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(16_000_000)))
+
+
+@app.exception_handler(StoredDataError)
+async def damaged_save_handler(request: Request, exc):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.middleware("http")
@@ -300,7 +306,7 @@ async def health():
     return {
         "status": "ok",
         "service": "NovelGenerator",
-        "app_version": "4.3.1",
+        "app_version": "4.3.2",
         "workspace_id": __import__('hashlib').sha256(os.path.normcase(os.path.abspath(NOVELS_DIR)).encode()).hexdigest()[:12],
         "storage_exists": novels_exist,
         "novel_count": novel_count,

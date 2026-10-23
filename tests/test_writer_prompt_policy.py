@@ -80,3 +80,17 @@ def test_writer_does_not_run_hidden_rewrite_passes_after_streaming_draft():
 
     assert "".join(chunks) == draft
     assert hidden_calls == []
+
+
+def test_complete_stream_does_not_request_invisible_continuations():
+    draft = "风穿过城门，守卫望向远方" * 70
+    calls = []
+    class FakeResilient:
+        async def create_stream(self, **kwargs):
+            calls.append(kwargs)
+            yield draft
+    writer = Writer(object(), "test-model")
+    writer._resilient = FakeResilient()
+    chunks = _collect(writer.write_stream(context="城门见闻", genre="奇幻", style="克制哲思", target_words=600))
+    assert "".join(chunks) == draft
+    assert len(calls) == 1
