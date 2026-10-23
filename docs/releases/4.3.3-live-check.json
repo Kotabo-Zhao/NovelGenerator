@@ -1,0 +1,65 @@
+{
+  "model": "deepseek-v4-flash",
+  "scope": "isolated neutral fixture, no user novel data",
+  "cases": [
+    {
+      "name": "recall_after_reload_and_35_memories",
+      "passed": true,
+      "reply": "（放下抹布，眯起眼）蓝燕七号嘛，你特意叮嘱过，我记性好着呢。怎么，又绕回来问一遍——是信不过我？"
+    },
+    {
+      "name": "private_memory_not_shared",
+      "passed": true,
+      "reply": "（叼着烟，眯眼打量他）你的船？我哪知道你给船起什么名。码头上船多的是，认船不认名字。"
+    },
+    {
+      "name": "canon_event_source_quotes",
+      "passed": true,
+      "events": [
+        {
+          "id": 1,
+          "desc": "林舟在码头把密信交给掌柜",
+          "source_quote": "林舟把密信交给掌柜",
+          "status": "current",
+          "trigger": {},
+          "entry_hook": ""
+        }
+      ]
+    },
+    {
+      "name": "actual_delivery_commits_inventory_event_and_memory",
+      "passed": true
+    },
+    {
+      "name": "repeat_delivery_fails_without_item",
+      "passed": true
+    },
+    {
+      "name": "live_adjudication_canonical_rescue",
+      "passed": true,
+      "resolution": {
+        "id": "74336fb71e7349389cafb18ffc90a37d",
+        "input": "我用绳索救下顾川",
+        "verb": "rescue",
+        "item": "绳索",
+        "target": "顾川",
+        "status": "success",
+        "reason": "玩家持有绳索，目标顾川处于落水状态且在场，使用绳索救援是合理可行的物理行动；当前章节参考段1明确记载林舟用绳索把落水的顾川拉上码头，救下顾川，故本次救援执行成功。",
+        "changes": [
+          "顾川已获救",
+          "章节推进: 救下顾川"
+        ],
+        "event_completed": true,
+        "time": "2026-10-24 01:24:09",
+        "event_id": 1,
+        "event_chapter": 0,
+        "conditions_satisfied": true,
+        "witnesses": [
+          "掌柜",
+          "顾川"
+        ]
+      }
+    }
+  ],
+  "status": "PASS"
+}

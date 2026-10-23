@@ -253,6 +253,8 @@
           <p><b>你扮演：</b>{{playerName}} · {{playerIdentity}}。AI 负责环境与其他人物，你的关键行动由你决定。</p>
           <p><b>你的目标：</b>{{participation.goal}}</p>
           <p><b>当前事件：</b>{{participation.event || (participation.event_state === 'resolved' ? '本章事件已解决，可继续后续剧情。' : '当前章节事件尚在准备；先观察或继续场景。')}}</p>
+          <p v-if="participation.source_warning || participation.event_warning">{{participation.source_warning || participation.event_warning}}</p>
+          <details v-if="participation.event_source"><summary>当前事件的原文依据</summary><p class="sc-canon-reference">{{participation.event_source}}</p></details>
           <button v-if="participation.mode === 'branch' && participation.event" class="btn btn-secondary btn-sm" :disabled="busy" @click="declineEvent">拒绝当前事件 · 进入后果分支</button>
           <p v-if="participation.entry_seed"><b>开局状态依据：</b>{{participation.entry_seed.note}}</p>
           <p><b>依据：</b>{{participation.source === 'chapter_text' ? '原著正文' : '仅大纲（正文未提供）'}}</p>
@@ -261,6 +263,13 @@
           <details><summary>原著开篇参考（不等于本局已发生）</summary><p class="sc-canon-reference">{{participation.opening}}</p></details>
           <details v-if="participation.completed_events && participation.completed_events.length"><summary>已参与完成的事件</summary><p v-for="event in participation.completed_events" :key="event.action_id">第{{event.chapter}}章 · {{event.event}}</p></details>
           <details v-if="participation.divergences && participation.divergences.length"><summary>本局造成的变化</summary><p v-for="change in participation.divergences" :key="change.action_id">{{change.changes.join('；')}}</p></details>
+          <details><summary>角色记忆 · 查看实际记录</summary>
+            <p>行动记忆仅写给在场见证者，交谈仅由对话对象记住。对话中的说法不会自动变成已发生事实。</p>
+            <p v-if="!participation.memories || !participation.memories.length">尚无已记录的互动记忆。</p>
+            <details v-for="character in participation.memories" :key="character.name"><summary>{{character.name}} · {{character.count}} 条</summary>
+              <p v-for="(memory,i) in character.recent" :key="memory.event_id || i">{{memory.content}}<br><small>{{memory.source === 'action' ? '行动见证' : memory.source === 'dialogue' ? '直接交谈' : '历史记录'}} · {{memory.ts}}</small></p>
+            </details>
+          </details>
         </div>
         <div v-else class="sc-participation-body"><p>保留人物、物品、聊天及剧情进度，按当前章节补充原著依据；旧节点完成记录不会自动重演。</p><button class="btn btn-secondary" :disabled="busy" @click="upgradeParticipation">保留进度并升级</button></div>
       </details>
@@ -731,7 +740,7 @@
 <script src="/vue.global.prod.js"></script>
 <script src="/assets/runtime.js?v=84400d7649a3"></script>
 <script src="/assets/scene-runtime.js?v=8c0c90dc83d1"></script>
-<script src="/assets/app-shell.js?v=ec2111e3db6b"></script>
+<script src="/assets/app-shell.js?v=6f86608c8abf"></script>
 <script src="/assets/scene.js?v=e5b4c14b914b"></script>
 </body>
 </html>

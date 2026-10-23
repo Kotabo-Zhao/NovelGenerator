@@ -2075,9 +2075,10 @@ class StoryDirector:
             from .char_memory import get_memories
             _mem_lines = []
             for name in list(_whitelist.keys())[:4]:
-                mems = get_memories(state, name, 3)
+                query = str((state.get('last_action') or {}).get('input','')) + str(s.get('objective',''))
+                mems = get_memories(state, name, 4, query)
                 if mems:
-                    _ms = "；".join(str(m.get("content", ""))[:45] for m in mems)
+                    _ms = "；".join(str(m.get("content", ""))[:600] for m in mems)
                     _mem_lines.append(f"- {name}: {_ms}")
             if _mem_lines:
                 parts.append("在场角色记忆（角色明确记得的事——行为/台词必须与之吻合，"
@@ -2318,6 +2319,13 @@ class StoryDirector:
                 )
                 if last_end > 200:
                     candidate = cut[:last_end + 1]
+
+            # Another action or dialogue may have committed while prose was streaming.
+            # Do not overwrite its outcomes or memory with this older scene snapshot.
+            latest = self.store.load_state(novel_id) or {}
+            if state.get('participation') and latest.get('revision') != state.get('revision'):
+                yield {'type':'error','message':'生成期间剧情状态已更新，本段未保存，请基于最新行动继续。'}
+                return
 
             is_repeat = scene_repeat_check(candidate, recent_old, 0.22)
             if not is_repeat:
@@ -2689,6 +2697,11 @@ class StoryDirector:
     # ── PACT 提取（对话结束）──
     def extract_pact(self, novel_id: str, chat_entries: list) -> dict:
         """对话 → 剧情事实（PACT）。返回提取结果，并写入 state"""
+        if (self.store.load_state(novel_id) or {}).get('participation'):
+            # Each completed dialogue turn already records direct testimony.
+            # A second inference must not promote a claim into a world fact or
+            # leak it to a character named in the conversation but absent from it.
+            return {'facts':[], 'relations':{}, 'objective_update':'', 'tone':''}
         if not chat_entries:
             return {"facts": [], "relations": {}, "objective_update": "", "tone": ""}
         transcript = []
@@ -2932,6 +2945,8 @@ class StoryDirector:
         cb = state.get("chapter_beats") or {}
         if (not force and cb.get("chapter_idx") == idx and cb.get("beats")):
             return cb["beats"]
+        if state.get('participation'):
+            return self._ensure_participation_beats(novel_id, state, idx, ch)
         # v3.5.54: 大纲节点优先（Galgame 关键节点——剧情收束的锚点）
         _sb = ch.get("scene_beats") or []
         if _sb and any(str(b.get("key_action", "")).strip() for b in _sb if isinstance(b, dict)):
@@ -3002,6 +3017,44 @@ class StoryDirector:
                 self.store.save_state(novel_id, state)
             except Exception:
                 pass
+        return beats
+
+    def _ensure_participation_beats(self, novel_id, state, idx, chapter):
+        """Build intervention points with literal evidence; invalid proposals stay unconfirmed."""
+        contract = state['participation']
+        reference = str(contract.get('reference') or chapter.get('summary') or '')
+        player = (state.get('player_char') or {}).get('name') or '玩家'
+        beats = []
+        try:
+            prompt = (f'玩家扮演{player}。从以下当前章节中提取最多4个按时间排序、该玩家能实际参与的事件。'
+                      '每个事件给出可执行的具体行动，不要将整章结局当成玩家已经完成。'
+                      'actor必须是玩家姓名。不能将NPC独立做的事列为玩家任务；可提取玩家的交付、求助、观察或等待等干预行为。'
+                      'source_quote必须逐字引用下列正文支持该事件；资料不足返回空数组。'
+                      '不得编造道具、人物、奖励或前置条件。只返回JSON：'
+                      '{"beats":[{"actor":"玩家姓名","desc":"玩家行动与对象","source_quote":"逐字依据"}]}\n'
+                      + reference[:16000])
+            data = _parse_json(self._llm('你是小说原著事件提取员。', prompt, temperature=0.1, max_tokens=1600)) or {}
+            for entry in (data.get('beats') or [])[:4]:
+                if not isinstance(entry, dict):
+                    continue
+                quote = str(entry.get('source_quote') or '').strip()
+                desc = str(entry.get('desc') or '').strip()
+                npc_action = any(desc.startswith(name) for name in state.get('casts',{}) if name != player)
+                if entry.get('actor') != player or npc_action or not desc or not (4 <= len(quote) <= 600) or quote not in reference:
+                    continue
+                beats.append({'id':len(beats)+1, 'desc':desc[:180], 'source_quote':quote,
+                              'status':'pending','trigger':{},'entry_hook':''})
+        except Exception as exc:
+            log.warning('Canon event extraction failed: %s', type(exc).__name__)
+        if beats:
+            beats[0]['status'] = 'current'
+            contract.pop('event_warning', None)
+        else:
+            contract['event_warning'] = '当前没有通过原文核验的事件；可继续自由行动，下次场景生成将重试提取。'
+        state['chapter_beats'] = {'chapter_idx':idx,'beats':beats,'source':'verified_reference'}
+        # Called synchronously from scene generation; never save a pre-generated
+        # old whole-state snapshot from a background worker.
+        self.store.save_state(novel_id, state)
         return beats
 
     def _check_anchor_trigger(self, state: dict) -> Optional[dict]:
@@ -3168,7 +3221,7 @@ class StoryDirector:
         _do_cut = chapter_complete(_check_state, per)
         if _do_cut and state.get('participation'):
             from .participation import advance_canon_chapter
-            advance_canon_chapter(state, self.store.novels_dir, novel_id)
+            _do_cut = advance_canon_chapter(state, self.store.novels_dir, novel_id)
 
         # v1.1 P3: 切章时状态一致性修复（L3 规则修复，零 LLM）——先修复再切章
         if _do_cut:
@@ -3216,10 +3269,8 @@ class StoryDirector:
                 # 注入"本章事件进度"，每场景推进 1 个事件，杜绝重复生成
                 try:
                     _st_new = self.store.load_state(novel_id) or state
-                    if state.get('participation'):
-                        _st_new = dict(state)
-                        _st_new['outline_progress'] = {'idx':idx,'scene_in_chapter':0,'scene_start':state.get('scene_num',0)}
-                    enqueue_background(self._ensure_chapter_beats, novel_id, _st_new, True, critical=True)
+                    if not state.get('participation'):
+                        enqueue_background(self._ensure_chapter_beats, novel_id, _st_new, True, critical=True)
                 except Exception as e:
                     log.warning(f"beats pregen failed: {e}")
                 # v3.5.48: 非最后一章不设 final_done（否则下一场景直接 return 再次卡死）

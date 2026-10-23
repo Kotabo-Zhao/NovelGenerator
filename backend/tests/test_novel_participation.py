@@ -138,7 +138,7 @@ def test_dead_character_not_resurrected_by_ordinary_rescue():
 
 def test_conservative_mode_blocks_key_rewrite_and_model_outage_stays_pending():
     state=world();state['participation']['mode']='canon'
-    assert resolve_action(state,{'input':'我救下顾川'},yes)['status']=='failure'
+    assert resolve_action(state,{'input':'我救下顾川'},yes)['status']=='pending'
     assert 'condition' not in state['casts']['顾川']
     state['participation']['mode']='branch'
     assert resolve_action(state,{'input':'我说服顾川'},lambda *_:{} )['status']=='pending'
@@ -340,3 +340,201 @@ def test_successful_consumable_use_deducts_inventory_without_completing_delivery
     assert resolve_action(state,action,yes)['status']=='success'
     assert '药丸' not in state['state']['inventory']
     assert not beat_advance_by_action(state,action)
+
+
+@pytest.mark.parametrize('text', ['我没有交出密信', '我没有把密信交给掌柜', '我并未救下顾川', '交出密信会有什么后果？'])
+def test_denial_and_questions_are_never_committed(text):
+    state = world()
+    result = resolve_action(state, {'input':text}, yes)
+    assert result['status'] in ('refused','pending')
+    assert state['state']['inventory'] == ['密信']
+    assert 'condition' not in state['casts']['顾川']
+
+
+def test_canon_rescue_with_literal_evidence_can_complete():
+    state=world(); state['participation'].update(mode='canon', reference='林舟跳入河中，救下了顾川。')
+    state['chapter_beats']['beats'][0]['desc']='救下顾川'
+    def verdict(*args):
+        return {**yes(*args), 'canon_compatible':True, 'canon_quote':'林舟跳入河中，救下了顾川。'}
+    action={'input':'我救下顾川'}
+    assert resolve_action(state,action,verdict)['status']=='success'
+    assert beat_advance_by_action(state,action)
+
+
+def test_old_resolution_cannot_complete_another_event():
+    state=world(); action={'input':'我把密信交给掌柜'}
+    resolve_action(state,action,yes)
+    state['chapter_beats']['beats'][0]['id']=2
+    assert not beat_advance_by_action(state,action)
+    assert state['state']['flags']==[]
+
+
+def test_action_commit_remembers_witnesses_and_final_event_result(tmp_path):
+    state=world();state['casts']['顾川']['present']=False
+    state['world']['chars']['顾川'].update(present=False,location='城门')
+    store=InteractStore(str(tmp_path));store.save_state('book',state)
+    action=ActionEngine(None,'mock',store)
+    result=action.apply_action('book',{'input':'我把密信交给掌柜'})
+    reloaded=InteractStore(str(tmp_path)).load_state('book')
+    assert reloaded['memories']['掌柜'][-1]['event_id']==result['resolution']['id']
+    assert '交付：密信' in reloaded['memories']['掌柜'][-1]['content']
+    assert '顾川' not in reloaded['memories']
+    assert reloaded['action_ledger'][-1]['event_completed'] is True
+    assert reloaded['participation']['actions'][-1]['changes']==result['changed']
+    from core.interactive.dialogue_engine import DialogueEngine
+    prompt=DialogueEngine(None,'mock',store)._build_chat_prompt(reloaded,'掌柜',[{'content':'之前那封密信呢？'}],novel_id='book')
+    assert '亲历：林舟尝试' in prompt and '交付：密信' in prompt
+
+
+def test_failed_action_memory_does_not_claim_success(tmp_path):
+    state=world();state['state']['inventory']=[]
+    store=InteractStore(str(tmp_path));store.save_state('book',state)
+    engine=ActionEngine(None,'mock',store)
+    result=engine.apply_action('book',{'input':'我把密信交给掌柜'})
+    assert result['resolution']['status']=='failure'
+    memory=store.load_state('book')['memories']['掌柜'][-1]['content']
+    assert '判定失败' in memory and '实际变化：无' in memory
+
+
+def test_memory_retrieval_survives_recent_window_and_prefix_collision():
+    from core.interactive.char_memory import add_memory, memory_brief
+    state=world()
+    add_memory(state,'掌柜','promise','林舟承诺三日后归还青铜钥匙。')
+    prefix='玩家向守卫解释今晚发生在城门外的事情，请守卫认真记住这些事情：'
+    add_memory(state,'掌柜','info',prefix+'甲事件')
+    add_memory(state,'掌柜','info',prefix+'乙事件')
+    for i in range(40):add_memory(state,'掌柜','event',f'普通事件{i}')
+    assert len(state['memory_archive']['掌柜'])==13
+    recalled=memory_brief(state,'掌柜',8,'归还青铜钥匙的承诺')
+    assert '三日后归还青铜钥匙' in recalled
+    assert '三日后归还青铜钥匙' not in memory_brief(state,'顾川',8,'青铜钥匙')
+
+
+def test_dialogue_memory_commits_before_chat_end_and_does_not_leak(tmp_path):
+    from core.interactive.dialogue_engine import DialogueEngine
+    store=InteractStore(str(tmp_path));store.save_state('book',world())
+    engine=DialogueEngine(None,'mock',store); prompts=[]
+    async def reply(system,prompt,**kwargs):
+        prompts.append(prompt)
+        yield '我记住了。'
+    engine._llm_stream=reply
+    async def turn(target,message):
+        stream=engine.chat_stream('book',message,target,force_talk=True)
+        async for event in stream:
+            if event['type']=='chat_end':
+                assert InteractStore(str(tmp_path)).load_state('book')['memories'][target][-1]['source']=='dialogue'
+                break
+        await stream.aclose()
+    asyncio.run(turn('掌柜','我的旧船叫蓝燕七号。'))
+    engine.store=InteractStore(str(tmp_path))
+    asyncio.run(turn('掌柜','还记得我的旧船叫什么吗？'))
+    assert '蓝燕七号' in prompts[-1]
+    asyncio.run(turn('顾川','你好。'))
+    assert '蓝燕七号' not in prompts[-1]
+
+
+def test_verified_event_extraction_rejects_fabricated_quotes(tmp_path):
+    state=world();state.pop('chapter_beats')
+    state['outline_chapters']=[{'number':1,'summary':'交信'}]
+    state['participation']['reference']='林舟把密信交给掌柜。'
+    store=InteractStore(str(tmp_path));store.save_state('book',state)
+    director=StoryDirector(None,'mock',store)
+    director._llm=lambda *a,**k:json.dumps({'beats':[
+        {'actor':'林舟','desc':'获得神器','source_quote':'林舟获得神器。'},
+        {'actor':'林舟','desc':'把密信交给掌柜','source_quote':'林舟把密信交给掌柜。'},
+        {'actor':'掌柜','desc':'掌柜接收密信','source_quote':'林舟把密信交给掌柜。'}]})
+    beats=director._ensure_chapter_beats('book',state)
+    assert len(beats)==1 and beats[0]['source_quote']=='林舟把密信交给掌柜。'
+    director._llm=lambda *a,**k:'{"beats":[]}'
+    assert director._ensure_chapter_beats('book',state,True)==[]
+    assert state['participation']['event_warning']
+    assert not chapter_complete(state)
+
+
+def test_chapter_transition_is_atomic_and_does_not_pregen_stale_state(tmp_path, monkeypatch):
+    import core.interactive.story_director as module
+    state=world();state['chapter_beats']['beats'][0]['status']='done'
+    state['outline_progress']={'idx':0,'scene_in_chapter':2}
+    state['outline_chapters']=[{'number':1},{'number':2}]
+    state['participation'].update(reference='掌柜本会拿到密信。',source_file='001.md')
+    store=InteractStore(str(tmp_path));store.save_state('book',state)
+    director=StoryDirector(None,'mock',store)
+    monkeypatch.setattr(module,'enqueue_background',lambda *a,**k:pytest.fail('participation must not save stale background state'))
+    director._advance_outline('book',state)
+    assert store.load_state('book')['outline_progress']['idx']==0
+    assert state['participation']['source_warning']
+    base=tmp_path/'book';(base/'chapters').mkdir()
+    (base/'plan.json').write_text(json.dumps({'outline':{'volumes':[{'chapters':[{'number':1},{'number':2}]}]}}))
+    (base/'chapters/002.md').write_text('顾川在城门等候。',encoding='utf-8')
+    director._advance_outline('book',state)
+    saved=store.load_state('book')
+    assert saved['outline_progress']['idx']==1
+    assert saved['participation']['chapter_number']==2
+    assert saved['participation']['reference_history'][0]['reference_only'] is True
+    assert '掌柜本会拿到密信' in canon_context(saved,'密信')
+    assert not saved['participation'].get('source_warning')
+
+
+@pytest.mark.parametrize('text',['我救人','我拔剑战斗','交出密信'])
+def test_ambiguous_target_does_not_commit_model_success(text):
+    state=world();action={'input':text}
+    assert resolve_action(state,action,yes)['status']=='pending'
+    assert not beat_advance_by_action(state,action)
+    assert state['state']['inventory']==['密信']
+
+
+def test_action_narration_cannot_overwrite_newer_memory(tmp_path):
+    store=InteractStore(str(tmp_path));store.save_state('book',world())
+    engine=ActionEngine(None,'mock',store);action={'input':'我把密信交给掌柜'}
+    applied=engine.apply_action('book',action)
+    async def narrative(*a,**k):
+        from core.interactive.char_memory import add_memory
+        def remember(latest):
+            add_memory(latest,'顾川','info','新的口信必须保留。')
+            return latest
+        store.update_state('book',remember)
+        yield '【旁白】掌柜收好了密信。'
+    engine._llm_stream=narrative
+    async def run():return [e async for e in engine.action_scene_stream('book',action,applied['changed'])]
+    asyncio.run(run())
+    assert store.load_state('book')['memories']['顾川'][-1]['content']=='新的口信必须保留。'
+
+
+
+def test_slow_scene_does_not_erase_action_or_memory_committed_during_generation(tmp_path):
+    store=InteractStore(str(tmp_path));store.save_state('book',world())
+    director=StoryDirector(None,'mock',store)
+    async def scene(*a,**k):
+        ActionEngine(None,'mock',store).apply_action('book',{'input':'我把密信交给掌柜'})
+        yield '【旁白】码头上的风渐渐停了，掌柜抬头看向门口。'
+    director._llm_stream=scene
+    async def run():return [e async for e in director.generate_scene_stream('book',force_node_check=False)]
+    events=asyncio.run(run())
+    assert any(e['type']=='error' and '状态已更新' in e['message'] for e in events), events
+    assert not store.recent_scenes('book',10)
+    assert store.load_state('book')['state']['inventory']==[]
+    assert store.load_state('book')['memories']['掌柜']
+
+
+
+def test_explicit_promise_is_not_fulfilled_until_matching_action(tmp_path):
+    from core.interactive.char_memory import remember_dialogue
+    state=world()
+    remember_dialogue(state,'掌柜','我答应明天把密信交给你。','等你来。','promise-1')
+    assert state['pending_promises'][0]['status']=='pending'
+    assert state['state']['inventory']==['密信']
+    store=InteractStore(str(tmp_path));store.save_state('book',state)
+    engine=ActionEngine(None,'mock',store)
+    engine.apply_action('book',{'input':'我观察四周'})
+    assert store.load_state('book')['pending_promises'][0]['status']=='pending'
+    applied=engine.apply_action('book',{'input':'我把密信交给掌柜'})
+    assert applied['state']['pending_promises'][0]['status']=='fulfilled'
+    assert applied['state']['pending_promises'][0]['action_id']==applied['resolution']['id']
+
+
+def test_refused_promise_is_only_testimony():
+    from core.interactive.char_memory import remember_dialogue
+    state=world()
+    remember_dialogue(state,'掌柜','我不会答应明天把密信交给你。','我明白了。','refusal-1')
+    assert not state.get('pending_promises')
+    assert state['memories']['掌柜'][-1]['source']=='dialogue'

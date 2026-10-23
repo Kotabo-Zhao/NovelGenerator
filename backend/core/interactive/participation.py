@@ -111,7 +111,7 @@ def initialize_participation(state, novel_dir, plan, chapter_index=0, mode='bran
     return state['participation']
 
 
-def canon_context(state, query='', limit=9000):
+def canon_context(state, query='', limit=9000, observer=None):
     contract = state.get('participation') or {}
     if not contract:
         return ''
@@ -121,17 +121,27 @@ def canon_context(state, query='', limit=9000):
     ranked = sorted(enumerate(evidence), key=lambda pair: (
         sum(term in pair[1]['text'] for term in terms), pair[0]), reverse=True)
     facts = '\n'.join(f"[原著第{item['chapter']}章/{item['source']}] {item['text']}" for _,item in ranked[:7])[:max(600,limit//3)]
+    previous = sorted(enumerate(contract.get('reference_history') or []), key=lambda pair: (
+        sum(term in pair[1]['text'] for term in terms), pair[0]), reverse=True)[:3]
+    previous_reference = '\n'.join(f"[已游玩章节的原著参考/第{item['chapter']}章] {item['text']}" for _, item in previous)[:1400]
     paragraphs = [p.strip() for p in re.split(r'\n\s*\n|\n',contract.get('reference','')) if p.strip()]
     passages = sorted(enumerate(paragraphs), key=lambda pair:(
         sum(term in pair[1] for term in terms), -pair[0]),reverse=True)[:5]
     current_reference = '\n'.join(f"[本章参考段{index+1}] {text[:1000]}" for index,text in sorted(passages))
     mode = '遵循原著主要事件，拒绝会改写结局的执行并说明原因；普通行动仍可自由进行' if contract.get('mode') == 'canon' else '允许玩家改变当前及后续事件；原著后续走向只是参考，不能强行回轨'
+    actions = contract.get('actions', [])
+    divergences = contract.get('divergences', [])
+    if observer:
+        actions = [a for a in actions if observer in a.get('witnesses', [])]
+        known = {a['id'] for a in actions}
+        divergences = [d for d in divergences if d.get('action_id') in known]
     return (f"## 小说参与契约\n玩家是{(state.get('player_char') or {}).get('name','你')}；AI只负责环境与NPC，不能替玩家决定或完成关键行动。\n"
             f"进入第{contract.get('chapter_number')}章《{contract.get('chapter_title')}》，依据：{contract.get('source_file') or '仅大纲，未提供正文'}。\n"
             f"规则：{mode}\n玩家目标：{contract.get('goal')}\n{contract.get('knowledge_rule')}\n"
-            f"本局已发生变化（优先于原著参考）：{json.dumps(contract.get('divergences', [])[-8:],ensure_ascii=False)[:800]}\n"
-            f"最近执行结果（优先于参考叙事）：{json.dumps(contract.get('actions', [])[-3:],ensure_ascii=False)[:1600]}\n"
+            f"本局已发生变化（优先于原著参考）：{json.dumps(divergences[-8:],ensure_ascii=False)[:800]}\n"
+            f"最近执行结果（优先于参考叙事）：{json.dumps(actions[-3:],ensure_ascii=False)[:1600]}\n"
             f"已发生的原著证据（未检索到不等于不存在）：\n{facts or '无前章正文证据，不能编造前史'}\n"
+            f"已游玩章节的原著参考（不代表本局发生；本局以执行记录为准）：\n{previous_reference}\n"
             f"当前章节参考（尚未发生的玩家行为不能当成既成事实）：\n{current_reference[:max(800,limit//3)]}\n"
             "以已提交的行动结果为权威：失败、拒绝、未决不得叙述成成功；未来章节内容不在本轮依据内。")[:limit]
 
@@ -139,12 +149,12 @@ def canon_context(state, query='', limit=9000):
 def request_kind(text):
     """A refusal/conditional clause must never become an affirmative action."""
     clauses = [c.strip() for c in re.split(r'[，,。；;！!\n]', str(text)) if c.strip()]
-    if re.search(r'^(?:如果|假如|假设|要是)|(?:能不能|是否可以|可不可以|要不要)', str(text).strip()):
+    if re.search(r'^(?:如果|假如|假设|要是)|(?:能不能|是否可以|可不可以|要不要)|[?？]', str(text).strip()):
         return 'conditional', str(text)
     positive = []
     negative = []
     for clause in clauses:
-        if re.search(r'拒绝|取消|放弃|不(?:去|要|想|会|愿|打算|交|给|使用|拿|杀|救|出发)|别(?:去|动|交)', clause):
+        if re.match(r'^(?:我)?(?:没有|并未|从未|未曾|不会|不打算|不想|不愿|不要)', clause) or re.search(r'拒绝|取消|放弃|不(?:去|要|想|会|愿|打算|交|给|使用|拿|杀|救|出发|能|攻击)|(?:没有|没|未曾|并未)(?:交|给|杀|救|去|使用|拿|攻击)|别(?:去|动|交)', clause):
             negative.append(clause)
         else:
             positive.append(clause)
@@ -216,6 +226,9 @@ def resolve_action(state, action, adjudicate=None):
     s = state.setdefault('state', {})
     inv = s.setdefault('inventory', [])
     event = current_event(state)
+    if event:
+        result['event_id'] = event.get('id')
+        result['event_chapter'] = (state.get('outline_progress') or {}).get('idx', 0)
     event_text = str((event or {}).get('desc',''))
     event_related = (typed['verb'] == 'give' and typed['item'] and typed['item'] in event_text) or (typed['verb'] in ('rescue','combat') and typed['target'] and typed['target'] in event_text)
     result['conditions_satisfied'] = conditions_met(state,(event.get('trigger') or {}).get('conditions')) if event else True
@@ -265,7 +278,9 @@ def resolve_action(state, action, adjudicate=None):
         present = [name for name in present if (state.get('casts') or {}).get(name,{}).get('alive') is not False
                    and authoritative.get(name,{}).get('present') is not False
                    and (not authoritative.get(name,{}).get('location') or authoritative[name]['location'] == here)]
-        if typed['target'] and typed['target'] not in present:
+        if typed['verb'] in ('give','rescue','combat') and not typed['target']:
+            result.update(reason='请明确行动对象；尚未对任何角色执行')
+        elif typed['target'] and typed['target'] not in present:
             result.update(status='failure',reason='目标角色不在场，不能执行该行动')
         elif typed['verb'] == 'rescue' and typed['target'] and (
                 (state.get('cast_states') or {}).get(typed['target'],{}).get('condition') in ('死亡','已死')
@@ -291,14 +306,16 @@ def resolve_action(state, action, adjudicate=None):
                 verdict = adjudicate(state, {**result,'event':event})
             except Exception:
                 verdict = {}
-            if isinstance(verdict, dict) and verdict.get('status') in ('success','failure') and verdict.get('reason'):
+            if isinstance(verdict, dict) and verdict.get('status') in ('success','failure','pending') and verdict.get('reason'):
                 result.update(status=verdict['status'],reason=str(verdict['reason'])[:300],
                               event_completed=verdict.get('event_completed') is True)
             if result['status'] == 'success':
                 contract = state.get('participation') or {}
-                disruptive = typed['verb'] in ('rescue','combat') and result['event_completed']
-                if disruptive and contract.get('mode') == 'canon':
-                    result.update(status='failure',reason='当前为遵循原著模式，这项行动会改写关键事件；可在新开局选择分支模式',event_completed=False)
+                disruptive = typed['verb'] in ('rescue','combat')
+                quote = str(verdict.get('canon_quote') or '')
+                compatible = verdict.get('canon_compatible') is True and len(quote) >= 4 and quote in contract.get('reference','')
+                if disruptive and contract.get('mode') == 'canon' and not compatible:
+                    result.update(status='pending',reason='遵循原著模式下，尚无正文证据证明该结果符合原著；未改变人物状态',event_completed=False)
                 elif typed['verb'] == 'give':
                     if not typed['target']:
                         result.update(status='pending',reason='请明确交付给哪位在场角色',event_completed=False)
@@ -361,6 +378,8 @@ def event_matches(state, action):
     resolution = action.get('resolution') or {}
     if not event or resolution.get('status') != 'success':
         return False
+    if resolution.get('event_id') != event.get('id') or resolution.get('event_chapter') != (state.get('outline_progress') or {}).get('idx', 0):
+        return False
     if any(e.get('action_id') == resolution.get('id') for e in
            (state.get('participation') or {}).get('completed_events',[])):
         return False
@@ -394,16 +413,28 @@ def advance_canon_chapter(state, novels_dir, novel_id):
         catalog = chapter_catalog(base,plan)
         index = int((state.get('outline_progress') or {}).get('idx',0)) + 1
         if index >= len(catalog):
-            return
+            return True
         entry = catalog[index]
         body = _read_chapter(base,entry)
+        # Keep the original entry history separate from reference-only chapters
+        # traversed in this playthrough: their canonical endings may have changed.
+        history = contract.setdefault('reference_history', [])
+        if contract.get('reference'):
+            for paragraph in re.split(r'\n\s*\n|\n', contract['reference']):
+                if paragraph.strip():
+                    history.append({'chapter':contract.get('chapter_number'), 'source':contract.get('source_file',''),
+                                    'text':paragraph.strip()[:1000], 'reference_only':True})
+            del history[:-800]
         contract.update(chapter_index=index,chapter_number=entry['number'],chapter_title=entry['title'],
                         source='chapter_text' if body else 'outline',source_file=entry['file'],
                         reference=body if body else entry['summary'],
                         opening=body[:900] if body else entry['summary'])
+        contract.pop('source_warning', None)
+        return True
     except (OSError, ValueError, TypeError):
         # Retain the last verified context on missing/corrupt source, never invent it.
         contract['source_warning'] = '下一章原著依据暂不可读，保留已确认的本局事实'
+        return False
 
 
 def participation_view(state):
@@ -415,6 +446,11 @@ def participation_view(state):
             'opening':contract.get('opening',''), 'event':event.get('desc','') if event else '',
             'event_state':'current' if event else ('resolved' if (state.get('chapter_beats') or {}).get('beats') else 'preparing'),
             'entry_seed':contract.get('entry_seed',{}),
+            'source_warning':contract.get('source_warning',''),
+            'event_warning':contract.get('event_warning',''),
+            'event_source':event.get('source_quote','') if event else '',
+            'memories':[{'name':name, 'count':len(entries) + len((state.get('memory_archive') or {}).get(name,[])),
+                         'recent':entries[-3:][::-1]} for name,entries in (state.get('memories') or {}).items()],
             'last_action':(state.get('action_ledger') or [{}])[-1],
             'completed_events':contract.get('completed_events',[]) [-10:],
             'divergences':contract.get('divergences',[])[-10:]}

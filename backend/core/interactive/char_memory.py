@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 import time
+import re
 from typing import Optional
 
 MEMORY_LIMIT = 30
+ARCHIVE_LIMIT = 200
 EVENT_LIMIT = 30  # v2.5.60: 8→30 扩容——关键事件（摊牌/决裂/约定）不被挤出记忆窗口
 SUMMARY_LIMIT = 6        # v3.5.31: 摘要条数上限（满后再合并最旧摘要）
 COMPRESS_KEEP = 5        # v3.5.31: 压缩时保留最近 N 条原始记忆（保鲜窗口）
@@ -40,27 +42,32 @@ MEMORY_COMPRESS_SYSTEM = """你是小说角色的记忆整理师。把角色的�
 
 
 def add_memory(state: dict, char: str, mtype: str, content: str,
-               source: str = "", ts: Optional[str] = None) -> None:
-    """给角色加一条记忆（内容级去重：前 30 字相同视为重复）"""
+               source: str = "", ts: Optional[str] = None, event_id: str = "") -> None:
+    """Record a character's evidence, retaining older entries for relevant recall."""
     if not char or not content:
         return
     mems = state.setdefault("memories", {}).setdefault(char, [])
-    key = str(content)[:30]
+    key = str(content)[:600]
     for m in mems[-12:]:
-        if str(m.get("content", ""))[:30] == key:
+        if (event_id and m.get('event_id') == event_id) or str(m.get("content", "")) == key:
             return
     mems.append({
         "ts": ts or time.strftime("%m-%d %H:%M"),
         "type": mtype,
-        "content": str(content)[:120],
+        "content": key,
         "source": str(source)[:40],
+        "event_id": event_id,
     })
     if len(mems) > MEMORY_LIMIT:
         # v3.5.31: 标记待压缩（硬删除仅作兜底，实际压缩在章节结束时后台执行）
         dirty = state.setdefault("_memory_dirty", [])
         if char not in dirty:
             dirty.append(char)
-        # 兜底：若压缩从未执行（如 LLM 不可用），仍硬截断防无限膨胀
+        archive = state.setdefault('memory_archive', {}).setdefault(char, [])
+        archive.extend(mems[:len(mems) - MEMORY_LIMIT])
+        while len(archive) > ARCHIVE_LIMIT:
+            index = next((i for i,m in enumerate(archive) if m.get('type') not in ('promise','secret','summary')), 0)
+            archive.pop(index)
         del mems[: len(mems) - MEMORY_LIMIT]
 
 
@@ -76,7 +83,7 @@ def compress_char_memories(state: dict, char: str, llm_fn) -> bool:
     old = mems[:-COMPRESS_KEEP] if len(mems) > COMPRESS_KEEP else []
     if not old:
         return False
-    batch = old[-COMPRESS_BATCH:]
+    batch = old[:COMPRESS_BATCH]
     if not batch:
         return False
     try:
@@ -159,15 +166,30 @@ def add_event(state: dict, summary: str, etype: str = "event") -> None:
         del evs[: len(evs) - EVENT_LIMIT]
 
 
-def get_memories(state: dict, char: str, n: int = 8) -> list:
+def get_memories(state: dict, char: str, n: int = 8, query: str = '') -> list:
     """角色记忆（最近 n 条，按时间倒序）"""
     mems = (state.get("memories") or {}).get(char, [])
-    return mems[-n:][::-1]
+    if n <= 0:
+        return []
+    if not query:
+        return mems[-n:][::-1]
+    entries = ((state.get('memory_archive') or {}).get(char) or []) + mems
+    terms = set(re.findall(r'[a-zA-Z]{3,}', query.lower()))
+    for run in re.findall(r'[\u4e00-\u9fff]+', query):
+        terms.update(run[i:i+2] for i in range(len(run)-1))
+    recent = list(range(max(0, len(entries)-min(2, n)), len(entries)))[::-1]
+    ranked = sorted(range(len(entries)), key=lambda i: (
+        sum(t in entries[i].get('content','').lower() for t in terms),
+        entries[i].get('type') in ('promise','secret','summary'), i), reverse=True)
+    chosen = (ranked[:max(0,n-len(recent))] + recent)
+    chosen = list(dict.fromkeys(chosen))
+    chosen += [i for i in ranked if i not in chosen][:n-len(chosen)]
+    return [entries[i] for i in chosen[:n]]
 
 
-def memory_brief(state: dict, char: str, n: int = 8) -> str:
+def memory_brief(state: dict, char: str, n: int = 8, query: str = '') -> str:
     """角色记忆 → prompt 文本（'你记得的事'）"""
-    mems = get_memories(state, char, n)
+    mems = get_memories(state, char, n, query)
     if not mems:
         return ""
     lines = []
@@ -189,3 +211,40 @@ def events_brief(state: dict, n: int = 4) -> str:
     if not evs:
         return ""
     return "；".join(f"{e.get('ts', '')} {e.get('summary', '')}" for e in evs)
+
+
+def remember_action(state: dict, result: dict, witnesses: list) -> None:
+    """Only witnesses remember an executed attempt, including its actual outcome."""
+    if result.get('status') not in ('success', 'failure'):
+        return  # A hypothetical or refused intention is not an observed event.
+    player = (state.get('player_char') or {}).get('name') or '玩家'
+    outcome = '成功' if result['status'] == 'success' else '失败'
+    content = (f"亲历：{player}尝试「{result.get('input','')[:180]}」；判定{outcome}。"
+               f"{result.get('reason','')[:120]}；实际变化：{'；'.join(result.get('changes') or []) or '无'}")
+    for name in dict.fromkeys(witnesses):
+        add_memory(state, name, 'event', content, source='action', event_id=result['id'])
+    add_event(state, f"{player}行动{outcome}：{result.get('input','')[:50]}", 'action')
+
+
+def remember_dialogue(state: dict, target: str, user_text: str, reply: str, turn_id: str) -> None:
+    """Remember direct testimony without promoting claims to world facts."""
+    if target not in (state.get('casts') or {}):
+        return
+    player = (state.get('player_char') or {}).get('name') or '玩家'
+    kind = 'promise' if re.search(r'答应|承诺|保证|约定', user_text) else 'info'
+    content = f"交谈记录（说法不等于事实）：{player}对你说「{user_text[:260]}」；你回答「{reply[:240]}」"
+    add_memory(state, target, kind, content, source='dialogue', event_id=turn_id)
+    if state.get('participation') and kind == 'promise':
+        from .participation import request_kind, _typed
+        polarity, clause = request_kind(user_text)
+        if polarity != 'affirmative':
+            return
+        typed = _typed(clause, state, {'recipient':target})
+        anchor = re.search(r'明天|后天|今晚|明早|周[一二三四五六日天]|星期[一二三四五六日天]|[一二三四五六七八九十\d]+天后', user_text)
+        ledger = state.setdefault('pending_promises', [])
+        if any(p.get('who') == target and p.get('what') == user_text[:260] and p.get('status') == 'pending' for p in ledger):
+            return
+        ledger.append({'id':turn_id, 'who':target, 'what':user_text[:260],
+                       'when_raw':anchor[0] if anchor else '', 'status':'pending',
+                       'source':'direct_dialogue', 'fulfillment':typed,
+                       'scene_num':state.get('scene_num',0)})

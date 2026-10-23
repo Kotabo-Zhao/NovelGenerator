@@ -625,8 +625,9 @@ async def interactive_state(novel_id: str):
     out["recent_scene_num"] = state.get("scene_num", 0) or 0
     from core.interactive.participation import participation_view
     out['participation_view'] = participation_view(state)
+    out.pop('memory_archive', None)  # Recall archive stays on disk; the UI receives recent evidence only.
     if out.get('participation'):
-        out['participation'] = {k:v for k,v in out['participation'].items() if k not in ('past_evidence','reference')}
+        out['participation'] = {k:v for k,v in out['participation'].items() if k not in ('past_evidence','reference','reference_history')}
     return {"ok": True, "state": out}
 
 

@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from typing import AsyncIterator, Optional
 
 from ..resilient_client import ResilientLLMClient, llm_error_message
@@ -211,7 +212,9 @@ class DialogueEngine:
         # v3.5.27: 角色白名单——本轮只有你与读者，严禁其他人出现
         from .participation import canon_context
         if state.get('participation'):
-            parts.append(canon_context(state, target_char, 6000))
+            parts.append(canon_context(state, target_char, 6000, observer=target_char))
+            parts.append('原著仅用于维持世界一致性，不代表你亲历或得知。其他角色的谈话与行动，只能通过你的专属记忆或玩家本轮告知获知。')
+            parts.append('记忆边界：没有亲历记录或当前对话依据的具体名字、旧约定和秘密，必须直接表示不知道或询问。严禁猜造一个名字冒充回忆，严禁编造“你以前告诉过我”的经历。')
         parts.append(f"## 对话对象: 你（{target_char}）与读者（{((state.get('player_char') or {}).get('name', '你'))}）"
                      "两人。其他角色一律不得出现、插话或提及在场（读者主动提起时只回应其内容）。")
         # v3.4: 读者刚执行的行动（角色需即时反应，不复述行动本身）
@@ -320,13 +323,13 @@ class DialogueEngine:
                 parts.append(f"- [{f.get('type')}] {f.get('content')}")
         # v3.5.9: 角色专属记忆（你记得的事——你的视角，其他角色的秘密你不知道）
         from .char_memory import memory_brief
-        mem_brief = memory_brief(state, target_char, 8)
+        mem_brief = memory_brief(state, target_char, 8, str((history[-1] if history else {}).get('content','')))
         if mem_brief:
             parts.append("## " + mem_brief)
         # v3.9: 当前场景状态注入——角色知道'此刻'在哪、和谁、刚发生什么，
         # 避免行动-对话衔接断裂（如玩家未起身角色却'追上前几步'）
         try:
-            _recent_sc = self.store.recent_scenes(novel_id, 1) if novel_id else []
+            _recent_sc = self.store.recent_scenes(novel_id, 1) if novel_id and not state.get('participation') else []
             if _recent_sc:
                 _sc_last = _recent_sc[-1]
                 _loc_now = s.get('location', '') or ''
@@ -460,8 +463,9 @@ class DialogueEngine:
             if not target and candidates:
                 target = candidates[0]
         if not target:
+            from .story_director import compute_present
             node_chars = [n for n in (state.get("node_chars") or []) if n != player_name]
-            target = node_chars or [n for n in casts.keys() if n != player_name]
+            target = compute_present(state)[0] if state.get('participation') else node_chars or [n for n in casts.keys() if n != player_name]
             target = target[0] if target else ""
         if not target and prepared_action:
             target = "旁白"
@@ -502,7 +506,8 @@ class DialogueEngine:
             clean_input = re.sub(r"@\S+", "", clean_input).strip() or "…"
 
         # 记录对话
-        entry_user = {"role": "user", "content": clean_input, "speaker": "player",
+        turn_id = uuid.uuid4().hex
+        entry_user = {"role": "user", "content": clean_input, "speaker": "player", 'target':target, 'turn_id':turn_id,
                       "ts": time.strftime("%H:%M:%S")}
         self.store.append_chat(novel_id, entry_user)
         if state.get('participation'):
@@ -653,6 +658,8 @@ class DialogueEngine:
         history = self.store.recent_chats(novel_id, 20)
         history = [h for h in history if h.get("role") in ("user", "assistant")
                    and h.get("type") != "action_result"]
+        if state.get('participation'):
+            history = [h for h in history if (h.get('target') if h.get('role') == 'user' else h.get('speaker')) == target]
         prompt = self._build_chat_prompt(state, target, history, last_action, novel_id=novel_id)
 
         # 流式回复
@@ -701,24 +708,29 @@ class DialogueEngine:
         # 多角色分段解析（【角色名】...）
         segments = self._parse_segments(reply, target)
         entry_assistant = {"role": "assistant", "speaker": target,
+                           'target':target, 'turn_id':turn_id,
                            "content": reply, "segments": segments,
                            "ts": time.strftime("%H:%M:%S")}
         self.store.append_chat(novel_id, entry_assistant)
 
         # v3.5.42: 对话回复同步进 recent_blocks（切回时进度恢复完整）
-        try:
-            rb = state.get("recent_blocks") or []
-            rb.append({"type": "dialogue", "speaker": target, "content": reply})
-            state["recent_blocks"] = rb[-260:]
-            self.store.save_state(novel_id, state)
-        except Exception:
-            pass
+        session_id = (state.get('participation') or {}).get('session_id')
+        def commit_reply(latest):
+            if (latest.get('participation') or {}).get('session_id') != session_id:
+                return None
+            rb = latest.setdefault('recent_blocks', [])
+            rb.append({'type':'dialogue','speaker':target,'content':reply})
+            latest['recent_blocks'] = rb[-260:]
+            from .char_memory import remember_dialogue
+            remember_dialogue(latest, target, clean_input, reply, turn_id)
+            return latest
+        state = self.store.update_state(novel_id, commit_reply)
         # v2.5.58: 增量 PACT 提取——对话中命中承诺/邀约/威胁/秘密/交易信号 → 后台即时提取
         # （历史问题修复：不再依赖玩家点"结束对话"，时间约定等关键对话即时入账）
         # 注意：必须在 chat_end yield 之前触发——SSE 消费者收完 chat_end 即关闭生成器，
         # yield 之后的代码永远不会执行。
         try:
-            if pact_need_extract(clean_input, reply):
+            if not state.get('participation') and pact_need_extract(clean_input, reply):
                 import asyncio
                 loop = asyncio.get_event_loop()
                 loop.create_task(asyncio.to_thread(

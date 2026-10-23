@@ -1,0 +1,31 @@
+{
+  "version": "4.3.3",
+  "android_version_code": 75,
+  "changes": [
+    "Witnessed actions and per-character dialogue memory persisted before completion",
+    "Query-based memory recall with bounded archive and private history",
+    "Cited player intervention events and safe chapter progression"
+  ],
+  "python_tests_passed": 350,
+  "frontend_roundtrip": "PASS",
+  "windows_smoke": "PASS",
+  "windows_source_modules_verified": 110,
+  "android_source_modules_verified": 115,
+  "frontend_files_verified_per_platform": 28,
+  "android_same_signer": true,
+  "user_data_embedded": false,
+  "real_model": "PASS: DeepSeek isolated short scenario; see 4.3.3-live-check.json",
+  "android_device": "NOT_RUN",
+  "packages": [
+    {
+      "name": "NovelGenerator-v4.3.3-windows-x64.zip",
+      "bytes": 36540120,
+      "sha256": "f9d9e758bf85c7e558ad2168e389749c35c03f452634a30355bb4b4dafb22f5b"
+    },
+    {
+      "name": "NovelGenerator-v4.3.3-arm64-debug.apk",
+      "bytes": 23625853,
+      "sha256": "75208abaf38314e84d2f43e0c19a0b35cb8aa99a8060c24ed10edf3ea95167d0"
+    }
+  ]
+}

@@ -375,7 +375,8 @@ class ActionEngine:
                   "基于当前在场人物、物品、能力和原著证据判断本次尝试。"
                   "资料不够返回pending。不能创造物品、能力、NPC或替玩家作决定。"
                   "event_completed只能表示本次实际执行已满足当前事件结果，不是提到关键词。"
-                  "返回JSON：{status:success/failure/pending,reason:具体依据,event_completed:布尔,effect:injured/defeated/dead/none}。战斗结果必须结合双方属性；救援必须检查目标是否仍然存活。")
+                  "返回JSON：{status:success/failure/pending,reason:具体依据,event_completed:布尔,effect:injured/defeated/dead/none,canon_compatible:布尔,canon_quote:原著逐字引文}。"
+                  "canon_compatible表示实际结果符合原著，必须提供支持该结果的原文。战斗结果必须结合双方属性；救援必须检查目标是否仍然存活。")
         world = {'location':(state.get('world') or {}).get('location'),
                  'characters':{n:{'present':c.get('present'), 'condition':c.get('condition'),
                                   'profile':c.get('profile')} for n,c in (state.get('casts') or {}).items()},
@@ -565,11 +566,31 @@ class ActionEngine:
                 return {}
             if action.get('intent') == 'meta':
                 return {'changed':[], 'state':state}
+            from .story_director import compute_present
+            witnesses = compute_present(state)[0]
             result = resolve_action(state, action, self._adjudicate_action)
             changed = list(result['changes'])
             from .story_director import beat_advance_by_action
             event_changes = beat_advance_by_action(state,action)
             changed += event_changes
+            if result['status'] == 'success' and result['changes']:
+                for promise in state.get('pending_promises') or []:
+                    expected = promise.get('fulfillment') or {}
+                    if (promise.get('status') == 'pending' and expected.get('verb') in ('give','rescue')
+                            and all(expected.get(k) == result.get(k) for k in ('verb','item','target'))):
+                        promise.update(status='fulfilled', action_id=result['id'])
+                        changed.append('已履行对' + promise['who'] + '的承诺：' + promise['what'])
+            result['event_completed'] = bool(event_changes)
+            result['changes'] = changed
+            result['witnesses'] = witnesses
+            # Persist the same completed resolution in every consumer's ledger.
+            action['resolution'] = dict(result)
+            state['last_action'].update(result)
+            for ledger in (state.get('action_ledger', []), (state.get('participation') or {}).get('actions', [])):
+                if ledger and ledger[-1].get('id') == result['id']:
+                    ledger[-1].update(result)
+            from .char_memory import remember_action
+            remember_action(state, result, witnesses)
             if state.get('participation') and (event_changes or any('事件分支' in c for c in changed)):
                 state.update(pending_node=False,node_chars=[],agenda=None,suggestions=[])
             self.store.save_state(novel_id,state)
@@ -586,6 +607,15 @@ class ActionEngine:
         if state is None:
             yield {"type": "error", "message": "互动存档不存在"}
             return
+        session_id = (state.get('participation') or {}).get('session_id')
+        def persist_narration(text):
+            def merge(latest):
+                if (latest.get('participation') or {}).get('session_id') != session_id:
+                    return None
+                latest.setdefault('recent_blocks', []).append({'type':'narration','speaker':'','content':text})
+                latest['recent_blocks'] = latest['recent_blocks'][-260:]
+                return latest
+            return self.store.update_state(novel_id, merge)
         s = state.get("state", {})
         # v3.5.46: 在场角色用推导名单（不在场角色不得反应/出现）
         try:
@@ -665,13 +695,13 @@ class ActionEngine:
             yield {'type':'action_chunk','content':text}
             self.store.append_chat(novel_id, {'role':'assistant','speaker':'旁白',
                 'type':'action_result','content':text,'resolution':resolution,'ts':time.strftime('%H:%M:%S')})
-            state.setdefault('recent_blocks',[]).append({'type':'narration','speaker':'','content':text})
-            state['recent_blocks'] = state['recent_blocks'][-260:]
-            self.store.save_state(novel_id,state)
+            state = persist_narration(text)
             yield {'type':'action_end','content':text,'action':action,'snapshot':_state_snapshot(state)}
             return
         from .participation import canon_context
         user += '\n' + canon_context(state, action.get('input',''), 5000)
+        from .char_memory import memory_brief
+        user += '\n'.join(f'\n{name}的专属记忆：\n' + memory_brief(state, name, 4, action.get('input','')) for name in chars[:3])
         collected = []
         # v3.5.19: 阶段提示（行动结果生成中）
         yield {"type": "phase", "label": "⚡ 正在生成行动结果…"}
@@ -709,13 +739,6 @@ class ActionEngine:
             "content": text, "action": action.get("type", "other"),
             "ts": time.strftime("%H:%M:%S"),
         })
-        # v3.5.42: 行动结果同步进 recent_blocks（切回时进度恢复完整）
-        try:
-            rb = state.get("recent_blocks") or []
-            rb.append({"type": "narration", "speaker": "", "content": text})
-            state["recent_blocks"] = rb[-260:]
-            self.store.save_state(novel_id, state)
-        except Exception:
-            pass
+        state = persist_narration(text)
         yield {"type": "action_end", "content": text, "action": action,
                "snapshot": _state_snapshot(state)}
