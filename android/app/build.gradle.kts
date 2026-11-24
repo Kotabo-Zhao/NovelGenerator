@@ -12,8 +12,8 @@ android {
         applicationId = "com.novelgen.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 75
-        versionName = "4.3.3"
+        versionCode = 76
+        versionName = "4.3.4"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -89,7 +89,7 @@ chaquopy {
             // v3.6.3: 禁用 pip cache 防 safe-delete 拦截
             // v2.5.67: 默认 PyPI 源国内不可达（pydantic==1.10.26 报 from versions: none）→ 切清华镜像
             options("--no-cache-dir", "--no-clean",
-                    "--index-url", "https://pypi.tuna.tsinghua.edu.cn/simple",
+                    "--index-url", if (System.getenv("CI") == "true") "https://pypi.org/simple" else "https://pypi.tuna.tsinghua.edu.cn/simple",
                     "--extra-index-url", "https://chaquo.com/pypi-13.1")
             install("fastapi==0.125.0")
             install("uvicorn==0.52.1")

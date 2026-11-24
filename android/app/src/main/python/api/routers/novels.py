@@ -233,7 +233,7 @@ def _generate_quality_recommendations(completeness, ai_score, total_hooks, resol
 async def get_chapter(novel_id: str, chapter_num: int, request: Request):
     """读取单章正文与独立修订草稿。"""
     _require_legacy_owner(request, novel_id)
-    content = engine.get_chapter(novel_id, chapter_num)
+    content = await asyncio.to_thread(engine.get_chapter, novel_id, chapter_num)
     draft = engine.memory.read_chapter_draft(novel_id, chapter_num)
     if content is None and draft is None:
         raise HTTPException(status_code=404, detail=f"第{chapter_num}章不存在")
@@ -1087,3 +1087,19 @@ async def scan_consistency(novel_id: str, request: Request):
     except Exception as e:
         log.warning(f"Consistency scan failed: {e}")
         raise HTTPException(status_code=500, detail=f"扫描失败: {e}")
+
+
+@router.post("/api/novels/{novel_id}/chapters/{chapter_num}/craft-check")
+async def check_chapter_craft(novel_id: str, chapter_num: int, request: Request, req: dict = None):
+    """零 LLM 消耗、毫秒级章节文风体检（AI 痕迹、句长节奏、对话占比、感官密度与一键改稿建议）。"""
+    _require_legacy_owner(request, novel_id)
+    text = (req or {}).get("text") if isinstance(req, dict) else None
+    if not text:
+        text = await asyncio.to_thread(engine.get_chapter, novel_id, chapter_num)
+    if not text:
+        raise HTTPException(status_code=404, detail="章节尚未生成或正文为空")
+    try:
+        from core.ai_detector import AIDetector
+    except ImportError:
+        from backend.core.ai_detector import AIDetector
+    return await asyncio.to_thread(AIDetector.analyze_prose_craft, text)

@@ -1521,6 +1521,72 @@ const app = createApp({
       loading.write=false; chapterProgress.value=0;
     }
     function nextChapter() { const n=writing.chapter+1; if(n<=(activeNovel.value?.state.total_chapters||999)) selectChapter(n); }
+    function prevChapter() { const n=writing.chapter-1; if(n>=1) selectChapter(n); }
+
+    // ── 写作体验增强：实时字数/阅读时长、专注模式、快捷键与零成本文风体检 ──
+    const zenMode = ref(false);
+    const craftChecking = ref(false);
+    const craftReport = ref(null);
+
+    const chapterWordCount = computed(() => (writing.content || '').replace(/\s+/g, '').length);
+    const chapterParagraphCount = computed(() => (writing.content || '').split(/\n+/).map(s => s.trim()).filter(Boolean).length);
+    const chapterReadMinutes = computed(() => Math.max(1, Math.ceil(chapterWordCount.value / 450)));
+
+    function toggleZenMode(force) {
+      zenMode.value = typeof force === 'boolean' ? force : !zenMode.value;
+      document.body.classList.toggle('zen-mode', zenMode.value);
+    }
+
+    async function runCraftCheck() {
+      const text = (writing.content || '').trim();
+      if (!text || !activeNovel.value || craftChecking.value) return;
+      craftChecking.value = true;
+      try {
+        const res = await api(`/api/novels/${activeNovel.value.id}/chapters/${writing.chapter}/craft-check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        craftReport.value = { ...res, chapter: writing.chapter };
+      } catch (e) {
+        reportError(e.message || '文风体检失败', '体检失败');
+      } finally {
+        craftChecking.value = false;
+      }
+    }
+
+    function applyCraftRevisionPrompt() {
+      const prompt = craftReport.value?.suggested_revision_prompt || '';
+      if (!prompt) return;
+      reviewFeedback.value = reviewFeedback.value.trim()
+        ? `${reviewFeedback.value.trim()}；${prompt}`
+        : prompt;
+      showToast('已将体检改稿建议填入下方改稿框，点击「按意见重新生成」即可生效', '已填入', '✨');
+    }
+
+    function _onWorkshopKeydown(e) {
+      if (e.key === 'Escape' && zenMode.value) {
+        toggleZenMode(false);
+        return;
+      }
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) {
+        return;
+      }
+      if (e.altKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        toggleZenMode();
+      } else if (e.altKey && e.key === 'ArrowRight' && activeNovel.value && writing.content) {
+        e.preventDefault();
+        nextChapter();
+      } else if (e.altKey && e.key === 'ArrowLeft' && activeNovel.value && writing.content) {
+        e.preventDefault();
+        prevChapter();
+      }
+    }
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('keydown', _onWorkshopKeydown);
+    }
     function copyChapter() { navigator.clipboard.writeText(writing.content); showToast('已复制到剪贴板', '操作成功', '✅'); }
 
     // ── v2.5.2: 免费 TTS 朗读（edge-tts）──
@@ -2273,7 +2339,7 @@ const app = createApp({
       pct,fmtWords,coverGradient,
       navigateMain,openNovelWorld,enterNovelWorld,openCreate,openWrite,openOutline,openOutlineFor,doCreate,openNovel,startWriting,openRoleplay,
       openTrends,doTrendAnalyze,doBizarreQuick,doBizarreFull,createBizarreNovel,trendData,bizarreNovels,trendLoading,bizarreMode,
-      selectChapter,doGenerateChapter,nextChapter,copyChapter,speakChapter,stopSpeaking,speaking,
+      selectChapter,doGenerateChapter,nextChapter,prevChapter,copyChapter,speakChapter,stopSpeaking,speaking,zenMode,toggleZenMode,chapterWordCount,chapterParagraphCount,chapterReadMinutes,craftChecking,craftReport,runCraftCheck,applyCraftRevisionPrompt,
       toggleExport,selectAll,doSingleExport,doBatchExport,loadShelf,
       addChapter,addVolume,removeVolume,renumberChapters,savePlan,confirmAndStart,
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,

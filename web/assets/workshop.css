@@ -208,3 +208,22 @@ body.zen-mode .chapter-content {
   font-size: 17px;
   line-height: 1.95;
 }
+
+/* v4.3.4 reading & craft polish */
+.chapter-content {
+  line-height: 1.92;
+  letter-spacing: 0.015em;
+  max-width: 72ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+.chapter-meta-bar {
+  max-width: 72ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+.craft-panel {
+  max-width: 72ch;
+  margin-left: auto;
+  margin-right: auto;
+}

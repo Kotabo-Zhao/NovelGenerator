@@ -546,23 +546,36 @@ class Writer:
 
 
 def _dedup_continuation(existing: str, continuation: str) -> str:
-    """去重续写内容：移除与前文结尾重叠的部分"""
+    """去重续写内容：忽略前导空白/换行并移除与前文结尾重叠的部分"""
     if not continuation:
         return ""
-    # 取前文最后 50 个字符作为重叠检测窗口
-    overlap_window = min(50, len(existing))
-    tail = existing[-overlap_window:]
+    existing_clean = existing.rstrip()
+    cont_stripped = continuation.lstrip()
+    if not existing_clean or not cont_stripped:
+        return continuation
 
-    # 在续写内容中向前搜索重叠
+    overlap_window = min(80, len(existing_clean))
+    tail = existing_clean[-overlap_window:]
+
+    # 1) 精确后缀-前缀重叠（忽略续写前导空白）
     best_cut = 0
-    for cut_len in range(min(overlap_window, len(continuation)), 3, -1):
-        if tail[-cut_len:] == continuation[:cut_len]:
+    for cut_len in range(min(overlap_window, len(cont_stripped)), 3, -1):
+        if tail[-cut_len:] == cont_stripped[:cut_len]:
             best_cut = cut_len
             break
 
     if best_cut > 0:
-        log.info(f"Dedup: removed {best_cut} overlapping chars")
-        return continuation[best_cut:]
+        log.info("Dedup: removed %d overlapping chars", best_cut)
+        return cont_stripped[best_cut:]
+
+    # 2) 续写重复了前文最后一句（允许开头多出1-2个标点/引号）
+    for lead in range(1, min(4, len(cont_stripped))):
+        sub = cont_stripped[lead:]
+        for cut_len in range(min(overlap_window, len(sub)), 7, -1):
+            if tail[-cut_len:] == sub[:cut_len]:
+                log.info("Dedup: removed %d sentence-echo chars", lead + cut_len)
+                return sub[cut_len:]
+
     return continuation
 
 
@@ -578,11 +591,48 @@ def _trim_to_target(text: str, target_words: int) -> str:
         if len(text) <= cap:
             return text
         cut = text[:tw]
-        last_punct = max(cut.rfind("。"), cut.rfind("！"), cut.rfind("？"),
-                         cut.rfind("…"), cut.rfind("……"))
-        if last_punct > tw * 0.5:
-            cut = cut[:last_punct + 1]
-        log.info(f"Flash trim: {len(text)} -> {len(cut)} chars (target {tw})")
+        # 从目标字数向前寻找安全句末边界，避免裁在未闭合引号/括号内部
+        pairs = {"「": "」", "『": "』", "“": "”", "（": "）", "【": "】", "《": "》"}
+        closers = {v: k for k, v in pairs.items()}
+
+        def _delimiters_balanced(sample: str) -> bool:
+            stack = []
+            for ch in sample:
+                if ch in pairs:
+                    stack.append(ch)
+                elif ch in closers:
+                    if not stack or stack[-1] != closers[ch]:
+                        return False
+                    stack.pop()
+            return not stack
+
+        best_cut = ""
+        search_pos = len(cut)
+        while search_pos > int(tw * 0.5):
+            idx = max(
+                cut.rfind("。", 0, search_pos),
+                cut.rfind("！", 0, search_pos),
+                cut.rfind("？", 0, search_pos),
+                cut.rfind("…", 0, search_pos),
+            )
+            if idx <= int(tw * 0.5):
+                break
+            end = idx + 1
+            while end < len(text) and text[end] in ("」", "』", "”", "）", "】", "》", '"', "'"):
+                end += 1
+            candidate = text[:end].rstrip()
+            if _delimiters_balanced(candidate):
+                best_cut = candidate
+                break
+            search_pos = idx
+
+        if best_cut:
+            cut = best_cut
+        else:
+            last_punct = max(cut.rfind("。"), cut.rfind("！"), cut.rfind("？"), cut.rfind("…"))
+            if last_punct > tw * 0.5:
+                cut = cut[:last_punct + 1]
+        log.info("Flash trim: %d -> %d chars (target %d)", len(text), len(cut), tw)
         return cut
     except Exception:
         return text
@@ -599,7 +649,7 @@ def _check_truncation(text: str, target_words: int) -> tuple:
 
     # 1. 结尾完整性: 句子不能断在半截
     last_char = text.rstrip()[-1] if text.rstrip() else ""
-    valid_endings = set("。！？…\"')」》")
+    valid_endings = set("。！？….!?\"'”’」』）】》")
     if last_char not in valid_endings:
         return True, f"结尾不完整 (最后字符: {last_char})"
 
