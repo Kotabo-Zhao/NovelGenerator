@@ -591,6 +591,16 @@
           <span class="text-xs color-text3" style="margin-left:4px">逐beat生成 · 高随机性</span>
         </div>
 
+        <div v-if="writing.content" class="chapter-meta-bar">
+          <div class="cmb-stats">
+            <span>{{ chapterWordCount }} 字</span>
+            <span>{{ chapterParagraphCount }} 段</span>
+            <span>约 {{ chapterReadMinutes }} 分钟阅读</span>
+          </div>
+          <div class="cmb-actions">
+            <button class="btn btn-ghost btn-xs" @click="toggleZenMode" title="快捷键 Alt+Z 切换，Esc 退出">{{ zenMode ? '退出专注 (Esc)' : '🧘 专注模式' }}</button>
+          </div>
+        </div>
         <div v-if="writing.content" class="chapter-content" ref="preview">{{ writing.content }}</div>
         <div v-else-if="!loading.write && (activeNovel.state.completed_chapters||[]).includes(writing.chapter) && writing.done" class="chapter-empty">
           <div class="ce-icon">☐</div><p>第{{ writing.chapter }}章</p><p class="text-xs color-text3 mt-8">点击章节序号查看</p>
@@ -598,10 +608,34 @@
 
         <div v-if="loading.write && !writing.content" class="text-center" style="padding:60px 20px"><div class="spinner" style="width:28px;height:28px"></div><p class="color-text2 mt-16 text-sm">写作中…</p></div>
 
-        <div v-if="writing.done" class="flex gap-8 justify-center mt-24 mb-16">
+        <div v-if="writing.done" class="flex gap-8 justify-center mt-24 mb-16" style="flex-wrap:wrap">
           <button class="btn btn-primary" @click="nextChapter">下一章</button>
           <button class="btn btn-secondary" @click="copyChapter">复制</button>
-          <button class="btn btn-ghost" @click="speakChapter" :disabled="speaking">{{ speaking ? '🔊 朗读中…' : '🔊 朗读' }}</button>
+          <button class="btn btn-secondary" @click="runCraftCheck" :disabled="craftChecking">{{ craftChecking ? '体检中…' : '🩺 文风体检' }}</button>
+          <button class="btn btn-ghost" @click="speakChapter">{{ speaking ? '⏹ 停止朗读' : '🔊 朗读' }}</button>
+        </div>
+
+        <div v-if="writing.done && craftReport && craftReport.chapter === writing.chapter" class="craft-panel mb-16">
+          <div class="craft-head">
+            <div class="craft-summary">{{ craftReport.summary }}</div>
+            <div class="flex gap-8">
+              <button v-if="craftReport.suggested_revision_prompt" class="btn btn-primary btn-xs" @click="applyCraftRevisionPrompt">✨ 一键填入改稿框</button>
+              <button class="btn btn-ghost btn-xs" @click="craftReport = null">收起</button>
+            </div>
+          </div>
+          <div class="craft-metrics">
+            <span>质感 <strong>{{ craftReport.craft_score }}</strong>/100</span>
+            <span>AI痕迹 <strong>{{ craftReport.ai_score }}</strong>/100</span>
+            <span>对话占比 <strong>{{ craftReport.dialogue_ratio_pct }}%</strong></span>
+            <span>句长节奏 CV <strong>{{ craftReport.sentence_rhythm_cv }}</strong></span>
+            <span>感官密度 <strong>{{ craftReport.sensory_per_1k }}</strong>/千字</span>
+          </div>
+          <ul v-if="craftReport.suggestions && craftReport.suggestions.length" class="craft-list">
+            <li v-for="(tip, idx) in craftReport.suggestions" :key="idx">{{ tip }}</li>
+          </ul>
+          <div v-if="craftReport.flagged_sections && craftReport.flagged_sections.length" class="craft-flags">
+            <span v-for="(item, idx) in craftReport.flagged_sections.slice(0, 6)" :key="idx" class="craft-chip" :class="'sev-' + item.severity" :title="item.start">{{ item.reason }}</span>
+          </div>
         </div>
 
         <div v-if="writing.done" class="review-section" style="border-color:rgba(63,185,80,.25)">

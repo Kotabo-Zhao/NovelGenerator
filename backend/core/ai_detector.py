@@ -77,42 +77,157 @@ class AIDetector:
             return self._offline_detect(text)
 
     @staticmethod
-    def _offline_detect(text: str) -> dict:
-        """离线规则检测"""
-        ai_patterns = [
-            "他感到", "她感到", "他意识到", "她意识到", 
-            "他决定", "她决定", "他明白", "她明白",
-            "心中充满", "内心深处", "真正的", "本质上",
-            "与此同时", "在这个过程中", "随着……的发展",
-            "这不仅仅", "标志着", "值得一提的是",
-        ]
-        flagged = []
-        for pat in ai_patterns:
-            count = text.count(pat)
-            if count > 0:
-                flagged.append({
-                    "start": pat, "reason": f"AI常用句式(出现{count}次)", "severity": "medium"
-                })
-        
-        # 句长单调检测
-        sentences = text.replace("！", "。").replace("？", "。").replace("…", "。").split("。")
-        lengths = [len(s.strip()) for s in sentences if s.strip()]
-        if lengths:
-            avg = sum(lengths) / len(lengths)
-            similar = sum(1 for l in lengths if abs(l - avg) < 5)
-            if similar > len(lengths) * 0.6:
-                flagged.append({
-                    "start": "整体", "reason": "句长过于均匀(>60%句子长度接近)", "severity": "high"
-                })
+    def analyze_prose_craft(text: str) -> dict:
+        """零 LLM 成本、毫秒级中文小说文风体检与可操作改稿建议。"""
+        import math
+        import re as _re
 
-        score = min(100, len(flagged) * 15)
+        clean = (text or "").strip()
+        if not clean:
+            return {
+                "ai_score": 0,
+                "craft_score": 100,
+                "char_count": 0,
+                "paragraph_count": 0,
+                "dialogue_ratio_pct": 0.0,
+                "sentence_rhythm_cv": 0.0,
+                "sensory_per_1k": 0.0,
+                "flagged_sections": [],
+                "suggestions": [],
+                "suggested_revision_prompt": "",
+                "summary": "正文为空",
+                "offline": True,
+            }
+
+        cliche_groups = {
+            "心理动词直给": (
+                "他感到", "她感到", "我感到", "他意识到", "她意识到", "他明白", "她明白",
+                "他决定", "她决定", "心中暗想", "心里明白", "不禁想到",
+            ),
+            "情绪直白标签": (
+                "心中充满", "内心深处", "一股难以言喻", "莫名的情绪", "复杂的情绪",
+                "百感交集", "五味杂陈", "悲伤不已", "愤怒不已", "心中一紧",
+            ),
+            "套路动作神态": (
+                "嘴角勾起一抹", "眼中闪过一丝", "深吸一口气", "缓缓开口", "淡淡地说道",
+                "微微一笑", "眉头微皱", "空气仿佛凝固", "瞳孔骤缩", "倒吸一口凉气",
+            ),
+            "AI总结过渡词": (
+                "与此同时", "在这个过程中", "随着……的发展", "这不仅仅", "标志着",
+                "值得一提的是", "本质上", "毫无疑问", "不可否认", "总而言之",
+            ),
+        }
+
+        flagged = []
+        category_hits = {}
+        total_cliche_hits = 0
+        for category, patterns in cliche_groups.items():
+            cat_count = 0
+            for pat in patterns:
+                cnt = clean.count(pat)
+                if cnt > 0:
+                    cat_count += cnt
+                    total_cliche_hits += cnt
+                    idx = clean.find(pat)
+                    excerpt = clean[max(0, idx - 6):min(len(clean), idx + len(pat) + 12)].replace("\n", " ")
+                    flagged.append({
+                        "start": excerpt,
+                        "pattern": pat,
+                        "category": category,
+                        "count": cnt,
+                        "reason": f"{category}：「{pat}」(出现{cnt}次)",
+                        "severity": "high" if cnt >= 2 else "medium",
+                    })
+            if cat_count > 0:
+                category_hits[category] = cat_count
+
+        # 句长节奏分析（变异系数 CV 越高说明长短句交替越自然）
+        raw_sentences = _re.split(r"[。！？!?…]+", clean)
+        sent_lengths = [len(s.strip()) for s in raw_sentences if len(s.strip()) >= 2]
+        rhythm_cv = 0.0
+        if len(sent_lengths) >= 4:
+            mean_len = sum(sent_lengths) / len(sent_lengths)
+            if mean_len > 0:
+                variance = sum((l - mean_len) ** 2 for l in sent_lengths) / len(sent_lengths)
+                rhythm_cv = round(math.sqrt(variance) / mean_len, 2)
+                if rhythm_cv < 0.35:
+                    flagged.append({
+                        "start": "整体句长节奏",
+                        "pattern": "rhythm_flat",
+                        "category": "节奏单调",
+                        "count": len(sent_lengths),
+                        "reason": f"句长过于均匀（变异系数 {rhythm_cv:.2f} < 0.35），建议增加短句锤击与长短交替",
+                        "severity": "high",
+                    })
+
+        # 对话占比
+        dialogue_matches = _re.findall(r'[“「『"][^”」』"]+[”」』"]', clean)
+        dialogue_chars = sum(len(m) for m in dialogue_matches)
+        dialogue_ratio = round(dialogue_chars / max(len(clean), 1) * 100, 1)
+
+        # 非视觉感官密度（听觉/嗅觉/触觉/味觉/温度）
+        sensory_cues = (
+            "声音", "响声", "脚步", "呼吸", "低语", "嘶哑", "风声", "雨声", "回声",
+            "气味", "香味", "血腥", "铁锈", "潮湿", "烟味", "苦涩", "咸味",
+            "冰冷", "滚烫", "刺痛", "粗糙", "发麻", "发抖", "汗水", "微凉", "灼热",
+        )
+        sensory_hits = sum(clean.count(cue) for cue in sensory_cues)
+        sensory_per_1k = round(sensory_hits / max(len(clean) / 1000.0, 0.2), 1)
+
+        paragraphs = [p.strip() for p in clean.split("\n") if p.strip()]
+
+        # 综合计算 AI 痕迹分（0-100，越低越自然）与文风质感分（0-100，越高越好）
+        cliche_density = total_cliche_hits / max(len(clean) / 1000.0, 0.5)
+        ai_score = min(100, int(cliche_density * 14) + (20 if rhythm_cv and rhythm_cv < 0.35 else 0))
+        craft_score = max(0, min(100, 100 - ai_score - (8 if len(clean) >= 800 and sensory_per_1k < 1.0 else 0)))
+
+        suggestions = []
+        revision_parts = []
+        if category_hits.get("心理动词直给") or category_hits.get("情绪直白标签"):
+            suggestions.append("减少“感到/意识到/心中充满”等心理直给，改用具体动作、停顿或物件细节展现情绪。")
+            revision_parts.append("删去“感到/意识到/心中充满”等心理直述，改用人物动作、神态细节和留白来表现情绪")
+        if category_hits.get("套路动作神态"):
+            top_p = [f["pattern"] for f in flagged if f.get("category") == "套路动作神态"][:3]
+            suggestions.append(f"替换高频网文套路动作（如 {'、'.join(top_p)}），换成贴合当前场景的具体动作。")
+            revision_parts.append(f"替换“{'、'.join(top_p)}”等高频套路动作，改写为更具画面感的具体动作")
+        if category_hits.get("AI总结过渡词"):
+            suggestions.append("去掉“与此同时/这不仅仅/标志着”等论文式过渡或总结句，直接切入下一镜头。")
+            revision_parts.append("去掉“与此同时/这不仅仅/标志着”等过渡和总结句，保留留白")
+        if rhythm_cv and rhythm_cv < 0.35:
+            suggestions.append("当前句长过于均匀，建议在冲突处加入 10 字以内的短句，拉开长短句节奏。")
+            revision_parts.append("拉开长短句节奏，在冲突或转折处加入短句锤击")
+        if len(clean) >= 800 and sensory_per_1k < 1.0:
+            suggestions.append("非视觉感官细节偏少，可补充 1-2 处声音、气味、温度或触感描写增强沉浸感。")
+            revision_parts.append("补充 1-2 处声音、气味或触感等非视觉细节增强镜头感")
+        if len(clean) >= 1000 and dialogue_ratio < 10.0:
+            suggestions.append(f"当前对话占比仅 {dialogue_ratio}%，叙述偏密，可适当增加带潜台词的人物对话。")
+
+        flagged.sort(key=lambda x: (0 if x["severity"] == "high" else 1, -x.get("count", 1)))
+        summary = (
+            f"文风质感 {craft_score}/100 · AI 痕迹 {ai_score}/100（命中 {total_cliche_hits} 处高频套话，对话占比 {dialogue_ratio}%）"
+            if total_cliche_hits or ai_score > 0
+            else f"文风质感 {craft_score}/100 · 未检出明显 AI 套话（对话占比 {dialogue_ratio}%，节奏 CV {rhythm_cv:.2f}）"
+        )
         return {
-            "ai_score": score,
-            "flagged_sections": flagged[:8],
-            "summary": f"检测到 {len(flagged)} 处AI痕迹" if flagged else "未检测到明显AI痕迹",
+            "ai_score": ai_score,
+            "craft_score": craft_score,
+            "char_count": len(clean),
+            "paragraph_count": len(paragraphs),
+            "dialogue_ratio_pct": dialogue_ratio,
+            "sentence_rhythm_cv": rhythm_cv,
+            "sensory_per_1k": sensory_per_1k,
+            "category_hits": category_hits,
+            "flagged_sections": flagged[:10],
+            "suggestions": suggestions,
+            "suggested_revision_prompt": "；".join(revision_parts) + "。" if revision_parts else "",
+            "summary": summary,
             "offline": True,
         }
 
+    @staticmethod
+    def _offline_detect(text: str) -> dict:
+        """离线规则检测（委托给升级后的 analyze_prose_craft，保持返回字段向后兼容）"""
+        return AIDetector.analyze_prose_craft(text)
 
 # ═══════════════════════════════════════════
 # Human Rewriter Agent
@@ -134,7 +249,7 @@ REWRITER_SYSTEM = """你是一位文字改写专家。你的任务是把"AI味�
 - 三种交替出现，像呼吸
 
 ### 3. 段落格式
-- 一段 = 3-5句组成的语义单元。绝对不要一句话一段！
+- 段落按语义单元自然组织（动作完成、焦点转移或对话换人时分段），避免每句都用空行隔开。
 - 禁止把每句都用空行隔开。这是AI最明显的特征。
 - 对话场景的连续对话在同一段内，不要每句话一段。
 
@@ -161,7 +276,7 @@ REWRITER_SYSTEM = """你是一位文字改写专家。你的任务是把"AI味�
 - 只改表达方式的"人味儿"，不改内容的露骨程度
 
 ## 输出
-直接输出改写后的文字。使用正常段落格式（3-5句一段，段间空一行）。保持原意，但用"人"的方式写。只输出改写内容，不要说明。"""
+直接输出改写后的文字。按语义单元自然分段。保持原意，但用"人"的方式写。只输出改写内容，不要说明。"""
 
 
 class HumanRewriter:
