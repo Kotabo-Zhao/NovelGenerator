@@ -19,6 +19,7 @@ jobs:
           java-version: '17'
 
       - name: Set up Python 3.13 (Chaquopy build Python)
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -34,8 +35,10 @@ jobs:
         run: |
           python -c "import shutil, pathlib; p = pathlib.Path('android/app/src/main/python'); shutil.rmtree(p / 'backend', ignore_errors=True); shutil.rmtree(p / 'frontend', ignore_errors=True); shutil.copytree('backend', p / 'backend'); shutil.copytree('frontend', p / 'frontend')"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses & verify SDK
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
       - name: Build Android ARM64 Debug APK
         env:
