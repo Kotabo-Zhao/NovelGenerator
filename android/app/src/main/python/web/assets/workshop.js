@@ -1378,6 +1378,9 @@ const app = createApp({
             decomposeSummary.value = { ...decomposeSummary.value, name_warning: evt.mismatches, name_suggestion: evt.suggestion };
           }
           else if(evt.type==='done'){ createProgress.value=100; createPhaseLabel.value='完成！'; planResult.value=evt.plan; loadShelfDebounced(); _saveSession(); }
+          else if(evt.type==='craft_report' && evt.report){
+            craftReport.value = { ...evt.report, chapter: evt.chapter || writing.chapter };
+          }
           else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
         });
       } catch(e){ if(e.name!=='AbortError') reportError(e.message||'连接超时，请重试'); }

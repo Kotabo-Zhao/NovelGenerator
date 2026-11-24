@@ -12,6 +12,8 @@ POST  /api/novels/{novel_id}/interactive/rollback   回退一步
 POST  /api/novels/{novel_id}/interactive/restart    重开
 """
 from __future__ import annotations
+import pydantic as _pydantic
+_FIELD_PATTERN_KW = "pattern" if int(getattr(_pydantic, "__version__", "1").split(".")[0]) >= 2 else "regex"
 
 import asyncio
 import json
@@ -80,7 +82,7 @@ class ChatRequest(BaseModel):
     target: Optional[str] = None
     # v3.6.4: force_talk=True → 纯对话（跳过行动识别，输入框专用）
     force_talk: Optional[bool] = False
-    input_mode: Optional[str] = Field(default=None, regex='^(dialogue|action)$')
+    input_mode: Optional[str] = Field(default=None, **{_FIELD_PATTERN_KW: '^(dialogue|action)$'})
 
 
 class VoiceOverrideRequest(BaseModel):
@@ -92,7 +94,7 @@ class VoiceOverrideRequest(BaseModel):
 class StartRequest(BaseModel):
     character: Optional[str] = Field(default=None, max_length=80)
     chapter_index: int = Field(default=0, ge=0)
-    canon_mode: str = Field(default='branch', regex='^(branch|canon)$')
+    canon_mode: str = Field(default='branch', **{_FIELD_PATTERN_KW: '^(branch|canon)$'})
     player_goal: str = Field(default='', max_length=200)
 
 

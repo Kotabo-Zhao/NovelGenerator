@@ -2075,43 +2075,7 @@ class GenerationMixin:
             if chapter_num == 1:
                 self._save_narrative_pov(novel_id, full_text)
 
-            # v2.42: 提取角色状态变化
-            try:
-                from ..character_state import CharacterStateTracker
-                tracker = CharacterStateTracker(self.client, self.model, self.memory)
-                asyncio.ensure_future(tracker.update_from_chapter(
-                    novel_id, chapter_num, full_text
-                ))
-            except Exception as e:
-                log.warning(f"Character state extraction failed (non-fatal): {e}")
-
-            # ── v2.10: 提取章节桥接数据 → 保证下章接续（v2.15: 使用韧性客户端）──
-            # v2.6: 批量模式后台化（流水线：下一章启动前 await_pending_bridge 衔接）
-            try:
-                def _extract_bridge():
-                    bridge = self.memory.extract_bridge_from_chapter(
-                        full_text, chapter_num, chapter_outline,
-                        client=self._resilient, model=self.model,
-                    )
-                    if bridge:
-                        self.memory.save_bridge(novel_id, chapter_num, bridge)
-                        log.info(f"ChapterBridge saved for chapter {chapter_num}: "
-                                f"next_beat={bridge.get('next_beat','')[:60]}...")
-                    else:
-                        log.warning(f"ChapterBridge extraction returned None for chapter {chapter_num}")
-                    return bridge
-
-                if batch_mode:
-                    _bkey = (novel_id, chapter_num)
-                    _btask = asyncio.ensure_future(asyncio.to_thread(_extract_bridge))
-                    self._pending_bridges[_bkey] = _btask
-                    # 任务完成后自动清理（防止未 await 时残留）
-                    _btask.add_done_callback(lambda _fut, _k=_bkey: self._pending_bridges.pop(_k, None))
-                else:
-                    # 非批量路径也走线程池，避免同步 LLM 调用（含重试 time.sleep）阻塞事件循环。
-                    await asyncio.to_thread(_extract_bridge)
-            except Exception as e:
-                log.warning(f"ChapterBridge extraction failed (non-fatal): {e}")
+            # S3P v4.4: 角色状态、章间桥接、摘要与一致性由尾部 UnifiedPostProcessor 单次合并抽取
 
             # Keep the published state unchanged while consistency, outline,
             # requirement and final quality passes can still mutate the draft.
@@ -2279,152 +2243,48 @@ class GenerationMixin:
             except Exception as _se:
                 log.warning(f"Setting annotation step skipped: {_se}")
 
-            # ── 自动执行 ContextUpdater: 更新全局角色状态 ──
-            # v2.6: 批量模式后台化（不阻塞正文流程）；单章模式保持同步
-            try:
-                novel_dir = self.memory.get_novel_dir(novel_id)
-                state_path = os.path.join(novel_dir, "global_state.json")
-                current_state = {}
-                if os.path.exists(state_path):
-                    current_state = safe_read_json(state_path)
-
-                def _ctx_update():
-                    new_state = self.context_updater.update(novel_id, chapter_num, full_text, current_state)
-                    # v2.8.5: 走 memory.write（per-path 锁 + 缓存失效）而非 atomic_write_json
-                    # 直写——此前直写绕过 SharedMemoryManager 的锁，与 chapter_summarizer /
-                    # character_state 的写入并发时互相覆盖，角色状态/摘要/时间线随机丢失。
-                    self.memory.write("global_state", novel_id, new_state)
-                    log.info(f"ContextUpdater: state updated after chapter {chapter_num}")
-
-                if batch_mode:
-                    asyncio.ensure_future(asyncio.to_thread(_ctx_update))
-                else:
-                    # v3.8: 单章模式也放线程池——ContextUpdater 内含同步 LLM（含 sleep 重试），
-                    # 直接调用会阻塞整个事件循环（其他用户的 SSE 心跳/请求全部卡死）
-                    await asyncio.to_thread(_ctx_update)
-            except Exception as e:
-                log.warning(f"ContextUpdater skipped: {e}")
-
-            # ── 方案A: 一致性校验（ConsistencyValidator L1+L2 每章，P0 自动重写）──
-            _post_consistency_validation = {
-                "score": 0,
-                "violations": [],
-                "warnings": [],
-                "error": "consistency validation was not completed",
-            }
+            # ── S3P v4.4: 五合一单次结构化后处理（桥接 + 摘要 + 角色状态 + 伏笔 + 一致性审计）──
+            _post_consistency_validation = {"score": 100, "violations": [], "warnings": []}
             _post_consistency_auto_fixed = False
             try:
-                # 获取前文章节
-                prev_chapters = {}
-                for ch in completed:
-                    if ch < chapter_num:
-                        ch_content = self.get_chapter(novel_id, ch)
-                        if ch_content:
-                            prev_chapters[ch] = ch_content
-
-                # 获取全局状态
-                novel_dir_gs = self.memory.get_novel_dir(novel_id)
-                gs_path = os.path.join(novel_dir_gs, "global_state.json")
-                global_state = safe_read_json(gs_path, {}) if os.path.exists(gs_path) else {}
-
-                # 执行校验（v2.3.5: 统一 ConsistencyValidator，L2 每章深检，含亲属关系检测）
-                # v2.6: 批量模式跳过 — 前面 v2.3.5 校验已跑 L1 规则，避免重复校验白烧 LLM
-                if batch_mode:
-                    validation = {"violations": [], "score": 100, "warnings": []}
-                else:
-                    validation = await asyncio.to_thread(
-                        self.consistency_validator.validate_chapter,
-                        chapter_text=full_text,
-                        chapter_num=chapter_num,
-                        plan=plan,
-                        prev_chapters=prev_chapters,
-                        global_state=global_state,
-                        chapter_outline=chapter_outline,
-                        run_deep=True,  # 每章 L2 语义校验（v2.3.5: 原每3章→每章）
-                    )
-                _post_consistency_validation = validation
-
-                violations = validation.get("violations", [])
-                p0_count = 0
-                if violations:
-                    p0_count = sum(1 for v in violations if v.get("severity") == "P0")
-                    score = validation.get("score", 100)
-
-                    log.warning(f"ConsistencyValidator(atomic): {len(violations)} violations "
-                               f"(P0:{p0_count}) score={score}")
-
-                    yield {"type": "consistency_check",
-                           "violations": violations,
-                           "score": score}
-
-                    # P0违规 ≥1 → 自动修复
-                    if p0_count >= 1:
-                        fix_prompt = self.consistency_validator.build_fix_prompt(violations)
-                        log.info(f"Auto-fix triggered: {p0_count} P0 violations")
-
-                        # 构造修复上下文
-                        fix_context = f"{context}\n\n{fix_prompt}"
-                        fixed_text = ""
-
-                        async for fix_chunk in self.writer.write_stream(
-                            context=fix_context,
-                            genre=genre,
-                            style=style,
-                            target_words=target_words,
-                            writing_mode=writing_mode,
-                            normal_pacing=plan.get("_meta", {}).get("creative_input", {}).get("normal_pacing", False), fast_food=plan.get("_meta", {}).get("creative_input", {}).get("fast_food", False),
-                            chapter_outline=chapter_outline,
-                            skip_ending=True,  # v2.12: 修复重试不重复生成结尾
-                        ):
-                            fixed_text += fix_chunk
-
-                        if fixed_text and len(fixed_text) > len(full_text) * 0.5:
-                            full_text = fixed_text
-                            # 重新保存
-                            formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{fixed_text}"
-                            self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
-                            _post_consistency_auto_fixed = True
-                            log.info(f"Auto-fix completed for chapter {chapter_num}")
-                            yield {"type": "auto_fix", "applied": True, "violations_fixed": p0_count}
-
-                # P1 问题 → 注入下一章修正（与普通路径对齐）
-                p1_issues = [v.get("description", "") for v in violations if v.get("severity") == "P1"]
-                if p1_issues and not p0_count:
-                    state = self.memory.get_novel_state(novel_id)
-                    state["consistency_issues"] = state.get("consistency_issues", {})
-                    state["consistency_issues"][str(chapter_num)] = p1_issues[:5]
-                    self.memory.save_novel_state(novel_id, state)
-                    yield {"type": "consistency_warning", "chapter": chapter_num, "issues": p1_issues[:5]}
-            except Exception as e:
+                from ..unified_post_processor import UnifiedPostProcessor
+                yield {"type": "status", "message": "🧠 正在执行五合一状态归档与逻辑体检…"}
+                _upp = UnifiedPostProcessor(self._resilient, self.model)
+                _upp_res = await asyncio.to_thread(
+                    _upp.process_and_persist,
+                    self.memory,
+                    novel_id,
+                    chapter_num,
+                    full_text,
+                    chapter_outline,
+                )
+                violations = _upp_res.get("consistency_violations") or []
+                p0_count = sum(1 for v in violations if isinstance(v, dict) and v.get("severity") == "P0")
+                score = max(0, 100 - p0_count * 25 - (len(violations) - p0_count) * 8)
                 _post_consistency_validation = {
-                    "score": 0,
-                    "violations": [],
-                    "warnings": [],
-                    "error": str(e),
+                    "score": score,
+                    "violations": violations,
+                    "warnings": [v.get("description", "") for v in violations if isinstance(v, dict)],
                 }
-                log.warning(f"Consistency auto-validation skipped: {e}")
+                if violations:
+                    yield {"type": "consistency_check", "violations": violations, "score": score}
+                    _issues = [v.get("description", "") for v in violations[:5] if isinstance(v, dict) and v.get("description")]
+                    if _issues:
+                        state = self.memory.get_novel_state(novel_id)
+                        state["consistency_issues"] = state.get("consistency_issues", {})
+                        state["consistency_issues"][str(chapter_num)] = _issues
+                        self.memory.save_novel_state(novel_id, state)
+                        yield {"type": "consistency_warning", "chapter": chapter_num, "issues": _issues}
+            except Exception as _upp_e:
+                log.warning(f"UnifiedPostProcessor skipped for Ch{chapter_num}: {_upp_e}")
 
-            # ── v2.14: 每章自动摘要生成（注入后续章节上下文）──
+            # ── S3P v4.4: 零 LLM 消耗毫秒级文风体检（直推前端面板，联动一键改稿/局部精修）──
             try:
-                chapter_text = self.get_chapter(novel_id, chapter_num) or full_text
-                if chapter_text and len(chapter_text) > 200:
-                    summary_result = await asyncio.to_thread(
-                        self.chapter_summarizer.summarize_chapter,
-                        chapter_num, chapter_text
-                    )
-                    if summary_result:
-                        # 摘要必须写入 global_state.json（消费方 build_summary_context
-                        # 读的是 global_state），此前误写进 state.json 导致"前情摘要"
-                        # 永远拿不到。用 update() 原子读-改-写，避免并发覆盖。
-                        def _add_summary(gs):
-                            if not isinstance(gs, dict):
-                                gs = {}
-                            gs.setdefault("summaries", {})[str(chapter_num)] = summary_result
-                            return gs
-                        self.memory.update("global_state", novel_id, _add_summary)
-                        log.info(f"Auto-summary for Ch{chapter_num}: {len(summary_result.get('summary',''))} chars")
-            except Exception as e:
-                log.warning(f"Auto-summary for Ch{chapter_num} skipped: {e}")
+                from ..ai_detector import AIDetector
+                _craft = AIDetector.analyze_prose_craft(full_text)
+                yield {"type": "craft_report", "chapter": chapter_num, "report": _craft}
+            except Exception as _craft_e:
+                log.warning(f"Zero-cost craft report skipped: {_craft_e}")
 
             # ── 渐进式摘要压缩（每10章）──
             try:
