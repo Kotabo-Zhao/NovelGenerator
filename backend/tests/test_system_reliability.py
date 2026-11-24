@@ -55,10 +55,9 @@ def test_application_serves_canonical_assets_and_novel_world(monkeypatch, tmp_pa
     client = TestClient(app)
     for path in ("/", "/scene.html", "/assets/scene.js", "/assets/scene.css", "/roleplay.html", "/assets/runtime.js", "/assets/theme.css", "/assets/workshop.js"):
         assert client.get(path).status_code == 200
-    assert any(
-        getattr(route, "path", None) == "/api/novels/{novel_id}/interactive/start"
-        for route in app.routes
-    )
+    # FastAPI >= 0.165 wraps included routers in _IncludedRouter (route.path is None);
+    # OpenAPI paths enumerates all mounted routes consistently across FastAPI versions.
+    assert "/api/novels/{novel_id}/interactive/start" in (app.openapi().get("paths") or {})
     assert client.get("/api/system/connection").status_code == 200
     assert "api_key" not in client.get("/api/system/connection").json()
     response = client.get("/api/novels/C:secret")
