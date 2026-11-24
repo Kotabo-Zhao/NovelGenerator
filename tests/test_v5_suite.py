@@ -165,5 +165,17 @@ class NovelGenV5Tests(unittest.TestCase):
         self.assertTrue(craft["suggested_revision_prompt"])
 
 
+    def test_sqlite_without_fts5_android_fallback(self):
+        from backend.core.database import NarrativeLedgerDB
+        with tempfile.TemporaryDirectory() as td:
+            db = NarrativeLedgerDB(Path(td) / "no_fts.db", enable_fts5=False)
+            self.assertFalse(db.has_fts5)
+            novel = db.create_novel(title="安卓兼容测试", premise="无FTS5环境检索验证")
+            db.upsert_world_entry(novel["id"], {"title": "火漆条例", "keywords": "火漆", "content": "双联火漆封存"})
+            hits = db.search_ledger(novel["id"], "火漆")
+            self.assertEqual(len(hits), 1)
+            self.assertEqual(hits[0]["title"], "火漆条例 火漆")
+            self.assertTrue(db.delete_novel(novel["id"]))
+
 if __name__ == "__main__":
     unittest.main()

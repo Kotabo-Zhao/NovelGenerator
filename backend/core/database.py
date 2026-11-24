@@ -118,6 +118,18 @@ CREATE TABLE IF NOT EXISTS world_entries (
     FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS ledger_search_index (
+    novel_id TEXT NOT NULL,
+    doc_type TEXT NOT NULL,
+    ref_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (novel_id, doc_type, ref_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_search_novel ON ledger_search_index (novel_id);
+"""
+
+FTS5_SCHEMA_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS ledger_fts USING fts5(
     novel_id UNINDEXED,
     doc_type UNINDEXED,
@@ -132,10 +144,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS ledger_fts USING fts5(
 class NarrativeLedgerDB:
     """Thread-safe SQLite WAL + FTS5 repository for novels and narrative state."""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, *, enable_fts5: bool = True):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_schema()
+        self.has_fts5 = False
+        self._init_schema(enable_fts5=enable_fts5)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=10.0)
@@ -156,23 +169,41 @@ class NarrativeLedgerDB:
         finally:
             conn.close()
 
-    def _init_schema(self) -> None:
+    def _init_schema(self, *, enable_fts5: bool = True) -> None:
         conn = self._connect()
         try:
             conn.executescript(SCHEMA_SQL)
+            if enable_fts5:
+                try:
+                    conn.executescript(FTS5_SCHEMA_SQL)
+                    self.has_fts5 = True
+                except sqlite3.OperationalError:
+                    # Android Chaquopy libsqlite3 is compiled without FTS5; fall back cleanly.
+                    self.has_fts5 = False
             conn.commit()
         finally:
             conn.close()
 
     def _upsert_fts(self, conn: sqlite3.Connection, novel_id: str, doc_type: str, ref_id: str, title: str, body: str) -> None:
         conn.execute(
-            "DELETE FROM ledger_fts WHERE novel_id = ? AND doc_type = ? AND ref_id = ?",
-            (novel_id, doc_type, ref_id),
-        )
-        conn.execute(
-            "INSERT INTO ledger_fts (novel_id, doc_type, ref_id, title, body) VALUES (?, ?, ?, ?, ?)",
+            """
+            INSERT INTO ledger_search_index (novel_id, doc_type, ref_id, title, body)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(novel_id, doc_type, ref_id) DO UPDATE SET
+                title = excluded.title,
+                body = excluded.body
+            """,
             (novel_id, doc_type, ref_id, title, body),
         )
+        if self.has_fts5:
+            conn.execute(
+                "DELETE FROM ledger_fts WHERE novel_id = ? AND doc_type = ? AND ref_id = ?",
+                (novel_id, doc_type, ref_id),
+            )
+            conn.execute(
+                "INSERT INTO ledger_fts (novel_id, doc_type, ref_id, title, body) VALUES (?, ?, ?, ?, ?)",
+                (novel_id, doc_type, ref_id, title, body),
+            )
 
     # ── Novels ──
 
@@ -249,7 +280,9 @@ class NarrativeLedgerDB:
 
     def delete_novel(self, novel_id: str) -> bool:
         with self.transaction() as conn:
-            conn.execute("DELETE FROM ledger_fts WHERE novel_id = ?", (novel_id,))
+            conn.execute("DELETE FROM ledger_search_index WHERE novel_id = ?", (novel_id,))
+            if self.has_fts5:
+                conn.execute("DELETE FROM ledger_fts WHERE novel_id = ?", (novel_id,))
             cur = conn.execute("DELETE FROM novels WHERE id = ?", (novel_id,))
             return cur.rowcount > 0
 
@@ -592,7 +625,7 @@ class NarrativeLedgerDB:
         try:
             safe_tokens = [tok for tok in q.replace('"', " ").split() if tok]
             results: list[dict[str, Any]] = []
-            if safe_tokens:
+            if self.has_fts5 and safe_tokens:
                 fts_query = " OR ".join(f'"{t}"' for t in safe_tokens[:6])
                 try:
                     rows = conn.execute(
@@ -612,7 +645,7 @@ class NarrativeLedgerDB:
                 rows = conn.execute(
                     """
                     SELECT doc_type, ref_id, title, substr(body, 1, 220) AS snippet
-                    FROM ledger_fts
+                    FROM ledger_search_index
                     WHERE novel_id = ? AND (title LIKE ? OR body LIKE ?)
                     LIMIT ?
                     """,
