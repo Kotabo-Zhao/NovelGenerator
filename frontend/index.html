@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>墨局 v5 — 长篇小说叙事状态工坊</title>
+  <link rel="stylesheet" href="/styles/tokens.css">
+  <link rel="stylesheet" href="/styles/studio.css">
+</head>
+<body>
+  <div id="shell" class="shell">
+    <aside class="rail" id="rail">
+      <div class="rail-brand">
+        <span class="brand-mark">墨</span>
+        <div class="brand-text">
+          <strong>墨局</strong>
+          <span class="brand-ver">v5 叙事工坊</span>
+        </div>
+      </div>
+
+      <nav class="rail-nav" aria-label="主导航">
+        <button class="nav-btn active" data-view="shelf">书架</button>
+        <button class="nav-btn" data-view="studio">写作工坊</button>
+        <button class="nav-btn" data-view="ledger">叙事账本</button>
+        <button class="nav-btn" data-view="settings">模型设置</button>
+      </nav>
+
+      <div class="rail-chapters" id="rail-chapters" hidden>
+        <div class="rail-sec-head">
+          <span>章节目录</span>
+          <button class="text-btn" id="btn-plan-more" title="续规划后续章节">+ 续规划</button>
+        </div>
+        <div class="chapter-list" id="chapter-list"></div>
+      </div>
+
+      <div class="rail-footer">
+        <span class="mode-pill" id="mode-pill">演示模式</span>
+        <button class="text-btn" id="btn-theme" title="切换深浅色主题">深色主题</button>
+      </div>
+    </aside>
+
+    <main class="workspace" id="workspace"></main>
+  </div>
+
+  <div class="toast-host" id="toast-host" aria-live="polite"></div>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

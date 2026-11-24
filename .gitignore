@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+data/
+dist/
+android/app/build/
+android/.gradle/
+android/app/src/main/python/backend/
+android/app/src/main/python/frontend/
