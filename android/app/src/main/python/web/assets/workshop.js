@@ -1153,7 +1153,7 @@ const app = createApp({
         if (done.includes(writing.chapter)) {
           fetch(API+'/api/novels/'+encodeURIComponent(novel.id)+'/chapters/'+writing.chapter)
             .then(r=>r.ok?r.json():null)
-            .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
+            .then(d=>{const txt=(d&&(d.content||d.draft))||'';if(txt){writing.content=txt;writing.done=true;}})
             .catch(()=>{});
         }
       }
@@ -1406,7 +1406,7 @@ const app = createApp({
       if (done.includes(defaultCh)) {
         fetch(API+'/api/novels/'+encodeURIComponent(novel.id)+'/chapters/'+defaultCh)
           .then(r=>r.ok?r.json():null)
-          .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
+          .then(d=>{const txt=(d&&(d.content||d.draft))||'';if(txt){writing.content=txt;writing.done=true;}})
           .catch(()=>{});
       }
     }
@@ -1452,7 +1452,7 @@ const app = createApp({
       const ctrl=new AbortController(); _chFetchAbort=ctrl;
       fetch(API+'/api/novels/'+encodeURIComponent(activeNovel.value.id)+'/chapters/'+ch, {signal:ctrl.signal})
         .then(r=>r.ok?r.json():null)
-        .then(d=>{if(d&&d.content){writing.content=d.content;writing.done=true;}})
+        .then(d=>{const txt=(d&&(d.content||d.draft))||'';if(txt){writing.content=txt;writing.done=true;}})
         .catch(()=>{})
         .finally(()=>{if(_chFetchAbort===ctrl) _chFetchAbort=null;});
     }
@@ -1513,7 +1513,7 @@ const app = createApp({
             const novId=encodeURIComponent(activeNovel.value.id);
             fetch(API+'/api/novels/'+novId+'/chapters/'+evt.chapter_num)
               .then(r=>r.ok?r.json():null)
-              .then(d=>{if(d&&d.content){writing.content=d.content;}})
+              .then(d=>{const txt=(d&&(d.content||d.draft))||'';if(txt){writing.content=txt;}})
               .catch(()=>{});
             // v2.3.1: 自动刷新剧情图谱
             if (writing.activeTab === 'storygraph') loadStoryGraph(0);
@@ -1698,6 +1698,9 @@ const app = createApp({
       if(count > 10) { reportError('批量生成上限为10章，请缩小范围'); return; }
       loading.batch=true; batchProgress.value=0; batchCurrent.value=start-1; error.value=''; batchStreaming.value='';
       let failedChapters = [];
+      let lastDoneChapter = null;
+      let batchCompleted = false;
+      const totalBatch = Math.max(1, end - start + 1);
       // v2.6: 断线自动重连（最多重试2次，带 resume 从检查点续传）
       const MAX_ATTEMPTS = 3;
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -1721,7 +1724,8 @@ const app = createApp({
           await readSSE(r, (evt) => {
             if(evt.type==='progress'){
               writing.chapter=evt.chapter; writing.content=''; writing.done=false;
-              batchCurrent.value=evt.chapter-1; batchProgress.value=Math.round((evt.chapter-1-start)/(end-start)*100);
+              batchCurrent.value=evt.chapter-1;
+              batchProgress.value=Math.max(0, Math.min(99, Math.round((evt.chapter-start)/totalBatch*100)));
               batchStatus.value='第'+evt.chapter+'章 生成中…';
             }
             else if(evt.type==='status'){
@@ -1740,17 +1744,18 @@ const app = createApp({
             }
             else if(evt.type==='chapter_done'){
               writing.done=true;
+              lastDoneChapter=evt.chapter;
               const st=activeNovel.value.state;
               if(!st.completed_chapters) st.completed_chapters=[];
               if(!st.completed_chapters.includes(evt.chapter)) st.completed_chapters.push(evt.chapter);
               st.completed_chapters.sort((a,b)=>a-b);
               st.current_chapter=Math.max(...st.completed_chapters);
-              batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
+              batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/totalBatch*100);
               batchStreaming.value=''; loadShelfDebounced();
             }
             else if(evt.type==='chapter_failed'){
               failedChapters.push(evt.chapter);
-              batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/(end-start+1)*100);
+              batchCurrent.value=evt.chapter; batchProgress.value=Math.round((evt.chapter-start+1)/totalBatch*100);
               batchStreaming.value='';
             }
             else if(evt.type==='batch_done'){
@@ -1759,10 +1764,13 @@ const app = createApp({
             }
             else if(evt.type==='error'){ reportError(evt.message, '生成失败'); return false; }
           });
-          selectChapter(end); loadShelfDebounced();
+          batchCompleted = true;
           break; // 成功完成
         } catch(e){
-          if(e.name==='AbortError') return; // 用户主动中断
+          if(e.name==='AbortError') {
+            loading.batch=false; abortCtrl.value=null; batchStreaming.value='';
+            return; // 用户主动中断
+          }
           if(attempt >= MAX_ATTEMPTS - 1){
             error.value=e.message||'连接超时，已生成的部分已保存';
             reportError('连接中断多次，已生成章节已保存。可点击"批量生成"继续（自动断点续传）', '批量中断');
@@ -1770,7 +1778,12 @@ const app = createApp({
           // 否则循环重试
         }
       }
+      // v4.5.0: 必须先解除 loading.batch 忙碌锁，再触发 selectChapter 拉取落盘正文
       loading.batch=false; abortCtrl.value=null; batchStreaming.value='';
+      if (batchCompleted) {
+        selectChapter(lastDoneChapter || end);
+        loadShelfDebounced();
+      }
     }
 
     async function doRegenerate() {

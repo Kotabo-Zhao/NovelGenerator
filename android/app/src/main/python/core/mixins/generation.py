@@ -2296,6 +2296,24 @@ class GenerationMixin:
             except Exception as e:
                 log.warning(f"Auto-compression skipped: {e}")
 
+            # v4.5.0: 标准/批量路径同样执行统一硬门禁与原子落盘（此前仅写 .draft.md，导致批量生成后正文无法加载）
+            _completion = self._finalize_chapter_candidate(
+                novel_id,
+                chapter_num,
+                full_text,
+                formatted,
+                None,
+                None,
+                _outline_compliance_report,
+            )
+            if _completion.get("status") == "needs_revision":
+                yield {
+                    "type": "needs_revision",
+                    "message": _completion.get("reason", "章节未通过最终校验"),
+                    **_completion,
+                }
+                return
+
             yield {"type": "status", "message": "✅ 章节正文与质量报告已同步保存"}
             yield {"type": "text", "content": "\n\n"}
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num}

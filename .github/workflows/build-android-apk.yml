@@ -46,6 +46,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NovelGenerator-v4.4.0-arm64-debug-apk
+          name: NovelGenerator-v4.5.0-arm64-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
