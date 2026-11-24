@@ -1,8 +1,7 @@
 """Novels CRUD, blueprint planning, and export routes."""
 
-from __future__ import annotations
-
 import asyncio
+from typing import List
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
@@ -32,8 +31,8 @@ class UpdateContractRequest(BaseModel):
     summary: str = ""
     goal: str = ""
     conflict: str = ""
-    characters: list[str] = Field(default_factory=list)
-    must_happen: list[str] = Field(default_factory=list)
+    characters: List[str] = Field(default_factory=list)
+    must_happen: List[str] = Field(default_factory=list)
     hook_direction: str = ""
     target_words: int = Field(default=2000, ge=200, le=20000)
     pov: str = "第三人称限知"

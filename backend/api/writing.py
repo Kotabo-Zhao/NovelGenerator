@@ -1,9 +1,8 @@
 """Streaming chapter drafting, surgical rewrite, craft check, and version history routes."""
 
-from __future__ import annotations
-
 import asyncio
 import json
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -31,7 +30,7 @@ class SurgicalRewriteRequest(BaseModel):
 
 
 class CraftCheckRequest(BaseModel):
-    text: str | None = None
+    text: Optional[str] = None
 
 
 @router.get("/{chapter_num}")
@@ -110,7 +109,7 @@ async def surgical_rewrite_stream(novel_id: str, chapter_num: int, req: Surgical
 
 
 @router.post("/{chapter_num}/craft-check")
-async def craft_check(novel_id: str, chapter_num: int, request: Request, req: CraftCheckRequest | None = None):
+async def craft_check(novel_id: str, chapter_num: int, request: Request, req: Optional[CraftCheckRequest] = None):
     db = request.app.state.db
     text = req.text if (req and req.text) else None
     if not text:

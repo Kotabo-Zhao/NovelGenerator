@@ -1,9 +1,7 @@
 """Narrative State Ledger CRUD & FTS5 search routes."""
 
-from __future__ import annotations
-
 import asyncio
-from typing import Any
+from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -20,7 +18,7 @@ async def get_ledger(novel_id: str, request: Request):
 
 
 @router.post("/entities")
-async def upsert_entity(novel_id: str, payload: dict[str, Any], request: Request):
+async def upsert_entity(novel_id: str, payload: Dict[str, Any], request: Request):
     db = request.app.state.db
     try:
         return await asyncio.to_thread(db.upsert_entity, novel_id, payload)
@@ -29,7 +27,7 @@ async def upsert_entity(novel_id: str, payload: dict[str, Any], request: Request
 
 
 @router.post("/foreshadows")
-async def upsert_foreshadow(novel_id: str, payload: dict[str, Any], request: Request):
+async def upsert_foreshadow(novel_id: str, payload: Dict[str, Any], request: Request):
     db = request.app.state.db
     try:
         return await asyncio.to_thread(db.upsert_foreshadow, novel_id, payload)
@@ -38,7 +36,7 @@ async def upsert_foreshadow(novel_id: str, payload: dict[str, Any], request: Req
 
 
 @router.post("/world")
-async def upsert_world_entry(novel_id: str, payload: dict[str, Any], request: Request):
+async def upsert_world_entry(novel_id: str, payload: Dict[str, Any], request: Request):
     db = request.app.state.db
     try:
         return await asyncio.to_thread(db.upsert_world_entry, novel_id, payload)

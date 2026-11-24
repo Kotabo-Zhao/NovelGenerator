@@ -1,9 +1,7 @@
 """System status, styles catalog, and LLM settings routes (never returns plaintext API keys)."""
 
-from __future__ import annotations
-
 import asyncio
-from typing import Any
+from typing import Any, Dict
 
 from fastapi import APIRouter, Request
 
@@ -41,7 +39,7 @@ async def get_llm_settings(request: Request):
 
 
 @router.put("/llm")
-async def update_llm_settings(payload: dict[str, Any], request: Request):
+async def update_llm_settings(payload: Dict[str, Any], request: Request):
     settings = await asyncio.to_thread(request.app.state.llm_store.save, payload)
     return settings.to_public_dict()
 

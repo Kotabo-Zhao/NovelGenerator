@@ -34,6 +34,7 @@ def start_server(api_key, host, port, log_dir, internal_build=False):
 
     try:
         _log("init")
+        os.environ["NOVELGEN_DEFER_APP"] = "1"
         os.environ["NOVELGEN_DATA_DIR"] = log_dir
         os.environ["NOVELGEN_FRONTEND_DIR"] = os.path.join(_HERE, "frontend")
 
@@ -81,8 +82,10 @@ def start_server(api_key, host, port, log_dir, internal_build=False):
         if failure:
             return {"status": "error"}
         return {"status": "done"}
-    except Exception:
-        _log(f"error_{traceback.format_exc()}")
+    except Exception as exc:
+        tb_lines = [ln.strip() for ln in traceback.format_exc().splitlines() if ln.strip()]
+        tail = " | ".join(tb_lines[-3:])
+        _log(f"error_{type(exc).__name__}: {exc} ({tail})")
         return {"status": "error"}
 
 

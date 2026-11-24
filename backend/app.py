@@ -1,8 +1,8 @@
-"""FastAPI application factory for NovelGenerator v5."""
+"""FastAPI application factory for NovelGenerator v5 (Desktop + Android Chaquopy compatible)."""
 
-from __future__ import annotations
-
+import os
 from pathlib import Path
+from typing import Optional, Union
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,13 +13,20 @@ from .api import ledger as ledger_router
 from .api import novels as novels_router
 from .api import system as system_router
 from .api import writing as writing_router
-from .config import FRONTEND_DIR, AppConfig
+from .config import PROJECT_ROOT, AppConfig
 from .core.database import NarrativeLedgerDB
 from .core.llm import AsyncLLMGateway, LLMConfigStore
 from .core.writing_engine import WritingEngine
 
 
-def create_app(data_dir: str | Path | None = None) -> FastAPI:
+def _resolve_frontend_dir() -> Path:
+    override = os.environ.get("NOVELGEN_FRONTEND_DIR")
+    if override:
+        return Path(override).resolve()
+    return (PROJECT_ROOT / "frontend").resolve()
+
+
+def create_app(data_dir: Optional[Union[str, Path]] = None) -> FastAPI:
     cfg = AppConfig.from_env(data_dir=data_dir)
     db = NarrativeLedgerDB(cfg.db_path)
     llm_store = LLMConfigStore(cfg.llm_config_path)
@@ -39,7 +46,12 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://127.0.0.1:8787", "http://localhost:8787"],
+        allow_origins=[
+            "http://127.0.0.1:8787",
+            "http://localhost:8787",
+            "http://127.0.0.1:8899",
+            "http://localhost:8899",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -50,15 +62,25 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.include_router(ledger_router.router)
     app.include_router(system_router.router)
 
-    if FRONTEND_DIR.is_dir():
-        app.mount("/styles", StaticFiles(directory=str(FRONTEND_DIR / "styles")), name="styles")
-        app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
+    @app.get("/api/health", include_in_schema=False)
+    async def health_alias():
+        return {"status": "ok", "version": "5.0.0"}
 
+    frontend_dir = _resolve_frontend_dir()
+    styles_dir = frontend_dir / "styles"
+    js_dir = frontend_dir / "js"
+    index_file = frontend_dir / "index.html"
+
+    if styles_dir.is_dir():
+        app.mount("/styles", StaticFiles(directory=str(styles_dir)), name="styles")
+    if js_dir.is_dir():
+        app.mount("/js", StaticFiles(directory=str(js_dir)), name="js")
+    if index_file.is_file():
         @app.get("/", include_in_schema=False)
         async def serve_index():
-            return FileResponse(str(FRONTEND_DIR / "index.html"))
+            return FileResponse(str(index_file))
 
     return app
 
 
-app = create_app()
+app = None if os.environ.get("NOVELGEN_DEFER_APP") == "1" else create_app()
