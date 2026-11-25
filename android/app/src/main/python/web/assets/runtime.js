@@ -10,7 +10,7 @@
     document.documentElement.dataset.theme = theme;
     storage.set('theme', theme);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.content = theme === 'dark' ? '#171923' : '#f7f8fc';
+    if (meta) meta.content = theme === 'dark' ? '#0C1016' : '#F5F7FA';
   }
   setTheme(storage.get('theme', 'light'));
 

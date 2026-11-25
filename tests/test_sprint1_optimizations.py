@@ -43,9 +43,11 @@ class TestSprint1Optimizations(unittest.TestCase):
         a_start = src.index("async def atomic_generate_chapter_stream(")
         s_start = src.index("async def generate_chapter_stream(")
         atomic_body = src[a_start:s_start]
-        self.assertIn("UnifiedPostProcessor", atomic_body)
-        self.assertIn("analyze_prose_craft", atomic_body)
-        self.assertIn('"type": "craft_report"', atomic_body)
+        self.assertIn("run_post_chapter_pipeline(", atomic_body)
+        pp_src = (ROOT / "backend/core/mixins/post_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("UnifiedPostProcessor", pp_src)
+        self.assertIn("analyze_prose_craft", pp_src)
+        self.assertIn('"type": "craft_report"', pp_src)
 
     def test_prepare_frontend_supports_check_and_is_wired_in_ci(self):
         ci_src = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

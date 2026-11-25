@@ -9,12 +9,12 @@
     <title>墨局 · 让灵感落成故事</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=4553a5f934a5">
-<script src="/assets/runtime.js?v=733b7bd3c76c"></script>
+<script src="/assets/runtime.js?v=a98f7bad7c8a"></script>
 <script src="/vue.global.prod.js" defer></script>
-<script src="/assets/app-shell.js?v=5e1958a4e119"></script><script src="/assets/workshop.js?v=b2f6fb4e7829" defer></script>
+<script src="/assets/app-shell.js?v=5e1958a4e119"></script><script src="/assets/workshop.js?v=579e31f68c1d" defer></script>
 <link rel="stylesheet" href="/assets/theme.css?v=50fb48f925b3">
 <link rel="stylesheet" href="/assets/tools.css?v=ea848a4d73db">
-<link rel="stylesheet" href="/assets/workshop.css?v=075844583850">
+<link rel="stylesheet" href="/assets/workshop.css?v=83e72b197ecc">
 <link rel="stylesheet" href="/assets/navigation.css?v=060d36cc8074">
 <link rel="stylesheet" href="/assets/app-polish.css?v=f6b355bca346">
 </head>
@@ -69,7 +69,7 @@
         <p>{{ shelfLoadFailed ? '服务器暂未就绪，请稍后重试' : '种下一颗灵感，开启你的第一部作品' }}</p>
         <button class="btn btn-primary" @click="openCreate" v-if="!shelfLoadFailed">开始创作</button>
         <button class="btn btn-primary" @click="loadShelf(); shelfLoadFailed=false" v-if="shelfLoadFailed">🔄 重新加载</button>
-        <button class="btn btn-ghost mt-8" @click="loadShelf" style="font-size:12px" v-if="!shelfLoadFailed">🔄 重新加载</button>
+        <button class="btn btn-ghost mt-8 u-text-sm" @click="loadShelf" v-if="!shelfLoadFailed">🔄 重新加载</button>
       </div>
 
       <div v-else class="shelf-grid">
@@ -112,7 +112,7 @@
       <div class="card" :style="{border:'2px solid '+ (xhsMode ? 'var(--accent)' : 'var(--border)'), background: xhsMode ? 'linear-gradient(135deg, rgba(233,69,96,.08), rgba(255,107,107,.04))' : ''}">
         <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" @click="xhsMode=!xhsMode">
           <div>
-            <div style="font-size:16px;font-weight:700;color:var(--accent)">📕 小红书爆款短篇</div>
+            <div class="u-kpi-accent">📕 小红书爆款短篇</div>
             <div style="font-size:12px;color:var(--text2);margin-top:2px">8000-10000字，女频爽文，一键生成完整短篇 + 爆款标题</div>
           </div>
           <div style="font-size:24px;color:var(--text2);transition:transform .2s" :style="{transform:xhsMode?'rotate(90deg)':''}">▶</div>
@@ -138,15 +138,15 @@
         <div class="form-group"><label>书名（留空自动生成）</label><input v-model="form.title" placeholder="我在修真界写代码"></div>
         <div class="form-group"><label>核心灵感</label><textarea v-model="form.inspiration" rows="3" placeholder="用几句话描述你的故事创意，越具体效果越好…"></textarea></div>
 
-        <div class="flex items-center gap-6 mt-8" style="font-size:13px;color:var(--text2)">
+        <div class="flex items-center gap-6 mt-8 u-text-sub">
           <label class="toggle-switch">
             <input type="checkbox" v-model="form.naturalNames">
             <span class="toggle-slider"></span>
           </label>
-          <span>自然命名 <span style="opacity:.55">（禁用"云星辰叶尘无极天帝"等AI高频词）</span></span>
+          <span>自然命名 <span class="u-dim">（禁用"云星辰叶尘无极天帝"等AI高频词）</span></span>
         </div>
 
-        <div class="flex items-center gap-8 mt-8" style="font-size:13px;color:var(--text2)">
+        <div class="flex items-center gap-8 mt-8 u-text-sub">
           <label class="toggle-switch">
             <input type="checkbox" v-model="form.normalPacing">
             <span class="toggle-slider"></span>
@@ -157,14 +157,14 @@
           </span>
         </div>
 
-        <div class="flex items-center gap-8 mt-8" style="font-size:13px;color:var(--text2)">
+        <div class="flex items-center gap-8 mt-8 u-text-sub">
           <label class="toggle-switch">
             <input type="checkbox" v-model="form.creativeEnhance">
             <span class="toggle-slider"></span>
           </label>
           <span>
-            <span v-if="form.creativeEnhance">🎲 创意加成 <span style="opacity:.55">— 允许AI注入反套路脑洞（随机创意约束）</span></span>
-            <span v-else style="opacity:.55">🎲 创意加成 <span style="opacity:.4">— 默认关：严格按你的需求写，不加任何私货</span></span>
+            <span v-if="form.creativeEnhance">🎲 创意加成 <span class="u-dim">— 允许AI注入反套路脑洞（随机创意约束）</span></span>
+            <span v-else class="u-dim">🎲 创意加成 <span style="opacity:.4">— 默认关：严格按你的需求写，不加任何私货</span></span>
           </span>
         </div>
 
@@ -177,8 +177,8 @@
       </div>
 
       <div class="card">
-        <div class="flex justify-between items-center" style="margin-bottom:16px">
-          <div class="card-title" style="margin:0">风格</div>
+        <div class="flex justify-between items-center u-mb-16">
+          <div class="card-title u-m-0">风格</div>
           <div class="flex gap-6">
             <button class="btn btn-xs" :class="styleMode==='library'?'btn-primary':'btn-ghost'" @click="styleMode='library'">风格库</button>
             <button class="btn btn-xs" :class="styleMode==='params'?'btn-primary':'btn-ghost'" @click="styleMode='params';loadStyleParams()">参数化</button>
@@ -229,13 +229,13 @@
           <div v-if="styleSeeds.length>0" class="mt-12">
             <div class="style-cat-title">已保存的种子</div>
             <div class="flex gap-6 flex-wrap">
-              <span v-for="s in styleSeeds" :key="s.name" class="tag" style="cursor:pointer" @click="loadStyleSeed(s)">{{ s.name }}<span style="opacity:.4;margin-left:4px;cursor:pointer" @click.stop="deleteStyleSeed(s)">×</span></span>
+              <span v-for="s in styleSeeds" :key="s.name" class="tag u-pointer" @click="loadStyleSeed(s)">{{ s.name }}<span style="opacity:.4;margin-left:4px;cursor:pointer" @click.stop="deleteStyleSeed(s)">×</span></span>
             </div>
           </div>
         </div>
       </div>
 
-      <div v-if="error" class="error-msg" style="cursor:pointer" @click="error=''">{{ error }} <span style="float:right;opacity:.5">✕</span></div>
+      <div v-if="error" class="error-msg u-pointer" @click="error=''">{{ error }} <span class="u-float-dim">✕</span></div>
 
       <!-- 生成进度 -->
       <div v-if="loading.create" class="create-progress glass">
@@ -258,7 +258,7 @@
           <div v-if="requirementSnapshot.offline_mode" style="color:var(--orange);font-size:12px;margin-top:4px">⚠️ 离线模式拆解（AI服务暂时不可用，已使用关键词规则分析）</div>
         </div>
       </div>
-      <div v-if="requirementSnapshot && requirementSnapshot.subtasks?.length" class="glass panel" style="margin-top:10px">
+      <div v-if="requirementSnapshot && requirementSnapshot.subtasks?.length" class="glass panel u-mt-10">
         <div class="panel-title" style="font-size:13px;margin:0 0 4px">需求明细与生效范围</div>
         <div class="text-xs color-text3">先确认需求属于哪一层；仅“章节事件”和已落点的“剧情里程碑”会成为单章硬任务。</div>
         <template v-for="kind in requirementKindOrder" :key="kind">
@@ -271,8 +271,8 @@
             <details v-for="item in requirementsForKind(kind)" :key="item.id" style="border-top:1px solid var(--border-light);padding:8px 10px">
               <summary style="cursor:pointer;font-size:12px;display:flex;gap:8px;align-items:center">
                 <span class="req-priority" :style="{color:item.priority==='P0'?'#ff6b81':'var(--text3)'}">{{ item.priority }}</span>
-                <span style="flex:1">{{ item.id }} · {{ item.title }}</span>
-                <span style="color:var(--text3)">{{ requirementScopeText(item) }}</span>
+                <span class="u-flex-1">{{ item.id }} · {{ item.title }}</span>
+                <span class="u-text-muted">{{ requirementScopeText(item) }}</span>
               </summary>
               <div style="font-size:12px;color:var(--text2);line-height:1.6;padding:7px 4px 0">
                 <div v-if="item.description"><b>目标：</b>{{ item.description }}</div>
@@ -296,7 +296,7 @@
               <span v-if="isRegenerating"><span class="spinner"></span></span><span v-else>🔄 AI 修改大纲</span>
             </button>
           </div>
-          <div v-if="isRegenerating" class="create-progress" style="margin-bottom:16px">
+          <div v-if="isRegenerating" class="create-progress u-mb-16">
             <div class="cp-bar"><div class="cp-fill" :style="{width:createProgress+'%'}"></div></div>
             <div class="cp-info"><span class="cp-label">{{ createPhaseLabel }}</span><span class="cp-pct">{{ createProgress }}%</span></div>
           </div>
@@ -304,9 +304,9 @@
           <div class="mb-12"><label>世界观</label></div>
           <div v-if="outlineChangePlan.length || outlineExecutionSummary" class="glass" style="margin:10px 0;background:var(--bg2);border-color:var(--accent)">
             <div class="panel-title" style="font-size:13px;margin:0 0 6px">AI 修改影响范围</div>
-            <div v-if="outlineExecutionSummary" style="font-size:12px;color:var(--text2)">已执行 {{ outlineExecutionSummary.executed || 0 }}/{{ outlineExecutionSummary.total || 0 }} 项<span v-if="outlineExecutionSummary.failed">，失败 {{ outlineExecutionSummary.failed }} 项</span></div>
+            <div v-if="outlineExecutionSummary" class="u-text-sm-sub">已执行 {{ outlineExecutionSummary.executed || 0 }}/{{ outlineExecutionSummary.total || 0 }} 项<span v-if="outlineExecutionSummary.failed">，失败 {{ outlineExecutionSummary.failed }} 项</span></div>
             <div v-for="change in outlineChangePlan" :key="change.id" style="font-size:12px;margin-top:5px;color:var(--text2)">
-              <b>{{ change.id }}</b> · {{ change.target?.description || change.target || change.description || '待修改' }}<span style="color:var(--text3)">{{ change.priority ? ' · P'+change.priority : '' }}</span>
+              <b>{{ change.id }}</b> · {{ change.target?.description || change.target || change.description || '待修改' }}<span class="u-text-muted">{{ change.priority ? ' · P'+change.priority : '' }}</span>
             </div>
           </div>
           <div class="form-group"><input v-model="planResult.worldbuilding.era" placeholder="时代背景"></div>
@@ -322,14 +322,14 @@
           <div class="form-group"><textarea v-model="planResult.characters.protagonist.backstory" rows="2" placeholder="背景故事"></textarea></div>
 
           <div class="flex justify-between items-center mb-12">
-            <label style="margin:0">大纲（{{ planResult.outline?.total_chapters || 0 }}章）</label>
+            <label class="u-m-0">大纲（{{ planResult.outline?.total_chapters || 0 }}章）</label>
             <button class="btn btn-ghost btn-xs" @click="addVolume">＋ 卷</button>
           </div>
           <div v-for="(vol,vi) in planResult.outline.volumes" :key="vi" style="margin-bottom:16px;padding:14px;background:var(--bg2);border:1px solid var(--border-light);border-radius:var(--radius-xs)">
             <div class="flex gap-8 mb-8">
               <input v-model.number="vol.number" style="width:50px;text-align:center;flex-shrink:0" @change="renumberChapters">
               <input v-model="vol.title" placeholder="卷标题" class="flex-1">
-              <button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="removeVolume(vi)" v-if="planResult.outline.volumes.length>1">×</button>
+              <button class="btn btn-ghost btn-xs u-text-danger" @click="removeVolume(vi)" v-if="planResult.outline.volumes.length>1">×</button>
             </div>
             <div v-for="(ch,ci) in vol.chapters" :key="ci" style="padding:6px 0;border-bottom:1px solid var(--border-light)">
               <div class="flex gap-8 items-start">
@@ -362,9 +362,9 @@
       <div class="card" style="padding:8px 12px">
         <div style="display:flex;gap:6px;align-items:center">
           <span style="font-size:12px;color:var(--text2);margin-right:8px">生成模式:</span>
-          <button class="btn btn-sm" :class="bizarreMode==='topical'?'btn-primary':''" @click="bizarreMode='topical'" style="font-size:12px;padding:4px 12px">🌍 时事离谱</button>
-          <button class="btn btn-sm" :class="bizarreMode==='twist'?'btn-primary':''" @click="bizarreMode='twist'" style="font-size:12px;padding:4px 12px">🔀 剧情反转</button>
-          <button class="btn btn-sm" :class="bizarreMode==='mixed'?'btn-primary':''" @click="bizarreMode='mixed'" style="font-size:12px;padding:4px 12px">🎲 混搭</button>
+          <button class="btn btn-sm u-btn-compact" :class="bizarreMode==='topical'?'btn-primary':''" @click="bizarreMode='topical'">🌍 时事离谱</button>
+          <button class="btn btn-sm u-btn-compact" :class="bizarreMode==='twist'?'btn-primary':''" @click="bizarreMode='twist'">🔀 剧情反转</button>
+          <button class="btn btn-sm u-btn-compact" :class="bizarreMode==='mixed'?'btn-primary':''" @click="bizarreMode='mixed'">🎲 混搭</button>
         </div>
       </div>
 
@@ -415,8 +415,8 @@
           <div style="position:absolute;top:8px;right:12px;font-size:11px;color:var(--text3);background:var(--bg2);padding:2px 8px;border-radius:10px">{{ bn.premise?.tag || bn.tag }}</div>
           <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;padding-right:80px">
             <div>
-              <div style="font-size:16px;font-weight:700;color:var(--accent)">{{ bn.premise?.title || bn.title }}</div>
-              <div style="font-size:12px;color:var(--text2)">{{ bn.premise?.genre || bn.genre }} · {{ bn.premise?.trope || bn.twist }}</div>
+              <div class="u-kpi-accent">{{ bn.premise?.title || bn.title }}</div>
+              <div class="u-text-sm-sub">{{ bn.premise?.genre || bn.genre }} · {{ bn.premise?.trope || bn.twist }}</div>
             </div>
             <button class="btn btn-primary btn-sm" @click="createBizarreNovel(bn)" style="padding:4px 12px;font-size:12px">📖 创建小说</button>
           </div>
@@ -428,7 +428,7 @@
           <div v-if="bn.outline?.volumes" style="margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;font-size:12px">
             <div style="font-weight:600;margin-bottom:4px">📋 大纲预览</div>
             <div v-for="vol in (bn.outline.volumes||[]).slice(0,2)">
-              <div style="color:var(--accent)">第{{ vol.number }}卷: {{ vol.title }}</div>
+              <div class="u-text-accent">第{{ vol.number }}卷: {{ vol.title }}</div>
               <div v-for="ch in (vol.chapters||[]).slice(0,3)" style="padding-left:12px;color:var(--text2)">
                 Ch{{ ch.number }} [{{ ch.title }}] {{ ch.summary }}
               </div>
@@ -472,7 +472,7 @@
 
         <details class="advanced-panel"><summary><icon name="check" size="15"></icon>创作约束与质量监督<small>需求、评分与校验</small></summary>
         <div class="card" style="margin-top:12px;background:var(--bg2)">
-          <div class="flex justify-between items-center" style="margin-bottom:8px">
+          <div class="flex justify-between items-center u-mb-8">
             <div class="card-title" style="margin:0;font-size:14px">🧪 需求管理 & 质量监督</div>
             <div class="flex gap-6">
               <button class="btn btn-xs btn-ghost" @click="decomposeRequirements" :disabled="isBusy">拆解需求</button>
@@ -488,7 +488,7 @@
             <div v-for="t in (requirements.subtasks||[])" :key="t.id" class="req-item"
                  :style="{borderLeftColor: t.status==='passed'?'#4caf50':t.status==='failed'?'#f44336':'var(--border)'}">
               <span class="req-status">{{ t.status==='passed'?'✅':t.status==='failed'?'❌':'⏳' }}</span>
-              <span class="req-title" style="font-size:12px">{{ t.title?.substring(0,50) }}</span>
+              <span class="req-title u-text-sm">{{ t.title?.substring(0,50) }}</span>
               <span class="req-priority" :style="{color:t.priority==='P0'?'#f44336':'var(--text3)'}">{{ t.priority }}</span>
             </div>
           </div>
@@ -565,8 +565,8 @@
               <button v-else class="btn btn-secondary btn-sm" @click="doBatchGenerate" :disabled="isBusy">📦 批量生成</button>
             </div>
           </div>
-          <div v-if="loading.batch" style="margin-top:8px">
-            <div class="batch-status"><div class="progress-bar" style="flex:1"><div class="progress-fill" :style="{width:batchProgress+'%'}"></div></div><span class="progress-text" style="margin-left:8px">{{ batchCurrent }}/{{ batchEnd }} ({{ batchProgress }}%)</span></div>
+          <div v-if="loading.batch" class="u-mt-8">
+            <div class="batch-status"><div class="progress-bar u-flex-1"><div class="progress-fill" :style="{width:batchProgress+'%'}"></div></div><span class="progress-text u-ml-8">{{ batchCurrent }}/{{ batchEnd }} ({{ batchProgress }}%)</span></div>
             <div v-if="batchStatus" style="font-size:12px;color:var(--accent);margin-top:6px">{{ batchStatus }}</div>
             <div v-if="batchStreaming" class="batch-preview">{{ batchStreaming.slice(-300) }}</div>
           </div>
@@ -640,7 +640,7 @@
 
         <div v-if="writing.done" class="review-section" style="border-color:rgba(63,185,80,.25)">
           <div class="rs-title">📊 这章写得怎么样？反馈会让我越写越懂你</div>
-          <div class="flex gap-8" style="margin-bottom:8px">
+          <div class="flex gap-8 u-mb-8">
             <button class="btn btn-xs" :class="chapterRating===1?'btn-primary':''" @click="chapterRating=chapterRating===1?0:1">👍 满意</button>
             <button class="btn btn-xs" :class="chapterRating===-1?'btn-danger':''" @click="chapterRating=chapterRating===-1?0:-1">👎 不满意</button>
             <input v-model="chapterReason" placeholder="一句话理由（可选）：节奏太快？对话太少？" style="flex:1;min-height:32px;font-size:13px" :disabled="!chapterRating">
@@ -659,7 +659,7 @@
           <span class="text-xs color-text3 ml-8">大纲、角色、节拍结构均保持不变</span>
         </div>
 
-        <div v-if="error" class="error-msg" style="cursor:pointer" @click="error=''">{{ error }} <span style="float:right;opacity:.5">✕</span></div>
+        <div v-if="error" class="error-msg u-pointer" @click="error=''">{{ error }} <span class="u-float-dim">✕</span></div>
         </div>
 
         <div v-if="writing.activeTab==='storygraph'" class="storygraph-panel">
@@ -672,15 +672,15 @@
           <div v-else>
 
             <div class="sg-toolbar">
-              <button class="btn btn-ghost btn-xs" @click="loadStoryGraph(0)" :disabled="sgLoading" style="font-size:12px">🔄 刷新</button>
+              <button class="btn btn-ghost btn-xs u-text-sm" @click="loadStoryGraph(0)" :disabled="sgLoading">🔄 刷新</button>
               <span class="text-xs color-text3" style="margin-left:6px" v-if="sgData?.last_updated_chapter">
                 最后更新: Ch{{ sgData.last_updated_chapter }}
-                <template v-if="sgData.filtered_to_chapter"><span style="color:var(--accent)"> (回溯至Ch{{ sgData.filtered_to_chapter }})</span></template>
+                <template v-if="sgData.filtered_to_chapter"><span class="u-text-accent"> (回溯至Ch{{ sgData.filtered_to_chapter }})</span></template>
               </span>
               <div class="sg-chapter-slider" v-if="activeNovel?.state?.total_chapters">
                 <span class="text-xs color-text3">追踪至 Ch</span>
                 <input type="range" v-model.number="sgChapterFilter" :min="1" :max="activeNovel.state.total_chapters" style="width:120px;margin:0 6px">
-                <span class="text-xs font-semibold" style="color:var(--accent)">{{ sgChapterFilter }}</span>
+                <span class="text-xs font-semibold u-text-accent">{{ sgChapterFilter }}</span>
                 <button class="btn btn-ghost btn-xs" @click="sgChapterFilter=(sgData?.last_updated_chapter||(activeNovel.state.completed_chapters||[]).length+1);loadStoryGraph(0)" style="font-size:10px;margin-left:4px">最新</button>
               </div>
             </div>
@@ -712,19 +712,19 @@
 
             <div v-if="sgSubTab==='overview'">
               <div class="sg-dashboard">
-                <div class="sg-stat-card" @click="sgSubTab='threads'" style="cursor:pointer">
+                <div class="sg-stat-card u-pointer" @click="sgSubTab='threads'">
                   <div class="sg-stat-num">{{ sgStats.activeThreads }}/{{ sgStats.totalThreads }}</div>
                   <div class="sg-stat-label">活跃剧情线</div>
                 </div>
-                <div class="sg-stat-card" @click="sgSubTab='foreshadows'" style="cursor:pointer">
+                <div class="sg-stat-card u-pointer" @click="sgSubTab='foreshadows'">
                   <div class="sg-stat-num" :style="{color:sgStats.overdueForeshadows>0?'#f85149':''}">{{ sgStats.unresolvedForeshadows }}</div>
                   <div class="sg-stat-label">未回收伏笔<template v-if="sgStats.overdueForeshadows>0"><span style="color:#f85149"> · {{sgStats.overdueForeshadows}}超期</span></template></div>
                 </div>
-                <div class="sg-stat-card" @click="sgSubTab='characters'" style="cursor:pointer">
+                <div class="sg-stat-card u-pointer" @click="sgSubTab='characters'">
                   <div class="sg-stat-num">{{ sgStats.trackedChars }}</div>
                   <div class="sg-stat-label">追踪角色</div>
                 </div>
-                <div class="sg-stat-card" @click="sgSubTab='calibration'" style="cursor:pointer">
+                <div class="sg-stat-card u-pointer" @click="sgSubTab='calibration'">
                   <div class="sg-stat-num" :style="{color:sgCalibration?.score<70?'#f85149':sgCalibration?.score>=90?'#3fb950':''}">{{ sgCalibration?.score??'--' }}</div>
                   <div class="sg-stat-label">剧情健康度</div>
                 </div>
@@ -744,7 +744,7 @@
                        }"
                        :style="{flex: a.chapters?.length||1}"
                        @click="sgExpandedArc = sgExpandedArc===a.arc_id ? null : a.arc_id"
-                       style="cursor:pointer">
+                       class="u-pointer">
                     <span class="sg-arc-label">{{ a.label || '弧'+a.arc_id }}</span>
                     <span class="sg-arc-range">Ch{{ a.start_chapter }}-{{ a.end_chapter }}</span>
                     <span class="sg-arc-type">{{ {'setup':'🥚','rising':'⚔️','climax':'🔥','resolution':'🌅'}[a.type]||'' }}</span>
@@ -753,16 +753,16 @@
                 <div v-if="sgExpandedArc && sgArcs.current_arc" class="sg-current-arc" style="margin-top:10px;padding:10px;background:var(--bg);border-radius:var(--radius-xs)">
                   <div style="font-size:13px;font-weight:600;margin-bottom:4px">
                     🔍 {{ sgArcs.current_arc.label }} (第{{ sgArcs.current_arc.current_position }}/{{ sgArcs.current_arc.total_in_arc }}章)
-                    <span class="text-xs color-text3" style="margin-left:8px">Ch{{ sgArcs.current_arc.start_chapter }}-{{ sgArcs.current_arc.end_chapter }}</span>
+                    <span class="text-xs color-text3 u-ml-8">Ch{{ sgArcs.current_arc.start_chapter }}-{{ sgArcs.current_arc.end_chapter }}</span>
                   </div>
-                  <div style="font-size:12px;color:var(--text2)">{{ sgArcs.current_arc.goal }}</div>
+                  <div class="u-text-sm-sub">{{ sgArcs.current_arc.goal }}</div>
                   <div style="font-size:11px;color:var(--text3);margin-top:4px">情绪曲线: {{ sgArcs.current_arc.emotional_arc }}</div>
                   <div v-if="sgArcs.current_arc.characters?.length" class="text-xs color-text2 mt-4">参与角色: {{ sgArcs.current_arc.characters.join('、') }}</div>
                 </div>
               </div>
 
               <div class="sg-grid-2" style="margin-top:12px;gap:12px">
-                <div class="card" @click="sgSubTab='threads'" style="cursor:pointer">
+                <div class="card u-pointer" @click="sgSubTab='threads'">
                   <div class="card-title" style="font-size:14px;margin:0 0 8px">📊 剧情线 · 最新进展</div>
                   <div v-if="!sgThreads.length" class="text-xs color-text3">暂无数据</div>
                   <div v-for="t in sgThreads.slice(0,3)" :key="t.id" class="sg-thread-item" :style="{borderLeftColor: statusColor(t.status)}">
@@ -771,11 +771,11 @@
                     <div v-if="t.key_nodes?.length" class="text-xs color-text3 mt-2">{{ t.key_nodes.slice(-1)[0]?.event?.substring(0,30) }}</div>
                   </div>
                 </div>
-                <div class="card" @click="sgSubTab='foreshadows'" style="cursor:pointer">
+                <div class="card u-pointer" @click="sgSubTab='foreshadows'">
                   <div class="card-title" style="font-size:14px;margin:0 0 8px">📌 伏笔 · 最近埋设</div>
                   <div v-if="!sgForeshadows.length" class="text-xs color-text3">暂无伏笔</div>
                   <div v-for="f in sgForeshadows.slice(0,3)" :key="f.id" class="sg-fs-item" :style="{'--fs-color': fsStatusColor(f)}">
-                    <span style="font-size:12px">{{ f.description?.substring(0,35) }}</span>
+                    <span class="u-text-sm">{{ f.description?.substring(0,35) }}</span>
                     <span class="sg-fs-badge" :style="{background:fsStatusBg(f),color:fsStatusColor(f)}">{{ fsStatusLabel(f) }}</span>
                   </div>
                 </div>
@@ -790,7 +790,7 @@
                 <button class="sg-filter-btn" :class="{active:sgThreadFilter==='dormant'}" @click="sgThreadFilter='dormant'">休眠</button>
                 <button class="btn btn-ghost btn-xs" @click="createThread" style="margin-left:auto;font-size:11px">+ 新增</button>
               </div>
-              <div v-if="!filteredThreads.length" class="text-xs color-text3" style="padding:20px;text-align:center">无匹配剧情线</div>
+              <div v-if="!filteredThreads.length" class="text-xs color-text3 u-center-pad">无匹配剧情线</div>
               <div v-for="t in filteredThreads" :key="t.id" class="sg-thread-item sg-expandable"
                    :class="{expanded:sgExpandedThread===t.id || editState.type==='thread'&&editState.id===t.id}"
                    :style="{borderLeftColor: statusColor(t.status)}">
@@ -808,12 +808,12 @@
                   </div>
 
                   <div class="flex gap-4 mt-6 flex-wrap">
-                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'heat_up')" :disabled="(t.current_tension||0)>=10" title="升温" style="font-size:10px">🔥 升温</button>
-                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'pause')" v-if="t.status!=='dormant'" title="暂停" style="font-size:10px">⏸️ 暂停</button>
-                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'resume')" v-if="t.status==='dormant'" title="恢复" style="font-size:10px">▶️ 恢复</button>
-                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'resolve')" v-if="t.status!=='resolved'" title="完结" style="font-size:10px">✅ 完结</button>
-                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'raise_priority')" :disabled="(t.priority||0)>=5" title="提优" style="font-size:10px">⬆️</button>
-                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'lower_priority')" :disabled="(t.priority||0)<=1" title="降优" style="font-size:10px">⬇️</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'heat_up')" :disabled="(t.current_tension||0)>=10" title="升温" class="u-text-xs">🔥 升温</button>
+                    <button class="btn btn-ghost btn-xs u-text-xs" @click.stop="quickAction('thread',t.id,'pause')" v-if="t.status!=='dormant'" title="暂停">⏸️ 暂停</button>
+                    <button class="btn btn-ghost btn-xs u-text-xs" @click.stop="quickAction('thread',t.id,'resume')" v-if="t.status==='dormant'" title="恢复">▶️ 恢复</button>
+                    <button class="btn btn-ghost btn-xs u-text-xs" @click.stop="quickAction('thread',t.id,'resolve')" v-if="t.status!=='resolved'" title="完结">✅ 完结</button>
+                    <button class="btn btn-ghost btn-xs" @click.stop="quickAction('thread',t.id,'raise_priority')" :disabled="(t.priority||0)>=5" title="提优" class="u-text-xs">⬆️</button>
+                    <button class="btn btn-ghost btn-xs u-text-xs" @click.stop="quickAction('thread',t.id,'lower_priority')" :disabled="(t.priority||0)<=1" title="降优">⬇️</button>
                     <button class="btn btn-ghost btn-xs" @click.stop="startEdit('thread',t.id)" style="font-size:10px;margin-left:auto" title="详细编辑">✏️ 编辑</button>
                   </div>
 
@@ -871,7 +871,7 @@
                     <div class="flex gap-6 mt-8 justify-end">
                       <button class="btn btn-ghost btn-xs" @click="cancelEdit">取消</button>
                       <button class="btn btn-primary btn-xs" @click="saveEdit">💾 保存</button>
-                      <button class="btn btn-ghost btn-xs" @click="deleteThread(t.id)" style="color:var(--red)">🗑️ 删除</button>
+                      <button class="btn btn-ghost btn-xs u-text-danger" @click="deleteThread(t.id)">🗑️ 删除</button>
                     </div>
                   </div>
                 </template>
@@ -902,7 +902,7 @@
                 </div>
               </div>
 
-              <div v-if="!filteredForeshadows.length" class="text-xs color-text3" style="padding:20px;text-align:center">无匹配伏笔</div>
+              <div v-if="!filteredForeshadows.length" class="text-xs color-text3 u-center-pad">无匹配伏笔</div>
               <div v-for="f in filteredForeshadows" :key="f.id" class="sg-fs-item sg-expandable"
                    :class="{expanded:sgExpandedForeshadow===f.id}"
                    :style="{'--fs-color': fsStatusColor(f)}"
@@ -920,8 +920,8 @@
                 </div>
 
                 <div class="flex gap-4 mt-6 flex-wrap" v-if="f.status!=='resolved'">
-                  <button class="btn btn-ghost btn-xs" @click.stop="quickAction('foreshadow',f.id,'resolve')" title="现在回收" style="font-size:10px">✅ 回收</button>
-                  <button class="btn btn-ghost btn-xs" @click.stop="quickAction('foreshadow',f.id,'delay',{offset:5})" title="推迟5章" style="font-size:10px">⏪ 推迟5章</button>
+                  <button class="btn btn-ghost btn-xs u-text-xs" @click.stop="quickAction('foreshadow',f.id,'resolve')" title="现在回收">✅ 回收</button>
+                  <button class="btn btn-ghost btn-xs u-text-xs" @click.stop="quickAction('foreshadow',f.id,'delay',{offset:5})" title="推迟5章">⏪ 推迟5章</button>
                   <button class="btn btn-ghost btn-xs" @click.stop="startEdit('foreshadow',f.id)" style="font-size:10px;margin-left:auto" title="编辑">✏️</button>
                 </div>
 
@@ -935,7 +935,7 @@
             </div>
 
             <div v-if="sgSubTab==='characters'">
-              <div v-if="!sgCharSnapshots || !Object.keys(sgCharSnapshots).length" class="text-xs color-text3" style="padding:20px;text-align:center">暂无角色数据</div>
+              <div v-if="!sgCharSnapshots || !Object.keys(sgCharSnapshots).length" class="text-xs color-text3 u-center-pad">暂无角色数据</div>
               <div class="sg-char-grid">
                 <div v-for="(snap,name) in sgCharSnapshots" :key="name" class="sg-char-card sg-expandable"
                      :class="{expanded:sgExpandedChar===name}"
@@ -956,7 +956,7 @@
                   <div v-if="sgExpandedChar===name">
                     <div v-if="snap.active_goals?.length" class="text-xs color-text2 mt-6">🎯 目标: {{ snap.active_goals.join('、') }}</div>
                     <div v-if="snap.known_secrets?.length" class="text-xs mt-4" style="color:var(--purple)">🔮 已知秘密: {{ snap.known_secrets.join('、') }}</div>
-                    <div v-if="snap.status_effects?.length" class="text-xs mt-4" style="color:var(--red)">⚠ 状态异常: {{ snap.status_effects.join('、') }}</div>
+                    <div v-if="snap.status_effects?.length" class="text-xs mt-4 u-text-danger">⚠ 状态异常: {{ snap.status_effects.join('、') }}</div>
                     <div v-if="snap.relationship_changes?.length" class="text-xs color-text2 mt-6">
                       <div class="font-semibold mb-2">关系变化:</div>
                       <div v-for="(rc,i) in snap.relationship_changes.slice(-5)" :key="i" class="ml-8" style="line-height:1.8">
@@ -999,7 +999,7 @@
                   </div>
                 </div>
 
-                <div v-if="sgCalibration.recommendations?.length" style="margin-top:10px">
+                <div v-if="sgCalibration.recommendations?.length" class="u-mt-10">
                   <div class="text-xs font-semibold mb-4" style="color:#58a6ff">💡 建议 ({{ sgCalibration.recommendations.length }})</div>
                   <div v-for="(r,i) in sgCalibration.recommendations" :key="'rec'+i" class="text-xs color-text2" style="padding:2px 0;line-height:1.6">
                     <span style="color:var(--accent);font-weight:600">{{ i+1 }}.</span> {{ r }}
@@ -1010,20 +1010,20 @@
                   ✅ 剧情状态良好，无明显问题
                 </div>
               </div>
-              <div v-else class="text-center" style="padding:40px;color:var(--text3)">
-                <div style="font-size:36px;margin-bottom:8px">🔍</div>
+              <div v-else class="text-center u-empty-pad">
+                <div class="u-empty-icon">🔍</div>
                 <p class="text-sm">尚未执行校准，每10章自动触发</p>
               </div>
             </div>
 
             <div v-if="sgSubTab==='relations'">
-              <div v-if="!relationGraph.nodes.length" class="text-center" style="padding:40px;color:var(--text3)">
-                <div style="font-size:36px;margin-bottom:8px">🕸️</div>
+              <div v-if="!relationGraph.nodes.length" class="text-center u-empty-pad">
+                <div class="u-empty-icon">🕸️</div>
                 <p class="text-sm">暂无角色关系数据，请先生成章节</p>
               </div>
               <div v-else class="sg-relation-container">
                 <div class="sg-legend">
-                  <span class="text-xs color-text3" style="font-weight:600">图例</span>
+                  <span class="text-xs color-text3 u-fw-600">图例</span>
                   <span class="sg-legend-item"><span class="sg-legend-dot" style="background:var(--accent);box-shadow:0 0 6px var(--accent)"></span> 关系变化</span>
                   <span class="sg-legend-item"><span style="display:inline-block;width:12px;border-top:1.5px dashed var(--accent);opacity:.6;vertical-align:middle;margin-right:4px"></span> 剧情共线</span>
                   <span class="text-xs color-text3" style="margin-left:auto">拖拽节点 · 滚轮缩放</span>
@@ -1136,13 +1136,13 @@
             </div>
 
             <div v-if="sgSubTab==='timeline'">
-              <div v-if="!plotTimeline.lanes?.length" class="text-center" style="padding:40px;color:var(--text3)">
-                <div style="font-size:36px;margin-bottom:8px">📈</div>
+              <div v-if="!plotTimeline.lanes?.length" class="text-center u-empty-pad">
+                <div class="u-empty-icon">📈</div>
                 <p class="text-sm">暂无剧情线数据，请先生成章节</p>
               </div>
               <div v-else class="sg-timeline-container">
                 <div class="sg-legend">
-                  <span class="text-xs color-text3" style="font-weight:600">图例</span>
+                  <span class="text-xs color-text3 u-fw-600">图例</span>
                   <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#f85149;box-shadow:0 0 6px #f85149"></span> 主线</span>
                   <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#f59e0b;box-shadow:0 0 6px #f59e0b"></span> 支线</span>
                   <span class="sg-legend-item"><span class="sg-legend-dot" style="background:#8b5cf6;box-shadow:0 0 6px #8b5cf6"></span> 角色弧</span>
@@ -1211,8 +1211,8 @@
             </div>
 
             <div v-if="sgSubTab==='canvas'">
-              <div v-if="!plotTimeline.lanes?.length" class="text-center" style="padding:40px;color:var(--text3)">
-                <div style="font-size:36px;margin-bottom:8px">🎨</div>
+              <div v-if="!plotTimeline.lanes?.length" class="text-center u-empty-pad">
+                <div class="u-empty-icon">🎨</div>
                 <p class="text-sm">暂无剧情线数据，请先生成章节</p>
               </div>
               <div v-else class="sg-canvas-wrap" ref="canvasWrap"
@@ -1295,7 +1295,7 @@
                 </div>
             </div>
 
-            <div v-if="!sgCalibration && !sgThreads.length && sgSubTab==='overview'" class="text-center" style="padding:40px;color:var(--text3)">
+            <div v-if="!sgCalibration && !sgThreads.length && sgSubTab==='overview'" class="text-center u-empty-pad">
               <div style="font-size:36px;margin-bottom:12px">🔍</div>
               <p>尚未生成章节，剧情图谱数据将在写作过程中自动构建</p>
             </div>
@@ -1331,10 +1331,10 @@
         <div class="export-actions" v-if="selectedCount>0">
           <button class="btn btn-secondary flex-1" @click="doBatchExport()" :disabled="loading.export"><span v-if="loading.export==='batch'"><span class="spinner"></span></span>批量下载 ({{ selectedCount }}本)</button>
         </div>
-        <div v-if="loading.export==='batch'" style="margin-top:8px"><div class="progress-bar"><div class="progress-fill" :style="{width:exportProgress+'%'}"></div></div></div>
+        <div v-if="loading.export==='batch'" class="u-mt-8"><div class="progress-bar"><div class="progress-fill" :style="{width:exportProgress+'%'}"></div></div></div>
         <button class="btn btn-ghost btn-sm mt-8" @click="selectAll" v-if="novels.length">{{ allSelected ? '取消全选' : '全选' }}</button>
       </div>
-      <div v-if="error" class="error-msg" style="cursor:pointer" @click="error=''">{{ error }} <span style="float:right;opacity:.5">✕</span></div>
+      <div v-if="error" class="error-msg u-pointer" @click="error=''">{{ error }} <span class="u-float-dim">✕</span></div>
     </section>
 
     <!-- ══════════ 设置视图 ══════════ -->
@@ -1429,7 +1429,7 @@
             <button class="btn btn-primary btn-sm" type="button" @click="saveLLMConfig(true)" :disabled="loading.health || llmSaving">{{ llmTesting ? '测试中…' : '保存并测试' }}</button>
           </div>
           <div class="llm-config-hint" v-if="llmTested">✅ 已连通 {{ llmProviderMeta?.name || llmProvider }} / {{ llmEffectiveModel }}</div>
-          <div class="llm-config-hint" style="color:var(--text3)">同一服务留空 Key 会保留已保存的密钥。配置用于小说创作、小说世界与角色扮演，保存在本机，重启后仍然有效。</div>
+          <div class="llm-config-hint u-text-muted">同一服务留空 Key 会保留已保存的密钥。配置用于小说创作、小说世界与角色扮演，保存在本机，重启后仍然有效。</div>
         </div>
       </div>
 
@@ -1466,7 +1466,7 @@
         </div>
         <button class="btn btn-primary btn-sm" @click="saveBible" :disabled="bibleLoading">{{ bibleLoading ? '保存中…' : '💾 保存' }}</button>
       </div>
-      <div class="seg" style="margin-bottom:16px">
+      <div class="seg u-mb-16">
         <button :class="{on:bibleTab==='characters'}" @click="switchBibleTab('characters')">人物</button>
         <button :class="{on:bibleTab==='locations'}" @click="switchBibleTab('locations')">地点</button>
         <button :class="{on:bibleTab==='terms'}" @click="switchBibleTab('terms')">专有名词</button>
@@ -1480,15 +1480,15 @@
             <div class="bible-card-title">{{ name }}</div>
             <div class="flex gap-6">
               <button class="btn btn-xs btn-ghost" @click="bibleStartEdit('character', name, {...c, name})">✏️</button>
-              <button class="btn btn-xs btn-ghost" style="color:var(--red)" @click="bibleDeleteEntry('character', name)">✕</button>
+              <button class="btn btn-xs btn-ghost u-text-danger" @click="bibleDeleteEntry('character', name)">✕</button>
             </div>
           </div>
           <div class="text-xs color-text3">{{ c.identity || '未设定身份' }}</div>
           <div v-if="c.note" class="text-xs color-text3" style="margin-top:4px">{{ c.note }}</div>
           <div style="font-size:12px;color:var(--text2);margin-top:6px;white-space:pre-wrap">{{ c.personality?.surface || c.description || '' }}</div>
         </div>
-        <button class="btn btn-secondary btn-sm" style="grid-column:1/-1" @click="bibleStartNew">＋ 新增人物</button>
-        <div v-if="!Object.keys(bibleData.characters||{}).length" class="empty-state glass" style="grid-column:1/-1">
+        <button class="btn btn-secondary btn-sm u-span-all" @click="bibleStartNew">＋ 新增人物</button>
+        <div v-if="!Object.keys(bibleData.characters||{}).length" class="empty-state glass u-span-all">
           <p>暂无人物档案。可先关闭本页，从写作页「📖」或书卡进入后由系统自动合并。</p>
         </div>
       </div>
@@ -1499,35 +1499,35 @@
             <div class="bible-card-title">{{ name }}</div>
             <div class="flex gap-6">
               <button class="btn btn-xs btn-ghost" @click="bibleStartEdit('location', name, {...loc, name})">✏️</button>
-              <button class="btn btn-xs btn-ghost" style="color:var(--red)" @click="bibleDeleteEntry('location', name)">✕</button>
+              <button class="btn btn-xs btn-ghost u-text-danger" @click="bibleDeleteEntry('location', name)">✕</button>
             </div>
           </div>
           <div class="text-xs color-text3">{{ loc.description || '暂无描述' }}</div>
         </div>
-        <button class="btn btn-secondary btn-sm" style="grid-column:1/-1" @click="bibleStartNew">＋ 新增地点</button>
-        <div v-if="!Object.keys(bibleData.locations||{}).length" class="empty-state glass" style="grid-column:1/-1">
+        <button class="btn btn-secondary btn-sm u-span-all" @click="bibleStartNew">＋ 新增地点</button>
+        <div v-if="!Object.keys(bibleData.locations||{}).length" class="empty-state glass u-span-all">
           <p>暂无地点档案。可切换到「专有名词」提取正文中的地名。</p>
         </div>
       </div>
       <!-- 专有名词 -->
       <div v-if="bibleTab==='terms'" class="bible-grid">
-        <div class="glass panel" style="grid-column:1/-1">
+        <div class="glass panel u-span-all">
           <div class="panel-head">
-            <div class="panel-title" style="margin:0">📋 专有名词</div>
+            <div class="panel-title u-m-0">📋 专有名词</div>
             <button class="btn btn-secondary btn-xs" @click="extractTerms" :disabled="bibleLoading">🧬 从正文提取</button>
           </div>
           <div v-if="termCandidates.length" class="term-candidates">
-            <span v-for="c in termCandidates" :key="c.name" class="tag" style="cursor:pointer" :style="c.exists?{opacity:.4}:{}" @click="addTermFromCandidate(c)">
+            <span v-for="c in termCandidates" :key="c.name" class="tag u-pointer" :style="c.exists?{opacity:.4}:{}" @click="addTermFromCandidate(c)">
               {{ c.name }}{{ c.exists ? '✓已收录' : '+收录' }}<span style="opacity:.4;margin-left:3px">{{ c.count }}</span>
             </span>
           </div>
-          <div class="term-list" style="margin-top:10px">
+          <div class="term-list u-mt-10">
             <div v-for="(t, name) in bibleData.terms" :key="name" class="term-item">
-              <span style="font-weight:600">{{ name }}</span>
+              <span class="u-fw-600">{{ name }}</span>
               <span class="text-xs color-text3"> · {{ t.category || '术语' }}</span>
-              <span style="flex:1"></span>
+              <span class="u-flex-1"></span>
               <button class="btn btn-xs btn-ghost" @click="bibleStartEdit('term', name, {...t, name})">✏️</button>
-              <button class="btn btn-xs btn-ghost" style="color:var(--red)" @click="bibleDeleteEntry('term', name)">✕</button>
+              <button class="btn btn-xs btn-ghost u-text-danger" @click="bibleDeleteEntry('term', name)">✕</button>
             </div>
           </div>
         </div>
@@ -1535,63 +1535,63 @@
       <!-- 关系图 -->
       <div v-if="bibleTab==='relations'" class="glass panel">
         <div class="panel-head">
-          <div class="panel-title" style="margin:0">💞 人物关系</div>
+          <div class="panel-title u-m-0">💞 人物关系</div>
           <button class="btn btn-secondary btn-xs" @click="bibleStartRelation">＋ 添加关系</button>
         </div>
         <div class="relation-list" v-if="bibleData.relations.length">
           <div v-for="(r, idx) in bibleData.relations" :key="idx" class="relation-item">
-            <span style="font-weight:600">{{ r.from }}</span>
+            <span class="u-fw-600">{{ r.from }}</span>
             <span class="text-xs" :style="{color: r.type==='敌对'?'var(--red)':r.type==='盟友'?'var(--green)':'var(--accent)'}">→ {{ r.type }} →</span>
-            <span style="font-weight:600">{{ r.to }}</span>
+            <span class="u-fw-600">{{ r.to }}</span>
             <span v-if="r.note" class="text-xs color-text3"> · {{ r.note }}</span>
-            <span style="flex:1"></span>
+            <span class="u-flex-1"></span>
             <button class="btn btn-xs btn-ghost" @click="bibleEditRelation(idx)">✏️</button>
-            <button class="btn btn-xs btn-ghost" style="color:var(--red)" @click="bibleDeleteRelation(idx)">✕</button>
+            <button class="btn btn-xs btn-ghost u-text-danger" @click="bibleDeleteRelation(idx)">✕</button>
           </div>
         </div>
         <canvas id="relationCanvas" width="800" height="400" style="width:100%;height:auto;max-width:800px;background:rgba(255,255,255,.03);border-radius:12px;margin-top:12px"></canvas>
-        <div class="text-xs color-text3" style="margin-top:8px">关系图：绿=盟友 红=敌对 粉=暧昧 蓝=导师。</div>
+        <div class="text-xs color-text3 u-mt-8">关系图：绿=盟友 红=敌对 粉=暧昧 蓝=导师。</div>
       </div>
 
       <!-- 圣经编辑表单 -->
       <div v-if="bibleEdit.active" class="toast-overlay" @click.self="bibleCancelEdit">
         <div class="search-panel" style="max-width:440px">
-          <div class="panel-title" style="margin:0 0 12px">{{ bibleEdit.kind==='relation' ? '💞 关系' : (bibleEdit.name ? '✏️ 编辑' : '＋ 新增') }}</div>
+          <div class="panel-title u-mb-12">{{ bibleEdit.kind==='relation' ? '💞 关系' : (bibleEdit.name ? '✏️ 编辑' : '＋ 新增') }}</div>
           <template v-if="bibleEdit.kind!=='relation'">
             <label class="text-xs">名称</label>
-            <input v-model="bibleEdit.form.name" placeholder="名称" style="margin-bottom:8px">
+            <input v-model="bibleEdit.form.name" placeholder="名称" class="u-mb-8">
           </template>
           <template v-if="bibleEdit.kind==='character'">
             <label class="text-xs">身份</label>
-            <input v-model="bibleEdit.form.identity" placeholder="身份（如：剑修 / 设计师）" style="margin-bottom:8px">
+            <input v-model="bibleEdit.form.identity" placeholder="身份（如：剑修 / 设计师）" class="u-mb-8">
             <label class="text-xs">外貌</label>
-            <textarea v-model="bibleEdit.form.appearance" rows="2" placeholder="外貌描述" style="margin-bottom:8px"></textarea>
+            <textarea v-model="bibleEdit.form.appearance" rows="2" placeholder="外貌描述" class="u-mb-8"></textarea>
             <label class="text-xs">备注</label>
-            <textarea v-model="bibleEdit.form.note" rows="2" placeholder="备注" style="margin-bottom:8px"></textarea>
+            <textarea v-model="bibleEdit.form.note" rows="2" placeholder="备注" class="u-mb-8"></textarea>
           </template>
           <template v-else-if="bibleEdit.kind==='location'">
             <label class="text-xs">描述</label>
-            <textarea v-model="bibleEdit.form.description" rows="3" placeholder="地点描述" style="margin-bottom:8px"></textarea>
+            <textarea v-model="bibleEdit.form.description" rows="3" placeholder="地点描述" class="u-mb-8"></textarea>
             <label class="text-xs">备注</label>
-            <textarea v-model="bibleEdit.form.note" rows="2" placeholder="备注" style="margin-bottom:8px"></textarea>
+            <textarea v-model="bibleEdit.form.note" rows="2" placeholder="备注" class="u-mb-8"></textarea>
           </template>
           <template v-else-if="bibleEdit.kind==='term'">
             <label class="text-xs">分类</label>
-            <input v-model="bibleEdit.form.category" placeholder="功法/组织/物品/能力" style="margin-bottom:8px">
+            <input v-model="bibleEdit.form.category" placeholder="功法/组织/物品/能力" class="u-mb-8">
             <label class="text-xs">描述</label>
-            <textarea v-model="bibleEdit.form.description" rows="2" placeholder="描述" style="margin-bottom:8px"></textarea>
+            <textarea v-model="bibleEdit.form.description" rows="2" placeholder="描述" class="u-mb-8"></textarea>
           </template>
           <template v-else>
             <label class="text-xs">从</label>
-            <input v-model="bibleEdit.form.from" placeholder="人物A" style="margin-bottom:8px">
+            <input v-model="bibleEdit.form.from" placeholder="人物A" class="u-mb-8">
             <label class="text-xs">关系类型</label>
-            <select v-model="bibleEdit.form.type" style="margin-bottom:8px">
+            <select v-model="bibleEdit.form.type" class="u-mb-8">
               <option>盟友</option><option>敌对</option><option>暧昧</option><option>导师</option><option>其他</option>
             </select>
             <label class="text-xs">到</label>
-            <input v-model="bibleEdit.form.to" placeholder="人物B" style="margin-bottom:8px">
+            <input v-model="bibleEdit.form.to" placeholder="人物B" class="u-mb-8">
             <label class="text-xs">备注</label>
-            <input v-model="bibleEdit.form.note" placeholder="关系备注" style="margin-bottom:8px">
+            <input v-model="bibleEdit.form.note" placeholder="关系备注" class="u-mb-8">
           </template>
           <div class="flex gap-6" style="justify-content:flex-end">
             <button class="btn btn-ghost btn-sm" @click="bibleCancelEdit">取消</button>
@@ -1621,7 +1621,7 @@
       </div>
       <!-- 每日字数趋势（SVG 折线） -->
       <div v-if="statsData && statsData.daily && statsData.daily.length > 1" class="glass panel">
-        <div class="panel-title" style="margin:0 0 12px">📅 每日字数趋势</div>
+        <div class="panel-title u-mb-12">📅 每日字数趋势</div>
         <svg :viewBox="'0 0 '+trendW+' '+trendH" style="width:100%;height:auto;max-height:160px" :ref="'trendSvg'">
           <polyline :points="trendPoints" fill="none" stroke="url(#trendGrad)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
           <defs>
@@ -1634,7 +1634,7 @@
       </div>
       <!-- 每章字数分布（CSS 柱状） -->
       <div v-if="statsData && statsData.per_chapter.length" class="glass panel">
-        <div class="panel-title" style="margin:0 0 12px">📈 每章字数</div>
+        <div class="panel-title u-mb-12">📈 每章字数</div>
         <div class="stats-bars">
           <div v-for="c in statsData.per_chapter.slice(-30)" :key="c.num" class="stat-bar-col" :title="'第'+c.num+'章 · '+c.chars+'字'">
             <div class="stat-bar" :style="{height: Math.max(3, c.chars/(statsData.total_chars/30+1)*60)+'px'}"></div>
@@ -1644,7 +1644,7 @@
       </div>
       <!-- 目标 -->
       <div v-if="statsData" class="glass panel">
-        <div class="panel-title" style="margin:0 0 12px">🎯 写作目标</div>
+        <div class="panel-title u-mb-12">🎯 写作目标</div>
         <div v-if="statsData.goal && statsData.goal.target_chars > 0" class="goal-progress">
           <div class="goal-progress-track">
             <div class="goal-progress-fill" :style="{width: Math.min(100, statsData.total_chars/statsData.goal.target_chars*100)+'%'}"></div>
@@ -1677,7 +1677,7 @@
       </div>
       <div v-if="ideasTab==='ideas'">
         <div v-if="ideasTags.length" class="flex gap-6 flex-wrap" style="margin-bottom:14px">
-          <span v-for="t in ideasTags" :key="t" class="tag" @click="filterIdeasByTag(t)" style="cursor:pointer">{{ t }}</span>
+          <span v-for="t in ideasTags" :key="t" class="tag u-pointer" @click="filterIdeasByTag(t)">{{ t }}</span>
         </div>
         <div class="idea-grid">
           <div v-for="i in ideasData" :key="i.id" class="idea-card glass">
@@ -1685,10 +1685,10 @@
             <div class="idea-tags"><span v-for="t in (i.tags||[])" :key="t" class="tag">{{ t }}</span></div>
             <div class="flex gap-6" style="justify-content:flex-end;margin-top:10px">
               <button class="btn btn-secondary btn-xs" @click="ideaToNovel(i.text)">用它创作</button>
-              <button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="deleteIdea(i.id)">✕</button>
+              <button class="btn btn-ghost btn-xs u-text-danger" @click="deleteIdea(i.id)">✕</button>
             </div>
           </div>
-          <div v-if="!ideasData.length" class="empty-state glass" style="grid-column:1/-1">
+          <div v-if="!ideasData.length" class="empty-state glass u-span-all">
             <p>还没有灵感。点击「＋ 新灵感」记录第一个点子。</p>
           </div>
         </div>
@@ -1696,10 +1696,10 @@
       <div v-else>
         <div class="idea-grid">
           <div v-for="m in materialsData" :key="m.id" class="idea-card glass">
-            <div class="idea-text" style="font-weight:700">{{ m.title }}<span class="text-xs color-text3" style="margin-left:8px">{{ m.category }}</span></div>
+            <div class="idea-text" style="font-weight:700">{{ m.title }}<span class="text-xs color-text3 u-ml-8">{{ m.category }}</span></div>
             <div class="idea-text" style="white-space:pre-wrap">{{ m.content }}</div>
           </div>
-          <div v-if="!materialsData.length" class="empty-state glass" style="grid-column:1/-1">
+          <div v-if="!materialsData.length" class="empty-state glass u-span-all">
             <p>素材库为空。添加桥段/对白/场景氛围素材。</p>
           </div>
         </div>

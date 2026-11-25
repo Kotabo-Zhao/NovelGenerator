@@ -21,6 +21,7 @@ from ..beat_decomposer import BeatDecomposer, Beat
 from ..pacing_checker import PacingChecker
 from ..evaluation_system import evaluate_chapter
 from ..chapter_summarizer import check_and_compress
+from .post_pipeline import run_post_chapter_pipeline
 from ..usage_context import report_response_usage
 
 
@@ -1340,50 +1341,11 @@ class GenerationMixin:
                 }
                 return
 
-            # ── v4.5.1: 原子化路径对齐 S3P 五合一后处理 + 零成本文风体检 ──
-            try:
-                from ..unified_post_processor import UnifiedPostProcessor
-                yield {"type": "status", "message": "🧠 正在执行五合一状态归档与逻辑体检…"}
-                _upp = UnifiedPostProcessor(self._resilient, self.model)
-                _upp_res = await asyncio.to_thread(
-                    _upp.process_and_persist,
-                    self.memory,
-                    novel_id,
-                    chapter_num,
-                    full_text,
-                    chapter_outline,
-                )
-                violations = _upp_res.get("consistency_violations") or []
-                p0_count = sum(1 for v in violations if isinstance(v, dict) and v.get("severity") == "P0")
-                score = max(0, 100 - p0_count * 25 - (len(violations) - p0_count) * 8)
-                if violations:
-                    yield {"type": "consistency_check", "violations": violations, "score": score}
-                    _issues = [v.get("description", "") for v in violations[:5] if isinstance(v, dict) and v.get("description")]
-                    if _issues:
-                        state = self.memory.get_novel_state(novel_id)
-                        state["consistency_issues"] = state.get("consistency_issues", {})
-                        state["consistency_issues"][str(chapter_num)] = _issues
-                        self.memory.save_novel_state(novel_id, state)
-                        yield {"type": "consistency_warning", "chapter": chapter_num, "issues": _issues}
-            except Exception as _upp_e:
-                log.warning(f"UnifiedPostProcessor skipped for atomic Ch{chapter_num}: {_upp_e}")
-
-            try:
-                from ..ai_detector import AIDetector
-                _craft = AIDetector.analyze_prose_craft(full_text)
-                yield {"type": "craft_report", "chapter": chapter_num, "report": _craft}
-            except Exception as _craft_e:
-                log.warning(f"Zero-cost craft report skipped (atomic): {_craft_e}")
-
-            # 渐进式摘要压缩（每8章间隔，与标准路径一致）
-            try:
-                compress_result = check_and_compress(
-                    self.memory, novel_id, chapter_num, self.chapter_summarizer
-                )
-                if compress_result:
-                    yield {"type": "compression", "chapters_summarized": len(compress_result)}
-            except Exception as e:
-                log.warning(f"Auto-compression skipped (atomic): {e}")
+            # ── v4.6.0: 统一章节后处理管线（五合一归档 + 零成本文风体检 + 定期压缩）──
+            async for _post_ev in run_post_chapter_pipeline(
+                self, novel_id, chapter_num, full_text, chapter_outline, mode_label="atomic"
+            ):
+                yield _post_ev
 
             yield {"type": "done", "content": formatted, "chapter_num": chapter_num,
                    "atomic": True, "beat_count": len(beats)}
@@ -2256,58 +2218,11 @@ class GenerationMixin:
             except Exception as _se:
                 log.warning(f"Setting annotation step skipped: {_se}")
 
-            # ── S3P v4.4: 五合一单次结构化后处理（桥接 + 摘要 + 角色状态 + 伏笔 + 一致性审计）──
-            _post_consistency_validation = {"score": 100, "violations": [], "warnings": []}
-            _post_consistency_auto_fixed = False
-            try:
-                from ..unified_post_processor import UnifiedPostProcessor
-                yield {"type": "status", "message": "🧠 正在执行五合一状态归档与逻辑体检…"}
-                _upp = UnifiedPostProcessor(self._resilient, self.model)
-                _upp_res = await asyncio.to_thread(
-                    _upp.process_and_persist,
-                    self.memory,
-                    novel_id,
-                    chapter_num,
-                    full_text,
-                    chapter_outline,
-                )
-                violations = _upp_res.get("consistency_violations") or []
-                p0_count = sum(1 for v in violations if isinstance(v, dict) and v.get("severity") == "P0")
-                score = max(0, 100 - p0_count * 25 - (len(violations) - p0_count) * 8)
-                _post_consistency_validation = {
-                    "score": score,
-                    "violations": violations,
-                    "warnings": [v.get("description", "") for v in violations if isinstance(v, dict)],
-                }
-                if violations:
-                    yield {"type": "consistency_check", "violations": violations, "score": score}
-                    _issues = [v.get("description", "") for v in violations[:5] if isinstance(v, dict) and v.get("description")]
-                    if _issues:
-                        state = self.memory.get_novel_state(novel_id)
-                        state["consistency_issues"] = state.get("consistency_issues", {})
-                        state["consistency_issues"][str(chapter_num)] = _issues
-                        self.memory.save_novel_state(novel_id, state)
-                        yield {"type": "consistency_warning", "chapter": chapter_num, "issues": _issues}
-            except Exception as _upp_e:
-                log.warning(f"UnifiedPostProcessor skipped for Ch{chapter_num}: {_upp_e}")
-
-            # ── S3P v4.4: 零 LLM 消耗毫秒级文风体检（直推前端面板，联动一键改稿/局部精修）──
-            try:
-                from ..ai_detector import AIDetector
-                _craft = AIDetector.analyze_prose_craft(full_text)
-                yield {"type": "craft_report", "chapter": chapter_num, "report": _craft}
-            except Exception as _craft_e:
-                log.warning(f"Zero-cost craft report skipped: {_craft_e}")
-
-            # ── 渐进式摘要压缩（每10章）──
-            try:
-                compress_result = check_and_compress(
-                    self.memory, novel_id, chapter_num, self.chapter_summarizer
-                )
-                if compress_result:
-                    yield {"type": "compression", "chapters_summarized": len(compress_result)}
-            except Exception as e:
-                log.warning(f"Auto-compression skipped: {e}")
+            # ── v4.6.0: 统一章节后处理管线（五合一归档 + 零成本文风体检 + 定期压缩）──
+            async for _post_ev in run_post_chapter_pipeline(
+                self, novel_id, chapter_num, full_text, chapter_outline, mode_label="standard"
+            ):
+                yield _post_ev
 
             # v4.5.0: 标准/批量路径同样执行统一硬门禁与原子落盘（此前仅写 .draft.md，导致批量生成后正文无法加载）
             _completion = self._finalize_chapter_candidate(

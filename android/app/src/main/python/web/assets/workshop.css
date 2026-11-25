@@ -229,3 +229,30 @@ body.zen-mode .chapter-content {
 }
 
 [data-theme="dark"] .bottom-nav { background:rgba(22,29,40,0.88); border-top-color:var(--border); }
+
+/* v4.6.0 Semantic layout & typography utilities (extracted from index.html inline styles) */
+.u-mb-8 { margin-bottom: 8px; }
+.u-mb-12 { margin: 0 0 12px; }
+.u-mb-16 { margin-bottom: 16px; }
+.u-mt-8 { margin-top: 8px; }
+.u-mt-10 { margin-top: 10px; }
+.u-ml-8 { margin-left: 8px; }
+.u-m-0 { margin: 0; }
+.u-pointer { cursor: pointer; }
+.u-flex-1 { flex: 1; }
+.u-span-all { grid-column: 1 / -1; }
+.u-text-danger { color: var(--red); }
+.u-text-accent { color: var(--accent); }
+.u-text-muted { color: var(--text3); }
+.u-text-sub { font-size: 13px; color: var(--text2); }
+.u-text-sm { font-size: 12px; }
+.u-text-sm-sub { font-size: 12px; color: var(--text2); }
+.u-text-xs { font-size: 10px; }
+.u-fw-600 { font-weight: 600; }
+.u-dim { opacity: .55; }
+.u-float-dim { float: right; opacity: .5; }
+.u-empty-pad { padding: 40px; color: var(--text3); }
+.u-empty-icon { font-size: 36px; margin-bottom: 8px; }
+.u-center-pad { padding: 20px; text-align: center; }
+.u-btn-compact { font-size: 12px; padding: 4px 12px; }
+.u-kpi-accent { font-size: 16px; font-weight: 700; color: var(--accent); }

@@ -1,4 +1,11 @@
 const API = window.location.origin;
+    function apiJson(path, opts) {
+      const url = path.startsWith('http') ? path : (API + path);
+      if (window.NovelUI && typeof window.NovelUI.requestJson === 'function') {
+        return window.NovelUI.requestJson(url, opts || {});
+      }
+      return fetch(url, opts).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)));
+    }
 const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, onErrorCaptured } = Vue;
 
 const app = createApp({
@@ -1034,8 +1041,6 @@ const app = createApp({
       refreshHealth(); loadLLMProviders();
       NovelUI.requestJson('/api/system/connection').then(value => Object.assign(provider, value)).catch(() => {});
       loadStyles(); loadStyleSeeds(); // fire-and-forget
-      // v2.50: 加载小红书模板列表（加载完自动加载预设）
-      fetch('/api/xiaohongshu/templates').then(r=>r.json()).then(d=>{ if(d.ok){ xhsTemplates.value=d.templates; loadXhsPresets(); } }).catch(()=>{});
 
       // v2.11: 兜底 — 无论如何12秒后关闭shelf loading
       setTimeout(() => { if (loading.shelf) { loading.shelf = false; console.warn('Shelf loading: forced close after 12s'); } }, 12000);
