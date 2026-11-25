@@ -1753,6 +1753,33 @@ class GenerationMixin:
             except Exception as _be:
                 log.warning(f"Beat injection skipped (non-fatal): {_be}")
 
+            # v4.8.0: 零介入人味引擎 — 跨章防复读 + 微观导演卡（自动生成感官锚点与潜台词）
+            _recent_cliches = []
+            _cliche_block = ""
+            _director_card_block = ""
+            try:
+                from ..surgical_humanizer import build_rolling_cliche_block, get_rolling_cliches
+                _recent_cliches = get_rolling_cliches(self.memory, novel_id, chapter_num, window=2)
+                _cliche_block = build_rolling_cliche_block(self.memory, novel_id, chapter_num)
+            except Exception as _rce:
+                log.debug("Rolling cliche block skipped: %s", _rce)
+
+            try:
+                from ..scene_director_card import build_director_card
+                yield {"type": "status", "message": "🎬 正在构思场景感官细节与潜台词…"}
+                _director_card_block = await asyncio.to_thread(
+                    build_director_card,
+                    self._resilient,
+                    self.model,
+                    chapter_outline,
+                    context[:600],
+                    genre=genre,
+                    style=style,
+                    recent_cliches=_recent_cliches,
+                )
+            except Exception as _dce:
+                log.warning("SceneDirectorCard skipped (non-fatal): %s", _dce)
+
             from ..context_budget import ContextSection, allocate_context
             context, _context_trimmed = allocate_context(
                 [
@@ -1763,6 +1790,8 @@ class GenerationMixin:
                         required=True,
                     ),
                     ContextSection("用户反馈", feedback or "", priority=95, required=bool(feedback)),
+                    ContextSection("本章表演微观提示", _director_card_block, priority=88),
+                    ContextSection("跨章防复读提醒", _cliche_block, priority=85),
                     ContextSection("写作上下文", context, priority=60),
                 ],
                 max_chars=max(4000, config.MAX_CONTEXT_TOKENS * 4),
@@ -2217,6 +2246,29 @@ class GenerationMixin:
                            "chapter": chapter_num, "annotations": _setting_annos}
             except Exception as _se:
                 log.warning(f"Setting annotation step skipped: {_se}")
+
+            # ── v4.8.0: 零介入段落级微创去 AI 味精修（仅改写高风险 3-4 段，干净正文零消耗跳过）──
+            try:
+                from ..surgical_humanizer import polish_flagged_paragraphs
+                _polished_text, _polish_meta = await asyncio.to_thread(
+                    polish_flagged_paragraphs,
+                    self._resilient,
+                    self.model,
+                    full_text,
+                    max_paragraphs=4,
+                    min_score=2,
+                    recent_cliches=locals().get("_recent_cliches") or [],
+                )
+                if _polish_meta.get("polished", 0) > 0 and _polished_text:
+                    full_text = _polished_text
+                    formatted = f"# 第{chapter_num}章 {chapter_title}\n\n{full_text}"
+                    self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
+                    yield {
+                        "type": "status",
+                        "message": f"✨ 已自动微创润色 {_polish_meta['polished']} 处高 AI 味段落",
+                    }
+            except Exception as _she:
+                log.warning("SurgicalHumanizer skipped (non-fatal): %s", _she)
 
             # ── v4.6.0: 统一章节后处理管线（五合一归档 + 零成本文风体检 + 定期压缩）──
             async for _post_ev in run_post_chapter_pipeline(

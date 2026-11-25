@@ -489,13 +489,28 @@ class Writer:
             {"role": "user", "content": user_prompt},
         ]
 
-        async for chunk in self._resilient.create_stream(
-            messages=messages,
-            temperature=0.85,
-            max_tokens=safe_max_tokens,
-        ):
-            draft += chunk
-            yield chunk  # 流式输出初稿
+        # v4.8.0: 温和去复读采样参数（若非标供应商不支持则自动静默回退）
+        _stream_extra = {"frequency_penalty": 0.22, "presence_penalty": 0.16}
+        try:
+            async for chunk in self._resilient.create_stream(
+                messages=messages,
+                temperature=0.85,
+                max_tokens=safe_max_tokens,
+                **_stream_extra,
+            ):
+                draft += chunk
+                yield chunk  # 流式输出初稿
+        except Exception as _pe:
+            if draft:
+                raise
+            log.info("Sampling penalty fallback without penalty params: %s", _pe)
+            async for chunk in self._resilient.create_stream(
+                messages=messages,
+                temperature=0.85,
+                max_tokens=safe_max_tokens,
+            ):
+                draft += chunk
+                yield chunk  # 流式输出初稿
 
         # 流式调用完成后推断 finish_reason
         if len(draft) < target_words * 0.8:

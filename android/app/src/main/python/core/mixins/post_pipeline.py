@@ -72,6 +72,8 @@ async def run_post_chapter_pipeline(
 
         craft = AIDetector.analyze_prose_craft(full_text)
         yield {"type": "craft_report", "chapter": chapter_num, "report": craft}
+        from ..surgical_humanizer import record_rolling_cliches
+        record_rolling_cliches(engine.memory, novel_id, chapter_num, full_text)
     except Exception as exc:
         log.warning(
             "Zero-cost craft report skipped (%s) Ch%s: %s", mode_label, chapter_num, exc
