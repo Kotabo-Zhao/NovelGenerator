@@ -27,6 +27,55 @@ from .action_engine import _state_snapshot, clean_location
 
 log = logging.getLogger(__name__)
 
+def generate_suggestions(client, model, store, state: dict, chars: list) -> list:
+    """v3.5.40/v2.5.59: 生成 3 个建议回应（真两难）。模块级——场景节点停顿 + 对话后刷新共用。
+
+    上下文增强（v2.5.59）：注入世界状态简报（玩家现状/角色情绪/关系）+ 最近事件
+    + 未兑现约定到期信息——选项贴合最新剧情进度，不再与现状脱节。
+    """
+    try:
+        from ..resilient_client import ResilientLLMClient
+        s = state.get("state", {}) or {}
+        ps = state.get("player_state") or {}
+        agenda = state.get("agenda") or {}
+        _ctx = state_context_brief(state, 220)
+        _due_state = promise_due_check(state)
+        _due = _due_state.get("due") or []
+        _due_line = ""
+        if _due:
+            _due_line = "待兑现（时间已到，剧情必须推进）: " + "；".join(
+                f"{p.get('when_raw', '?')}与{p.get('who', '?')}约定{p.get('what', '')}" for p in _due[:2])
+        user = (
+            f"剧情目标: {s.get('objective', '')}\n"
+            f"当前处境: {ps.get('situation', '') or '（未知）'}\n"
+            + (f"当前世界状态: {_ctx}\n" if _ctx else "")
+            + (f"{_due_line}\n" if _due_line else "")
+            + f"在场角色: {', '.join(chars)}\n"
+            f"对话议程: {str(agenda.get('goal', ''))[:100]}\n"
+            f"请为读者生成 3 个建议回应（Galgame 风格选项）——"
+            f"必须是有分量的真两难（答应/拒绝/追问/试探/沉默/转移话题…），"
+            f"每个选项 4-15 字，口语化，符合当前角色的处境、关系与最新剧情进度。"
+        )
+        _rc = ResilientLLMClient(client, model)
+        resp = _rc.create(
+            messages=[
+                {"role": "system", "content": SUGGESTION_SYSTEM},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.7, max_tokens=300,
+        )
+        raw = getattr(resp, "choices", [{}])[0].message.content if resp else None
+        result = _parse_json(raw) if raw else None
+        opts = (result or {}).get("options") or []
+        if isinstance(opts, list):
+            cleaned = [str(o)[:30] for o in opts if str(o).strip()][:3]
+            if cleaned:
+                return cleaned
+    except Exception as e:
+        log.warning(f"suggestions gen failed: {e}")
+    return []
+
+
 from .director_rules import (  # noqa: F401
     tension_update,
     chapter_complete,
@@ -58,7 +107,6 @@ from .director_rules import (  # noqa: F401
     _STATE_CHANGE_RE,
     state_change_detect,
     promise_due_check,
-    generate_suggestions,
     cast_presets_build,
     choose_char_apply,
     INTERACTIVE_TO_CHAPTER_SYSTEM,
