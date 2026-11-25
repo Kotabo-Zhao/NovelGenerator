@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, LLM_CONFIG_FILE
 from core.version import APP_VERSION
+from core.diagnostics import install_log_ring
 from core.path_security import validate_novel_id, RESERVED_NOVEL_IDS
 from core.atomic_io import StoredDataError
 
@@ -38,6 +39,7 @@ from core.auth import AuthError
 from .routers import auth, novels, v1, outline, quality, requirements, styles, trends, characters, feedback, tts, bible, ideas, roleplay, system, interactive
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+install_log_ring()
 
 app = FastAPI(title="NovelGenerator API", version="1.0.0")
 app.add_middleware(NovelWorldJobs)

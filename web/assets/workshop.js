@@ -2225,6 +2225,19 @@ const app = createApp({
 
     function returnToPrevious() { currentView.value = _returnView.value; }
 
+    async function exportDiagnostics() {
+      try {
+        const data = await NovelUI.requestJson('/api/system/diagnostics', { timeout: 10000 });
+        const content = JSON.stringify(data, null, 2);
+        const name = 'novelgen-diagnostics-v' + (data.app_version || '4.7.0') + '.json';
+        if (window.NovelUI && typeof window.NovelUI.download === 'function') {
+          window.NovelUI.download(name, content, 'application/json;charset=utf-8');
+        }
+        showToast('已导出脱敏诊断日志（不包含 API Key）', '系统诊断', '🩺');
+      } catch (e) {
+        reportError(e.message || '导出诊断日志失败', '系统诊断');
+      }
+    }
     function openSettings() {
       currentView.value = 'settings';
       refreshHealth();
@@ -2342,7 +2355,7 @@ const app = createApp({
     const todayLabel = new Intl.DateTimeFormat('zh-CN', {month:'long', day:'numeric', weekday:'long'}).format(new Date());
 
     return { isAndroid,provider,shelfQuery,shelfFilter,shelfSort,shelfStats,filteredNovels,viewLabel,todayLabel,currentView,novels,activeNovel,planResult,error,preview,styleCategories,exportSelected,toast,
-      health,refreshHealth,applyAppearance,uiStyle,openSettings,
+      health,refreshHealth,applyAppearance,uiStyle,openSettings,exportDiagnostics,
       requirementKindOrder,requirementSnapshot,requirementsForKind,requirementKindLabel,requirementKindHelp,requirementScopeText,
       outlineChangePlan,outlineExecutionSummary,outlineLoading,
       llmProviders,llmProvider,llmProviderMeta,llmApiKey,llmBaseUrl,llmModel,llmCustomModel,llmCustomModelMode,

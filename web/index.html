@@ -11,7 +11,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/icon.svg?v=4553a5f934a5">
 <script src="/assets/runtime.js?v=a98f7bad7c8a"></script>
 <script src="/vue.global.prod.js" defer></script>
-<script src="/assets/app-shell.js?v=5e1958a4e119"></script><script src="/assets/workshop.js?v=579e31f68c1d" defer></script>
+<script src="/assets/app-shell.js?v=5e1958a4e119"></script><script src="/assets/workshop.js?v=98add73b1607" defer></script>
 <link rel="stylesheet" href="/assets/theme.css?v=50fb48f925b3">
 <link rel="stylesheet" href="/assets/tools.css?v=ea848a4d73db">
 <link rel="stylesheet" href="/assets/workshop.css?v=83e72b197ecc">
@@ -1447,10 +1447,13 @@
 
       <!-- 关于 -->
       <div class="glass panel">
-        <div class="panel-title">ℹ️ 关于</div>
+        <div class="panel-title">ℹ️ 关于与诊断</div>
         <div class="about-row"><span class="about-k">应用</span><span class="about-v">墨·局 — AI 小说创作</span></div>
-        <div class="about-row"><span class="about-k">版本</span><span class="about-v">4.1.0</span></div>
+        <div class="about-row"><span class="about-k">版本</span><span class="about-v">{{ health?.app_version || '4.7.0' }}</span></div>
         <div class="about-row"><span class="about-k">架构</span><span class="about-v">Vue 3 · FastAPI · 本地优先</span></div>
+        <div class="llm-actions u-mt-10">
+          <button class="btn btn-secondary btn-sm" type="button" @click="exportDiagnostics">导出脱敏诊断日志</button>
+        </div>
       </div>
     </section>
 

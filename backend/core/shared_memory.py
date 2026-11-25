@@ -26,6 +26,7 @@ import threading
 import logging
 from typing import Optional, Callable
 from .atomic_io import atomic_write_json, safe_read_json, atomic_write_text
+from .metadata_index import MetadataIndex
 from .path_security import safe_novel_dir, safe_novel_file
 
 log = logging.getLogger(__name__)
@@ -1577,6 +1578,10 @@ class SharedMemoryManager:
             state_path = safe_novel_file(self.novels_dir, novel_id, "state.json")
             try:
                 atomic_write_json(state_path, state)
+                try:
+                    self._meta_index.upsert_state(novel_id, state)
+                except Exception as _meta_e:
+                    log.debug(f"MetadataIndex mirror skipped: {_meta_e}")
                 self._invalidate(novel_id, "state")
             except Exception as e:
                 log.warning(f"State auto-sync write failed (non-fatal): {e}")
