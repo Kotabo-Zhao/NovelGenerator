@@ -1,3 +1,4 @@
+import asyncio
 """NovelGenerator — TrendAnalyzer: 爆火小说抓取 + 趋势分析 + 模式提取
 
 抓取主流小说平台的热门榜单，提取成功模式，为逆天生成器提供"基因库"。
@@ -253,7 +254,8 @@ class TrendAnalyzer:
 只输出JSON。"""
 
         try:
-            resp = self.client.chat.completions.create(
+            resp = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 model=self.model,
                 messages=[{"role": "system", "content": "你是一位网文市场分析师。"},
                          {"role": "user", "content": prompt}],
@@ -1227,7 +1229,8 @@ class BizarreNovelGenerator:
 只输出 JSON。"""
 
         try:
-            resp = self.client.chat.completions.create(
+            resp = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 model=self.model,
                 messages=[{"role": "system", "content": "你是网文策划大师，专精颠覆性剧情反转设计。反转要震撼但合理。不要写成搞笑文。人物要有真实情感。"},
                          {"role": "user", "content": prompt}],

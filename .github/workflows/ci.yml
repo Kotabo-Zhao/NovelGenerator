@@ -20,5 +20,6 @@ jobs:
       - run: ruff check backend --select F821,F811
       - run: python -m pytest -q
       - run: node tests/frontend_runtime.test.cjs
+      - run: python tools/prepare_frontend.py --check
       - run: python tools/sync_frontend.py --check
       - run: python tools/sync_android_core.py --check

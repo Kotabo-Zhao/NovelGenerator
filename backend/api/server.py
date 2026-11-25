@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from config import CORS_ORIGINS, HOST, PORT, NOVELS_DIR, LLM_CONFIG_FILE
+from core.version import APP_VERSION
 from core.path_security import validate_novel_id, RESERVED_NOVEL_IDS
 from core.atomic_io import StoredDataError
 
@@ -306,7 +307,7 @@ async def health():
     return {
         "status": "ok",
         "service": "NovelGenerator",
-        "app_version": "4.3.3",
+        "app_version": APP_VERSION,
         "workspace_id": __import__('hashlib').sha256(os.path.normcase(os.path.abspath(NOVELS_DIR)).encode()).hexdigest()[:12],
         "storage_exists": novels_exist,
         "novel_count": novel_count,

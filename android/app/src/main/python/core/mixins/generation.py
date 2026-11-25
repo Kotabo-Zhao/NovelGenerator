@@ -1340,27 +1340,40 @@ class GenerationMixin:
                 }
                 return
 
-            # ── v2.7.5: 原子化路径补每章自动摘要（与 generate_chapter_stream 对齐）──
-            # 此前 atomic 路径完全无摘要逻辑 → 原子章节不进 summaries → L2c
-            # 事件清单 fallback 大纲计划（失真）。此处补上与标准路径一致的
-            # summarize + check_and_compress。
+            # ── v4.5.1: 原子化路径对齐 S3P 五合一后处理 + 零成本文风体检 ──
             try:
-                chapter_text = self.get_chapter(novel_id, chapter_num) or full_text
-                if chapter_text and len(chapter_text) > 200:
-                    summary_result = await asyncio.to_thread(
-                        self.chapter_summarizer.summarize_chapter,
-                        chapter_num, chapter_text
-                    )
-                    if summary_result:
-                        def _add_summary(gs):
-                            if not isinstance(gs, dict):
-                                gs = {}
-                            gs.setdefault("summaries", {})[str(chapter_num)] = summary_result
-                            return gs
-                        self.memory.update("global_state", novel_id, _add_summary)
-                        log.info(f"Auto-summary for Ch{chapter_num} (atomic): {len(summary_result.get('summary',''))} chars")
-            except Exception as e:
-                log.warning(f"Auto-summary for Ch{chapter_num} (atomic) skipped: {e}")
+                from ..unified_post_processor import UnifiedPostProcessor
+                yield {"type": "status", "message": "🧠 正在执行五合一状态归档与逻辑体检…"}
+                _upp = UnifiedPostProcessor(self._resilient, self.model)
+                _upp_res = await asyncio.to_thread(
+                    _upp.process_and_persist,
+                    self.memory,
+                    novel_id,
+                    chapter_num,
+                    full_text,
+                    chapter_outline,
+                )
+                violations = _upp_res.get("consistency_violations") or []
+                p0_count = sum(1 for v in violations if isinstance(v, dict) and v.get("severity") == "P0")
+                score = max(0, 100 - p0_count * 25 - (len(violations) - p0_count) * 8)
+                if violations:
+                    yield {"type": "consistency_check", "violations": violations, "score": score}
+                    _issues = [v.get("description", "") for v in violations[:5] if isinstance(v, dict) and v.get("description")]
+                    if _issues:
+                        state = self.memory.get_novel_state(novel_id)
+                        state["consistency_issues"] = state.get("consistency_issues", {})
+                        state["consistency_issues"][str(chapter_num)] = _issues
+                        self.memory.save_novel_state(novel_id, state)
+                        yield {"type": "consistency_warning", "chapter": chapter_num, "issues": _issues}
+            except Exception as _upp_e:
+                log.warning(f"UnifiedPostProcessor skipped for atomic Ch{chapter_num}: {_upp_e}")
+
+            try:
+                from ..ai_detector import AIDetector
+                _craft = AIDetector.analyze_prose_craft(full_text)
+                yield {"type": "craft_report", "chapter": chapter_num, "report": _craft}
+            except Exception as _craft_e:
+                log.warning(f"Zero-cost craft report skipped (atomic): {_craft_e}")
 
             # 渐进式摘要压缩（每8章间隔，与标准路径一致）
             try:
