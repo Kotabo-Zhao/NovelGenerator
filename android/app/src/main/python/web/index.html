@@ -13,8 +13,8 @@
 <script src="/vue.global.prod.js" defer></script>
 <script src="/assets/app-shell.js?v=5e1958a4e119"></script><script src="/assets/workshop.js?v=98add73b1607" defer></script>
 <link rel="stylesheet" href="/assets/theme.css?v=50fb48f925b3">
-<link rel="stylesheet" href="/assets/tools.css?v=ea848a4d73db">
-<link rel="stylesheet" href="/assets/workshop.css?v=83e72b197ecc">
+<link rel="stylesheet" href="/assets/tools.css?v=3e387fdf4687">
+<link rel="stylesheet" href="/assets/workshop.css?v=92055e7a3142">
 <link rel="stylesheet" href="/assets/navigation.css?v=060d36cc8074">
 <link rel="stylesheet" href="/assets/app-polish.css?v=f6b355bca346">
 </head>
@@ -109,16 +109,6 @@
         <div class="sub">选择模式开始创作</div>
       </div>
 
-      <div class="card" :style="{border:'2px solid '+ (xhsMode ? 'var(--accent)' : 'var(--border)'), background: xhsMode ? 'linear-gradient(135deg, rgba(233,69,96,.08), rgba(255,107,107,.04))' : ''}">
-        <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" @click="xhsMode=!xhsMode">
-          <div>
-            <div class="u-kpi-accent">📕 小红书爆款短篇</div>
-            <div style="font-size:12px;color:var(--text2);margin-top:2px">8000-10000字，女频爽文，一键生成完整短篇 + 爆款标题</div>
-          </div>
-          <div style="font-size:24px;color:var(--text2);transition:transform .2s" :style="{transform:xhsMode?'rotate(90deg)':''}">▶</div>
-        </div>
-      </div>
-
       <!-- 步骤指示器 -->
       <div class="steps" v-if="!planReady || loading.create">
         <div class="step" :class="{on:true,done:false}"><span class="step-num">1</span><span class="step-label">灵感</span></div>
@@ -168,11 +158,12 @@
           </span>
         </div>
 
-        <div class="flex items-center gap-8 mt-6" v-if="!form.normalPacing">
-          <label class="toggle">
+        <div class="flex items-center gap-8 mt-6 u-text-sub" v-if="!form.normalPacing">
+          <label class="toggle-switch">
             <input type="checkbox" v-model="form.fastFood">
             <span class="toggle-slider"></span>
           </label>
+          <span>🚀 短剧化快餐模式 <span class="u-dim">— 约 2500 字/章，强钩子高密度推进</span></span>
         </div>
       </div>
 

@@ -476,7 +476,12 @@ class RoleplayEngine:
                 }
                 if "v4" in model:
                     kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-                response = client.chat.completions.create(**kwargs)
+                try:
+                    response = client.chat.completions.create(
+                        **kwargs, frequency_penalty=0.25, presence_penalty=0.20
+                    )
+                except Exception:
+                    response = client.chat.completions.create(**kwargs)
                 state["response"] = response
                 for chunk in response:
                     if stop.is_set():

@@ -20,6 +20,7 @@ from .commands import ACTION_DIRECTIVE
 from .worldinfo import format_world_info
 from .identity import identity_instruction
 from .regex_rules import transform
+from .anti_slop import ROLEPLAY_HUMAN_VOICE_RULES, detect_recent_rp_cliches
 
 DEFAULT_SYSTEM_PROMPT = (
     "你正在进行沉浸式角色扮演。请遵循角色卡定义的身份、语气、叙事职责和视角回应，"
@@ -81,6 +82,7 @@ def build_system_prompt(
         parts.append("[补充指示]\n" + post_history)
 
     parts.append(ACTION_DIRECTIVE)
+    parts.append(expand(ROLEPLAY_HUMAN_VOICE_RULES))
     parts.append(identity_instruction(card, settings))
     return "\n\n".join(part for part in parts if part)
 
@@ -223,6 +225,10 @@ def build_messages(
     post = expand(card.get('post_history_instructions')).strip()
     if post:
         messages.append({'role': 'system', 'content': '[补充指示]\n' + post})
+
+    anti_cliche_note = detect_recent_rp_cliches(history)
+    if anti_cliche_note:
+        messages.append({"role": "system", "content": anti_cliche_note})
 
     if directive:
         messages.append({"role": "system", "content": expand(directive)})
