@@ -1342,7 +1342,7 @@ class GenerationMixin:
                     self.model,
                     full_text,
                     max_paragraphs=4,
-                    min_score=2,
+                    min_score=3,
                     recent_cliches=locals().get("_atomic_recent_cliches") or [],
                 )
                 if _ap_meta.get("polished", 0) > 0 and _ap_text:
@@ -1787,6 +1787,12 @@ class GenerationMixin:
             _recent_cliches = []
             _cliche_block = ""
             _director_card_block = ""
+            _voice_bank_block = ""
+            try:
+                from ..unified_post_processor import build_active_voice_bank_block
+                _voice_bank_block = build_active_voice_bank_block(self.memory, novel_id, chapter_outline.get("characters"))
+            except Exception as _vbe:
+                log.debug("Active voice bank skipped: %s", _vbe)
             try:
                 from ..surgical_humanizer import build_rolling_cliche_block, get_rolling_cliches
                 _recent_cliches = get_rolling_cliches(self.memory, novel_id, chapter_num, window=2)
@@ -1820,6 +1826,7 @@ class GenerationMixin:
                         required=True,
                     ),
                     ContextSection("用户反馈", feedback or "", priority=95, required=bool(feedback)),
+                    ContextSection("出场角色历史代表台词", _voice_bank_block, priority=90),
                     ContextSection("本章表演微观提示", _director_card_block, priority=88),
                     ContextSection("跨章防复读提醒", _cliche_block, priority=85),
                     ContextSection("写作上下文", context, priority=60),
@@ -2286,7 +2293,7 @@ class GenerationMixin:
                     self.model,
                     full_text,
                     max_paragraphs=4,
-                    min_score=2,
+                    min_score=3,
                     recent_cliches=locals().get("_recent_cliches") or [],
                 )
                 if _polish_meta.get("polished", 0) > 0 and _polished_text:

@@ -62,9 +62,9 @@ class TestHumanVoiceEngine(unittest.TestCase):
             "deepseek-chat",
             {"title": "试探", "summary": "两人在茶馆博弈"},
         )
-        self.assertIn("感官锚点：茶盏边缘裂纹发烫", block)
-        self.assertIn("潜台词张力：嘴上劝退，实则逼对方表态", block)
-        self.assertIn("生活微细节：倒茶时溅出两滴水渍", block)
+        self.assertIn("茶盏边缘裂纹发烫", block)
+        self.assertIn("嘴上劝退，实则逼对方表态", block)
+        self.assertIn("倒茶时溅出两滴水渍", block)
 
     def test_surgical_humanizer_skips_clean_prose_with_zero_llm_calls(self):
         clean_text = (

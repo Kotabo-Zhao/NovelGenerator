@@ -186,7 +186,7 @@ def polish_flagged_paragraphs(
     text: str,
     *,
     max_paragraphs: int = 4,
-    min_score: int = 2,
+    min_score: int = 3,
     recent_cliches: list[str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Surgically polish only the top high-AI-smell paragraphs; skip LLM if clean."""

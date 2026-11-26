@@ -18,12 +18,13 @@ from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
-UNIFIED_POST_SYSTEM = """你是长篇小说连续性总编。请阅读刚定稿的一章正文，一次性输出严格 JSON，同时完成五项任务：
+UNIFIED_POST_SYSTEM = """你是长篇小说连续性总编。请阅读刚定稿的一章正文，一次性输出严格 JSON，同时完成六项任务：
 1. bridge：供下一章无缝衔接的桥接信息（summary 80-120字、ending_scene 结尾画面、next_beat 下一章紧接动作、unresolved_tension 未解悬念）；
 2. summary_entry：归档摘要（summary 60-100字、key_events 2-4条已发生正史事件数组、characters 本章实际出场角色名数组）；
 3. character_updates：仅记录本章位置/状态/情绪/物品发生真实变化的角色（字典：角色名 -> {location, status, emotion, items}）；
 4. foreshadow_updates：本章新埋设、再暗示或已回收的伏笔数组（每项 {title, status: planted|hinted|resolved, detail}）；
 5. consistency_violations：仅记录确凿的逻辑硬伤或设定矛盾（每项 {severity: "P0"|"P1", quote: "原文原句摘录", description: "矛盾说明", fix_hint: "局部修改建议"}）；没有硬伤则输出空数组 []。
+6. character_quotes：抽取本章出场主要角色最具辨识度的 1-2 句原话（字典：角色名 -> ["原话1"]，供后续章节维持千人千声）。
 
 只输出合法 JSON，不要任何解释文字：
 {
@@ -31,7 +32,8 @@ UNIFIED_POST_SYSTEM = """你是长篇小说连续性总编。请阅读刚定稿�
   "summary_entry": {"summary": "", "key_events": [], "characters": []},
   "character_updates": {},
   "foreshadow_updates": [],
-  "consistency_violations": []
+  "consistency_violations": [],
+  "character_quotes": {}
 }"""
 
 
@@ -74,6 +76,7 @@ def _fallback_post_result(chapter_num: int, chapter_text: str, chapter_outline: 
         "character_updates": {},
         "foreshadow_updates": [],
         "consistency_violations": [],
+        "character_quotes": {},
         "fallback": True,
     }
 
@@ -130,6 +133,7 @@ class UnifiedPostProcessor:
                 "character_updates": parsed.get("character_updates") if isinstance(parsed.get("character_updates"), dict) else {},
                 "foreshadow_updates": parsed.get("foreshadow_updates") if isinstance(parsed.get("foreshadow_updates"), list) else [],
                 "consistency_violations": parsed.get("consistency_violations") if isinstance(parsed.get("consistency_violations"), list) else [],
+                "character_quotes": parsed.get("character_quotes") if isinstance(parsed.get("character_quotes"), dict) else {},
                 "fallback": False,
             }
         except Exception as exc:
@@ -213,6 +217,21 @@ class UnifiedPostProcessor:
                                 "planted_chapter": chapter_num,
                                 "updated_chapter": chapter_num,
                             })
+            # Voice bank (zero-extra-cost rolling iconic spoken lines per character)
+            quotes_map = result.get("character_quotes") or {}
+            if isinstance(quotes_map, dict) and quotes_map:
+                vb = state.setdefault("voice_bank", {})
+                if isinstance(vb, dict):
+                    for cname, qlines in quotes_map.items():
+                        cname_s = str(cname or "").strip()
+                        if not cname_s or not isinstance(qlines, list):
+                            continue
+                        cur = list(vb.get(cname_s) or [])
+                        for q in qlines:
+                            qs = str(q or "").strip().strip("“”\"「」")
+                            if 4 <= len(qs) <= 60 and qs not in cur:
+                                cur.append(qs)
+                        vb[cname_s] = cur[-3:]
             state["last_updated_chapter"] = chapter_num
             return state
 
@@ -223,3 +242,33 @@ class UnifiedPostProcessor:
                 log.warning("UnifiedPostProcessor global_state merge skipped: %s", exc)
 
         return result
+
+
+def build_active_voice_bank_block(
+    memory: Any,
+    novel_id: str,
+    active_characters: Optional[List[str]] = None,
+) -> str:
+    """Return a compact spoken-line anchor block filtered strictly to active scene characters."""
+    if memory is None or not hasattr(memory, "read"):
+        return ""
+    try:
+        gs = memory.read("global_state", novel_id) or {}
+        vb = gs.get("voice_bank") if isinstance(gs, dict) else None
+        if not isinstance(vb, dict) or not vb:
+            return ""
+        filter_set = {str(c).strip() for c in (active_characters or []) if str(c).strip()}
+        lines = []
+        for cname, quotes in vb.items():
+            if filter_set and cname not in filter_set:
+                continue
+            if isinstance(quotes, list) and quotes:
+                joined = " / ".join(f"「{q}」" for q in quotes[-2:])
+                lines.append(f"- {cname}：{joined}")
+            if len(lines) >= 6:
+                break
+        if not lines:
+            return ""
+        return "## 🗣️ 出场角色历史代表台词（保持各人说话口吻与节奏）\n" + "\n".join(lines)
+    except Exception:
+        return ""
