@@ -1,4 +1,4 @@
-﻿"""NovelGenerator — BeatDecomposer: 章节→节拍拆解器
+"""NovelGenerator — BeatDecomposer: 章节→节拍拆解器
 
 将一章大纲拆解为 5-7 个独立节拍（beat），每个 beat 有独立的功能、情绪弧、冲突类型、钩子类型。
 这是原子化生成的第一步：拆得越碎，随机性空间越大。

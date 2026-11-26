@@ -944,8 +944,8 @@ class SharedMemoryManager:
                         narrative_pov = 'first_person'
                     elif third_count > first_count * 1.5 and third_count > 3:
                         narrative_pov = 'third_person'
-            except Exception:
-                pass
+            except Exception as _exc:
+                log.debug("suppressed exception: %s", _exc)
         
         pov_instruction = ""
         if narrative_pov == 'first_person':
@@ -989,8 +989,8 @@ class SharedMemoryManager:
                 _nl = chr(10)
                 parts.append("## ⚠️ 上一章一致性提醒（本章写作必须修正）" + _nl
                              + _nl.join(f"- {_i}" for _i in _prev_issues[:4]))
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
 
         # ── v2.3.4: 角色人设约束注入（女娲框架蒸馏结果，仅本角色出场时生效）──
         try:
@@ -1059,8 +1059,8 @@ class SharedMemoryManager:
                     f"最近 {high_dialogue_count} 章对话占比>40%。本章对话占比硬约束 ≤30%，"
                     "连续对话不超过 4 轮就必须用动作/环境打断。"
                 )
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
 
         # ── v2.7: 快餐模式上下文告警 ──
         try:
@@ -1077,8 +1077,8 @@ class SharedMemoryManager:
                     "- 零心理描写，零环境描写（冲突场景除外），零铺垫\n"
                     "- 对话不超过3轮就必须用动作打断\n"
                 )
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         
         # ── v2.3.5: 上下文预算保护 — 总长超限时从尾部（低优先级段）截断 ──
         # v2.8: 保护关键段（本章大纲/逻辑硬约束）——正文生成的事件契约绝不能被截断，

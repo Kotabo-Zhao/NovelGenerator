@@ -183,8 +183,8 @@ def enqueue_background(fn, *args, critical: bool = False, novel_id: str = None):
         if _bg_queue.full():
             try:
                 _drop_one_non_critical()
-            except Exception:
-                pass
+            except Exception as _exc:
+                log.debug("suppressed exception: %s", _exc)
     try:
         _bg_queue.put_nowait((fn, args, critical, novel_id))
     except _bgqueue.Full:
@@ -749,6 +749,8 @@ class StoryDirector:
                 ],
                 temperature=temperature,
                 max_tokens=max_tokens,
+                frequency_penalty=0.20,
+                presence_penalty=0.16,
             ):
                 yield chunk
         except Exception as e:
@@ -846,8 +848,8 @@ class StoryDirector:
             _wctx = state_context_brief(state)
             if _wctx:
                 parts.append(f"## 当前世界状态（生成角色反应/剧情后果必须基于此）:\n{_wctx}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         # v3.6.5 P0: 权威时间横幅——现在是什么时候由规则引擎唯一决定，
         # 场景叙事/台词的时间表述必须以此为基准（防时间错乱：深夜与晨阳共存、
         # 问候语与时段不符、凭空跳日等）
@@ -857,8 +859,8 @@ class StoryDirector:
             _tb = time_now_brief(state.get("world") or {})
             if _tb:
                 parts.append(f"## {_tb}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         # v1.1 P2: 锚点触发进入方式（entry_hook）——本场景以它开场，事件找上门
         _at = state.get("anchor_triggered")
         if _at and _at.get("hook"):
@@ -868,22 +870,22 @@ class StoryDirector:
             _dh = beat_drift_hint(state)
             if _dh:
                 parts.append(f"## 主线牵引:\n{_dh}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         # v1.1 P4: 跨章张力介入（保险③）——连续 2 章偏离，主线势力施压
         try:
             _mp = mainline_pressure(state)
             if _mp:
                 parts.append(f"## 世界施压:\n{_mp}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         # v1.1 P4: 填充事件（节奏调节）——张力高位未触发锚点时维持节奏
         try:
             _se = side_event_hint(state)
             if _se:
                 parts.append(f"## 填充事件:\n{_se}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         # v1.1 P4: 主线健康度捷径（保险④）——切章对账落后，注入捷径提示
         if state.get("mainline_shortcut"):
             parts.append("## 主线捷径: 一位与主线相关的角色主动向你提供关键线索"
@@ -964,8 +966,8 @@ class StoryDirector:
                              "或出现变故导致约定作废——约定不能再无限期挂着）:")
                 for _p in _overdue[-2:]:
                     parts.append(f"- [{_p.get('when_raw', '?')}] 与{_p.get('who', '?')}约定: {_p.get('what', '')}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         if state.get("promise_conflict"):
             parts.append(f"⚠ 系统检测到上一场景时间表述与未兑现约定冲突（{state['promise_conflict']}）——"
                          f"本场景必须修正：提到该约定一律沿用原始时间，禁止再出现冲突的新时间表述")
@@ -1177,8 +1179,8 @@ class StoryDirector:
         state["intro_char"] = pc_name  # v2.5.63: 缓存绑定角色（角色切换后旧 intro 不可复用）
         try:
             self.store.save_state(novel_id, state)
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         return intro
 
     # ── 场景生成（SSE）──
@@ -1216,10 +1218,10 @@ class StoryDirector:
                 try:
                     self.store.save_state(novel_id, state)
                     log.info(f"存量脏 location 已清洗: {_loc_old[:30]} → {_ps_old['location'][:30]}")
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as _exc:
+                    log.debug("suppressed exception: %s", _exc)
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
 
         # v3.5.53: 本章事件序列（beats）同步兜底——beats 只在切章时后台预生成，
         # 第 1 章（idx=0）从生成开始就没有 beats → 前 2-4 个场景无事件约束，
@@ -1235,8 +1237,8 @@ class StoryDirector:
                     self._ensure_chapter_beats(novel_id, state)
                     try:
                         self.store.save_state(novel_id, state)
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        log.debug("suppressed exception: %s", _exc)
         except Exception as e:
             log.warning(f"beats sync ensure failed: {e}")
 
@@ -1498,8 +1500,8 @@ class StoryDirector:
         # 角色状态更新 + L1 矛盾检查（v3.5.47: 走串行队列，不与主流程抢 LLM）
         try:
             enqueue_background(self._post_scene_logic_check, novel_id, scene_num, scene_text, blocks, state.get("revision"))
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
 
         yield {"type": "done"}
 
@@ -1710,8 +1712,8 @@ class StoryDirector:
             _pf = [str(f.get("content", ""))[:60] for f in (_prev.get("facts") or [])[-8:]]
             if _pf:
                 user += "\n\n已有事实（不得重复提取同一事件）:\n- " + "\n- ".join(_pf)
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         raw = self._llm(PACT_SYSTEM, user, temperature=0.3, max_tokens=1500)
         result = _parse_json(raw) if raw else {}
         if not isinstance(result, dict):
@@ -1965,8 +1967,8 @@ class StoryDirector:
                 state["chapter_beats"] = {"chapter_idx": idx, "beats": beats}
                 try:
                     self.store.save_state(novel_id, state)
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    log.debug("suppressed exception: %s", _exc)
                 log.info(f"Galgame 节点 beats: 第{ch.get('number', idx + 1)}章 {len(beats)} 节点")
                 return beats
         tw = int(ch.get("target_words", 0) or 0)
@@ -2010,8 +2012,8 @@ class StoryDirector:
             }
             try:
                 self.store.save_state(novel_id, state)
-            except Exception:
-                pass
+            except Exception as _exc:
+                log.debug("suppressed exception: %s", _exc)
         return beats
 
     def _ensure_participation_beats(self, novel_id, state, idx, chapter):
@@ -2112,8 +2114,8 @@ class StoryDirector:
             try:
                 from .char_memory import add_event
                 add_event(state, f"本章节点完成: {str(beats[cur_i].get('desc', ''))[:50]}", "beat")
-            except Exception:
-                pass
+            except Exception as _exc:
+                log.debug("suppressed exception: %s", _exc)
             state.pop("anchor_triggered", None)
         except Exception as e:
             log.warning(f"advance_beat failed: {e}")
@@ -2314,8 +2316,8 @@ class StoryDirector:
             for h in self.store.recent_chats(novel_id, 500) or []:
                 if h.get("role") == "user" and h.get("content"):
                     player_acts.append(str(h.get("content"))[:100])
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         acts_brief = "\n".join(f"- {a}" for a in player_acts[-12:]) if player_acts else ""
         # 大纲章节（标题复用）
         chs = st.get("outline_chapters") or []
@@ -2358,8 +2360,8 @@ class StoryDirector:
             if progress_cb:
                 try:
                     progress_cb(gi + 1, len(groups), ch_title or f"第{gi + 1}章", len(raw))
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    log.debug("suppressed exception: %s", _exc)
         novel_md = "\n\n".join(bodies)
         with open(_os.path.join(out_dir, "全书.md"), "w", encoding="utf-8") as f:
             f.write(novel_md)
@@ -2402,8 +2404,8 @@ class StoryDirector:
                 if prof and "error" not in prof:
                     casts.setdefault(name, {})["profile"] = prof
                     changed = True
-            except Exception:
-                pass
+            except Exception as _exc:
+                log.debug("suppressed exception: %s", _exc)
         if changed:
             state["casts"] = casts
             self.store.save_state(novel_id, state)

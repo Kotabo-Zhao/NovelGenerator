@@ -1,4 +1,4 @@
-﻿"""Deterministic pre-persistence checks for generated chapter text."""
+"""Deterministic pre-persistence checks for generated chapter text."""
 
 from __future__ import annotations
 

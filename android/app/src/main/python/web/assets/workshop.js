@@ -191,19 +191,9 @@ const app = createApp({
     const readSSE = NovelUI.readSSE;
 
     const form = reactive({ genre:'修仙', style:'热血爽文', inspiration:'', target_words:500000, title:'', naturalNames:true, normalPacing:false, fastFood:false, creativeEnhance:false });
-    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false, xhs:false });
+    const loading = reactive({ shelf:false, create:false, write:false, export:false, saving:false, batch:false });
 
     // v2.50: XHS 短篇模式
-    const xhsMode = ref(true);  // 默认展开
-    const xhsTemplate = ref('爽文_打脸逆袭');
-    const xhsInspiration = ref('');
-    const xhsResult = ref(null);
-    const xhsTemplates = ref([]);
-    const xhsPresets = ref([]);
-    const xhsPreset = ref(null);
-    const xhsProgress = ref(0);
-    const xhsPhase = ref('');
-    const xhsStreamText = ref('');
     const shelfLoadFailed = ref(false);  // v2.17: 区分"加载失败"和"真正空书架"
     const writingModeLiterary = ref(false);
     const useAtomicMode = ref(true);  // v2.9: 原子化默认开启 — 已升级蓝图+滚动上下文
@@ -1262,46 +1252,6 @@ const app = createApp({
       trendLoading.value = false;
     }
 
-    // v2.50: 小红书短篇一键生成
-    function loadXhsPresets() {
-      const tpl = xhsTemplate.value;
-      fetch('/api/xiaohongshu/presets?template='+encodeURIComponent(tpl))
-        .then(r=>r.json()).then(d=>{ if(d.ok) xhsPresets.value=d.presets; }).catch(()=>{});
-    }
-    async function doXhsCreate() {
-      if (loading.xhs) return;
-      loading.xhs = true; xhsResult.value = null; xhsProgress.value = 0; xhsPhase.value = ''; xhsStreamText.value = ''; error.value = '';
-      const inspiration = xhsPreset.value ? xhsPreset.value.inspiration : xhsInspiration.value.trim();
-      if (!inspiration) { reportError('请选择预设或输入灵感'); loading.xhs = false; return; }
-      try {
-        const resp = await fetch(API+'/api/xiaohongshu/create', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ template: xhsTemplate.value, inspiration })
-        });
-        if (!resp.ok) { const d=await resp.json(); reportError(d.detail||'请求失败'); loading.xhs=false; return; }
-        const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
-        while (true) {
-          const {done, value} = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, {stream: true});
-          const lines = buffer.split('\n'); buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const evt = JSON.parse(line.slice(6));
-                if (evt.type === 'progress') { xhsProgress.value = evt.pct; xhsPhase.value = evt.message; }
-                else if (evt.type === 'chapter_start') { xhsPhase.value = `撰写第${evt.number}章 · ${evt.title}`; xhsProgress.value = evt.pct; }
-                else if (evt.type === 'chunk' && evt.chapter === 3) { xhsStreamText.value += evt.text; }
-                else if (evt.type === 'chapter_done') { xhsProgress.value = evt.pct; }
-                else if (evt.type === 'done') { xhsResult.value = evt; xhsProgress.value = 100; xhsPhase.value = '完成！'; }
-                else if (evt.type === 'error') { reportError(evt.message); loading.xhs = false; return; }
-              } catch(e) {}
-            }
-          }
-        }
-      } catch(e) { reportError(e.message||'网络错误'); }
-      finally { loading.xhs = false; }
-    }
 
     async function createBizarreNovel(bn) {
       if (isBusy.value) return;
@@ -2379,8 +2329,6 @@ const app = createApp({
       applyCustomStyle,saveStyleSeed,loadStyleSeed,deleteStyleSeed,toggleTheme,
       batchStart,batchEnd,batchProgress,batchCurrent,batchStatus,batchStreaming,exportProgress,writingModeLiterary,useAtomicMode,theme,
       doBatchGenerate,cancelBatch,onModeChange,isBusy,planReady,
-      // v2.50
-      xhsMode,xhsTemplate,xhsInspiration,xhsTemplates,xhsPresets,xhsPreset,xhsResult,xhsProgress,xhsPhase,xhsStreamText,doXhsCreate,loadXhsPresets,
       createProgress,createPhase,createPhaseLabel,decomposeSummary,reviewFeedback,doRegenerate,
       chapterProgress,chapterProgressLabel,outlineFeedback,doRegenerateOutline,isRegenerating,
       outlineCompliance,

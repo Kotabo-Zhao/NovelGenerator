@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """大纲合规校验器测试（v3.10）"""
 import sys
 from pathlib import Path

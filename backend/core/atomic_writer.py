@@ -1,4 +1,4 @@
-﻿"""NovelGenerator — AtomicWriter: 逐beat独立生成器
+"""NovelGenerator — AtomicWriter: 逐beat独立生成器
 
 核心理念: 每个 beat = 一次独立的 LLM 调用。
 - 独立 temperature (0.7-1.0, 按beat功能调优)

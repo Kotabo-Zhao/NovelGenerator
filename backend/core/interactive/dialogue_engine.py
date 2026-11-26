@@ -168,7 +168,9 @@ class DialogueEngine:
                     {"role": "user", "content": user},
                 ],
                 temperature=temperature,
-                max_tokens=400,  # v3.5.55: 架构级硬上限——单轮回复 20-80 字+动作，400 tokens 足够
+                max_tokens=400,
+                frequency_penalty=0.20,
+                presence_penalty=0.16,  # v3.5.55: 架构级硬上限——单轮回复 20-80 字+动作，400 tokens 足够
             ):
                 yield chunk
         except Exception as e:

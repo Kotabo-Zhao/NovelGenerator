@@ -579,8 +579,8 @@ class GenerationMixin:
                     if _pt:
                         _lines = [l for l in _pt.strip().splitlines() if l.strip()]
                         prev_tail = (_lines[-1] if _lines else _pt.strip()[-200:])[:150]
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    log.debug("suppressed exception: %s", _exc)
 
             prompt = (
                 f"你是资深网文大纲细化师。现有章节大纲信息不足，请把这一章扩写成 5 个连续事件节拍（scene_beats），"
@@ -891,8 +891,8 @@ class GenerationMixin:
                     haystacks.append(_v)
                 elif isinstance(_v, (list, tuple)):
                     haystacks.extend(str(x) for x in _v if isinstance(x, str))
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
         # 2) RequirementsStore 子任务全量（title/description/must_include）
         try:
             req_store = getattr(self, "_req_store", None)
@@ -906,8 +906,8 @@ class GenerationMixin:
                         haystacks.append(str(t.get("title", "")))
                         haystacks.append(str(t.get("description", "")))
                         haystacks.extend(str(x) for x in (t.get("must_include", []) or [])[:6])
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("suppressed exception: %s", _exc)
 
         joined = "\n".join(x for x in haystacks if x)
         if not joined:
@@ -1038,6 +1038,15 @@ class GenerationMixin:
             except Exception as _vce:
                 log.warning(f"Voices injection skipped (atomic): {_vce}")
 
+            _atomic_recent_cliches = []
+            _atomic_cliche_block = ""
+            try:
+                from ..surgical_humanizer import build_rolling_cliche_block, get_rolling_cliches
+                _atomic_recent_cliches = get_rolling_cliches(self.memory, novel_id, chapter_num, window=2)
+                _atomic_cliche_block = build_rolling_cliche_block(self.memory, novel_id, chapter_num)
+            except Exception as _arce:
+                log.debug("Atomic rolling cliche skipped: %s", _arce)
+
             from ..context_budget import ContextSection, allocate_context
             chapter_context, _context_trimmed = allocate_context(
                 [
@@ -1047,6 +1056,7 @@ class GenerationMixin:
                         priority=100,
                         required=True,
                     ),
+                    ContextSection("跨章防复读提醒", _atomic_cliche_block, priority=85),
                     ContextSection("写作上下文", chapter_context, priority=60),
                 ],
                 max_chars=max(4000, config.MAX_CONTEXT_TOKENS * 4),
@@ -1322,6 +1332,26 @@ class GenerationMixin:
                 stage="post_outline_compliance",
             )
             yield {"type": "final_quality", **_final_quality_record}
+
+            # v5.0.0: 原子化路径同样接入零介入段落级微创去 AI 味精修
+            try:
+                from ..surgical_humanizer import polish_flagged_paragraphs
+                _ap_text, _ap_meta = await asyncio.to_thread(
+                    polish_flagged_paragraphs,
+                    self._resilient,
+                    self.model,
+                    full_text,
+                    max_paragraphs=4,
+                    min_score=2,
+                    recent_cliches=locals().get("_atomic_recent_cliches") or [],
+                )
+                if _ap_meta.get("polished", 0) > 0 and _ap_text:
+                    full_text = _ap_text
+                    formatted = f"# 第{chapter_num}章 {chapter_outline.get('title', f'第{chapter_num}章')}\n\n{full_text}"
+                    self.memory.write_chapter_draft(novel_id, chapter_num, formatted)
+                    yield {"type": "status", "message": f"✨ 已自动微创润色 {_ap_meta['polished']} 处高 AI 味段落"}
+            except Exception as _ashe:
+                log.warning("Atomic SurgicalHumanizer skipped (non-fatal): %s", _ashe)
 
             # Both drafting strategies share this hard gate and final committer.
             _completion = self._finalize_chapter_candidate(
@@ -1635,8 +1665,8 @@ class GenerationMixin:
                             _fb_summary = (f"紧接上一章结尾继续：{_prev_last}。"
                                            f"在此基础上推进核心矛盾、展开新冲突，并自然收束本章。")
                             _fb_hook = f"围绕上一章结尾「{_prev_last[-40:]}」的悬念展开，章末制造新的反转钩子。"
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    log.debug("suppressed exception: %s", _exc)
                 chapter_outline = {
                     "number": chapter_num,
                     "title": f"第{chapter_num}章",
@@ -1940,8 +1970,8 @@ class GenerationMixin:
                                 "llm_accept": _llm_accept,
                                 "issues": qr["issues"][:5],
                             }, ensure_ascii=False) + "\n")
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        log.debug("suppressed exception: %s", _exc)
                 elif 40 <= qr["score"] < 60 and qr["issues"]:
                     log.info(f"Quality gate MILD (score={qr['score']}): {len(qr['issues'])} minor issues, accepting as-is")
                     yield {"type": "quality_minor", "score": qr["score"], "issues": qr["issues"]}
@@ -2170,7 +2200,7 @@ class GenerationMixin:
                         if _rreq:
                             retry_context = retry_context + "\n\n" + _rreq
                     except Exception as _rre:
-                        pass
+                        log.debug("suppressed exception: %s", _rre)
                     # v2.51: 注入角色状态
                     char_ctx2 = self.context_updater.get_context_for_writer(novel_id, chapter_num, self.memory)
                     if char_ctx2:

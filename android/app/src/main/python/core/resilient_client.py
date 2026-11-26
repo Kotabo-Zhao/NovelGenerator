@@ -272,7 +272,17 @@ class ResilientLLMClient:
                     call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
                 call_kwargs.update(kwargs)
                 def open_response():
-                    opened = self.client.chat.completions.create(**call_kwargs)
+                    try:
+                        opened = self.client.chat.completions.create(**call_kwargs)
+                    except Exception:
+                        if "frequency_penalty" in call_kwargs or "presence_penalty" in call_kwargs:
+                            fallback_kw = {
+                                k: v for k, v in call_kwargs.items()
+                                if k not in ("frequency_penalty", "presence_penalty")
+                            }
+                            opened = self.client.chat.completions.create(**fallback_kw)
+                        else:
+                            raise
                     # Cancellation can happen before the HTTP headers arrive.
                     if stopped.is_set():
                         if callable(getattr(opened, "close", None)):
