@@ -18,13 +18,15 @@ from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
-UNIFIED_POST_SYSTEM = """你是长篇小说连续性总编。请阅读刚定稿的一章正文，一次性输出严格 JSON，同时完成六项任务：
+UNIFIED_POST_SYSTEM = """你是长篇小说连续性总编。请阅读刚定稿的一章正文，一次性输出严格 JSON，同时完成八项任务（零额外调用）：
 1. bridge：供下一章无缝衔接的桥接信息（summary 80-120字、ending_scene 结尾画面、next_beat 下一章紧接动作、unresolved_tension 未解悬念）；
 2. summary_entry：归档摘要（summary 60-100字、key_events 2-4条已发生正史事件数组、characters 本章实际出场角色名数组）；
 3. character_updates：仅记录本章位置/状态/情绪/物品发生真实变化的角色（字典：角色名 -> {location, status, emotion, items}）；
 4. foreshadow_updates：本章新埋设、再暗示或已回收的伏笔数组（每项 {title, status: planted|hinted|resolved, detail}）；
-5. consistency_violations：仅记录确凿的逻辑硬伤或设定矛盾（每项 {severity: "P0"|"P1", quote: "原文原句摘录", description: "矛盾说明", fix_hint: "局部修改建议"}）；没有硬伤则输出空数组 []。
-6. character_quotes：抽取本章出场主要角色最具辨识度的 1-2 句原话（字典：角色名 -> ["原话1"]，供后续章节维持千人千声）。
+5. consistency_violations：仅记录确凿的逻辑硬伤或设定矛盾，按 ConStory-Bench 5 维标注（每项 {severity: "P0"|"P1", dimension: "timeline_plot|characterization|factual_detail|world_building|narrative_style", quote: "原文原句摘录", description: "矛盾说明", fix_hint: "局部修改建议"}）；没有硬伤则输出空数组 []。
+6. character_quotes：抽取本章出场主要角色最具辨识度的 1-2 句原话（字典：角色名 -> ["原话1"]）。
+7. character_beliefs：记录本章出场角色的显式信念状态（字典：角色名 -> {knows: ["已知事实"], misbelieves: ["误判或被隐瞒的真相"]}），防止后续全知穿帮。
+8. future_obligations：本章新产生的承诺/悬念/危机等未来必须兑现的叙事义务（数组：[{title, due_by_chapter, owner, status: "open|fulfilled"}]）。
 
 只输出合法 JSON，不要任何解释文字：
 {
@@ -33,7 +35,9 @@ UNIFIED_POST_SYSTEM = """你是长篇小说连续性总编。请阅读刚定稿�
   "character_updates": {},
   "foreshadow_updates": [],
   "consistency_violations": [],
-  "character_quotes": {}
+  "character_quotes": {},
+  "character_beliefs": {},
+  "future_obligations": []
 }"""
 
 
@@ -77,6 +81,9 @@ def _fallback_post_result(chapter_num: int, chapter_text: str, chapter_outline: 
         "foreshadow_updates": [],
         "consistency_violations": [],
         "character_quotes": {},
+        "character_beliefs": {},
+        "future_obligations": [],
+        "ced_per_10k": 0.0,
         "fallback": True,
     }
 
@@ -132,8 +139,11 @@ class UnifiedPostProcessor:
                 "summary_entry": summary_entry,
                 "character_updates": parsed.get("character_updates") if isinstance(parsed.get("character_updates"), dict) else {},
                 "foreshadow_updates": parsed.get("foreshadow_updates") if isinstance(parsed.get("foreshadow_updates"), list) else [],
-                "consistency_violations": parsed.get("consistency_violations") if isinstance(parsed.get("consistency_violations"), list) else [],
+                "consistency_violations": (v_list := parsed.get("consistency_violations") if isinstance(parsed.get("consistency_violations"), list) else []),
                 "character_quotes": parsed.get("character_quotes") if isinstance(parsed.get("character_quotes"), dict) else {},
+                "character_beliefs": parsed.get("character_beliefs") if isinstance(parsed.get("character_beliefs"), dict) else {},
+                "future_obligations": parsed.get("future_obligations") if isinstance(parsed.get("future_obligations"), list) else [],
+                "ced_per_10k": compute_ced_per_10k(len(v_list), len(clean)),
                 "fallback": False,
             }
         except Exception as exc:
@@ -232,6 +242,64 @@ class UnifiedPostProcessor:
                             if 4 <= len(qs) <= 60 and qs not in cur:
                                 cur.append(qs)
                         vb[cname_s] = cur[-3:]
+            # Explicit Belief-State ToM (EMNLP 2025)
+            beliefs_map = result.get("character_beliefs") or {}
+            if isinstance(beliefs_map, dict) and beliefs_map:
+                cb = state.setdefault("character_beliefs", {})
+                if isinstance(cb, dict):
+                    for cname, bval in beliefs_map.items():
+                        cname_s = str(cname or "").strip()
+                        if not cname_s or not isinstance(bval, dict):
+                            continue
+                        cur_b = dict(cb.get(cname_s) or {})
+                        for field in ("knows", "misbelieves"):
+                            incoming = bval.get(field)
+                            if isinstance(incoming, list):
+                                merged = list(cur_b.get(field) or [])
+                                for item in incoming:
+                                    s = str(item or "").strip()
+                                    if s and s not in merged:
+                                        merged.append(s)
+                                cur_b[field] = merged[-4:]
+                        cur_b["updated_chapter"] = chapter_num
+                        cb[cname_s] = cur_b
+            # Future Obligations Ledger (ConWriter / arXiv:2609.35759)
+            obs = result.get("future_obligations") or []
+            if isinstance(obs, list) and obs:
+                ob_list = state.setdefault("future_obligations", [])
+                if isinstance(ob_list, list):
+                    by_t = {
+                        str(it.get("title", "")).strip(): idx
+                        for idx, it in enumerate(ob_list)
+                        if isinstance(it, dict) and it.get("title")
+                    }
+                    for item in obs:
+                        if not isinstance(item, dict) or not str(item.get("title", "")).strip():
+                            continue
+                        t = str(item["title"]).strip()
+                        try:
+                            due = int(item.get("due_by_chapter") or (chapter_num + 3))
+                        except (TypeError, ValueError):
+                            due = chapter_num + 3
+                        status = str(item.get("status") or "open").strip().lower()
+                        if t in by_t:
+                            ob_list[by_t[t]].update({
+                                "status": status,
+                                "due_by_chapter": due,
+                                "updated_chapter": chapter_num,
+                            })
+                        else:
+                            ob_list.append({
+                                "title": t,
+                                "owner": str(item.get("owner") or "").strip(),
+                                "due_by_chapter": due,
+                                "status": status,
+                                "created_chapter": chapter_num,
+                                "updated_chapter": chapter_num,
+                            })
+            # ConStory-Bench CED history
+            ced_val = float(result.get("ced_per_10k") or 0.0)
+            state.setdefault("ced_history", {})[str(chapter_num)] = ced_val
             state["last_updated_chapter"] = chapter_num
             return state
 
@@ -270,5 +338,87 @@ def build_active_voice_bank_block(
         if not lines:
             return ""
         return "## 🗣️ 出场角色历史代表台词（保持各人说话口吻与节奏）\n" + "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def compute_ced_per_10k(error_count: int, char_count: int) -> float:
+    """Compute ConStory-Bench Consistency Error Density (errors per 10,000 chars)."""
+    if error_count <= 0 or char_count <= 0:
+        return 0.0
+    return round((error_count / max(1, char_count)) * 10000.0, 2)
+
+
+def build_active_beliefs_block(
+    memory: Any,
+    novel_id: str,
+    active_characters: Optional[List[str]] = None,
+) -> str:
+    """Inject explicit Theory-of-Mind belief states for active scene characters only."""
+    if memory is None or not hasattr(memory, "read"):
+        return ""
+    try:
+        gs = memory.read("global_state", novel_id) or {}
+        cb = gs.get("character_beliefs") if isinstance(gs, dict) else None
+        if not isinstance(cb, dict) or not cb:
+            return ""
+        filter_set = {str(c).strip() for c in (active_characters or []) if str(c).strip()}
+        lines = []
+        for cname, bval in cb.items():
+            if filter_set and cname not in filter_set:
+                continue
+            if not isinstance(bval, dict):
+                continue
+            knows = [str(x) for x in (bval.get("knows") or [])[-2:] if str(x).strip()]
+            mis = [str(x) for x in (bval.get("misbelieves") or [])[-2:] if str(x).strip()]
+            parts = []
+            if knows:
+                parts.append("已知：" + "；".join(knows))
+            if mis:
+                parts.append("误判/不知：" + "；".join(mis))
+            if parts:
+                lines.append(f"- {cname}：" + " ｜ ".join(parts))
+            if len(lines) >= 6:
+                break
+        if not lines:
+            return ""
+        return "## 🧠 出场角色视角与信念边界（严禁角色说出自己不知晓的真相）\n" + "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def build_due_obligations_block(
+    memory: Any,
+    novel_id: str,
+    chapter_num: int,
+    lookahead: int = 3,
+) -> str:
+    """Inject open narrative future obligations due within the next `lookahead` chapters."""
+    if memory is None or not hasattr(memory, "read"):
+        return ""
+    try:
+        gs = memory.read("global_state", novel_id) or {}
+        obs = gs.get("future_obligations") if isinstance(gs, dict) else None
+        if not isinstance(obs, list) or not obs:
+            return ""
+        due_items = []
+        for item in obs:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "open").lower() == "fulfilled":
+                continue
+            try:
+                due_ch = int(item.get("due_by_chapter") or (chapter_num + 1))
+            except (TypeError, ValueError):
+                due_ch = chapter_num + 1
+            if due_ch <= chapter_num + lookahead:
+                owner = str(item.get("owner") or "").strip()
+                prefix = f"[{owner}] " if owner else ""
+                due_items.append(f"- {prefix}{item.get('title')}（建议第{due_ch}章前推进/兑现）")
+            if len(due_items) >= 5:
+                break
+        if not due_items:
+            return ""
+        return "## 📌 近期到期叙事义务（本章优先呼应或推进）\n" + "\n".join(due_items)
     except Exception:
         return ""

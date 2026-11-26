@@ -45,7 +45,7 @@ async def run_post_chapter_pipeline(
         )
         score = max(0, 100 - p0_count * 25 - (len(violations) - p0_count) * 8)
         if violations:
-            yield {"type": "consistency_check", "violations": violations, "score": score}
+            yield {"type": "consistency_check", "violations": violations, "score": score, "ced_per_10k": upp_res.get("ced_per_10k", 0.0)}
             issues = [
                 v.get("description", "")
                 for v in violations[:5]

@@ -1788,11 +1788,20 @@ class GenerationMixin:
             _cliche_block = ""
             _director_card_block = ""
             _voice_bank_block = ""
+            _beliefs_block = ""
+            _obligations_block = ""
             try:
-                from ..unified_post_processor import build_active_voice_bank_block
-                _voice_bank_block = build_active_voice_bank_block(self.memory, novel_id, chapter_outline.get("characters"))
+                from ..unified_post_processor import (
+                    build_active_beliefs_block,
+                    build_active_voice_bank_block,
+                    build_due_obligations_block,
+                )
+                _active_chars = chapter_outline.get("characters")
+                _voice_bank_block = build_active_voice_bank_block(self.memory, novel_id, _active_chars)
+                _beliefs_block = build_active_beliefs_block(self.memory, novel_id, _active_chars)
+                _obligations_block = build_due_obligations_block(self.memory, novel_id, chapter_num, lookahead=3)
             except Exception as _vbe:
-                log.debug("Active voice bank skipped: %s", _vbe)
+                log.debug("Active voice/belief/obligation context skipped: %s", _vbe)
             try:
                 from ..surgical_humanizer import build_rolling_cliche_block, get_rolling_cliches
                 _recent_cliches = get_rolling_cliches(self.memory, novel_id, chapter_num, window=2)
@@ -1827,7 +1836,9 @@ class GenerationMixin:
                     ),
                     ContextSection("用户反馈", feedback or "", priority=95, required=bool(feedback)),
                     ContextSection("出场角色历史代表台词", _voice_bank_block, priority=90),
+                    ContextSection("出场角色视角与信念边界", _beliefs_block, priority=89),
                     ContextSection("本章表演微观提示", _director_card_block, priority=88),
+                    ContextSection("近期到期叙事义务", _obligations_block, priority=87),
                     ContextSection("跨章防复读提醒", _cliche_block, priority=85),
                     ContextSection("写作上下文", context, priority=60),
                 ],

@@ -1,8 +1,10 @@
-"""Zero-intervention Dramatic-Vector Director Card generator (v5.1.0).
+"""Zero-intervention Dramatic-Vector Director Card with Verbalized Sampling (v5.2.0).
 
-Produces pure structural dramatic vectors (tactical goals, information asymmetry,
-power shift, and 3 raw sensory nouns) WITHOUT pre-written prose sentences or
-dialogue lines, preventing mechanical card-echo while forcing vivid subtext.
+Incorporates Verbalized Sampling (arXiv:2510.01171, ICML 2026) inside a single JSON
+call (zero extra LLM calls): the director enumerates 2-3 candidate dramatic angles
+with explicit typicality probability `p`, automatically discards the cliché mode,
+and selects the lowest-typicality coherent dramatic vector (tactical goals, info
+asymmetry, power shift, and 3 raw sensory nouns) without pre-written prose lines.
 """
 from __future__ import annotations
 
@@ -13,11 +15,12 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-_DIRECTOR_SYSTEM = """你是顶级中文小说结构导演。根据本章大纲，为正文写手输出一份「纯戏剧向量卡」（严格 JSON，不要多余解释）。
+_DIRECTOR_SYSTEM = """你是顶级中文小说结构导演。根据本章大纲，采用「言语化采样（Verbalized Sampling）」在同一次 JSON 中先构思 3 种不同的戏剧推进切入点并估算各自的俗套典型概率 p（总和约 1.0），然后重点把最低典型度（p <= 0.30、反套路但逻辑自洽）的方案拆成纯戏剧向量。
 铁律：
 1. 只给戏剧条件和原始名词，绝对不要替正文写好完整描写句或台词，避免正文机械照抄。
-2. 每场必须明确：信息差（谁隐瞒了什么/谁误判了什么）、权力/情绪翻转（开场谁占上风→收尾局势如何逆转）。
-3. sensory_nouns 只填 3 个具体可感的原始名词（如 ["铁皮檐","焦边纸","旧算盘"]），不加形容词。"""
+2. 每场必须明确：博弈目标、信息差与潜台词、权力/情绪翻转。
+3. sensory_nouns 只填 3 个具体可感的原始名词（如 ["铁皮檐","焦边纸","旧算盘"]），不加形容词。
+4. 只输出合法 JSON，不要任何解释。"""
 
 
 def _extract_json_obj(raw: str) -> dict[str, Any] | None:
@@ -40,16 +43,43 @@ def _extract_json_obj(raw: str) -> dict[str, Any] | None:
             return None
 
 
+def select_verbalized_candidate(card: dict[str, Any]) -> dict[str, Any]:
+    """Pick the lowest-typicality valid candidate from a Verbalized Sampling payload.
+
+    Backward-compatible with direct `{"scenes": [...]}` payloads.
+    """
+    if not isinstance(card, dict):
+        return {}
+    candidates = card.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        valid = [
+            c for c in candidates
+            if isinstance(c, dict) and isinstance(c.get("scenes"), list) and c["scenes"]
+        ]
+        if valid:
+            def _prob(item: dict[str, Any]) -> float:
+                try:
+                    return float(item.get("p", 0.5))
+                except (TypeError, ValueError):
+                    return 0.5
+            valid.sort(key=_prob)
+            return valid[0]
+    return card
+
+
 def format_director_card(card: dict[str, Any]) -> str:
     """Format a structured dramatic-vector card into a compact writer instruction block."""
-    if not isinstance(card, dict):
+    chosen = select_verbalized_candidate(card)
+    if not isinstance(chosen, dict):
         return ""
-    scenes = card.get("scenes")
+    scenes = chosen.get("scenes")
     if not isinstance(scenes, list) or not scenes:
         return ""
-    lines = [
-        "## 🎬 本章戏剧向量（用全新原创动作与台词演出来，禁止照抄条目原话）"
-    ]
+    angle = str(chosen.get("angle") or "").strip()
+    header = "## 🎬 本章戏剧向量（用全新原创动作与台词演出来，禁止照抄条目原话）"
+    if angle:
+        header += f"\n- 反套路切入视角：{angle}"
+    lines = [header]
     for idx, sc in enumerate(scenes[:3], 1):
         if not isinstance(sc, dict):
             continue
@@ -85,7 +115,7 @@ def build_director_card(
     style: str = "热血爽文",
     recent_cliches: list[str] | None = None,
 ) -> str:
-    """Synchronously generate a compact dramatic-vector card (safe via asyncio.to_thread)."""
+    """Synchronously generate a Verbalized-Sampling dramatic-vector card."""
     if resilient_client is None or not isinstance(chapter_outline, dict):
         return ""
     title = str(chapter_outline.get("title") or "").strip()
@@ -101,9 +131,10 @@ def build_director_card(
         f"章节：{title}\n"
         f"大纲概要：{summary[:450]}\n"
         f"核心事件：{events_str[:300]}\n"
-        f"前文衔接参考：{(context_snippet or '')[:320]}{taboo_note}\n\n"
-        "请输出 JSON（2-3 场，每项用极简短语，不要写成品句子或台词）：\n"
-        '{"scenes":[{"tactical_goal":"双方本场各自想达成什么","info_asymmetry":"谁隐瞒了什么/谁误判了什么","power_shift":"开场态势→收尾翻转","sensory_nouns":["物件1","声响/触感2","环境3"]}]}'
+        f"前文衔接参考：{(context_snippet or '')[:300]}{taboo_note}\n\n"
+        "请输出 JSON（给出 2-3 个不同切入点及典型概率 p，只为低典型度反套路方案展开 2-3 场向量）：\n"
+        '{"candidates":[{"p":0.65,"angle":"最常见俗套写法（简述）","scenes":[]},'
+        '{"p":0.20,"angle":"反套路切入视角","scenes":[{"tactical_goal":"双方本场各自想达成什么","info_asymmetry":"谁隐瞒了什么/谁误判了什么","power_shift":"开场态势→收尾翻转","sensory_nouns":["物件1","声响2","环境3"]}]}]}'
     )
 
     try:
@@ -112,8 +143,8 @@ def build_director_card(
                 {"role": "system", "content": _DIRECTOR_SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.72,
-            max_tokens=380,
+            temperature=0.78,
+            max_tokens=480,
         )
         raw = resp.choices[0].message.content if resp and getattr(resp, "choices", None) else ""
         card = _extract_json_obj(raw or "")
